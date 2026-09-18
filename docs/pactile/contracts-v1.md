@@ -11,7 +11,8 @@ migrations.
 The v1 authority model is:
 
 1. `.pactile/` is the only writable canonical runtime root.
-2. `.cstl/` and `.trellis/` may be declared only as `read-only` legacy sources.
+2. The two roots in the [compatibility input contract](compatibility-inputs.md#contract-inputs)
+   may be declared only as `read-only` legacy sources.
 3. `.agents/skills/`, `.cursor/`, optional `.codex/`, and managed instruction
    blocks are rebuildable projections, not a second source of truth. Codex
    project leaves are emitted only when the host reports native support.
@@ -89,7 +90,7 @@ throw `TypeError` for non-JSON or cyclic input.
 | `tasksPath` / `archivePath` / `workspacePath` | Children of `.pactile/`                                                     |
 | `ownershipLedgerPath`                         | `.pactile/runtime/ownership-ledger.json`                                    |
 | `migrationJournalsPath` / `receiptsPath`      | Children of `.pactile/runtime/`                                             |
-| `legacySources`                               | Exactly one `.cstl` and one `.trellis` entry, both with `access: read-only` |
+| `legacySources`                               | Exactly one entry for each of the two [compatibility roots](compatibility-inputs.md#contract-inputs), both with `access: read-only` |
 
 Every writable path must be a normalized project-relative POSIX path inside
 `.pactile`, and canonical paths must be unique. A legacy source cannot express a
@@ -244,8 +245,9 @@ carry a project-relative target; external assets use non-writing `bind` or
 `detach` operations. Adapter targets may not enter `.pactile/`.
 
 Borrowed resources can only be bound or detached. No projection or ownership
-entry may target canonical `.pactile/` or the read-only legacy `.cstl/` and
-`.trellis/` roots. `ensure` and `merge` require a content reference and desired
+entry may target canonical `.pactile/` or either of the two read-only roots in
+the [compatibility input contract](compatibility-inputs.md#contract-inputs).
+`ensure` and `merge` require a content reference and desired
 fingerprint. Merge is limited to JSON, TOML, or managed blocks. Removal carries
 no desired content and requires an observed current fingerprint so a future
 Reconciler can guard the delete.
@@ -357,7 +359,7 @@ into the reference.
   emit a stable order before persistence.
 - V1 readers reject v2 rather than guessing. A future compatibility layer may
   explicitly down-project a newer record.
-- Historical `.cstl`/`.trellis` data, old manifests, and Evidence are migration
+- Historical legacy-root data, old manifests, and Evidence are migration
   inputs, not silently normalized v1 writes.
 
 ## Explicit non-goals and prohibitions

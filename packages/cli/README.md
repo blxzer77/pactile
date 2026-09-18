@@ -48,7 +48,7 @@ Run `pactile <command> --help` for current flags. `detach` takes the adapter as 
 
 ## Init options that affect ownership
 
-- `--import-cstl` explicitly declares an existing legacy tree as a read-only migration source. It never becomes a write target.
+- [Explicit legacy import](../../docs/pactile/compatibility-inputs.md#explicit-import) declares an existing tree as a read-only migration source. It never becomes a write target.
 - `--capability <id>` enables an optional project capability; use the flag repeatedly or pass `all`.
 - `--with-optional <name>` installs a packaged optional Skill into the project Skill directory. It does not install host-native plugins or services.
 - `--skip-readiness` records framework readiness as unverified instead of inventing a provider result.

@@ -8,5 +8,6 @@ current Cursor setup, projection, capability modes, and limitations live in
 For shared capability semantics, see [native install, adopt, and bind](capabilities/native-adoption.md)
 or [原生 install、adopt 与 bind](capabilities/native-adoption.zh-CN.md).
 
-Cursor++ retired: it is not a current product path. Native Cursor is the
+The alternate client is retired, not a current product path; its details are
+on the [history page](history/cursor-plus-plus.md). Native Cursor is the
 supported path; use the host guide above for the current integration contract.

@@ -21,7 +21,7 @@ resolve_pactile() {
     return
   fi
   echo "Error: pactile not found. Install: npm install -g @blxzer/pactile" >&2
-  echo "Or run from cursor-trellis repo after pnpm build." >&2
+  echo "Or run from the Pactile repo after pnpm build." >&2
   exit 1
 }
 

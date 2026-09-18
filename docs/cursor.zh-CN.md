@@ -4,4 +4,5 @@
 
 共享能力语义见[原生 install、adopt 与 bind](capabilities/native-adoption.zh-CN.md)与[native install, adopt, and bind](capabilities/native-adoption.md)。
 
-Cursor++ 已废弃，不是当前产品路径。支持的产品路径是 Native Cursor；当前集成契约请以上方宿主指南为准。
+替代客户端已废弃，不是当前产品路径；详情仅见[历史页面](history/cursor-plus-plus.zh-CN.md)。
+支持的产品路径是 Native Cursor；当前集成契约请以上方宿主指南为准。

@@ -232,17 +232,15 @@ describe("Pactile Batch 0 brand and documentation surface", () => {
     );
   });
 
-  it("preserves history and attribution while stable-release mode denies live debt", () => {
+  it("preserves scoped compatibility, history, and attribution with no live debt", () => {
     const result = runChecker(repoRoot, ["--release"]);
 
-    expect(result.status).toBe(1);
-    expect(result.report.ok).toBe(false);
-    expect(result.report.errors).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(
-          /stable-release mode rejects .* live legacy-token occurrences/,
-        ),
-      ]),
+    expect(result.status, JSON.stringify(result.report.errors)).toBe(0);
+    expect(result.report.ok).toBe(true);
+    expect(result.report.errors).toEqual([]);
+    expect(result.report.filesByClassification.live ?? []).toEqual([]);
+    expect(result.report.filesByClassification.compat).toContain(
+      "docs/pactile/compatibility-inputs.md",
     );
     expect(result.report.filesByClassification.history).toContain(
       "packages/cli/CHANGELOG.md",
@@ -380,6 +378,22 @@ describe("Pactile Batch 0 brand and documentation surface", () => {
 
   it("does not let broad history, attribution, or migration words exempt a live token", () => {
     const temporaryRoot = createMinimalContractRepository();
+    const documentationMap = readJson<DocumentationMap>(
+      path.join(temporaryRoot, "docs/pactile/documentation-map.json"),
+    );
+    for (const route of documentationMap.p23CursorPlusPlus.routes) {
+      fs.writeFileSync(
+        path.join(temporaryRoot, ...route.sourcePath.split("/")),
+        "",
+        "utf8",
+      );
+    }
+    refreshSnapshot(temporaryRoot);
+    const initialStrict = runChecker(temporaryRoot, ["--release"]);
+    expect(
+      initialStrict.status,
+      JSON.stringify(initialStrict.report.errors),
+    ).toBe(0);
     const livePath = ".github/workflows/ci.yml";
     fs.writeFileSync(
       path.join(temporaryRoot, ...livePath.split("/")),
@@ -397,6 +411,16 @@ describe("Pactile Batch 0 brand and documentation surface", () => {
     );
     expect(result.report.filesByClassification.attribution ?? []).not.toContain(
       livePath,
+    );
+    const strict = runChecker(temporaryRoot, ["--release"]);
+    expect(strict.status).toBe(1);
+    expect(strict.report.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /stable-release mode rejects .* live legacy-token occurrences/,
+        ),
+        expect.stringContaining(".github/workflows/ci.yml"),
+      ]),
     );
   });
 

@@ -20,7 +20,9 @@ describe("Method 2.5 / Cursor++ docs retired (P23)", () => {
   it("marks Cursor++ / Method 2.5 as retired without live setup steps", () => {
     for (const docPath of DOC_PATHS) {
       const content = readUtf8(docPath);
-      expect(content, docPath).toMatch(/Cursor\+\+ retired|Cursor\+\+ 已废弃/i);
+      expect(content, docPath).toMatch(
+        /alternate client is retired|替代客户端已废弃/i,
+      );
       expect(content, docPath).toMatch(
         /do not run|勿.*运行|retired|已废弃|not a current product path|不是当前产品路径/i,
       );
@@ -50,7 +52,10 @@ describe("Method 2.5 / Cursor++ docs retired (P23)", () => {
     ).toBe(false);
     expect(
       fs.existsSync(
-        path.join(cliRoot, "src/templates/cursor/commands/cursor2plus-setup.md"),
+        path.join(
+          cliRoot,
+          "src/templates/cursor/commands/cursor2plus-setup.md",
+        ),
       ),
     ).toBe(false);
     expect(

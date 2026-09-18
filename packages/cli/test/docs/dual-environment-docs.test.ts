@@ -27,8 +27,10 @@ describe("Cursor env docs after Cursor++ retirement (P23)", () => {
     const en = readUtf8(path.join(repoRoot, "docs/cursor.md"));
     const zh = readUtf8(path.join(repoRoot, "docs/cursor.zh-CN.md"));
 
-    expect(en).toMatch(/Cursor\+\+ retired/i);
-    expect(zh).toMatch(/Cursor\+\+ 已废弃/);
+    expect(en).toMatch(/alternate client is retired/i);
+    expect(zh).toContain("替代客户端已废弃");
+    expect(en).toContain("history/cursor-plus-plus.md");
+    expect(zh).toContain("history/cursor-plus-plus.zh-CN.md");
     expect(en).toContain("Native Cursor");
     expect(en).toContain("hosts/cursor.md");
     expect(zh).toContain("hosts/cursor.zh-CN.md");
@@ -40,7 +42,9 @@ describe("Cursor env docs after Cursor++ retirement (P23)", () => {
     for (const readmePath of README_FILES) {
       const content = readUtf8(readmePath);
       expect(content, readmePath).toMatch(/retired|已废弃|Native/);
-      expect(content, readmePath).not.toMatch(/cstl init --cursor --cursor2plus/);
+      expect(content, readmePath).not.toMatch(
+        /cstl init --cursor --cursor2plus/,
+      );
       expect(content, readmePath).not.toMatch(/patch_wpelc8\.py --apply/);
       for (const pattern of MUTUAL_EXCLUSION_PATTERNS) {
         expect(content, readmePath).not.toMatch(pattern);

@@ -21,7 +21,7 @@ function Resolve-Pactile {
     if ($global) {
         return $global.Source
     }
-    Write-Error "pactile not found. Install: npm install -g @blxzer/pactile`nOr run from cursor-trellis repo after pnpm build."
+    Write-Error "pactile not found. Install: npm install -g @blxzer/pactile`nOr run from the Pactile repo after pnpm build."
 }
 
 $Pactile = Resolve-Pactile

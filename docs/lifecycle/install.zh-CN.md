@@ -19,7 +19,7 @@ pactile capability-smoke --json
 | 项目观察                                         | 动作                                      | canonical 影响                              |
 | ------------------------------------------------ | ----------------------------------------- | ------------------------------------------- |
 | 没有 `.pactile/` 且宿主文件无冲突                | 运行 `init`。                             | 创建 generation 与选定投影。                |
-| 存在 legacy runtime 目录                         | 审阅只读源后才使用 `init --import-cstl`。 | 将事实导入 `.pactile/`；永不写 legacy 源。  |
+| 存在 legacy runtime 目录                         | 按已审阅的[显式导入参考](../pactile/compatibility-inputs.zh-CN.md#显式导入)执行。 | 将事实导入 `.pactile/`；永不写 legacy 源。  |
 | canonical 与 legacy 或 modified 宿主文件同时存在 | 停止并检查 plan。                         | 保留不明确的字节，解决 ownership 后再应用。 |
 
 初始化后检查 `.pactile/runtime/install-state.json`、ownership ledger 与 receipt。init 成功不代表每个可选 Provider 已 ready；应读取 JSON readiness 与 user action。

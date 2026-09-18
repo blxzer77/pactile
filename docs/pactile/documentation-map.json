@@ -625,6 +625,24 @@
   ],
   "sourceMappings": [
     {
+      "path": "docs/pactile/compatibility-inputs.md",
+      "classification": "compat",
+      "language": "en",
+      "action": "merge",
+      "targetPage": "governance.compatibility",
+      "ownerLane": "batch-3-brand-runtime",
+      "reason": "Name the exact read-only contract inputs, explicit import option, and 0.5.x bridge identities separately from canonical live guidance, with removal conditions."
+    },
+    {
+      "path": "docs/pactile/compatibility-inputs.zh-CN.md",
+      "classification": "compat",
+      "language": "zh-CN",
+      "action": "merge",
+      "targetPage": "governance.compatibility",
+      "ownerLane": "batch-3-brand-runtime",
+      "reason": "Chinese peer of the scoped compatibility input reference; the same commands, write boundaries, and removal conditions apply."
+    },
+    {
       "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
       "classification": "live",
       "language": "neutral",
@@ -1517,30 +1535,30 @@
     },
     {
       "path": "docs/cursor-platform-limitations-and-trellis-adaptation.md",
-      "classification": "live",
+      "classification": "compat",
       "language": "en",
       "action": "redirect",
       "targetPage": "hosts.cursor-limitations",
       "ownerLane": "batch-4-docs-hosts-capabilities",
-      "reason": "Revalidate current Cursor limits and move historical Cursor++ material to the canonical history page."
+      "reason": "Keep this old URL as a procedure-free pointer to maintained host limits during 0.5.x; historical procedures remain only on the canonical history page."
     },
     {
       "path": "docs/cursor-platform-limitations-and-trellis-adaptation.zh-CN.md",
-      "classification": "live",
+      "classification": "compat",
       "language": "zh-CN",
       "action": "redirect",
       "targetPage": "hosts.cursor-limitations",
       "ownerLane": "batch-4-docs-hosts-capabilities",
-      "reason": "Revalidate current Cursor limits and move historical Cursor++ material to the canonical history page."
+      "reason": "Chinese old-URL peer: a procedure-free pointer to maintained host limits during 0.5.x, not a current legacy installation surface."
     },
     {
       "path": "docs/cursor-trellis-release-coexistence-guide.md",
-      "classification": "live",
+      "classification": "compat",
       "language": "en",
-      "action": "merge",
+      "action": "redirect",
       "targetPage": "governance.releasing",
       "ownerLane": "batch-4-docs-governance-history",
-      "reason": "Merge release mechanics into governance; replace old Trellis coexistence with Cursor/Codex lifecycle guidance."
+      "reason": "Retain the old URL only as a short 0.5.x pointer to maintained release/coexistence pages; retire after the compatibility window and a link audit."
     },
     {
       "path": "docs/cursor.md",

@@ -55,10 +55,10 @@ const CONTRACT_IDS = {
   documentationMap: "pactile.documentation-map/v1",
 };
 const CANONICAL_POLICY_DIGESTS = {
-  inventory: "5ade101e9902e2f38be4a774f3bb9ad0c6afd6f5403ba62b3207c09c80891a15",
+  inventory: "541ec8c277cc1193a53593b7164c4f6a1d63b2b9f7f38a1484b730842a7ebc84",
   renameMap: "e7e3a0eeb7ba5c97b5ed614b13c8ac628e9e3781d57ec763be06f405bb1b91aa",
   documentationMap:
-    "b7a709a031269eb6e11023ce2be54f626c3936b3a1fc91c904adcb97d891fe77",
+    "b2a297a4671935075c06d06a36f658866d3ad5e5676f540b0848f718da49f5ec",
 };
 const REQUIRED_TOKEN_IDS = [
   "legacy-product-name",
@@ -89,6 +89,8 @@ const REQUIRED_DOCUMENTATION_SOURCES = [
   "docs/cursor.md",
   "docs/cursor.zh-CN.md",
   "docs/pactile/contracts-v1.md",
+  "docs/pactile/compatibility-inputs.md",
+  "docs/pactile/compatibility-inputs.zh-CN.md",
   "docs/retrieval.md",
   "docs/retrieval.zh-CN.md",
   "docs/skills.md",
@@ -204,6 +206,13 @@ const REQUIRED_HISTORY_DOCUMENTATION_SOURCES = [
   "docs/history/index.zh-CN.md",
   "docs/history/community/linux-do-release.md",
   "docs/history/research/personal-skills-integration.md",
+];
+const REQUIRED_COMPAT_DOCUMENTATION_SOURCES = [
+  "docs/pactile/compatibility-inputs.md",
+  "docs/pactile/compatibility-inputs.zh-CN.md",
+  "docs/cursor-platform-limitations-and-trellis-adaptation.md",
+  "docs/cursor-platform-limitations-and-trellis-adaptation.zh-CN.md",
+  "docs/cursor-trellis-release-coexistence-guide.md",
 ];
 const REQUIRED_TOPICS = [
   "tiles",
@@ -1160,7 +1169,9 @@ function validateDocumentationMap(
     const expectedClassification =
       REQUIRED_HISTORY_DOCUMENTATION_SOURCES.includes(mapping.path)
         ? "history"
-        : "live";
+        : REQUIRED_COMPAT_DOCUMENTATION_SOURCES.includes(mapping.path)
+          ? "compat"
+          : "live";
     if (mapping.classification !== expectedClassification) {
       errors.push(
         `source ${mapping.path} must be classified ${expectedClassification}`,

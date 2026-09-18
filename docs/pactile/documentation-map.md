@@ -105,19 +105,27 @@ Every discovered source has exactly one primary action. Section-level historical
 | `docs/architecture*.md` | live | redirect | `concepts.architecture` | Entry/concepts |
 | `docs/spec-system*.md` | live | redirect | `concepts.spec-system` | Entry/concepts |
 | `docs/task-system*.md` | live | redirect | `concepts.task-system` | Entry/concepts |
-| `docs/cursor*.md` | live | redirect | `hosts.cursor` or `hosts.cursor-limitations` | Hosts/capabilities |
+| `docs/cursor.md` / `docs/cursor.zh-CN.md` | live | redirect | `hosts.cursor` | Hosts/capabilities |
+| `docs/cursor-platform-limitations-and-trellis-adaptation*.md` | compat | redirect | `hosts.cursor-limitations` | Hosts/capabilities |
+| `docs/pactile/compatibility-inputs*.md` | compat | merge | `governance.compatibility` | Batch 3 runtime |
 | `docs/retrieval*.md` | live | redirect | `capabilities.retrieval` | Hosts/capabilities |
 | `docs/skills*.md` | live | redirect | `capabilities.skills` | Hosts/capabilities |
 | `docs/subagents*.md` | live | redirect | `capabilities.subagents` | Hosts/capabilities |
 | `docs/agent-tooling-narrative.zh-CN.md` | live | merge | `capabilities.native-adoption` | Hosts/capabilities |
 | `docs/workflow*.md` | live | redirect | `lifecycle.workflow` | Lifecycle/support |
-| `docs/cursor-trellis-release-coexistence-guide.md` | live | merge | `governance.releasing` | Governance/history |
+| `docs/cursor-trellis-release-coexistence-guide.md` | compat | redirect | `governance.releasing` | Governance/history |
 | `packages/cli/CHANGELOG.md` | history | archive | `history.release-changelog` | Governance/history |
 | `docs/campaign-ui.md` | history | archive | `history.campaign-ui` | Governance/history |
 | `docs/community/linux-do-release.md` | history | archive | `history.community-linux-do` | Governance/history |
 | `PERSONAL_SKILLS_TRELLIS_INTEGRATION_RESEARCH.md` | history | archive | `history.research-personal-skills` | Governance/history |
 
 The grouped rows above are presentation shorthand only. The JSON inventory contains one explicit record per source path and is what the checker validates.
+
+The three old-brand URL leaves are finite 0.5.x compatibility pointers; their
+maintained destinations remain live. The English and Chinese compatibility
+input references name exact legacy roots, the import option, and bridges with
+retirement conditions. They remain included in discovery and inventory.
+`contracts-v1.md` stays live and links to those exact compatibility facts.
 
 ## Cursor++ documentation tail
 
