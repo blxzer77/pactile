@@ -35,6 +35,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify strict Pactile brand surface
+        run: node packages/cli/scripts/check-pactile-brand-surface.js --release
+
       - name: Build
         run: pnpm build
 

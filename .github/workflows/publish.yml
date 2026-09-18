@@ -146,6 +146,26 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: node packages/cli/scripts/release-preflight.js check-versions --require-tag --tag "pactile-v${VERSION}"
 
+      - name: Resolve release package identities
+        env:
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'NODE'
+          import fs from "node:fs";
+          import { readPackageInfo } from "./packages/cli/scripts/publish-packages.js";
+          import { releasePackageDefinitions } from "./packages/cli/scripts/release-preflight.js";
+          const packages = releasePackageDefinitions(readPackageInfo());
+          const keys = { core: "CORE_PACKAGE", cli: "CLI_PACKAGE", legacyCore: "LEGACY_CORE_PACKAGE", legacyCli: "LEGACY_CLI_PACKAGE" };
+          for (const item of packages) {
+            if (!/^@[a-z0-9-]+\/[a-z0-9._-]+$/.test(item.name) || item.version !== process.env.VERSION) {
+              throw new Error(`Invalid release package identity for ${item.key}.`);
+            }
+          }
+          fs.appendFileSync(process.env.GITHUB_ENV, packages.map((item) => `${keys[item.key]}=${item.name}\n`).join(""));
+          NODE
+
       - name: Verify every package is staged under candidate
         env:
           VERSION: ${{ inputs.version }}
@@ -153,10 +173,10 @@ jobs:
         run: |
           set -euo pipefail
           for package_name in \
-            @blxzer/pactile-core \
-            @blxzer/pactile \
-            @blxzer/cursor-trellis-core \
-            @blxzer/cursor-trellis; do
+            "$CORE_PACKAGE" \
+            "$CLI_PACKAGE" \
+            "$LEGACY_CORE_PACKAGE" \
+            "$LEGACY_CLI_PACKAGE"; do
             tags="$(npm view "$package_name" dist-tags --json)"
             node - "$tags" "$VERSION" "$package_name" <<'NODE'
           const [rawTags, expected, packageName] = process.argv.slice(2);
@@ -183,8 +203,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm dist-tag add "@blxzer/pactile-core@$VERSION" latest
-          npm dist-tag add "@blxzer/pactile@$VERSION" latest
+          npm dist-tag add "$CORE_PACKAGE@$VERSION" latest
+          npm dist-tag add "$CLI_PACKAGE@$VERSION" latest
 
       - name: Promote legacy shims to latest
         env:
@@ -193,8 +213,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm dist-tag add "@blxzer/cursor-trellis-core@$VERSION" latest
-          npm dist-tag add "@blxzer/cursor-trellis@$VERSION" latest
+          npm dist-tag add "$LEGACY_CORE_PACKAGE@$VERSION" latest
+          npm dist-tag add "$LEGACY_CLI_PACKAGE@$VERSION" latest
 
       - name: Verify latest points to the promoted version
         env:
@@ -203,10 +223,10 @@ jobs:
         run: |
           set -euo pipefail
           for package_name in \
-            @blxzer/pactile-core \
-            @blxzer/pactile \
-            @blxzer/cursor-trellis-core \
-            @blxzer/cursor-trellis; do
+            "$CORE_PACKAGE" \
+            "$CLI_PACKAGE" \
+            "$LEGACY_CORE_PACKAGE" \
+            "$LEGACY_CLI_PACKAGE"; do
             latest="$(npm view "${package_name}@latest" version --json)"
             if [[ "$latest" != "\"$VERSION\"" && "$latest" != "$VERSION" ]]; then
               echo "${package_name}@latest resolves to $latest, expected $VERSION" >&2
@@ -221,7 +241,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          deprecation_message="Use @blxzer/pactile-core@$VERSION; the legacy package remains a compatibility bridge."
+          deprecation_message="Use $CORE_PACKAGE@$VERSION; the legacy package remains a compatibility bridge."
           deprecate_and_verify() {
             local package_name="$1"
             local message="$2"
@@ -263,9 +283,9 @@ jobs:
           verifyDeprecations().catch((error) => { console.error(error.message); process.exitCode = 1; });
           NODE
           }
-          deprecate_and_verify "@blxzer/cursor-trellis-core" "$deprecation_message"
-          deprecate_and_verify "@blxzer/cursor-trellis" \
-            "Use @blxzer/pactile@$VERSION; the legacy package remains a compatibility bridge."
+          deprecate_and_verify "$LEGACY_CORE_PACKAGE" "$deprecation_message"
+          deprecate_and_verify "$LEGACY_CLI_PACKAGE" \
+            "Use $CLI_PACKAGE@$VERSION; the legacy package remains a compatibility bridge."
 
       - name: Remove temporary candidate dist-tag
         env:
@@ -275,10 +295,10 @@ jobs:
         run: |
           set -euo pipefail
           for package_name in \
-            @blxzer/pactile-core \
-            @blxzer/pactile \
-            @blxzer/cursor-trellis-core \
-            @blxzer/cursor-trellis; do
+            "$CORE_PACKAGE" \
+            "$CLI_PACKAGE" \
+            "$LEGACY_CORE_PACKAGE" \
+            "$LEGACY_CLI_PACKAGE"; do
             tags="$(npm view "$package_name" dist-tags --json)"
             candidate_state="$(node - "$tags" "$VERSION" "$package_name" <<'NODE'
           const [rawTags, expected, packageName] = process.argv.slice(2);

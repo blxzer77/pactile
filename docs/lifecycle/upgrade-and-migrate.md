@@ -11,7 +11,7 @@ source. Use a preview before every write.
 | Inspect project changes       | `pactile update --dry-run`                         | Read-only.                                                       |
 | Apply reviewed project update | `pactile update`                                   | Canonical `.pactile/` and safe managed projections.              |
 | Preview legacy migration      | `pactile migrate --dry-run`                        | Always read-only for this command.                               |
-| Explicit legacy import        | `pactile init --import-cstl -y`                    | Reads the legacy tree; writes only canonical state after review. |
+| Explicit legacy import        | See the [explicit import reference](../pactile/compatibility-inputs.md#explicit-import). | Reads the legacy tree; writes only canonical state after review. |
 | Upgrade the global CLI        | `pactile upgrade --dry-run` then `pactile upgrade` | Package-manager scope, not project data.                         |
 
 During the 0.5.x compatibility window, old inputs may be dual-read when a

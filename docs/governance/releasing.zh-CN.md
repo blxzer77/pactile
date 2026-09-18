@@ -15,7 +15,7 @@ pnpm release:check
 pnpm --filter @blxzer/pactile check:pack-files
 pnpm --filter @blxzer/pactile check:release-pack
 pnpm mirror-check
-node packages/cli/scripts/check-pactile-brand-surface.js
+node packages/cli/scripts/check-pactile-brand-surface.js --release
 pnpm --filter @blxzer/pactile exec vitest run test/docs/documentation-parity.test.ts
 pnpm docs:smoke
 node packages/cli/scripts/release-conformance.js

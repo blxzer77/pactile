@@ -133,3 +133,17 @@ Batch 0 owns this contract, the inventories, the IA map, and the focused checker
 - Batch 3 consumes [`rename-map.json`](./rename-map.json) for runtime and compatibility work.
 - Batch 4 documentation lanes consume [`documentation-map.json`](./documentation-map.json) for rewrites, redirects, merges, and archives.
 - Release conformance consumes the checker in stable-release mode after the live debt has been removed.
+
+## Post-release strict enforcement
+
+CI and stable preflight run `check-pactile-brand-surface.js --release`; live
+legacy-name occurrences must be zero. The exact compatibility references,
+old URL pointers, conformance runners, and legacy/negative regression files
+remain inventoried with specific reasons and exit conditions. This does not
+exempt whole docs, test, or workflow directories. Publish stays live and reads
+its four-package identities from existing metadata.
+
+Exact import spellings and read-only roots are documented in
+[compatibility inputs](compatibility-inputs.md) and its
+[Chinese peer](compatibility-inputs.zh-CN.md). Unreferenced old artwork is
+archived byte-for-byte under `docs/history/assets/`, not used as current artwork.

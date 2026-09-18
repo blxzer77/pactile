@@ -24,7 +24,7 @@ not install their external Providers silently.
 | Project observation                                    | Action                                                              | Canonical effect                                              |
 | ------------------------------------------------------ | ------------------------------------------------------------------- | ------------------------------------------------------------- |
 | No `.pactile/` and no conflicting host files           | Run `init`.                                                         | Create a new generation and selected projections.             |
-| A legacy runtime directory exists                      | Use `init --import-cstl` only after reviewing the read-only source. | Import facts into `.pactile/`; never write the legacy source. |
+| A legacy runtime directory exists                      | Follow the reviewed [explicit import reference](../pactile/compatibility-inputs.md#explicit-import). | Import facts into `.pactile/`; never write the legacy source. |
 | Both canonical and legacy or modified host files exist | Stop and inspect the plan.                                          | Preserve ambiguous bytes; resolve ownership before applying.  |
 
 After initialization inspect `.pactile/runtime/install-state.json`, the

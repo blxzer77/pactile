@@ -89,6 +89,24 @@
   ],
   "pathClassifiers": [
     {
+      "classification": "compat",
+      "pathRegex": "^docs/(?:pactile/compatibility-inputs(?:\\.zh-CN)?|cursor-platform-limitations-and-trellis-adaptation(?:\\.zh-CN)?|cursor-trellis-release-coexistence-guide)\\.md$",
+      "reason": "The two compatibility references name exact read-only inputs and bridge identifiers. The three old URL leaves contain only redirects to maintained pages, not old installation procedures.",
+      "exitCondition": "Reassess references with a versioned compatibility/contract transition; retire the three redirects after the 0.5.x window and a link audit."
+    },
+    {
+      "classification": "compat",
+      "pathRegex": "^packages/cli/scripts/(?:docs-smoke|release-conformance)\\.js$",
+      "reason": "These two exact conformance runners verify the supported warning alias, shared-bin collision rejection, and explicit canonical/legacy install profiles. The publish workflow remains live.",
+      "exitCondition": "Remove legacy cases with the matching 0.5.x bridge behavior; retain canonical install and output checks."
+    },
+    {
+      "classification": "compat",
+      "pathRegex": "^packages/cli/test/(?:docs/(?:closed-item-gaps|dual-environment-docs|method25-patch-ops)\\.test\\.ts|pactile/(?:conformance/(?:release/(?:matrix\\.test\\.ts|cases\\.ts)|lifecycle/matrix\\.test\\.ts)|integration/batch3-lifecycle\\.test\\.ts))$",
+      "reason": "These seven exact files contain legacy-source fixtures, package/bin ownership checks, or negative assertions that retired commands and client procedures stay absent. Other tests are not exempted.",
+      "exitCondition": "Retire compatibility fixtures with their readers/bridges; preserve canonical-output checks and retired-entry negative assertions."
+    },
+    {
       "classification": "attribution",
       "pathRegex": "^(?:LICENSE|COPYRIGHT)$",
       "reason": "License and copyright provenance are permanent.",
@@ -210,24 +228,23 @@
     "^scripts/"
   ],
   "baselineSnapshot": {
-    "sha256": "e849629288f3e235232591aa96b0cbf399ddec50e7ea06e6af3e8be32a1db9c2",
-    "occurrences": 4490,
-    "files": 326,
+    "sha256": "cc986060b295dd62e389270173c19a63845956ec1cd97c458a2972ab7c3126e4",
+    "occurrences": 4466,
+    "files": 315,
     "byClassification": {
       "attribution": 3,
-      "compat": 997,
-      "history": 3353,
-      "live": 137
+      "compat": 1107,
+      "history": 3356
     },
     "byToken": {
       "cursor-plus-plus": 171,
-      "legacy-cstl-token": 744,
+      "legacy-cstl-token": 741,
       "legacy-environment-name": 61,
       "legacy-managed-marker": 27,
-      "legacy-package-name": 242,
-      "legacy-product-name": 256,
+      "legacy-package-name": 236,
+      "legacy-product-name": 248,
       "legacy-runtime-path": 330,
-      "legacy-trellis-token": 2244,
+      "legacy-trellis-token": 2237,
       "upstream-runtime-path": 415
     }
   }

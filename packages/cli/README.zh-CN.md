@@ -48,7 +48,7 @@ pactile capability-smoke --json
 
 ## 影响 ownership 的 init 参数
 
-- `--import-cstl` 显式声明一个既有旧树作为只读迁移源；它永远不会变成写入目标。
+- [显式旧树导入](../../docs/pactile/compatibility-inputs.zh-CN.md#显式导入)声明一个既有旧树作为只读迁移源；它永远不会变成写入目标。
 - `--capability <id>` 启用可选项目能力；可重复使用或传入 `all`。
 - `--with-optional <name>` 把包内可选 Skill 安装到项目 Skill 目录；不会安装宿主原生插件或服务。
 - `--skip-readiness` 将 framework readiness 记录为 unverified，而不是虚构 Provider 结果。

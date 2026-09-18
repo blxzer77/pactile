@@ -92,7 +92,7 @@ describe("P31–P36 product protocol docs", () => {
     expect(upgrade.length).toBeLessThan(1800);
   });
 
-  it("P35 does not make BYOK a CSTL release gate", () => {
+  it("P35 does not make BYOK a Pactile release gate", () => {
     const boundary = doc("release-boundary.md");
     expect(boundary).toContain("pactile-byok");
     expect(boundary).toMatch(/不是.*硬依赖|互不门禁/);
