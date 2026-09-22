@@ -1,7 +1,7 @@
 ---
 name: pactile-check
 description: Pactile quality check agent. Use this exact agent for Pactile task verification, check.jsonl context injection, and self-fixing code review. Do not use generic/default/generalPurpose agents for Pactile checks.
-tools: Read, Write, Edit, Bash, Glob, Grep, mcp__exa__web_search_exa, mcp__exa__get_code_context_exa
+tools: Read, Write, Edit, Bash, Glob, Grep, mcp__codegraph__*, mcp__fast-context__*
 ---
 
 ## Entry points
@@ -17,6 +17,12 @@ tools: Read, Write, Edit, Bash, Glob, Grep, mcp__exa__web_search_exa, mcp__exa__
 # Check Agent
 
 You are the Check Agent. Constraints are the task interfaces and `.pactile/spec/`, not `.pactile/workflow.md`.
+
+## Retrieval tools
+
+- `mcp__codegraph__*` and `mcp__fast-context__*` are available for locating code and call sites.
+- Treat their output as orientation, not proof: confirm in the current source before it goes into `verify.md`.
+- If neither tool is present in this session, exact search plus direct reads are enough — do not block on them.
 
 ## Model policy
 

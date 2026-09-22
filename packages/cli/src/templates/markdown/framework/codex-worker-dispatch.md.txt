@@ -1,0 +1,72 @@
+# Codex worker dispatch — use cross-session, not subagents
+
+> **Purpose**: This file is the **Codex Adapter** for worker dispatch. Core slots (`inline` / `worker` / `child-task`) are host-neutral and live in `execution-strategy.md`. Codex-specific nouns, commands, and degrade sentences live **here** and nowhere else.
+>
+> **Not a Pactile scheduler.** Pactile names the native entry to use and stops there: no queue, no retry orchestration, no status machine, no cross-host dispatch. If this document starts describing Pactile-owned state, it has gone wrong.
+
+---
+
+## The binding
+
+On Codex, the `worker` slot binds to **cross-session dispatch**, not to subagents.
+
+| What you want | Native entry |
+| --- | --- |
+| See the workers already running on the shared local daemon | `codex agents` |
+| Send a follow-up message to an existing worker session | `codex queue --thread <THREAD> --message <TEXT>` — `--thread` takes a session UUID **or an exact session name** |
+| Continue a previous session | `codex resume` (`--last` for the most recent) |
+| Branch a session so you can try a different path without losing the original | `codex fork` |
+| Run a non-interactive pass | `codex exec` |
+| Share or remote-control the daemon | `codex app-server` / `remote-control`; point a session at a remote daemon with `--remote <ADDR>`, where ADDR is `ws://host:port`, `wss://host:port`, `unix://`, or `unix://PATH` |
+
+A dispatch lifecycle looks like: **start** a session → **deliver** follow-ups with `queue --thread` → **retrieve** by resuming it → optionally **fork** to explore an alternative without disturbing the original.
+
+**Verified against `codex-cli 0.155.0-alpha.9.2`** (`--help` for each entry). If a command here has moved or changed shape in your version, that is a host change to re-check, not a Pactile defect — say so in one sentence and continue.
+
+## Why not Codex subagents
+
+This is a **product decision, not a claim that the mechanism is missing**. Codex does expose subagents (`spawn_agent` / `wait_agent`, role config with `description` / `config_file` / `nickname_candidates`). Pactile chooses not to bind the `worker` slot to them, because:
+
+- Cross-session workers are **addressable and durable**: a session has an id you can return to, send more work to, and inspect later. A subagent's result is delivered once and then you are back where you started.
+- The work Pactile fans out is usually **long-running and multi-step** — implementation and verification that you want to revisit, not one-shot answers.
+- One mechanism per host means one thing to reason about when something degrades.
+
+Do not silently substitute subagents for cross-session dispatch. If cross-session is unavailable in a given environment, use the degrade line below instead — a quiet substitution makes the dispatch story untrustworthy.
+
+## How this differs from Cursor
+
+The same slot binds differently on each host. That difference is declared in `execution-strategy.md`; do not try to level it.
+
+| Concern | Codex | Cursor |
+| --- | --- | --- |
+| Worker surface | Cross-session (`queue --thread`, `resume`) | Subagents (`Task`) |
+| Returning to a worker | Normal — sessions are addressable | Not possible; dispatch a new child |
+| Sending more work to a running worker | `queue --thread <UUID-or-name>` | Not supported |
+| Where the result lands | The session, retrievable later | The parent only; siblings never see it |
+| Nesting | Session-level; no Pactile-imposed depth | Native depth 3; Pactile workers do not nest further |
+| Branching history | `fork` | `forkAgentId` |
+
+The practical consequence: on Codex you can treat a worker as a **place you come back to**. On Cursor a worker is a **one-shot delivery to the parent**. Planning that assumes the Cursor shape — "dispatch, collect, move on" — wastes what Codex offers; planning that assumes the Codex shape will not work on Cursor.
+
+## What Pactile still owns
+
+Cross-session dispatch changes the transport, not the contract. Regardless of host:
+
+- The worker's objective, write set, isolation, and validation come from the approved task contract.
+- The Parent owns decomposition, integration, and final acceptance.
+- Evidence still lands in the task's `verify.md`; a worker's message is not evidence by itself.
+- Model choice is never evidence.
+
+## Degrade in one sentence
+
+When a native entry is missing, unavailable, or refuses the request: say **what happened** and **where the work already landed**, then continue. One sentence, no catalog, no blame.
+
+> "Cross-session dispatch unavailable here; implement in the main session and record the contract as `inline`."
+
+Do not block on the host surface, and do not claim a worker ran when it did not.
+
+## Related
+
+- `execution-strategy.md` — host-neutral slots and the two bindings
+- `cursor-subagent-policy.md` — the Cursor binding for the same slot
+- `parallel-first-execution.md` — declaration fields (`parallel_groups` / `serial_reason`)

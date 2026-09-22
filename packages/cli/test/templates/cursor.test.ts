@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAllAgents } from "../../src/templates/cursor/index.js";
+import { PROJECT_CAPABILITIES } from "../../src/utils/project-capabilities.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../../../..");
@@ -87,4 +88,96 @@ describe("cursor agents frontmatter single-line description", () => {
       expect(descValue.length).toBeGreaterThan(0);
     });
   }
+});
+
+/**
+ * A subagent's `tools:` list is a promise about what that child can reach. A
+ * whitelist naming an MCP server that Pactile does not declare is a broken
+ * promise: the child is told it has a capability that nobody provides, and the
+ * drift is invisible until someone reads the frontmatter closely.
+ *
+ * These cases pin the whitelist to the capability registry so the two cannot
+ * drift apart again.
+ */
+describe("cursor agents MCP tool whitelist", () => {
+  const DECLARED_MCP_SERVERS = new Set(
+    PROJECT_CAPABILITIES.flatMap((capability) =>
+      capability.mcpServers.map((server) => server.name),
+    ),
+  );
+
+  function declaredToolTokens(agentName: string): string[] {
+    const agent = getAllAgents().find((entry) => entry.name === agentName);
+    if (!agent) throw new Error(`Expected agent "${agentName}" to exist`);
+    // Working copies may carry CRLF; normalize before splitting frontmatter.
+    const content = agent.content.replace(/\r\n/g, "\n");
+    const frontmatter = content.split("---\n")[1] ?? "";
+    const toolsLine = frontmatter.match(/^tools:\s*(.+)$/m);
+    if (!toolsLine) throw new Error(`${agentName} has no tools: line`);
+    return toolsLine[1]
+      .split(",")
+      .map((token) => token.trim())
+      .filter(Boolean);
+  }
+
+  function mcpServerNames(tokens: readonly string[]): string[] {
+    const names: string[] = [];
+    for (const token of tokens) {
+      const match = token.match(/^mcp__([^_]+(?:-[^_]+)*)__/);
+      if (match) names.push(match[1]);
+    }
+    return names;
+  }
+
+  it("declares at least one MCP server in the capability registry", () => {
+    // Guard for the guard: if the registry ever declares none, the assertion
+    // below would pass vacuously and stop protecting anything.
+    expect(DECLARED_MCP_SERVERS.size).toBeGreaterThan(0);
+  });
+
+  for (const name of ["pactile-check", "pactile-implement", "pactile-research"]) {
+    it(`${name}.md only names MCP servers the capability registry declares`, () => {
+      const servers = mcpServerNames(declaredToolTokens(name));
+
+      for (const server of servers) {
+        expect(
+          DECLARED_MCP_SERVERS.has(server),
+          `${name}.md grants "mcp__${server}__*" but no Pactile capability declares an MCP server named "${server}". ` +
+            `Declared servers: ${[...DECLARED_MCP_SERVERS].join(", ") || "(none)"}.`,
+        ).toBe(true);
+      }
+    });
+  }
+
+  it("does not resurrect retired MCP brands in an agent whitelist", () => {
+    // These were granted to subagents and are not provided by anything in the
+    // product. Even if a future registry re-added a similarly named server,
+    // returning them here should be a deliberate, reviewed act.
+    const retiredServers = ["exa", "chrome-devtools"];
+
+    for (const name of [
+      "pactile-check",
+      "pactile-implement",
+      "pactile-research",
+    ]) {
+      const servers = mcpServerNames(declaredToolTokens(name));
+      for (const retired of retiredServers) {
+        expect(
+          servers,
+          `${name}.md still grants a retired MCP server "${retired}".`,
+        ).not.toContain(retired);
+      }
+    }
+  });
+
+  it("grants the repository retrieval servers to every worker role", () => {
+    // The whole point of the fix: workers must be able to reach code lookup.
+    for (const name of ["pactile-check", "pactile-implement", "pactile-research"]) {
+      const servers = mcpServerNames(declaredToolTokens(name));
+      expect(servers, `${name} cannot reach codegraph`).toContain("codegraph");
+      expect(servers, `${name} cannot reach fast-context`).toContain(
+        "fast-context",
+      );
+    }
+  });
 });

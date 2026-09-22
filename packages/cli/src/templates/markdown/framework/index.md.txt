@@ -11,7 +11,8 @@ Versioned framework and platform-adapter documentation. Project/team knowledge l
 | [prd-grill-frontier.md](./prd-grill-frontier.md) | On-demand path to the PRD grill and Frontier discipline (bundled `brainstorm` skill is SSOT) |
 | [internal-skills-cursor-reachability.md](./internal-skills-cursor-reachability.md) | How each internal workflow skill is reachable on Cursor (commands-only baseline) |
 | [dogfood-only-surfaces.md](./dogfood-only-surfaces.md) | Which surfaces ship by default vs exist only in the maintainer harness |
-| [cursor-subagent-policy.md](./cursor-subagent-policy.md) | When to spawn Pactile custom agents; model policy stays on the Cursor side |
+| [cursor-subagent-policy.md](./cursor-subagent-policy.md) | Cursor's binding for the `worker` slot: when to spawn custom agents, result flow, child toolboxes |
+| [codex-worker-dispatch.md](./codex-worker-dispatch.md) | Codex's binding for the same slot: cross-session dispatch via native entries, and why not subagents |
 | [retrieval-daily-guide.md](./retrieval-daily-guide.md) | Daily retrieval tool routing (search vs retrieval-pack scoring; web-research gate) |
 | [cursor-native-modes-guide.md](./cursor-native-modes-guide.md) | Mapping Cursor Plan / Ask / Debug / Agent / Multitask onto Pactile phases |
 | [parallel-first-execution.md](./parallel-first-execution.md) | Parallel-first **product** principle + execution contract: native parallel default, `serial_reason`, task-map fields |

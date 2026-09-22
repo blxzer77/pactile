@@ -117,14 +117,10 @@ max_journal_lines: 2000
 #     reuse_policy: true
 
 #-------------------------------------------------------------------------------
-# Codex (dispatch behavior)
+# Codex worker dispatch (documentation only — no Pactile-side switch)
 #-------------------------------------------------------------------------------
-# Codex-only knob; other platforms ignore it. Default ("inline") makes the
-# main Codex agent edit code directly because Codex sub-agents run with
-# `fork_turns="none"` isolation and can't inherit the parent session's
-# task context. Set to "sub-agent" to opt into the legacy dispatch model
-# (main agent spawns pactile-implement / pactile-check / pactile-research
-# sub-agents).
-#
-# codex:
-#   dispatch_mode: inline  # or "sub-agent" to dispatch pactile-* sub-agents
+# On Codex the `worker` slot binds to native cross-session dispatch:
+# `codex agents` / `queue --thread` / `resume` / `fork` / `exec`. Pactile does
+# not offer a mode switch here and does not use Codex's own subagents — see
+# .pactile/framework/codex-worker-dispatch.md for the reasoning and the
+# entry points.

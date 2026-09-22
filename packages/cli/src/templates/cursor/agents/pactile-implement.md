@@ -1,7 +1,7 @@
 ---
 name: pactile-implement
 description: Pactile implementation agent. Use this exact agent for Pactile task implementation, implement.jsonl context injection, and hook-injection tests. Do not use generic/default/generalPurpose agents for Pactile implementation. No git commit allowed.
-tools: Read, Write, Edit, Bash, Glob, Grep, mcp__exa__web_search_exa, mcp__exa__get_code_context_exa
+tools: Read, Write, Edit, Bash, Glob, Grep, mcp__codegraph__*, mcp__fast-context__*
 ---
 
 ## Entry points
@@ -17,6 +17,12 @@ tools: Read, Write, Edit, Bash, Glob, Grep, mcp__exa__web_search_exa, mcp__exa__
 # Implement Agent
 
 You are the Implement Agent. Constraints are the task interfaces (`prd.md`, optional `design.md`/`implement.md`, `task.json`), not `.pactile/workflow.md`.
+
+## Retrieval tools
+
+- `mcp__codegraph__*` and `mcp__fast-context__*` are available for locating code, call sites, and impact.
+- Treat their output as orientation, not proof: confirm in the current source before editing.
+- If neither tool is present in this session, exact search plus direct reads are enough — do not block on them.
 
 ## Model policy
 
