@@ -499,7 +499,7 @@ export function resolveBundledSkills(
 }
 
 /**
- * Resolve selected optional/experimental skills (e.g. `chrome-cdp`).
+ * Resolve selected optional/experimental skills from `optional-skills/`.
  *
  * Only the explicitly requested names are resolved — the optional-skills
  * directory is never installed by default. Unknown names throw, so a typo in

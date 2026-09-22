@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import chalk from "chalk";
 
@@ -12,6 +13,14 @@ import type { UpdateReadinessSnapshot } from "./update-rollout-report.js";
 export const SMART_SEARCH_READINESS_COMMAND =
   "smart-search doctor --format json";
 const CODEBASE_REQUIRED_EXACT_COMMAND = "rg";
+/**
+ * The single path the upstream `fastctx apply` flow materializes.
+ * Pactile checks this exact location and never resolves npm / nvm /
+ * version-manager candidates: guessing a launcher path is what silently
+ * broke this capability before, and a missing stable binary is the normal
+ * "not adopted yet" state rather than a broken install.
+ */
+const FASTCTX_STABLE_BINARY_RELATIVE_PATH = ".fastctx/bin/fastctx.exe";
 const CODEGRAPH_INDEX_MARKERS = [
   ".codegraph",
   "codegraph.json",
@@ -161,7 +170,6 @@ function npxPackageName(args: readonly string[]): string | undefined {
 }
 
 function safeVisibilitySmokeCommand(
-  id: ProjectCapabilityId,
   command: string,
   args: readonly string[] = [],
 ): string | undefined {
@@ -172,17 +180,14 @@ function safeVisibilitySmokeCommand(
       : undefined;
   }
 
-  if (id === "playwright-mcp") return undefined;
-
   return `${shellQuote(command)} --help`;
 }
 
 function runSafeVisibilitySmoke(
-  id: ProjectCapabilityId,
   command: string,
   args: readonly string[] = [],
 ): { info?: string; warning?: string; failure?: string } {
-  const smokeCommand = safeVisibilitySmokeCommand(id, command, args);
+  const smokeCommand = safeVisibilitySmokeCommand(command, args);
   if (!smokeCommand) {
     return {
       warning:
@@ -215,22 +220,16 @@ export function existingRelativePaths(
   );
 }
 
-function hasGithubApiCredentialEnv(): boolean {
-  return Boolean(
-    process.env.GITHUB_TOKEN ?? process.env.GITHUB_PERSONAL_ACCESS_TOKEN,
-  );
-}
-
-function hasLegacyGithubCredentialEnv(): boolean {
-  return Boolean(process.env.GH_TOKEN);
-}
-
 export function probeProjectCapability(
   cwd: string,
   id: ProjectCapabilityId,
 ): ProjectCapabilityProbe {
   if (id === "codebase-retrieval") {
     return probeCodebaseRetrievalCapability(cwd);
+  }
+
+  if (id === "fastctx") {
+    return probeFastCtxCapability();
   }
 
   const capability = getProjectCapability(id);
@@ -255,7 +254,7 @@ export function probeProjectCapability(
   }
 
   if (commandAvailable) {
-    const smoke = runSafeVisibilitySmoke(id, command, server.args);
+    const smoke = runSafeVisibilitySmoke(command, server.args);
     if (smoke.info) {
       infos.push(smoke.info);
     }
@@ -265,29 +264,6 @@ export function probeProjectCapability(
     if (smoke.failure) {
       failures.push(smoke.failure);
     }
-  }
-
-  if (id === "github-mcp" && commandAvailable && !hasGithubApiCredentialEnv()) {
-    failures.push(
-      "`GITHUB_TOKEN` or `GITHUB_PERSONAL_ACCESS_TOKEN` is not visible to Pactile readiness checks",
-    );
-  }
-
-  if (
-    id === "github-mcp" &&
-    commandAvailable &&
-    !hasGithubApiCredentialEnv() &&
-    hasLegacyGithubCredentialEnv()
-  ) {
-    warnings.push(
-      "`GH_TOKEN` is present, but Pactile GitHub MCP readiness expects `GITHUB_TOKEN` or `GITHUB_PERSONAL_ACCESS_TOKEN`; mirror the token into one of those variables before claiming GitHub MCP readiness.",
-    );
-  }
-
-  if (id === "playwright-mcp" && commandAvailable) {
-    warnings.push(
-      "Playwright MCP package and browser runtime were not started by readiness; run a host MCP smoke before claiming rendered UI evidence.",
-    );
   }
 
   return { id, infos, failures, warnings };
@@ -306,7 +282,7 @@ export function probeCodebaseRetrievalCapability(
       `required exact search command \`${CODEBASE_REQUIRED_EXACT_COMMAND}\` is not available on PATH`,
     );
   } else {
-    const smoke = runSafeVisibilitySmoke(id, CODEBASE_REQUIRED_EXACT_COMMAND);
+    const smoke = runSafeVisibilitySmoke(CODEBASE_REQUIRED_EXACT_COMMAND);
     if (smoke.info) {
       infos.push(smoke.info);
     }
@@ -335,7 +311,7 @@ export function probeCodebaseRetrievalCapability(
       continue;
     }
 
-    const smoke = runSafeVisibilitySmoke(id, server.command, server.args);
+    const smoke = runSafeVisibilitySmoke(server.command, server.args);
     if (smoke.info) {
       infos.push(`${adapter.label}: ${smoke.info}`);
     }
@@ -375,6 +351,53 @@ export function probeCodebaseRetrievalCapability(
 
 export function getCodegraphIndexMarkers(cwd: string): string[] {
   return existingRelativePaths(cwd, CODEGRAPH_INDEX_MARKERS);
+}
+
+/**
+ * Probe the FastCtx tool runtime.
+ *
+ * Readiness is exactly one question: does the upstream-managed stable binary
+ * exist? Pactile deliberately does not look for a launcher inside npm, nvm,
+ * or any version-manager tree, because that resolution is what left a stale
+ * path behind before.
+ *
+ * `probeOptions.homeDir` exists so tests can drive both branches without
+ * reading or writing a real user profile.
+ */
+export function probeFastCtxCapability(probeOptions?: {
+  homeDir?: string;
+}): ProjectCapabilityProbe {
+  const id: ProjectCapabilityId = "fastctx";
+  const homeDir = probeOptions?.homeDir ?? os.homedir();
+  const stableBinaryPath = path.join(
+    homeDir,
+    ...FASTCTX_STABLE_BINARY_RELATIVE_PATH.split("/"),
+  );
+
+  if (fs.existsSync(stableBinaryPath)) {
+    return {
+      id,
+      infos: [
+        `official stable binary found at \`${stableBinaryPath}\``,
+        "output tiers are compact / standard / high; `standard` matches the declared default host budget",
+      ],
+      failures: [],
+      warnings: [
+        "Pactile verified the stable binary path only; it did not start the FastCtx server or confirm that the current host session exposes its tools.",
+      ],
+    };
+  }
+
+  return {
+    id,
+    infos: [],
+    failures: [
+      `official stable binary is not present at \`${stableBinaryPath}\`; FastCtx has not been applied in this profile`,
+    ],
+    warnings: [
+      "This is the normal un-adopted state, not a broken install: the capability is declared and selectable, but its tools are unavailable until the upstream flow runs. Adopt it with `fastctx apply` (Codex path; it writes the stable binary, a Codex profile, and a managed block in `~/.codex/AGENTS.md`). The upstream flow does not cover Cursor: register `fastctx serve` through user-level host MCP configuration, pointing the command at the stable binary path.",
+    ],
+  };
 }
 
 function projectCapabilityReadinessError(
@@ -509,11 +532,10 @@ export function checkProjectCapabilityReadiness(options: {
 }
 
 function smokeCommandsForCapability(
-  id: ProjectCapabilityId,
   command: string,
   args: readonly string[],
 ): string[] {
-  const smoke = safeVisibilitySmokeCommand(id, command, args);
+  const smoke = safeVisibilitySmokeCommand(command, args);
   return smoke ? [smoke] : [];
 }
 
@@ -660,11 +682,10 @@ export function snapshotReadinessForRollout(options: {
     const probe = probeProjectCapability(options.cwd, id);
     const capability = getProjectCapability(id);
     const smokeCommands = capability.mcpServers.flatMap((server) =>
-      smokeCommandsForCapability(id, server.command, server.args),
+      smokeCommandsForCapability(server.command, server.args),
     );
     if (id === "codebase-retrieval") {
       const rgSmoke = safeVisibilitySmokeCommand(
-        id,
         CODEBASE_REQUIRED_EXACT_COMMAND,
       );
       if (rgSmoke) smokeCommands.unshift(rgSmoke);

@@ -386,13 +386,10 @@ describe("update() integration", () => {
   });
 
   it("#1e keeps selected project capability templates stable on same-version update", async () => {
-    vi.stubEnv("GITHUB_TOKEN", "test-token");
-    vi.stubEnv("GITHUB_PERSONAL_ACCESS_TOKEN", "");
-
     await init({
       yes: true,
       cursor: true,
-      capability: ["fast-context-mcp", "github-mcp", "playwright-mcp"],
+      capability: ["fast-context-mcp", "fastctx"],
     });
 
     const trackedFiles = [
@@ -452,30 +449,6 @@ describe("update() integration", () => {
         stdio: "pipe",
       }),
     );
-    expect(execSync).toHaveBeenCalledWith(
-      npmPackageLookupCommand("@modelcontextprotocol/server-github"),
-      expect.objectContaining({
-        encoding: "utf-8",
-        stdio: "pipe",
-        timeout: 5000,
-      }),
-    );
-    expect(execSync).toHaveBeenCalledWith(
-      capabilityLookupCommand("npx"),
-      expect.objectContaining({
-        encoding: "utf-8",
-        stdio: "pipe",
-      }),
-    );
-    expect(execSync).toHaveBeenCalledWith(
-      npmPackageLookupCommand("@playwright/mcp@latest"),
-      expect.objectContaining({
-        encoding: "utf-8",
-        stdio: "pipe",
-        timeout: 5000,
-      }),
-    );
-
     for (const relativePath of trackedFiles) {
       expect(readProjectFile(relativePath)).toBe(before.get(relativePath));
     }

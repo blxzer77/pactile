@@ -57,20 +57,21 @@ describe("P31–P36 product protocol docs", () => {
     expect(protocol).not.toMatch(/capability router.*bind/i);
   });
 
-  it("ships seven optional-or-required providers and does not leave Playwright/GitHub as Extra-unmanaged", () => {
+  it("ships the declared provider set and does not leave Playwright/GitHub as Extra-unmanaged", () => {
     const protocol = doc("middleware-protocol.md");
     for (const id of [
       "smart-search",
       "codegraph",
       "fast-context",
-      "chrome-cdp",
       "playwright",
       "github",
       "cursor-ide-browser",
     ]) {
       expect(protocol).toContain(`id: ${id}`);
     }
-    expect(protocol).toContain("blaze-skills/chrome-cdp");
+    // The browser-session skill was retired; the protocol must not keep
+    // advertising it as a shipped provider.
+    expect(protocol).not.toContain("chrome-cdp");
     expect(protocol).toContain("host-platform");
     expect(protocol).toContain("GITHUB_TOKEN");
     expect(protocol).not.toMatch(/Playwright \/ GitHub \| 默认不集成/);

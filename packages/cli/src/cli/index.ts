@@ -122,7 +122,7 @@ program
   )
   .option(
     "--with-optional <name>",
-    "Install an optional/experimental skill into the project skills directory (repeatable; e.g. chrome-cdp)",
+    "Install an optional/experimental skill into the project skills directory (repeatable; no optional skill ships today)",
     collectOption,
     [],
   )
