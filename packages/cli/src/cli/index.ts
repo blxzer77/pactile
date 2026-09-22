@@ -18,7 +18,6 @@ import {
   runWorkflowCommand,
   WorkflowCommandError,
 } from "../commands/workflow.js";
-// import { registerChannelCommand } from "../commands/channel/index.js";
 import { runValidateRules } from "../commands/validate-rules.js";
 import { isWorkflowInitialized, workflowPath } from "../utils/workflow-dir.js";
 import { PACKAGE_NAME, VERSION } from "../constants/version.js";
@@ -143,7 +142,7 @@ program
   )
   .option(
     "--workflow <id>",
-    "Workflow template id for .pactile/workflow.md (default: native; e.g., tdd, channel-driven-subagent-dispatch)",
+    "Workflow template id for .pactile/workflow.md (default: native; e.g., tdd)",
   )
   .option(
     "--workflow-source <source>",
@@ -426,11 +425,11 @@ program
 program
   .command("workflow")
   .description(
-    "List or switch the project's .pactile/workflow.md template (native, tdd, channel-driven-subagent-dispatch, or marketplace)",
+    "List or switch the project's .pactile/workflow.md template (native, tdd, or marketplace)",
   )
   .option(
     "-t, --template <id>",
-    "Workflow template id (e.g., native, tdd, channel-driven-subagent-dispatch)",
+    "Workflow template id (e.g., native, tdd)",
   )
   .option(
     "-m, --marketplace <source>",
@@ -466,9 +465,6 @@ program
       process.exit(1);
     }
   });
-
-// The experimental multi-agent `channel` runtime remains unregistered.
-// registerChannelCommand(program);
 
 program
   .command("validate-rules")

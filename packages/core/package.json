@@ -1,7 +1,7 @@
 {
   "name": "@blxzer/pactile-core",
   "version": "0.5.0",
-  "description": "Pactile core SDK — channel, task, and capability contract primitives consumed by the Pactile CLI and downstream Node services",
+  "description": "Pactile core SDK — task and capability contract primitives consumed by the Pactile CLI and downstream Node services",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -11,11 +11,6 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
-    },
-    "./channel": {
-      "types": "./dist/channel/index.d.ts",
-      "import": "./dist/channel/index.js",
-      "default": "./dist/channel/index.js"
     },
     "./task": {
       "types": "./dist/task/index.d.ts",
@@ -52,7 +47,7 @@
   },
   "keywords": [
     "pactile",
-    "channel",
+    "task",
     "sdk",
     "agent",
     "events"

@@ -181,10 +181,10 @@ describe("listWorkflowTemplates", () => {
           path: "workflows/tdd/workflow.md",
         },
         {
-          id: "channel-driven-subagent-dispatch",
+          id: "verification-first",
           type: "workflow",
-          name: "Channel-Driven",
-          path: "workflows/channel-driven-subagent-dispatch/workflow.md",
+          name: "Verification-First",
+          path: "workflows/verification-first/workflow.md",
         },
         {
           id: "electron-fullstack",
@@ -205,7 +205,7 @@ describe("listWorkflowTemplates", () => {
     const ids = templates.map((t) => t.id);
     expect(ids).toContain(NATIVE_WORKFLOW_ID);
     expect(ids).toContain("tdd");
-    expect(ids).toContain("channel-driven-subagent-dispatch");
+    expect(ids).toContain("verification-first");
     expect(ids).not.toContain("electron-fullstack");
   });
 });

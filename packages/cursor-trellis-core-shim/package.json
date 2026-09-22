@@ -12,11 +12,6 @@
       "import": "./index.js",
       "default": "./index.js"
     },
-    "./channel": {
-      "types": "./channel.d.ts",
-      "import": "./channel.js",
-      "default": "./channel.js"
-    },
     "./task": {
       "types": "./task.d.ts",
       "import": "./task.js",
@@ -31,8 +26,6 @@
   "files": [
     "index.js",
     "index.d.ts",
-    "channel.js",
-    "channel.d.ts",
     "task.js",
     "task.d.ts",
     "testing.js",
