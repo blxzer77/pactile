@@ -173,11 +173,18 @@ export function assertCleanTree(status) {
   }
 }
 
+/**
+ * Which branch may prepare a candidate at this channel.
+ *
+ * Two long-lived branches: `main` is the release line, `develop` is the
+ * development line. A stable candidate is cut from `main` (it is the thing
+ * being released); every prerelease candidate is cut from `develop`, which is
+ * where iteration happens and where a `-beta.N` / `-rc.N` version is allowed
+ * to be tested before it earns a place on the release line.
+ */
 export function allowedReleaseBranches(version) {
-  const { baseVersion, channel } = parseReleaseVersion(version);
-  if (channel === "beta" || channel === "alpha") return ["beta"];
-  if (channel === "rc") return ["beta", `release/${baseVersion}`];
-  return ["main", `release/${baseVersion}`];
+  const { channel } = parseReleaseVersion(version);
+  return channel === "stable" ? ["main"] : ["develop"];
 }
 
 export function assertReleaseBranch({ branch, version }) {
@@ -211,28 +218,15 @@ export function assertLocalReleaseAncestry({
   remote,
   isAncestor,
 }) {
-  const { channel } = parseReleaseVersion(version);
-  const betaRef = `${remote}/beta`;
+  const developRef = `${remote}/develop`;
   const mainRef = `${remote}/main`;
 
-  if (branch === "beta") {
-    requireSameCommit(isAncestor, head, betaRef);
+  if (branch === "develop") {
+    requireSameCommit(isAncestor, head, developRef);
     return;
   }
   if (branch === "main") {
     requireSameCommit(isAncestor, head, mainRef);
-    return;
-  }
-
-  // A release/X.Y.Z branch may carry an rc or stable candidate, but it must
-  // descend from the integrated beta line. Branch-name validation is separate.
-  if (channel === "rc" || channel === "stable") {
-    requireAncestor(
-      isAncestor,
-      betaRef,
-      head,
-      `Release candidate ${head} is not descended from ${betaRef}.`,
-    );
     return;
   }
 
@@ -260,7 +254,7 @@ export function assertPublishProvenance({
     );
   }
 
-  const betaRef = `${remote}/beta`;
+  const developRef = `${remote}/develop`;
   const mainRef = `${remote}/main`;
   if (parsed.channel === "stable") {
     requireAncestor(
@@ -271,22 +265,12 @@ export function assertPublishProvenance({
     );
     return parsed;
   }
-  if (parsed.channel === "beta" || parsed.channel === "alpha") {
-    requireAncestor(
-      isAncestor,
-      head,
-      betaRef,
-      `${parsed.channel} tag ${tag} is not contained in ${betaRef}.`,
-    );
-    return parsed;
-  }
-
-  const releaseRef = `${remote}/release/${parsed.baseVersion}`;
-  if (!isAncestor(head, betaRef) && !isAncestor(head, releaseRef)) {
-    throw new Error(
-      `rc tag ${tag} is contained in neither ${betaRef} nor ${releaseRef}.`,
-    );
-  }
+  requireAncestor(
+    isAncestor,
+    head,
+    developRef,
+    `${parsed.channel} tag ${tag} is not contained in ${developRef}.`,
+  );
   return parsed;
 }
 
