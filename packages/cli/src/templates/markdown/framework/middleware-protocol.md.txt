@@ -13,7 +13,9 @@ Capability router 只声明 `exact` / `semantic` / `structural` / `external`，�
 | 集成 | 本协议：Manifest + Profile + 健康。下表 **shipped** 各路属于此轨（含 MCP 传输）。 |
 | Extra | **未**出现在 shipped 表、也 **未**放入 overlay 的宿主 MCP / Agent 配置 → PACTILE 不管、不进健康表 |
 
-`pactile init` **不**写入 `.cursor/mcp.json`，也 **不**强制安装 Playwright / GitHub / codegraph / fast-context。默认 Profile 只把 **smart-search** 标为 required；其余 shipped 为 optional，有探测、缺了不挡无关任务。
+`pactile init` **不**写入 `.cursor/mcp.json`，也 **不**强制安装 codegraph / fast-context。默认 Profile 只把 **smart-search** 标为 required；其余 shipped 为 optional，有探测、缺了不挡无关任务。
+
+shipped 表只登记**产品侧有承载**的 Provider。Playwright / GitHub 等已退役集成的宿主 MCP 属 Extra：PACTILE 不管、不进健康表（见上「双轨」）。用户要接入就放进 overlay，否则与本协议无关。
 
 ## 义务
 
@@ -54,8 +56,6 @@ Status / Continue 在任务需要该 capability 时展示 `ready` / `missing` / 
 | smart-search | required `external-knowledge` | external-knowledge | skill+cli | 独立包；缺失则 degrade |
 | codegraph | optional | structural | mcp | 默认不装；不进 always-on |
 | fast-context | optional | semantic | mcp | 默认不装；Native `@codebase` 不是这一路 |
-| playwright | optional | browser-automation | mcp | `@playwright/mcp`；可复现自动化 |
-| github | optional | vcs-host | mcp | 官方 GitHub MCP；密钥只引用 |
 | cursor-ide-browser | optional | ide-browser | mcp | Cursor **宿主**注入；无独立 npm。非 Cursor 会话 = missing。不得用平台 WebSearch 冒充 |
 | pactile-byok | optional 占位 | — | — | **实现与发版延后**；不带 BYOK 安装 |
 
@@ -130,55 +130,6 @@ permissions:
   shell: true
   secrets: false
 secret_refs: []
-update_policy: preserve-user-overlay
-```
-
-### playwright
-
-```yaml
-id: playwright
-protocol: 1
-capability: browser-automation
-source: shipped
-ownership:
-  kind: external-package
-  name: "@playwright/mcp"
-transport: mcp
-profile: optional
-readiness:
-  probe: mcp
-  command_hint: npx -y @playwright/mcp@latest
-on_missing: degrade
-permissions:
-  network: true
-  shell: true
-  secrets: false
-secret_refs: []
-update_policy: preserve-user-overlay
-```
-
-### github
-
-```yaml
-id: github
-protocol: 1
-capability: vcs-host
-source: shipped
-ownership:
-  kind: external-package
-  name: "@modelcontextprotocol/server-github"
-transport: mcp
-profile: optional
-readiness:
-  probe: mcp
-  command_hint: npx -y @modelcontextprotocol/server-github
-on_missing: degrade
-permissions:
-  network: true
-  shell: true
-  secrets: true
-secret_refs:
-  - GITHUB_TOKEN
 update_policy: preserve-user-overlay
 ```
 

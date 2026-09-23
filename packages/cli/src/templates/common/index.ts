@@ -53,27 +53,10 @@ export interface CommonBundledSkill {
   files: CommonBundledSkillFile[];
 }
 
-/**
- * Optional/experimental skill — same shape as bundled skills, but lives under
- * `optional-skills/` which `getBundledSkillTemplates()` does NOT scan.
- * Installed only via `pactile init --with-optional <name>` (default off).
- *
- * No optional skill ships today: the directory is empty, so this returns an
- * empty list. The machinery remains for an explicitly requested skill, but a
- * brand must not be named here as if it were current.
- */
-export interface CommonOptionalSkill {
-  /** Skill directory name under `optional-skills/` */
-  name: string;
-  /** Files that must be written under the skill directory */
-  files: CommonBundledSkillFile[];
-}
-
 // Cached results — files don't change during a CLI run
 let cachedCommands: CommonTemplate[] | undefined;
 let cachedSkills: CommonTemplate[] | undefined;
 let cachedBundledSkills: CommonBundledSkill[] | undefined;
-let cachedOptionalSkills: CommonOptionalSkill[] | undefined;
 
 /**
  * Get all command templates (stay as slash commands on all platforms).
@@ -152,21 +135,4 @@ export function getBundledSkillTemplates(): CommonBundledSkill[] {
     files: listBundledSkillFiles(name),
   }));
   return cachedBundledSkills;
-}
-
-/**
- * Get all optional/experimental skills from `optional-skills/`.
- *
- * Deliberately separate from {@link getBundledSkillTemplates}: `optional-skills/`
- * is NOT scanned by the bundled pipeline, so default `pactile init` never installs
- * these. They are installed only through `pactile init --with-optional <name>`.
- * The directory ships empty, so this normally returns an empty list.
- * Results are cached after first call.
- */
-export function getOptionalSkillTemplates(): CommonOptionalSkill[] {
-  cachedOptionalSkills ??= listDirectories("optional-skills").map((name) => ({
-    name,
-    files: listSkillFiles("optional-skills", name),
-  }));
-  return cachedOptionalSkills;
 }
