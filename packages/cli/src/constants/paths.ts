@@ -25,8 +25,6 @@ export const DIR_NAMES = {
   FRAMEWORK: "framework",
   /** Scripts directory (under .pactile/) */
   SCRIPTS: "scripts",
-  /** Review-pool directory (under .pactile/) */
-  POOL: "pool",
   /** Short-contract modules (under .pactile/) — index.json + <id>/contract.md */
   MODULES: "modules",
   /** User middleware overlay (under .pactile/) — never written/hashed by init/update */
@@ -65,8 +63,6 @@ export const PATHS = {
   FRAMEWORK: `${DIR_NAMES.WORKFLOW}/${DIR_NAMES.FRAMEWORK}`,
   /** .pactile/scripts/ */
   SCRIPTS: `${DIR_NAMES.WORKFLOW}/${DIR_NAMES.SCRIPTS}`,
-  /** .pactile/pool/ */
-  POOL: `${DIR_NAMES.WORKFLOW}/${DIR_NAMES.POOL}`,
   /** .pactile/modules/ — user-shipped short contracts (not catalog.ts) */
   MODULES: `${DIR_NAMES.WORKFLOW}/${DIR_NAMES.MODULES}`,
   /** .pactile/middleware/ — user overlay; update never writes, deletes, or hashes */

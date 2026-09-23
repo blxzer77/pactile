@@ -119,7 +119,6 @@ def test_blocking_errors_for_statuses(sandbox) -> None:
     assert not any("dep-done" in e for e in errors)
     assert not any("dep-gone" in e for e in errors)
     assert any("dangling dependency: ghost-task" in e for e in errors)
-    assert not any("pool:P09" in e for e in errors)
 
 
 def test_blocking_errors_cycle(sandbox) -> None:
@@ -276,32 +275,6 @@ def test_t8_block_dangling_fails(sandbox) -> None:
                                      approved=True, enforce_deps_block=True)
     assert not guard.ok
     assert any("dangling dependency: ghost-task" in e for e in guard.errors)
-
-
-def test_t9_block_pool_open_fails(sandbox) -> None:
-    repo, tasks_dir = sandbox
-    items = repo / ".pactile" / "pool" / "items"
-    items.mkdir(parents=True)
-    (items / "P09.md").write_text(
-        "---\nid: P09\nstatus: accepted\ntype: mechanism\n"
-        "delivery: open\n---\n\n## 意图\nx\n",
-        encoding="utf-8",
-    )
-    task_dir = _ready_task(tasks_dir, "task-x", ["pool:P09"], mode="block")
-
-    guard = validate_start_execution(task_dir, _read_json(task_dir / "task.json"),
-                                     approved=True, enforce_deps_block=True)
-    assert not guard.ok
-    assert any("not satisfied: pool:P09" in e for e in guard.errors)
-
-
-def test_t9b_block_pool_missing_module_does_not_fail(sandbox) -> None:
-    repo, tasks_dir = sandbox
-    task_dir = _ready_task(tasks_dir, "task-x", ["pool:P09"], mode="block")
-
-    guard = validate_start_execution(task_dir, _read_json(task_dir / "task.json"),
-                                     approved=True, enforce_deps_block=True)
-    assert not any("pool:P09" in e for e in guard.errors)
 
 
 def test_t13_block_cancelled_dependency_not_blocked(sandbox) -> None:

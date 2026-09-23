@@ -132,7 +132,10 @@ def test_ondemand_defaults_and_retention_outcome() -> None:
     assert "independent-check" in STAGE5_ONDEMAND_MODULES
     assert "retrieval-extended" in STAGE5_ONDEMAND_MODULES
     assert "integration-handoff" not in STAGE5_ONDEMAND_MODULES
-    assert len(STAGE5_ONDEMAND_MODULES) == 12
+    assert len(STAGE5_ONDEMAND_MODULES) == 11
+    # candidate-pool was retired with the review-pool feature; the module
+    # table must not keep advertising it.
+    assert "candidate-pool" not in STAGE5_ONDEMAND_MODULES
 
 
 def test_first_legal_trigger_writes_active_and_triggers() -> None:

@@ -12,7 +12,7 @@
 | Surface | Where it exists | Why dogfood-only | Decision |
 | --- | --- | --- | --- |
 | `.claude/skills/*` full suite | `.claude/skills/` in the harness | Cursor default install is **commands-only**; Claude skill files are for Claude platforms, not Cursor consumers | **non-Cursor** (not in Cursor default install) |
-| Private review-pool items / plan narratives | `.pactile/pool/items/`, `{TASK}/research/` in the harness | Personal or project-specific content; the pool **mechanism** ships, the items do not | **narrative not packaged** — mechanism ships, content stays local |
+| Private task research / narratives | `{TASK}/research/` in the harness | Personal or project-specific content; the task **mechanism** ships, the notes do not | **narrative not packaged** — mechanism ships, content stays local |
 | `.codegraph/`, `.worktrees/`, scratch/analysis files | Harness root | Per-machine index / tooling state | **local only** |
 
 ## If a capability seems missing in a consumer repo

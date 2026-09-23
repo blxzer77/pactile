@@ -14,7 +14,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.task_dependencies import (
     KIND_CHILD,
     KIND_MISSING,
-    KIND_POOL,
     KIND_TASK,
     NOT_SATISFIED,
     SATISFIED,
@@ -112,19 +111,6 @@ def test_dangling_reference_is_unresolved_warning(tmp_path: Path) -> None:
     assert any("dangling" in w for w in report.warnings())
 
 
-def test_pool_prefix_without_pool_dir_is_ignored(tmp_path: Path) -> None:
-    tasks_dir = _tasks_fixture(tmp_path)
-    task_dir = _write_task(tasks_dir, "task-x", "planning", ["pool:P09"])
-
-    dep = resolve_dep_ref("pool:P09", tasks_dir=tasks_dir)
-    assert dep.kind == KIND_POOL
-    status, note = satisfaction_status(dep)
-    assert status == SATISFIED
-    assert "not materialized" in (note or "")
-    report = describe_dependencies(task_dir, {"depends_on": ["pool:P09"]}, tasks_dir=tasks_dir)
-    assert report.warnings() == []
-
-
 def test_cycle_detected_across_tasks(tmp_path: Path) -> None:
     tasks_dir = _tasks_fixture(tmp_path)
     task_a = _write_task(tasks_dir, "task-a", "planning", ["task-b"])
@@ -206,12 +192,12 @@ def test_dashboard_deps_line_renders_badges(tmp_path: Path) -> None:
     _write_task(tasks_dir, "dep-wait", "in_progress")
     _write_task(tasks_dir, "dep-gone", "cancelled")
     task_dir = _write_task(
-        tasks_dir, "task-x", "planning", ["dep-done", "dep-wait", "dep-gone", "pool:P09"]
+        tasks_dir, "task-x", "planning", ["dep-done", "dep-wait", "dep-gone"]
     )
     data = {
         "id": "task-x",
         "status": "planning",
-        "depends_on": ["dep-done", "dep-wait", "dep-gone", "pool:P09"],
+        "depends_on": ["dep-done", "dep-wait", "dep-gone"],
     }
 
     line = dashboard_deps_line(task_dir, data, tasks_dir=tasks_dir)
@@ -219,111 +205,9 @@ def test_dashboard_deps_line_renders_badges(tmp_path: Path) -> None:
     assert "dep-done ✅" in line
     assert "dep-wait ⏳" in line
     assert "dep-gone ✅已取消" in line
-    assert "pool:P09 ✅" in line
 
 
 def test_normalize_dep_list_dedupes_and_strips(tmp_path: Path) -> None:
     assert normalize_dep_list(None) == []
     assert normalize_dep_list(["a", " a ", "b", "a", "", 5]) == ["a", "b"]
     assert normalize_dep_list("not-a-list") == []
-
-
-# =============================================================================
-# pool: delivery-based status (not linked-task Close)
-# =============================================================================
-
-def _pool_repo(
-    tmp_path: Path,
-    *,
-    delivery: str | None = "standing",
-    status: str = "accepted",
-) -> Path:
-    repo = tmp_path / "repo"
-    items_dir = repo / ".pactile" / "pool" / "items"
-    items_dir.mkdir(parents=True)
-    lines = ["id: P09", "title: t", f"status: {status}", "type: mechanism"]
-    if delivery is not None:
-        lines.append(f"delivery: {delivery}")
-    (items_dir / "P09.md").write_text(
-        "---\n" + "\n".join(lines) + "\n---\n\n## 意图\nx\n",
-        encoding="utf-8",
-    )
-    (repo / ".pactile" / "tasks").mkdir(parents=True, exist_ok=True)
-    return repo
-
-
-def test_pool_missing_item_is_unresolved(tmp_path: Path) -> None:
-    tasks_dir = _tasks_fixture(tmp_path)
-    (tmp_path / "repo" / ".pactile" / "pool" / "items").mkdir(parents=True)
-    task_dir = _write_task(tasks_dir, "task-x", "planning", ["pool:P09"])
-
-    dep = resolve_dep_ref("pool:P09", tasks_dir=tasks_dir)
-    assert dep.kind == KIND_POOL
-    status, note = satisfaction_status(dep)
-    assert status == UNRESOLVED
-    assert "not found" in (note or "")
-    report = describe_dependencies(task_dir, {"depends_on": ["pool:P09"]}, tasks_dir=tasks_dir)
-    assert any("unresolved" in w for w in report.warnings())
-
-
-def test_pool_standing_is_satisfied_without_links(tmp_path: Path) -> None:
-    repo = _pool_repo(tmp_path, delivery="standing")
-    tasks_dir = repo / ".pactile" / "tasks"
-    task_dir = _write_task(tasks_dir, "task-x", "planning", ["pool:P09"])
-
-    dep = resolve_dep_ref("pool:P09", tasks_dir=tasks_dir)
-    assert satisfaction_status(dep)[0] == SATISFIED
-    report = describe_dependencies(task_dir, {"depends_on": ["pool:P09"]}, tasks_dir=tasks_dir)
-    assert report.warnings() == []
-
-
-def test_pool_open_is_not_satisfied(tmp_path: Path) -> None:
-    repo = _pool_repo(tmp_path, delivery="open")
-    tasks_dir = repo / ".pactile" / "tasks"
-    task_dir = _write_task(tasks_dir, "task-x", "planning", ["pool:P09"])
-
-    dep = resolve_dep_ref("pool:P09", tasks_dir=tasks_dir)
-    status, note = satisfaction_status(dep)
-    assert status == NOT_SATISFIED
-    assert "remaining obligation" in (note or "")
-    report = describe_dependencies(task_dir, {"depends_on": ["pool:P09"]}, tasks_dir=tasks_dir)
-    assert any("not satisfied" in w for w in report.warnings())
-
-
-def test_pool_in_slice_is_not_satisfied(tmp_path: Path) -> None:
-    repo = _pool_repo(tmp_path, delivery="in-slice")
-    tasks_dir = repo / ".pactile" / "tasks"
-    dep = resolve_dep_ref("pool:P09", tasks_dir=tasks_dir)
-    assert satisfaction_status(dep)[0] == NOT_SATISFIED
-
-
-def test_pool_landed_is_satisfied(tmp_path: Path) -> None:
-    repo = _pool_repo(tmp_path, delivery="landed")
-    tasks_dir = repo / ".pactile" / "tasks"
-    dep = resolve_dep_ref("pool:P09", tasks_dir=tasks_dir)
-    assert satisfaction_status(dep)[0] == SATISFIED
-
-
-def test_pool_deferred_is_satisfied(tmp_path: Path) -> None:
-    repo = _pool_repo(tmp_path, delivery="deferred")
-    tasks_dir = repo / ".pactile" / "tasks"
-    dep = resolve_dep_ref("pool:P09", tasks_dir=tasks_dir)
-    assert satisfaction_status(dep)[0] == SATISFIED
-
-
-def test_pool_accepted_missing_delivery_is_not_satisfied(tmp_path: Path) -> None:
-    repo = _pool_repo(tmp_path, delivery=None)
-    tasks_dir = repo / ".pactile" / "tasks"
-    dep = resolve_dep_ref("pool:P09", tasks_dir=tasks_dir)
-    status, note = satisfaction_status(dep)
-    assert status == NOT_SATISFIED
-    assert "missing delivery" in (note or "")
-
-
-def test_pool_inbox_is_unresolved(tmp_path: Path) -> None:
-    repo = _pool_repo(tmp_path, delivery=None, status="inbox")
-    tasks_dir = repo / ".pactile" / "tasks"
-    dep = resolve_dep_ref("pool:P09", tasks_dir=tasks_dir)
-    status, note = satisfaction_status(dep)
-    assert status == UNRESOLVED
-    assert "not accepted" in (note or "")

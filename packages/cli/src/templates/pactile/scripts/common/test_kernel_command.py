@@ -302,22 +302,22 @@ def test_kernel_patch_updates_meta_and_kernel_revision(fake_kernel, tmp_path):
     task_dir = tmp_path / "task"
     kernel_create(task_dir, _record(), actor="a", idempotency_key="create:shim-demo")
     data = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
-    data["meta"] = {"pool_items": ["P28"]}
+    data["meta"] = {"depends_mode": "block"}
     patched = kernel_patch(
         task_dir,
         data,
         kernel_projection_extras(data),
         expected_revision=kernel_expected_revision(task_dir),
-        actor="pool.py link",
-        idempotency_key="patch:pool-link:task:P28",
+        actor="task.py set-depends-mode",
+        idempotency_key="patch:depends-mode:task:block",
     )
     assert patched["ok"] is True
     kernel = json.loads((task_dir / "kernel.json").read_text(encoding="utf-8"))
     assert kernel["revision"] >= 2
-    assert kernel["audit"][-1]["idempotencyKey"] == "patch:pool-link:task:P28"
+    assert kernel["audit"][-1]["idempotencyKey"] == "patch:depends-mode:task:block"
     task = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
     assert task["status"] == "planning"
-    assert task["meta"]["pool_items"] == ["P28"]
+    assert task["meta"]["depends_mode"] == "block"
 
 
 def test_set_task_artifact_locale_goes_through_kernel(fake_kernel, tmp_path):

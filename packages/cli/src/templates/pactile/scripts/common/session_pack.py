@@ -81,7 +81,6 @@ NO_TASK_BLOCKED = frozenset(
         "define-extended",
         "spec-learning",
         "session-transfer",
-        "candidate-pool",
     }
 )
 
@@ -106,7 +105,6 @@ PHASE_ARTIFACT_ROLES: dict[str, tuple[tuple[str, str], ...]] = {
 }
 
 ONDEMAND_PHASE: dict[str, frozenset[str] | None] = {
-    "candidate-pool": None,
     "define-extended": frozenset({"define"}),
     "independent-check": frozenset({"verify"}),
     "worker-orchestration": frozenset({"execute"}),
@@ -412,8 +410,8 @@ def _next_action(kernel: dict[str, Any], layer2_ids: list[str]) -> str:
         )
     if not kernel.get("selected"):
         return (
-            "Intake: answer directly, clarify whether there is work, capture a pool "
-            "intent, or draft an Open Proposal. Do not `task.py create` without Open approval."
+            "Intake: answer directly, clarify whether there is work, or draft an "
+            "Open Proposal. Do not `task.py create` without Open approval."
         )
     if kernel.get("condition") == "blocked":
         return "Stop. Classify the stall before retrying the same hypothesis."

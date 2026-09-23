@@ -14,10 +14,9 @@ from typing import Any
 STAGE5_SOURCE = "stage5-ondemand-topology"
 STAGE5_SCHEMA_VERSION = 1
 
-# P29 twelve On-demand modules. `integration-handoff` is an owner mapping
+# P29 On-demand modules. `integration-handoff` is an owner mapping
 # under `parent-child`, not its own activatable module.
 STAGE5_ONDEMAND_MODULES = (
-    "candidate-pool",
     "define-extended",
     "independent-check",
     "worker-orchestration",

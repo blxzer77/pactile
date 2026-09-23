@@ -58,8 +58,6 @@ export const commonTaskGates = readTemplate("scripts/common/task_gates.py");
 export const commonTaskDependencies = readTemplate(
   "scripts/common/task_dependencies.py",
 );
-export const commonPoolStore = readTemplate("scripts/common/pool_store.py");
-export const commonPoolRefs = readTemplate("scripts/common/pool_refs.py");
 export const commonExecutionStrategy = readTemplate(
   "scripts/common/execution_strategy.py",
 );
@@ -88,7 +86,6 @@ export const commonOndemandTopology = readTemplate(
 export const commonParallelDeclaration = readTemplate(
   "scripts/common/parallel_declaration.py",
 );
-export const commonPoolSlice = readTemplate("scripts/common/pool_slice.py");
 export const commonAdapterMiddleware = readTemplate(
   "scripts/common/adapter_middleware.py",
 );
@@ -170,7 +167,6 @@ export const commonSafeCommit = readTemplate("scripts/common/safe_commit.py");
 export const getDeveloperScript = readTemplate("scripts/get_developer.py");
 export const initDeveloperScript = readTemplate("scripts/init_developer.py");
 export const taskScript = readTemplate("scripts/task.py");
-export const poolScript = readTemplate("scripts/pool.py");
 export const verifyEvidenceProbeScript = readTemplate(
   "scripts/verify_evidence_probe.py",
 );
@@ -198,11 +194,6 @@ export const gitignoreTemplate = readTemplate("gitignore.txt");
 // Project domain glossary stub + ADR rules (lazy-created docs/adr/)
 export const contextMdTemplate = readTemplate("CONTEXT.md");
 export const adrReadmeTemplate = readTemplate("docs/adr/README.md");
-
-// Review-pool skeleton (mechanism only — no user items)
-export const poolReadmeTemplate = readTemplate("pool/README.md");
-export const poolPlanTemplate = readTemplate("pool/plan.md");
-export const poolItemsGitkeepTemplate = readTemplate("pool/items/.gitkeep");
 
 const RELEASE_READINESS_TASK_TEMPLATE_FILES = [
   "prd.md",
@@ -260,14 +251,12 @@ export const MAINTAINER_ONLY_SCRIPT_PATHS = new Set([
   "common/test_observable_defaults.py",
   "common/test_task_dependencies.py",
   "common/test_depends_mode_block.py",
-  "common/test_pool_store.py",
   "common/test_kernel_command.py",
   "common/test_task_store_kernel_patch.py",
   "common/test_lite_path.py",
   "common/test_full_quality.py",
   "common/test_ondemand_topology.py",
   "common/test_parallel_declaration.py",
-  "common/test_pool_slice.py",
   "common/test_adapter_middleware.py",
   "common/test_task_dashboard.py",
   "hooks/linear_sync.py",
@@ -333,8 +322,6 @@ export function getAllScripts(): Map<string, string> {
   scripts.set("common/task_dashboard.py", commonTaskDashboard);
   scripts.set("common/task_gates.py", commonTaskGates);
   scripts.set("common/task_dependencies.py", commonTaskDependencies);
-  scripts.set("common/pool_store.py", commonPoolStore);
-  scripts.set("common/pool_refs.py", commonPoolRefs);
   scripts.set("common/execution_strategy.py", commonExecutionStrategy);
   scripts.set("common/task_map.py", commonTaskMap);
   scripts.set("common/parent_orchestration.py", commonParentOrchestration);
@@ -345,7 +332,6 @@ export function getAllScripts(): Map<string, string> {
   scripts.set("common/full_quality.py", commonFullQuality);
   scripts.set("common/ondemand_topology.py", commonOndemandTopology);
   scripts.set("common/parallel_declaration.py", commonParallelDeclaration);
-  scripts.set("common/pool_slice.py", commonPoolSlice);
   scripts.set("common/adapter_middleware.py", commonAdapterMiddleware);
   scripts.set("common/artifact_search.py", commonArtifactSearch);
   scripts.set("common/injection_budget.py", commonInjectionBudget);
@@ -359,7 +345,6 @@ export function getAllScripts(): Map<string, string> {
   scripts.set("get_developer.py", getDeveloperScript);
   scripts.set("init_developer.py", initDeveloperScript);
   scripts.set("task.py", taskScript);
-  scripts.set("pool.py", poolScript);
   scripts.set("get_context.py", getContextScript);
   scripts.set("compile_session_pack.py", compileSessionPackScript);
   scripts.set("add_session.py", addSessionScript);
@@ -414,16 +399,4 @@ export function getMaintainerScripts(): Map<string, string> {
 /** Test helper: Baseline thin set plus maintainer retrieval/evidence scripts. */
 export function getAllScriptsForTests(): Map<string, string> {
   return new Map([...getAllScripts(), ...getMaintainerScripts()]);
-}
-
-/**
- * Review-pool skeleton files under `.pactile/pool/` (mechanism only).
- * Init and update write these so users get pool CLI docs without sample items.
- */
-export function getAllPoolSkeleton(): Map<string, string> {
-  const poolFiles = new Map<string, string>();
-  poolFiles.set("README.md", poolReadmeTemplate);
-  poolFiles.set("plan.md", poolPlanTemplate);
-  poolFiles.set("items/.gitkeep", poolItemsGitkeepTemplate);
-  return poolFiles;
 }

@@ -1,7 +1,6 @@
 import { defineTileContent, loadTileContent } from "../source.js";
 
 export const ONDEMAND_TILE_IDS = [
-  "candidate-pool",
   "define-extended",
   "independent-check",
   "worker-orchestration",
@@ -16,19 +15,6 @@ export const ONDEMAND_TILE_IDS = [
 ] as const;
 
 export const ONDEMAND_TILE_CONTENT = [
-  defineTileContent({
-    id: "candidate-pool",
-    title: "Candidate Pool",
-    summary: "Track bounded future work without authorizing execution.",
-    body: "Add, refine, and inspect candidate items while keeping selection and execution explicit. Planning evidence is not an execution grant.",
-    intents: ["exact", "semantic"],
-    inputs: ["task.definition"],
-    outputs: ["pool.candidate"],
-    dependencies: ["define-basic"],
-    filesystem: "write",
-    evidenceKind: "artifact",
-    evidenceDescription: "Reference the candidate record and its scope.",
-  }),
   defineTileContent({
     id: "define-extended",
     title: "Define Extended",
@@ -74,9 +60,9 @@ export const ONDEMAND_TILE_CONTENT = [
     summary: "Decompose work and integrate accepted child results once.",
     body: "Keep child scope, base, state, and evidence explicit. Only the parent changes shared integration surfaces and advances accepted results.",
     intents: ["structural"],
-    inputs: ["worker.handoff", "pool.candidate"],
+    inputs: ["worker.handoff"],
     outputs: ["integration.candidate"],
-    dependencies: ["candidate-pool", "worker-orchestration"],
+    dependencies: ["worker-orchestration"],
     filesystem: "write",
     process: "execute",
     cost: "medium",

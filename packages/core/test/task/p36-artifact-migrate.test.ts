@@ -85,19 +85,6 @@ describe("P36 artifact B migrator", () => {
       depends_on: ["dep-1"],
     });
     fs.writeFileSync(path.join(taskDir, "prd.md"), "PRD-BODY\n", "utf-8");
-    fs.mkdirSync(path.join(tmp, ".pactile", "pool", "items"), { recursive: true });
-    fs.writeFileSync(path.join(tmp, ".pactile", "pool", "items", "P99.md"), [
-      "---",
-      "id: P99",
-      "title: Keep intent",
-      "status: accepted",
-      "type: mechanism",
-      "---",
-      "",
-      "## Intent",
-      "do not rewrite",
-      "",
-    ].join("\n"));
 
     const plan = planArtifactMigration({ root: tmp });
     const result = applyArtifactMigration({ root: tmp, plan });
@@ -120,12 +107,6 @@ describe("P36 artifact B migrator", () => {
     expect(fs.readFileSync(path.join(taskDir, "prd.md"), "utf-8")).toBe(
       "PRD-BODY\n",
     );
-    const pool = fs.readFileSync(
-      path.join(tmp, ".pactile", "pool", "items", "P99.md"),
-      "utf-8",
-    );
-    expect(pool).toMatch(/^---\npriority: P2\n/m);
-    expect(pool).toContain("do not rewrite");
   });
 
   it("writes a Child with parent and empty children as single", () => {

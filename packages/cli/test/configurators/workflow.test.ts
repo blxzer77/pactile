@@ -88,7 +88,7 @@ describe("createWorkflowStructure — P29 modules ship", () => {
     setWriteMode("ask");
   });
 
-  it("writes index.json and all twenty contract.md files, never catalog.ts", async () => {
+  it("writes index.json and all nineteen contract.md files, never catalog.ts", async () => {
     await createWorkflowStructure(tmpDir, { projectType: "fullstack" });
 
     const modulesDir = path.join(tmpDir, PATHS.MODULES);
@@ -100,7 +100,7 @@ describe("createWorkflowStructure — P29 modules ship", () => {
     const baseline = catalog.filter((entry) => entry.layer === "baseline");
     const onDemand = catalog.filter((entry) => entry.layer === "on-demand");
     expect(baseline).toHaveLength(8);
-    expect(onDemand).toHaveLength(12);
+    expect(onDemand).toHaveLength(11);
 
     for (const entry of catalog) {
       const contractPath = path.join(modulesDir, entry.contract);
