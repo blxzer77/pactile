@@ -106,15 +106,19 @@ max_journal_lines: 2000
 #-------------------------------------------------------------------------------
 # Cursor subagent dispatch (documentation only — not Cursor product settings)
 #-------------------------------------------------------------------------------
-# See .pactile/framework/cursor-subagent-policy.md
+# On Cursor the `worker` slot binds to native subagents through the Agent tool.
+# Pactile reads none of these keys; they mirror the vocabulary of
+# .pactile/framework/cursor-subagent-policy.md, which is the binding.
+#
+# There is deliberately no `child_worker` / `reuse_policy` here. Cursor children
+# are subagents, not separate sessions: Pactile dispatch is one-shot per child
+# and children share the parent's worktree, so nothing is reused across
+# dispatches. Codex binds the same slot to cross-session dispatch instead.
 #
 # cursor:
 #   subagent_dispatch:
 #     mode: agent
 #     model_policy: cursor-configured
-#   child_worker:
-#     mode: separate_writable_agent_session
-#     reuse_policy: true
 
 #-------------------------------------------------------------------------------
 # Codex worker dispatch (documentation only — no Pactile-side switch)
