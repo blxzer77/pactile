@@ -6,27 +6,15 @@ Only project-specific concepts belong here; generic programming concepts already
 
 ## Governance domain seed
 
-Optional starting set for the review-pool vocabulary — delete entries that do not apply:
+Optional starting set for governance vocabulary — delete entries that do not apply:
 
 **点子** (_idea_):
-Undecided development direction or improvement; a candidate for the review pool.
+Undecided development direction or improvement, not yet a Task.
 _Avoid_: requirement, thought
 
 **不足** (_debt_):
 Confirmed but unresolved gap found in review or verification.
 _Avoid_: issue, bug (unless it is a tracked defect elsewhere)
-
-**审核池** (_review pool_):
-Inbox for ideas and debt; states inbox / review / accepted / rejected / rework.
-_Avoid_: backlog, idea dump
-
-**开发计划** (_dev plan_):
-Plan file: accepted item ids + order + blocking edges + fog. Cite pool ids only.
-_Avoid_: roadmap
-
-**可裁决条目** (_adjudicable item_):
-Pool item with intent / motivation / coarse acceptance / non-goals.
-_Avoid_: todo
 
 **拒绝知识库** (_knowledge base_):
 Archive of rejected-concept reasons, used to dedupe prior requests.

@@ -2088,8 +2088,8 @@ def cmd_set_scope(args: argparse.Namespace) -> int:
 def cmd_set_deps(args: argparse.Namespace) -> int:
     """Set task-level depends_on (Plan A: declare + soft checks, no blocking).
 
-    Bare task ids and `pool:Pxx` refs are supported. Dangling references are
-    warned but still written (Plan A is discovery-first; `warn` never errors).
+    Bare task ids are supported. Dangling references are warned but still
+    written (Plan A is discovery-first; `warn` never errors).
     """
     from .task_dependencies import KIND_MISSING, normalize_dep_list, resolve_dep_ref
 

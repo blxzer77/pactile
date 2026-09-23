@@ -3,7 +3,6 @@ import path from "node:path";
 import { DIR_NAMES, PATHS } from "../constants/paths.js";
 import {
   getAllScripts,
-  getAllPoolSkeleton,
   workflowMdTemplate,
   configYamlTemplate,
   gitignoreTemplate,
@@ -122,9 +121,6 @@ export async function createWorkflowStructure(
   // Write user-shipped Python scripts (same source of truth as pactile update).
   await writeScriptTemplates(path.join(cwd, PATHS.SCRIPTS));
 
-  // Review-pool skeleton (mechanism docs only; no sample items)
-  await writePoolSkeleton(path.join(cwd, PATHS.POOL));
-
   // P29 short contracts — Session compiler reads these from the user tree.
   // Walk skips catalog.ts / any .ts; not registered in getAllScripts().
   await writeUserModuleContracts(path.join(cwd, PATHS.MODULES));
@@ -196,18 +192,6 @@ async function writeScriptTemplates(scriptsRoot: string): Promise<void> {
     await writeFile(destPath, replacePythonCommandLiterals(content), {
       executable: isExecutable,
     });
-  }
-}
-
-async function writePoolSkeleton(poolRoot: string): Promise<void> {
-  ensureDir(poolRoot);
-  for (const [relativePath, content] of getAllPoolSkeleton()) {
-    const destPath = path.join(poolRoot, relativePath);
-    ensureDir(path.dirname(destPath));
-    // Apply the same platform command rewrite as update.ts collectTemplateFiles
-    // so init-written content matches the hash update expects (no-op on
-    // same-version update instead of a spurious pool README rewrite).
-    await writeFile(destPath, replacePythonCommandLiterals(content));
   }
 }
 

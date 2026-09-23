@@ -32,7 +32,6 @@ Constraints live in artifacts and Kernel records:
 Start at `.pactile/framework/index.md`. Do not expand methodology here.
 
 - Parallel first → `.pactile/framework/parallel-first-execution.md`
-- Pool → `.pactile/pool/`
 - Full Quality / graded verify → `.pactile/framework/verification-strength-guide.md`
 - Retrieval → `.pactile/framework/retrieval-daily-guide.md`
 - Worker dispatch → Cursor: `.pactile/framework/cursor-subagent-policy.md`; Codex: `.pactile/framework/codex-worker-dispatch.md`

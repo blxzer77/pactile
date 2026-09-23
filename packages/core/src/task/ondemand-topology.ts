@@ -30,7 +30,6 @@ export const LIFECYCLE_SLOTS = [
 ] as const;
 
 export const STAGE5_ONDEMAND_MODULES = [
-  "candidate-pool",
   "define-extended",
   "independent-check",
   "worker-orchestration",

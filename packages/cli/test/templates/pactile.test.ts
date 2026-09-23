@@ -310,8 +310,6 @@ describe("getAllScripts", () => {
     expect(scripts.has("common/paths.py")).toBe(true);
     expect(scripts.has("common/active_task.py")).toBe(true);
     expect(scripts.has("common/kernel_command.py")).toBe(true);
-    expect(scripts.has("common/pool_store.py")).toBe(true);
-    expect(scripts.has("common/pool_refs.py")).toBe(true);
     expect(scripts.has("task.py")).toBe(true);
     expect(scripts.has("get_developer.py")).toBe(true);
     expect(scripts.has("common/lite_context.py")).toBe(true);
@@ -320,7 +318,6 @@ describe("getAllScripts", () => {
     expect(scripts.has("common/full_quality.py")).toBe(true);
     expect(scripts.has("common/ondemand_topology.py")).toBe(true);
     expect(scripts.has("common/parallel_declaration.py")).toBe(true);
-    expect(scripts.has("common/pool_slice.py")).toBe(true);
     expect(scripts.has("common/adapter_middleware.py")).toBe(true);
     expect(scripts.has("common/artifact_search.py")).toBe(true);
     expect(scripts.has("common/injection_budget.py")).toBe(true);

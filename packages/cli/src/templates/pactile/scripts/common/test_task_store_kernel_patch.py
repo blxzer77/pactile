@@ -133,9 +133,9 @@ def test_set_deps_and_depends_mode_go_through_kernel(sandbox) -> None:
     _repo, tasks_dir = sandbox
     task_dir = _write_task(tasks_dir, "task-x")
 
-    assert cmd_set_deps(argparse.Namespace(dir="task-x", dep=["dep-a", "pool:P28"])) == 0
+    assert cmd_set_deps(argparse.Namespace(dir="task-x", dep=["dep-a", "dep-gone"])) == 0
     data = _read(task_dir)
-    assert data["depends_on"] == ["dep-a", "pool:P28"]
+    assert data["depends_on"] == ["dep-a", "dep-gone"]
     assert data["status"] == "planning"
     kernel = json.loads((task_dir / "kernel.json").read_text(encoding="utf-8"))
     assert kernel["revision"] >= 1
@@ -144,7 +144,7 @@ def test_set_deps_and_depends_mode_go_through_kernel(sandbox) -> None:
     assert cmd_set_depends_mode(argparse.Namespace(dir="task-x", mode="block")) == 0
     data = _read(task_dir)
     assert data["meta"]["depends_mode"] == "block"
-    assert data["depends_on"] == ["dep-a", "pool:P28"]
+    assert data["depends_on"] == ["dep-a", "dep-gone"]
     assert data["status"] == "planning"
 
 

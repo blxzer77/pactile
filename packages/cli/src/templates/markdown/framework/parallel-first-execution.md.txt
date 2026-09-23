@@ -4,7 +4,7 @@
 >
 > **Not a scheduler.** No queue, no new CLI, no host-parallel replacement, no cross-platform dispatch.
 >
-> **Scope:** review-pool accepted items, development-plan batches, Parent/Full fan-out, and independent middleware / protocol / release tracks. **Not:** Lite / single-file (spawn not required); unisolatable write-sets; HITL / `start-execution --approved` / reviewer / `integrate-child`.
+> **Scope:** Parent/Full fan-out, independent isolatable Tasks, and independent middleware / protocol / release tracks. **Not:** Lite / single-file (spawn not required); unisolatable write-sets; HITL / `start-execution --approved` / reviewer / `integrate-child`.
 >
 > **Strength:** convention + Independent Check / planning review. Missing declaration on Full/Parent is **Check FAIL**. Not a `start-execution --check` hard gate. Attention order (`priority`) is not a serial lock.
 

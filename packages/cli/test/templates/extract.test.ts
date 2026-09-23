@@ -106,7 +106,7 @@ describe("user-shipped module templates", () => {
     expect(keys).not.toContain("catalog.ts");
 
     const catalog = listModuleCatalog();
-    expect(catalog).toHaveLength(20);
+    expect(catalog).toHaveLength(19);
     for (const entry of catalog) {
       expect(keys).toContain(entry.contract);
       expect(files.get(entry.contract)?.trim().length).toBeGreaterThan(0);

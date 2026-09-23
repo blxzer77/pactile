@@ -369,21 +369,21 @@ describe("Stage 2 Kernel commands + half-conversion", () => {
     const patched = applyKernelPatch({
       taskDir,
       expectedRevision: 1,
-      actor: "pool.py link",
-      idempotencyKey: "patch:pool-link:kernel-cmd:P28",
-      record: { meta: { pool_items: ["P28"] } },
+      actor: "task.py set-depends-mode",
+      idempotencyKey: "patch:depends-mode:kernel-cmd:block",
+      record: { meta: { depends_mode: "block" } },
     });
 
     expect(patched.kernel.phase).toBe("define");
     expect(patched.legacy.status).toBe("planning");
     expect(patched.kernel.revision).toBe(2);
-    expect(patched.kernel.projection?.record.meta).toEqual({ pool_items: ["P28"] });
+    expect(patched.kernel.projection?.record.meta).toEqual({ depends_mode: "block" });
 
     const taskJson = JSON.parse(
       fs.readFileSync(path.join(taskDir, "task.json"), "utf-8"),
-    ) as { status: string; meta?: { pool_items?: string[] } };
+    ) as { status: string; meta?: { depends_mode?: string } };
     expect(taskJson.status).toBe("planning");
-    expect(taskJson.meta?.pool_items).toEqual(["P28"]);
+    expect(taskJson.meta?.depends_mode).toBe("block");
   });
 
   it("patch rejects lifecycle status hops", () => {
@@ -461,7 +461,7 @@ describe("Stage 2 Kernel commands + half-conversion", () => {
         expectedRevision: 1,
         actor: "a",
         idempotencyKey: "patch:half",
-        record: { meta: { pool_items: ["P28"] } },
+        record: { meta: { depends_mode: "block" } },
       });
       expect.unreachable("half-conversion should throw");
     } catch (err) {
@@ -476,7 +476,7 @@ describe("Stage 2 Kernel commands + half-conversion", () => {
       expectedRevision: 1,
       actor: "a",
       idempotencyKey: "patch:half",
-      record: { meta: { pool_items: ["P28"] } },
+      record: { meta: { depends_mode: "block" } },
     });
     expect(json.ok).toBe(false);
     if (json.ok) return;
@@ -489,14 +489,14 @@ describe("Stage 2 Kernel commands + half-conversion", () => {
       expectedRevision: 1,
       actor: "a",
       idempotencyKey: "patch:half",
-      record: { meta: { pool_items: ["P28"] } },
+      record: { meta: { depends_mode: "block" } },
     });
     expect(recovered.projected).toBe(true);
     const taskJson = JSON.parse(
       fs.readFileSync(path.join(taskDir, "task.json"), "utf-8"),
-    ) as { status: string; meta?: { pool_items?: string[] } };
+    ) as { status: string; meta?: { depends_mode?: string } };
     expect(taskJson.status).toBe("planning");
-    expect(taskJson.meta?.pool_items).toEqual(["P28"]);
+    expect(taskJson.meta?.depends_mode).toBe("block");
   });
 
   it("patch rejects unimplemented gate hooks instead of fake-green", () => {
@@ -512,7 +512,7 @@ describe("Stage 2 Kernel commands + half-conversion", () => {
         expectedRevision: 1,
         actor: "a",
         idempotencyKey: "patch:gated",
-        record: { meta: { pool_items: ["P28"] } },
+        record: { meta: { depends_mode: "block" } },
         gate: { result: "PASS" },
       });
       expect.unreachable("gate hook should throw");

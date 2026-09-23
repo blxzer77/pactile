@@ -16,7 +16,7 @@ Agent 看见：
 2. 发现契约问题 → Return-to-Define，不是在 Check 里改 PRD 充数。
 3. 无可靠独立 Worker 时标签必须是 `self-review`。
 4. spawn `pactile-check` 仅当 `worker-orchestration` 同时激活且合同要求 worker；否则主会话做结构化第二遍并标 self-review。
-5. Full / Parent：缺 `touches`、或 `touches` 明显跨无关模块且无 `serial_reason` / `oversized_accepted` → 不合格。Lite 缺 `touches` 不因此不合格。`meta.pool_items` 多于一条时，PRD 须有 `## 池义务`（或 `## Pool obligations`）并点名每一条，否则不合格。调用 `common.pool_slice.evaluate_pool_slice`。这不是 `task.py create` 或 `start-execution --check` 硬挡，也不是 `pool.py validate` 因缺 `## 切片` 失败。
+5. Full / Parent：缺 `touches`、或 `touches` 明显跨无关模块且无 `serial_reason` / `oversized_accepted` → 不合格。Lite 缺 `touches` 不因此不合格。这是 Check 的判定，不是 `task.py create` 或 `start-execution --check` 的硬挡。
 
 用户看见：Full 收工前多一次「是否独立查过」的诚实标签。Lite 不出现本块。
 

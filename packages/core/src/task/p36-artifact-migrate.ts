@@ -1,8 +1,8 @@
 /**
  * P36 wave B — artifact dual-read + optional write (not wave C).
  *
- * User default: keep reading old task.json / evidence / pool. Maintainer
- * may write required_controls + Topology projections. Never delete
+ * User default: keep reading old task.json / evidence. Maintainer may write
+ * required_controls + Topology projections. Never delete
  * business prose. Archive is read-only. Failure rolls back to dual-read.
  */
 
@@ -26,14 +26,12 @@ import { isPlainObject } from "./schema.js";
 export const P36_ARTIFACT_SOURCE = "p36-artifact-migrate";
 
 export interface ArtifactWriteTarget {
-  kind: "task" | "pool";
   path: string;
   extra?: {
     required_controls?: RequiredControlsBundle;
     topology?: TopologyState;
     dependency_graph?: DependencyGraph;
   };
-  nextText?: string;
 }
 
 export interface ArtifactTaskScan {
@@ -61,7 +59,6 @@ export interface ArtifactMigratePlan {
 export interface PlanArtifactMigrationOptions {
   root: string;
   tasksDir?: string;
-  poolDir?: string;
 }
 
 export interface ApplyArtifactMigrationOptions {
@@ -85,15 +82,12 @@ export function planArtifactMigration(
   const tasksRoot = options.tasksDir
     ? path.resolve(options.tasksDir)
     : path.join(root, ".pactile", "tasks");
-  const poolRoot = options.poolDir
-    ? path.resolve(options.poolDir)
-    : path.join(root, ".pactile", "pool", "items");
 
   const degraded: string[] = [];
   const tasks: ArtifactTaskScan[] = [];
   const writable: ArtifactWriteTarget[] = [];
 
-  for (const file of collectFiles(tasksRoot, "task.json")) {
+  for (const file of collectFiles(tasksRoot)) {
     const scanned = scanTaskArtifact(file, tasksRoot);
     if (scanned.degraded) {
       degraded.push(scanned.degraded);
@@ -102,12 +96,6 @@ export function planArtifactMigration(
     if (!scanned.task) continue;
     tasks.push(scanned.task);
     if (scanned.write) writable.push(scanned.write);
-  }
-
-  for (const file of collectFiles(poolRoot, ".md")) {
-    if (isArchivePath(poolRoot, file)) continue;
-    const poolWrite = projectPoolPriority(file);
-    if (poolWrite) writable.push(poolWrite);
   }
 
   const dualRead = tasks.filter((task) => task.dualRead).length;
@@ -178,13 +166,6 @@ export function formatArtifactVernacular(
 }
 
 function writeArtifactTarget(target: ArtifactWriteTarget): void {
-  if (target.kind === "pool") {
-    if (target.nextText === undefined) {
-      throw new Error(`pool write missing text: ${target.path}`);
-    }
-    fs.writeFileSync(target.path, target.nextText, "utf-8");
-    return;
-  }
   const record = loadTaskRecord({ taskDir: path.dirname(target.path) });
   writeTaskRecord({
     taskDir: path.dirname(target.path),
@@ -287,7 +268,6 @@ function scanTaskArtifact(
     },
     write: writable
       ? {
-          kind: "task",
           path: file,
           extra,
         }
@@ -295,26 +275,7 @@ function scanTaskArtifact(
   };
 }
 
-function projectPoolPriority(file: string): ArtifactWriteTarget | null {
-  let text: string;
-  try {
-    text = fs.readFileSync(file, "utf-8");
-  } catch {
-    return null;
-  }
-  if (!text.startsWith("---")) return null;
-  const close = text.indexOf("\n---", 3);
-  if (close === -1) return null;
-  const frontmatter = text.slice(0, close);
-  if (/^priority\s*:/m.test(frontmatter)) return null;
-  return {
-    kind: "pool",
-    path: file,
-    nextText: text.replace(/^---\r?\n/, "---\npriority: P2\n"),
-  };
-}
-
-function collectFiles(root: string, match: string): string[] {
+function collectFiles(root: string): string[] {
   if (!fs.existsSync(root)) return [];
   const out: string[] = [];
   const stack = [root];
@@ -331,9 +292,8 @@ function collectFiles(root: string, match: string): string[] {
       const full = path.join(current, entry.name);
       if (entry.isDirectory()) {
         stack.push(full);
-      } else if (entry.isFile()) {
-        if (match === "task.json" && entry.name === "task.json") out.push(full);
-        if (match === ".md" && entry.name.endsWith(".md")) out.push(full);
+      } else if (entry.isFile() && entry.name === "task.json") {
+        out.push(full);
       }
     }
   }

@@ -838,7 +838,7 @@ def main() -> int:
     p_deps.add_argument(
         "dep",
         nargs="*",
-        help="Dependency task ids (bare id or pool:Pxx). No deps clears to [].",
+        help="Dependency task ids (bare id). No deps clears to [].",
     )
 
     # set-depends-mode

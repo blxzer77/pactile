@@ -35,7 +35,7 @@ This guide is **on-demand**. It is not the always-on Bootstrap (`.cursor/rules/p
 | PACTILE slot or need | Cursor native | Adapt | Enhance | Supplement |
 | --- | --- | --- | --- | --- |
 | Task identity / lifecycle / gates / evidence | none | — | — | Kernel (minimum set) |
-| Pool / Profile / principles | none | — | — | `.pactile/pool` and related |
+| Profile / principles | none | — | — | `.pactile/middleware/` (Profile) + `.pactile/framework/` |
 | Define / AC | Plan | Full **must** try the host design surface once | Draft is not definition until it lands in `{TASK}/prd.md` | Fail → Agent writes artifacts + Q12 |
 | Approve | chat confirm | Do not invent a confirm UI | — | `start-execution --approved` |
 | Execute | Agent | Default; leave design surface for Agent | Stay inside the contract; isolatable units fan out | — |

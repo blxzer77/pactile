@@ -9,10 +9,6 @@ Consumers: start-execution --check warnings (task_gates), dashboard summary
 Semantics per adjudication 08-09-depends-on-generalize-research (Plan A):
 - Bare ids resolve in scope order: same-Parent task-map children first, then
   global task dirs (.pactile/tasks/<id>, then archive/<month>/<id>).
-- "pool:XXX" refs resolve through ``pool_refs`` (item ``delivery``).
-  standing / landed / deferred → SATISFIED; open / in-slice → NOT_SATISFIED.
-  Missing ``.pactile/pool/`` (no Capture) is ignored (SATISFIED). Missing item →
-  UNRESOLVED. linked_tasks do not decide satisfaction.
 - Task-level satisfaction: status `completed` (archive counts as completed)
   or `cancelled`. Child-level satisfaction: task-map state in
   PARENT_TERMINAL_STATES (integrated | cancelled). Everything else is
@@ -34,8 +30,6 @@ from .io import read_json
 from .paths import get_repo_root, get_tasks_dir
 from .task_map import PARENT_TERMINAL_STATES
 
-POOL_PREFIX = "pool:"
-
 SATISFIED = "SATISFIED"
 NOT_SATISFIED = "NOT_SATISFIED"
 UNRESOLVED = "UNRESOLVED"
@@ -47,7 +41,6 @@ MAX_GRAPH_NODES = 50
 # Kinds of a resolved dependency reference.
 KIND_TASK = "task"
 KIND_CHILD = "child"
-KIND_POOL = "pool"
 KIND_MISSING = "missing"
 
 # Where a resolved dependency came from (display annotation).
@@ -93,7 +86,7 @@ class ResolvedDep:
 
     @property
     def is_cancelled(self) -> bool:
-        return self.kind in (KIND_TASK, KIND_CHILD, KIND_POOL) and self.status == "cancelled"
+        return self.kind in (KIND_TASK, KIND_CHILD) and self.status == "cancelled"
 
     @property
     def is_archived(self) -> bool:
@@ -133,7 +126,7 @@ class DependencyReport:
     def blocking_errors(self) -> list[str]:
         """Errors for block-mode mutation gates (Plan B).
 
-        NOT_SATISFIED / UNRESOLVED (missing + pool) / cycles all block;
+        NOT_SATISFIED / UNRESOLVED (dangling) / cycles all block;
         SATISFIED deps, including cancelled ones, never block. Every returned
         string is also produced by warnings(), so the blocking set is always
         a subset of the warning set for the same report (T14 invariant).
@@ -177,8 +170,6 @@ class DependencyReport:
 
 def _unresolved_issue_text(dep: ResolvedDep, note: str | None) -> str:
     """Shared text for UNRESOLVED deps (same wording in warnings and errors)."""
-    if dep.kind == KIND_POOL:
-        return f"dependency unresolved: {dep.ref} ({note})"
     return f"dangling dependency: {dep.ref} ({note})"
 
 
@@ -204,13 +195,10 @@ def normalize_dep_list(raw: object) -> list[str]:
 def satisfaction_status(dep: ResolvedDep) -> tuple[str, str | None]:
     """Return (SATISFIED | NOT_SATISFIED | UNRESOLVED, note_or_None).
 
-    - pool: -> status decided by item delivery (resolved at dep resolution).
     - missing -> UNRESOLVED (dangling; Plan A warns, never errors).
     - task: completed (archive counts as completed) or cancelled -> SATISFIED.
     - child: integrated or cancelled (PARENT_TERMINAL_STATES) -> SATISFIED.
     """
-    if dep.kind == KIND_POOL:
-        return _pool_satisfaction_status(dep)
     if dep.kind == KIND_MISSING:
         return (
             UNRESOLVED,
@@ -236,37 +224,6 @@ def satisfaction_status(dep: ResolvedDep) -> tuple[str, str | None]:
         NOT_SATISFIED,
         f"status={dep.status!r}, need completed or cancelled",
     )
-
-
-def _pool_satisfaction_status(dep: ResolvedDep) -> tuple[str, str | None]:
-    """Map the pool resolution result stored on dep.status to a status."""
-    if dep.status in ("satisfied", "cancelled"):
-        note = (
-            "pool entry satisfied via cancelled linked task(s)"
-            if dep.status == "cancelled"
-            else (dep.note if dep.status == "satisfied" else None)
-        )
-        return SATISFIED, note
-    if dep.status == "not_satisfied":
-        return NOT_SATISFIED, _pool_note(
-            dep, "pool item has remaining obligation"
-        )
-    if dep.status == "missing_module":
-        return SATISFIED, _pool_note(
-            dep, "candidate-pool not materialized; pool: ignored"
-        )
-    message = {
-        "missing_item": "pool item not found",
-        "not_ready": "pool item not accepted",
-        "unlinked": "pool item has no linked tasks",
-    }.get(dep.status, "pool item unresolved")
-    return UNRESOLVED, _pool_note(dep, message)
-
-
-def _pool_note(dep: ResolvedDep, message: str) -> str:
-    if dep.note:
-        return f"{message} ({dep.note})"
-    return message
 
 
 def find_dependency_cycles(graph: dict[str, list[str]]) -> list[list[str]]:
@@ -328,17 +285,12 @@ def resolve_dep_ref(
 ) -> ResolvedDep:
     """Resolve one declared dependency reference (pure, read-only).
 
-    Scope order: explicit `pool:` prefix (never falls through) -> same-Parent
-    task-map children -> global task dirs -> archive dirs -> missing.
+    Scope order: same-Parent task-map children -> global task dirs ->
+    archive dirs -> missing.
     """
     value = ref.strip()
     if not value:
         return ResolvedDep(ref=ref, kind=KIND_MISSING)
-
-    if value.startswith(POOL_PREFIX):
-        return _resolve_pool_dep(
-            value, repo_root=repo_root, tasks_dir=tasks_dir
-        )
 
     if scope_children and value in scope_children:
         state = scope_children.get(value)
@@ -369,30 +321,6 @@ def resolve_dep_ref(
         )
 
     return ResolvedDep(ref=value, kind=KIND_MISSING)
-
-
-def _resolve_pool_dep(
-    ref: str,
-    *,
-    repo_root: Path | None = None,
-    tasks_dir: Path | None = None,
-) -> ResolvedDep:
-    """Resolve a ``pool:XXX`` reference via the pool_refs contract."""
-    from .pool_refs import resolve_pool_ref
-
-    if repo_root is None:
-        if tasks_dir is not None:
-            repo_root = tasks_dir.parent.parent
-        else:
-            repo_root = get_repo_root()
-
-    result = resolve_pool_ref(ref, repo_root=repo_root)
-    return ResolvedDep(
-        ref=ref,
-        kind=KIND_POOL,
-        status=result.code,
-        note=result.note,
-    )
 
 
 def _find_task_dir(ref: str, tasks_dir: Path) -> Path | None:

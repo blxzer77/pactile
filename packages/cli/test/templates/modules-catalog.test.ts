@@ -30,7 +30,6 @@ const EXPECTED_BASELINE = [
 ] as const;
 
 const EXPECTED_ON_DEMAND = [
-  "candidate-pool",
   "define-extended",
   "independent-check",
   "worker-orchestration",
@@ -45,7 +44,7 @@ const EXPECTED_ON_DEMAND = [
 ] as const;
 
 describe("P29 module short-contract catalog", () => {
-  it("lists all twenty modules from index.json without parsing the human overview", () => {
+  it("lists all nineteen modules from index.json without parsing the human overview", () => {
     const catalogSource = readFileSync(
       join(getModulesRoot(), "catalog.ts"),
       "utf-8",
@@ -62,7 +61,7 @@ describe("P29 module short-contract catalog", () => {
     expect(catalog.source).toBe("p29-module-table");
     expect(catalog.baseline_intents).toEqual([...BASELINE_RETRIEVAL_INTENTS]);
     expect(catalog.baseline_intents).toHaveLength(4);
-    expect(listed).toHaveLength(20);
+    expect(listed).toHaveLength(19);
     expect(listed.map((entry) => entry.id)).toEqual([
       ...EXPECTED_BASELINE,
       ...EXPECTED_ON_DEMAND,

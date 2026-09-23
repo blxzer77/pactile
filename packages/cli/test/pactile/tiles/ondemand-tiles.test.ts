@@ -8,12 +8,12 @@ import { buildTileCatalog } from "../../../src/pactile/tiles/catalog.js";
 import { compileTileComposition } from "../../../src/pactile/tiles/compiler.js";
 
 describe("on-demand Tile catalog", () => {
-  it("loads twelve Tiles and expands only explicit selections and dependencies", () => {
+  it("loads eleven Tiles and expands only explicit selections and dependencies", () => {
     const baseline = loadBaselineTileContent();
     const ondemand = loadOndemandTileContent();
     if (!baseline.success) throw new Error(JSON.stringify(baseline.diagnostics));
     if (!ondemand.success) throw new Error(JSON.stringify(ondemand.diagnostics));
-    expect(ondemand.data).toHaveLength(12);
+    expect(ondemand.data).toHaveLength(11);
     expect(ondemand.data.map((entry) => entry.manifest.identity.id).sort()).toEqual(
       [...ONDEMAND_TILE_IDS].sort(),
     );
@@ -40,7 +40,6 @@ describe("on-demand Tile catalog", () => {
     for (const expected of [
       "parent-child@1.0.0",
       "worker-orchestration@1.0.0",
-      "candidate-pool@1.0.0",
       "retention-storage@1.0.0",
       "personal-memory@1.0.0",
       "retrieval-extended@1.0.0",

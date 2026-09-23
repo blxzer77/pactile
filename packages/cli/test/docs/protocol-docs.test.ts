@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { frameworkDocs } from "../../src/templates/markdown/index.js";
-import { poolPlanTemplate, workflowMdTemplate } from "../../src/templates/pactile/index.js";
+import { workflowMdTemplate } from "../../src/templates/pactile/index.js";
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const cliRoot = path.resolve(testDir, "../..");
@@ -19,10 +19,6 @@ function doc(name: string): string {
     throw new Error(`frameworkDocs missing ${name}`);
   }
   return hit.content;
-}
-
-function stripFences(text: string): string {
-  return text.replace(/```[\s\S]*?```/g, "");
 }
 
 describe("P31–P36 product protocol docs", () => {
@@ -114,14 +110,5 @@ describe("P31–P36 product protocol docs", () => {
     const parallelFirst = doc("parallel-first-execution.md");
     expect(parallelFirst).toMatch(/product/i);
     expect(parallelFirst).toMatch(/not a .*hard gate/i);
-  });
-
-  it("P31 plan skeleton has attention bands and no bare item-id tokens in prose", () => {
-    expect(poolPlanTemplate).toContain("priority-0");
-    expect(poolPlanTemplate).toContain("priority-1");
-    expect(poolPlanTemplate).toContain("priority-2");
-    expect(poolPlanTemplate).toMatch(/parallel group/i);
-    const prose = stripFences(poolPlanTemplate);
-    expect(prose).not.toMatch(/\bP\d+\b/);
   });
 });

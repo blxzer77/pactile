@@ -16,7 +16,10 @@ describe("closed-item product-template gaps (P02/P10/P12/P14/P19/P20)", () => {
   it("P02/P10-③ CONTEXT seed has governance + architecture terms", () => {
     const context = readUtf8(path.join(templates, "pactile/CONTEXT.md"));
     expect(context).toMatch(/## Governance domain seed/);
-    expect(context).toMatch(/\*\*审核池\*\*/);
+    // The review-pool term was retired with the pool feature; the governance
+    // seed still carries its remaining terms.
+    expect(context).toMatch(/\*\*不足\*\*/);
+    expect(context).toMatch(/\*\*拒绝知识库\*\*/);
     expect(context).toMatch(/## Architecture \(deep-module vocabulary\)/);
     expect(context).toMatch(/\*\*seam\*\*/);
     expect(context).toMatch(/\*\*locality\*\*/);

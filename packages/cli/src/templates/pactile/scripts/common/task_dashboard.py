@@ -226,7 +226,7 @@ def render_task_dashboard(
     lines.append("  - Inspect raw list: python ./.pactile/scripts/task.py list")
     if not selected.task_path:
         lines.append(
-            "  - No selected task: Intake — direct answer, clarify, pool intent, or Open Proposal"
+            "  - No selected task: Intake — direct answer, clarify, or Open Proposal"
         )
     if developer:
         lines.append(f"Developer: {developer}")
