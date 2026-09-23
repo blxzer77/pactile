@@ -10,7 +10,6 @@ import {
   commonTaskQueue,
   commonTaskUtils,
   commonActiveTask,
-  commonCliAdapter,
   commonArtifactSearch,
   commonSessionMemory,
   commonSmartSearchEvidence,
@@ -43,7 +42,6 @@ describe("Pactile template constants", () => {
     commonTaskQueue,
     commonTaskUtils,
     commonActiveTask,
-    commonCliAdapter,
     commonArtifactSearch,
     commonSessionMemory,
     commonSmartSearchEvidence,
@@ -215,7 +213,7 @@ describe("Pactile template constants", () => {
       ".pactile/framework/retrieval-daily-guide.md",
     );
     expect(workflowMdTemplate).toContain(
-      ".pactile/framework/cursor-subagent-policy.md",
+      ".pactile/framework/codex-worker-dispatch.md",
     );
   });
 

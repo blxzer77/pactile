@@ -33,6 +33,7 @@ _TRANSCRIPT_KEYS = ("transcript_path", "transcriptPath", "transcript")
 _NESTED_KEYS = ("input", "properties", "event", "hook_input", "hookInput")
 _KNOWN_PLATFORMS = {
     "cursor",
+    "codex",
 }
 
 _ENV_SESSION_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -377,7 +378,7 @@ def resolve_context_key(
     if env_context_key:
         return env_context_key
 
-    if platform_name in (None, "session", "cursor"):
+    if platform_name == "cursor":
         return _lookup_cursor_shell_ticket_context_key()
     return None
 

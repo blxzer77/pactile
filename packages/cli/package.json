@@ -33,7 +33,6 @@
     "check:router-copy-sync": "node scripts/check-router-copy-sync.js",
     "check:router-copy-sync:hash": "node scripts/check-router-copy-sync.js --hash-only",
     "docs:smoke": "node scripts/docs-smoke.js",
-    "mirror-check": "node scripts/mirror-check.js",
     "copy:release-assets": "node scripts/copy-release-assets.js",
     "sync:pack-files": "node scripts/sync-cli-pack-files.js",
     "dev": "tsc --watch",
@@ -63,7 +62,6 @@
   "keywords": [
     "ai",
     "workflow",
-    "cursor",
     "claude",
     "iflow",
     "cli",

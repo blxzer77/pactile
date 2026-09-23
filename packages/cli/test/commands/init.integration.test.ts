@@ -96,8 +96,8 @@ describe("init() integration", () => {
     expect(fs.existsSync(path.join(tmpDir, PATHS.TASKS))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, PATHS.SPEC))).toBe(true);
 
-    // Default platforms: Cursor + Codex share host-neutral Pactile resources.
-    expect(fs.existsSync(path.join(tmpDir, ".cursor"))).toBe(true);
+    // Codex is the only active host; baseline native project support may be unavailable.
+    expect(fs.existsSync(path.join(tmpDir, ".cursor"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, ".codex"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, ".agents", "skills"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, ".agent", "workflows"))).toBe(false);
@@ -120,30 +120,29 @@ describe("init() integration", () => {
     expect(fs.existsSync(path.join(tmpDir, ".mcp.json"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, ".cursor", "mcp.json"))).toBe(false);
 
-    // ProjectionStore owns host surfaces: one Pactile command/rule/agent plus
-    // host-neutral shared skills. Retired alternate-client surfaces stay absent.
+    // No Cursor command, rule, or agent is installed.
     expect(
       fs.existsSync(
         path.join(tmpDir, ".cursor", "commands", "pactile.md"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       fs.existsSync(
         path.join(tmpDir, ".cursor", "rules", "pactile.mdc"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       fs.existsSync(
         path.join(tmpDir, ".cursor", "agents", "pactile.md"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, ".cursor", "skills"))).toBe(false);
   });
 
   it("#1f writes selected capability facts without bypassing ProjectionStore", async () => {
     await init({
       yes: true,
-      cursor: true,
+      codex: true,
       user: "dev",
       capability: ["fast-context-mcp", "fastctx"],
     });
@@ -205,7 +204,7 @@ describe("init() integration", () => {
   it("#1f.1 records fastctx without projecting a machine-local path", async () => {
     await init({
       yes: true,
-      cursor: true,
+      codex: true,
       capability: ["fastctx"],
     });
 
@@ -273,7 +272,7 @@ describe("init() integration", () => {
       return "";
     }) as typeof execSync);
 
-    await init({ yes: true, cursor: true });
+    await init({ yes: true, codex: true });
 
     expect(execSync).not.toHaveBeenCalledWith(
       "smart-search setup",
@@ -284,7 +283,7 @@ describe("init() integration", () => {
       fs.existsSync(
         path.join(tmpDir, ".cursor", "rules", "pactile.mdc"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(console.warn).toHaveBeenCalledWith(
       expect.stringMatching(/Smart Search readiness unverified/),
     );
@@ -377,7 +376,7 @@ describe("init() integration", () => {
 
     await init({
       yes: true,
-      cursor: true,
+      codex: true,
       capability: ["codebase-retrieval"],
     });
     expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(true);
@@ -385,7 +384,7 @@ describe("init() integration", () => {
       fs.existsSync(
         path.join(tmpDir, ".cursor", "rules", "pactile.mdc"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(console.warn).toHaveBeenCalledWith(
       expect.stringMatching(/codebase-retrieval capability unverified/),
     );
@@ -435,7 +434,7 @@ describe("init() integration", () => {
 
     await init({
       user: "test-dev",
-      cursor: true,
+      codex: true,
       capability: ["codebase-retrieval"],
     });
 
@@ -518,7 +517,7 @@ describe("init() integration", () => {
 
     await init({
       yes: true,
-      cursor: true,
+      codex: true,
       capability: ["codebase-retrieval"],
     });
     expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(true);
@@ -526,7 +525,7 @@ describe("init() integration", () => {
       fs.existsSync(
         path.join(tmpDir, ".cursor", "rules", "pactile.mdc"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(console.warn).toHaveBeenCalledWith(
       expect.stringMatching(/codebase-retrieval capability unverified/),
     );
@@ -536,14 +535,14 @@ describe("init() integration", () => {
     // fastctx readiness depends on a machine-local stable binary, so this
     // asserts the outcome-agnostic contract: a capability that is declared but
     // not adopted must be reported, never treated as a hard stop.
-    await init({ yes: true, cursor: true, capability: ["fastctx"] });
+    await init({ yes: true, codex: true, capability: ["fastctx"] });
 
     expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(true);
     expect(
       fs.existsSync(
         path.join(tmpDir, ".cursor", "rules", "pactile.mdc"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     const capabilities = JSON.parse(
       fs.readFileSync(
         path.join(tmpDir, DIR_NAMES.WORKFLOW, "capabilities.json"),
@@ -553,17 +552,17 @@ describe("init() integration", () => {
     expect(capabilities.selected).toEqual(["fastctx"]);
   });
 
-  it("#2 single platform creates only that platform directory", async () => {
-    await init({ yes: true, cursor: true });
+  it("#2 Codex-only init does not create another host directory", async () => {
+    await init({ yes: true, codex: true });
 
-    expect(fs.existsSync(path.join(tmpDir, ".cursor"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, ".cursor"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, ".claude"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, ".codex"))).toBe(false);
     expect(
       fs.existsSync(
         path.join(tmpDir, ".cursor", "commands", "pactile.md"),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   
@@ -677,7 +676,7 @@ describe("init() integration", () => {
       (() => "Python 3.8.18") as typeof execSync,
     );
 
-    await expect(init({ yes: true, cursor: true })).rejects.toThrow(
+    await expect(init({ yes: true, codex: true })).rejects.toThrow(
       /No supported Python command found.*Python 3\.8\.18 \(< 3\.9\)/s,
     );
     expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(false);
@@ -690,7 +689,7 @@ describe("init() integration", () => {
       throw new Error("not found");
     }) as typeof execSync);
 
-    await expect(init({ yes: true, cursor: true })).rejects.toThrow(
+    await expect(init({ yes: true, codex: true })).rejects.toThrow(
       /No supported Python command found.*not found/s,
     );
     expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(false);
@@ -700,7 +699,7 @@ describe("init() integration", () => {
     const expectedPythonCmd =
       process.platform === "win32" ? "python" : "python3";
 
-    await init({ yes: true, cursor: true });
+    await init({ yes: true, codex: true });
 
     const workspaceIndex = fs.readFileSync(
       path.join(tmpDir, PATHS.WORKSPACE, "index.md"),
@@ -1094,7 +1093,7 @@ describe("init() integration", () => {
   });
 
   it("#19 init does not bypass ProjectionStore to create hook config", async () => {
-    await init({ yes: true, cursor: true });
+    await init({ yes: true, codex: true });
     expect(fs.existsSync(path.join(tmpDir, ".cursor", "hooks.json"))).toBe(false);
   });
 
@@ -1124,7 +1123,7 @@ describe("init() integration", () => {
       `# Project\n\n<!-- TRELLIS:START -->\n# upstream trellis block\n<!-- TRELLIS:END -->\n\n# User footer\n`,
     );
 
-    await init({ yes: true, cursor: true });
+    await init({ yes: true, codex: true });
 
     // Canonical state is created while the foreign tree remains byte-identical.
     expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(true);
@@ -1136,13 +1135,13 @@ describe("init() integration", () => {
       ),
     ).toBe("upstream-owned");
 
-    // Pactile adds its projection without overwriting unrelated foreign host
-    // files or claiming the upstream hook configuration.
+    // Pactile preserves unrelated foreign host files and does not create
+    // Cursor projection files or claim the upstream hook configuration.
     expect(
       fs.existsSync(
         path.join(tmpDir, ".cursor", "commands", "pactile.md"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     const hooks = JSON.parse(
       fs.readFileSync(path.join(tmpDir, ".cursor", "hooks.json"), "utf-8"),
     ) as { upstream?: boolean; hooks?: unknown };

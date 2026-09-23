@@ -1,32 +1,20 @@
 # Framework Docs (`.pactile/framework/`)
 
-> **Ownership**: These files are **framework-managed**. `pactile update` refreshes them (with the same hash-conflict prompt as `workflow.md`). If you edit one, update will ask before overwriting — prefer putting project-specific norms in `.pactile/spec/` instead, which update never touches.
+These framework-owned files are refreshed by `pactile update` with conflict review. Project-specific rules belong in `.pactile/spec/`.
 
-Versioned framework and platform-adapter documentation. Project/team knowledge lives in `.pactile/spec/` (user-owned); this directory documents how the framework itself behaves.
-
-## Docs
-
-| Doc | What it covers |
+| Doc | Purpose |
 | --- | --- |
-| [prd-grill-frontier.md](./prd-grill-frontier.md) | On-demand path to the PRD grill and Frontier discipline (bundled `brainstorm` skill is SSOT) |
-| [internal-skills-cursor-reachability.md](./internal-skills-cursor-reachability.md) | How each internal workflow skill is reachable on Cursor (commands-only baseline) |
-| [dogfood-only-surfaces.md](./dogfood-only-surfaces.md) | Which surfaces ship by default vs exist only in the maintainer harness |
-| [cursor-subagent-policy.md](./cursor-subagent-policy.md) | Cursor's binding for the `worker` slot: when to spawn custom agents, result flow, child toolboxes |
-| [codex-worker-dispatch.md](./codex-worker-dispatch.md) | Codex's binding for the same slot: cross-session dispatch via native entries, and why not subagents |
-| [retrieval-daily-guide.md](./retrieval-daily-guide.md) | Daily retrieval tool routing (search vs retrieval-pack scoring; web-research gate) |
-| [cursor-native-modes-guide.md](./cursor-native-modes-guide.md) | Mapping Cursor Plan / Ask / Debug / Agent / Multitask onto Pactile phases |
-| [parallel-first-execution.md](./parallel-first-execution.md) | Parallel-first **product** principle + execution contract: native parallel default, `serial_reason`, task-map fields |
-| [middleware-protocol.md](./middleware-protocol.md) | Middleware Protocol v1: one ABI, overlay `.pactile/middleware/`, shipped providers (smart-search required; others optional), `update` never writes/deletes/hashes overlay |
-| [upgrade.md](./upgrade.md) | Terminal-user upgrade half-page: install package → `pactile update` → confirm → keep working |
-| [release-boundary.md](./release-boundary.md) | PACTILE this-batch ship vs independent pactile-byok ship; BYOK is not a PACTILE release gate |
-| [cursor-context-injection-guide.md](./cursor-context-injection-guide.md) | Which Cursor injection channels actually reach the model |
-| [cursor-semantic-compliance.md](./cursor-semantic-compliance.md) | Plan-vs-exec semantic compliance on Cursor |
-| [injection-budget-guide.md](./injection-budget-guide.md) | Context injection budget across reliable Cursor channels |
-| [execution-strategy.md](./execution-strategy.md) | Development Strategy Contract (`execution_mode` / isolation) |
-| [verification-strength-guide.md](./verification-strength-guide.md) | How deeply tasks must be verified before closeout, graded by task mode |
-| [artifact-locale-guide.md](./artifact-locale-guide.md) | How human-reviewed artifacts follow the user's language |
+| [prd-grill-frontier.md](./prd-grill-frontier.md) | Requirements and planning questions |
+| [dogfood-only-surfaces.md](./dogfood-only-surfaces.md) | Product versus maintainer-local files |
+| [codex-worker-dispatch.md](./codex-worker-dispatch.md) | Current Codex worker boundary and planned bridge |
+| [retrieval-daily-guide.md](./retrieval-daily-guide.md) | Source search and evidence routing |
+| [parallel-first-execution.md](./parallel-first-execution.md) | Parallel work declarations |
+| [middleware-protocol.md](./middleware-protocol.md) | Middleware overlay and provider contracts |
+| [upgrade.md](./upgrade.md) | Project update steps |
+| [execution-strategy.md](./execution-strategy.md) | Execution mode and isolation |
+| [verification-strength-guide.md](./verification-strength-guide.md) | Verification depth |
+| [injection-budget-guide.md](./injection-budget-guide.md) | Context budget |
+| [artifact-locale-guide.md](./artifact-locale-guide.md) | Artifact language |
+| [release-boundary.md](./release-boundary.md) | Release scope |
 
-## Related
-
-- `.pactile/workflow.md` — the workflow itself (also framework-managed)
-- `.pactile/spec/guides/` — project thinking guides (user-owned; update never modifies)
+`.pactile/workflow.md` is the human workflow overview. `.pactile/spec/guides/` is user-owned and is not refreshed by update.

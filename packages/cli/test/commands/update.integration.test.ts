@@ -388,7 +388,7 @@ describe("update() integration", () => {
   it("#1e keeps selected project capability templates stable on same-version update", async () => {
     await init({
       yes: true,
-      cursor: true,
+      codex: true,
       capability: ["fast-context-mcp", "fastctx"],
     });
 

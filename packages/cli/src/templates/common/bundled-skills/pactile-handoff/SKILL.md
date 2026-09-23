@@ -37,7 +37,7 @@ At stage boundaries first ask: **does the work still continue in this session?**
 
 | Situation | Why a file is needed |
 | --- | --- |
-| Switch harness (e.g. Cursor → Codex) | The new harness cannot see the old context |
+| Switch tasks or hosts | The destination may not see the previous context |
 | Switch directory / repo | Common for prototype directories and new repos |
 | Hand to a colleague | They need something they can read independently |
 | Fork a side branch (main line continues) | You stay in this session; a second agent takes a copy in parallel |

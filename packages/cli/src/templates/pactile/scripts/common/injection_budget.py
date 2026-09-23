@@ -279,7 +279,7 @@ def budget_violations(report: BudgetReport, *, strict: bool = False) -> list[str
 
 def format_budget_report(report: BudgetReport) -> str:
     lines: list[str] = ["# Injection budget report", ""]
-    lines.append("## alwaysApply rules (.cursor/rules/*.mdc)")
+    lines.append("## Legacy alwaysApply rules (older .cursor/rules/*.mdc)")
     for rf in report.rules.files:
         flag = "alwaysApply" if rf.always_apply else "scoped"
         lines.append(f"- {rf.path}: {rf.bytes} B ({flag})")

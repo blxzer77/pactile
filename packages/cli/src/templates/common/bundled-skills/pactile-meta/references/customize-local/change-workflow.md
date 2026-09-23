@@ -58,7 +58,7 @@ If the user wants only one platform to avoid sub-agents, first confirm whether t
 | `in_progress` | check passed | Phase 3.1 (verify quality + spec update) |
 | `completed` | task is still in active tree | Phase 3.5 (run `pactile-finish-work` to archive) |
 
-When you add a custom status (e.g. `in-review`), add a `[workflow-state:in-review]` block in `.pactile/workflow.md` for the per-turn breadcrumb AND extend this route table — usually by editing the `pactile-continue` skill (`.cursor/skills/pactile-continue/` or the equivalent command file) to add a row that decides where to resume from. Without the route entry, the resume flow will fall through to a default branch and the user will not land on the step you intended.
+When you add a custom status (e.g. `in-review`), add a `[workflow-state:in-review]` block in `.pactile/workflow.md` for the per-turn breadcrumb AND extend the project-local `pactile-continue` entry under `.agents/skills/` if one exists. Without a route entry, the resume flow may fall through to a default branch.
 
 ## Notes
 

@@ -6,7 +6,8 @@ Detach 释放一个宿主 Adapter；uninstall 释放所有已安装 Adapter。�
 
 | 操作           | Preview                              | 应用                                  | 保留内容                                                |
 | -------------- | ------------------------------------ | ------------------------------------- | ------------------------------------------------------- |
-| 一个宿主       | `pactile detach cursor --dry-run`    | `pactile detach cursor`（或 `codex`） | `.pactile/`、其他 claimant、borrowed 与 modified 文件。 |
+| 当前宿主       | `pactile detach codex --dry-run`     | `pactile detach codex`              | `.pactile/`、borrowed 与 modified 文件。 |
+| 旧 Cursor 安装 | `pactile detach cursor --dry-run`    | `pactile detach cursor`             | 用户文件与旧安装中的其他 claimant。 |
 | 所有宿主       | `pactile uninstall --dry-run`        | `pactile uninstall --yes`             | 完整 `.pactile/` 状态与 receipt。                       |
 | 清理 canonical | [Purge](rollback-and-purge.zh-CN.md) | 独立 fingerprint + 确认               | 确认目标集内的内容都不保留。                            |
 

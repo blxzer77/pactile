@@ -41,11 +41,9 @@ const REQUIRED_ADOPTION_OPERATIONS = [
 ];
 const REQUIRED_COMMAND_SMOKE = [
   "pactile --version",
-  "pactile init --cursor",
   "pactile init --codex",
   "pactile capability-smoke --json",
   "pactile update",
-  "pactile detach cursor",
   "pactile detach codex",
   "pactile uninstall",
 ];
@@ -58,7 +56,7 @@ const CANONICAL_POLICY_DIGESTS = {
   inventory: "541ec8c277cc1193a53593b7164c4f6a1d63b2b9f7f38a1484b730842a7ebc84",
   renameMap: "e7e3a0eeb7ba5c97b5ed614b13c8ac628e9e3781d57ec763be06f405bb1b91aa",
   documentationMap:
-    "b2a297a4671935075c06d06a36f658866d3ad5e5676f540b0848f718da49f5ec",
+    "03942755efb2d1bedc1689af353ae972d31bbeeb4804e00c1e0c2ca99b083c29",
 };
 const REQUIRED_TOKEN_IDS = [
   "legacy-product-name",

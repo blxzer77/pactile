@@ -2,7 +2,7 @@
 
 Enter or refresh the Pactile Framework Context. This is a dashboard entry surface; it must not select, resume, or start a task by itself.
 
-On **agent-capable Cursor** this command is **not** installed as a `/` slash (SessionStart + `/pactile-continue` cover entry). Keep this template for agent-less platforms only.
+This entry is available as a Codex Skill. It does not dispatch another task.
 
 ---
 
@@ -50,7 +50,7 @@ Official `/goal` / CreateGoal is not a Pactile Task.
 
 ## Skill routing (quick reference)
 
-Internal names below are **workflow routing**, not a `/` palette. On Cursor, user slash commands are only Continue / Finish-work / Handoff.
+Internal names below are workflow routing, not a host command palette.
 
 | User intent | Route |
 |---|---|
@@ -63,4 +63,4 @@ Internal names below are **workflow routing**, not a `/` palette. On Cursor, use
 | Stuck / fixed same bug multiple times | Debug → `verify.md`; break-loop when looped |
 | Learned something worth capturing | learning disposition in `verify.md` |
 
-Full human overview in `.pactile/workflow.md`. Native mode bindings: `.pactile/framework/cursor-native-modes-guide.md`.
+Full human overview in `.pactile/workflow.md`. Codex worker boundary: `.pactile/framework/codex-worker-dispatch.md`.

@@ -1,6 +1,6 @@
 # PRD Grill & Frontier Discipline
 
-> **Purpose**: When the workflow routes to planning / PRD Grill, this is the on-demand path to the grill and Frontier discipline on Cursor. The full interview contract and Thinking Principles live in the bundled `brainstorm` skill (SSOT) — this guide is the Cursor loadable summary, not a second source of truth.
+> **Purpose**: When the workflow routes to planning / PRD Grill, this is the on-demand path to the grill and Frontier discipline. The full interview contract and Thinking Principles live in the bundled `brainstorm` skill (SSOT); this guide is a summary, not a second source of truth.
 
 ## When to read this
 
@@ -33,7 +33,7 @@ Treat `prd.md` (+ existing `design.md` fragments) as the **only document surface
 | 7 | **Research & external facts** — smart-search or documented fallback |
 | 8 | **Execution gate & artifacts** — `design.md` / `implement.md` / `verify.md` expectations |
 | 9 | **Durable Learning** — Phase 3.3 will need `update-spec` \| `no-update` \| `unsure` |
-| 10 | **Platform** — Cursor-first; PRD Grill in-session (no legacy grill-me / grill-with-docs subagent gate) |
+| 10 | **Platform** — Codex project entry; PRD Grill stays in the current task |
 | 11 | **Risk & rollback** for complex tasks |
 | 12 | **Open questions** — only **blocking** strategic/preference items remain |
 | 13 | **Root vs inherited assumptions** — every requirement traces to a user-facing root need; inherited assumptions flagged or removed (First Principles) |
@@ -101,5 +101,5 @@ Then proceed to Research (if needed), `task.py start-execution <task> --check`, 
 ## Related
 
 - Full SSOT: bundled `brainstorm` skill (`common/skills/brainstorm.md`) — interview contract, First Principles, Occam's Razor.
-- Reachability: [internal-skills-cursor-reachability.md](./internal-skills-cursor-reachability.md).
+- Reachability: inspect the installed `.agents/skills/` entry and current capability readiness.
 - Workflow routing: `.pactile/workflow.md` Phase 1 (Plan) and Active Task Routing.

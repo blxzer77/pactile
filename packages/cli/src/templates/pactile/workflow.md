@@ -34,7 +34,7 @@ Start at `.pactile/framework/index.md`. Do not expand methodology here.
 - Parallel first → `.pactile/framework/parallel-first-execution.md`
 - Full Quality / graded verify → `.pactile/framework/verification-strength-guide.md`
 - Retrieval → `.pactile/framework/retrieval-daily-guide.md`
-- Worker dispatch → Cursor: `.pactile/framework/cursor-subagent-policy.md`; Codex: `.pactile/framework/codex-worker-dispatch.md`
+- Worker dispatch → `.pactile/framework/codex-worker-dispatch.md` (manual until the bridge is implemented)
 
 <!--
   Codex/Claude UserPromptSubmit parses [workflow-state:STATUS] blocks.

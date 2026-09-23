@@ -21,7 +21,7 @@ This skill is the authoring and review guide for skill files. It is not the loca
 - Always make helper scripts deterministic, runnable from the skill directory, and explicit about inputs and outputs.
 - Never repeat the same rule in two sections — Hard Constraints is the single source of truth.
 - Never duplicate `pactile-meta` architecture guidance or project-private conventions inside a public Pactile skill.
-- Never edit Cursor's built-in `create-skill`; create or update Pactile-compatible skill files instead.
+- Never edit a host's built-in Skill creator to implement a Pactile project Skill.
 
 ## Workflow
 

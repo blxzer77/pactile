@@ -11,9 +11,9 @@
 
 [English](README.md) | 简体中文
 
-Pactile 把受契约约束的能力积木，按需拼成 Cursor 与 Codex 都能使用、且有证据可追溯的工作空间。
+Pactile 把受契约约束的能力积木，按需拼成 Codex 可用、且有证据可追溯的工作空间。
 
-它为 AI 编程项目建立一份宿主无关的指令、任务、所有权与生命周期真相。Cursor 和 Codex 分别获得适合自身集成面的投影；任何一个宿主都不会成为另一个宿主的权威来源。
+它为 AI 编程项目建立一份指令、任务、所有权与生命周期真相，并向 Codex 投影所需的项目内容。
 
 ## 五分钟上手
 
@@ -25,11 +25,11 @@ pactile --version
 
 mkdir my-pactile-project
 cd my-pactile-project
-pactile init --cursor --codex -y
+pactile init --codex -y
 pactile capability-smoke --json
 ```
 
-只选择你需要的宿主：`--cursor`、`--codex`，或同时使用两者。`init` 先在 `.pactile/` 建立 canonical 状态，再协调所选宿主 Adapter。最后一个命令报告实际能力就绪度；Provider 降级会明确展示，不会冒充宿主原生能力。
+`init` 先在 `.pactile/` 建立 canonical 状态，再协调 Codex Adapter。最后一个命令报告实际能力就绪度；Provider 降级会明确展示，不会冒充宿主原生能力。
 
 初始化后，直接让 Agent 正常工作即可。遇到需要持久化的工作，Agent 会使用生成的 workflow 和 task 工具；用户不需要记忆额外的提示词语言。
 
@@ -38,15 +38,14 @@ pactile capability-smoke --json
 ```text
 my-pactile-project/
   .pactile/        canonical workflow、任务、Tiles、运行状态与 Evidence
-  .agents/         一个或多个宿主 Adapter 共享声明的 Skills
-  .cursor/         选择 Cursor 时生成的投影
+  .agents/         为 Codex 投影的 Skills
   .codex/          原生支持就绪时才生成的可选 Codex 项目投影
   AGENTS.md        共享托管指令，同时保留用户内容
 ```
 
 Pactile 只拥有 ownership ledger 中记录的托管内容。既有宿主原生 Skills、MCP 配置、插件和用户文件仍属于外部或 borrowed 资产，除非经过审阅的计划明确另行处理。
 
-默认 Cursor 产品路径是 Native Cursor；Pactile 不内嵌 BYOK。
+旧版本生成的 Cursor 文件不会被当前安装路径刷新。可先用 `pactile detach cursor --dry-run` 审阅旧安装的清理计划。
 
 ## 心智模型
 
@@ -62,11 +61,9 @@ Pactile 只拥有 ownership ledger 中记录的托管内容。既有宿主原生
 
 ## 宿主与能力
 
-| 宿主   | 项目集成面                                             | Pactile 行为                                    |
-| ------ | ------------------------------------------------------ | ----------------------------------------------- |
-| Cursor | `.cursor/` rules、commands、agents、hooks 与受支持绑定 | 从当前 canonical generation 协调生成。          |
-| Codex  | 原生支持就绪时的可选 `.codex/` 项目配置与绑定           | 原生项目支持就绪时独立协调；否则明确报告 degraded。 |
-| 双宿主 | 共享 `.agents/` 资源与受管 `AGENTS.md` 内容            | 使用宿主无关的资源身份和独立 Adapter claimant。 |
+| 宿主  | 项目集成面                                          | Pactile 行为                                          |
+| ----- | --------------------------------------------------- | ----------------------------------------------------- |
+| Codex | 受管 `AGENTS.md`、`.agents/skills/` 与可选项目配置 | 从 canonical 状态协调生成；原生绑定不可用时报告 degraded。 |
 
 Pactile 将能力来源（`native`、`provider`、`heuristic`、`unsupported`）与 assurance 分开报告。可选 Provider 可以提升能力，但没有 Evidence 和通过时效探测的结果绝不会被标记为 verified。
 
@@ -75,7 +72,7 @@ Pactile 将能力来源（`native`、`provider`、`heuristic`、`unsupported`）
 ## 生命周期与安全
 
 - `pactile update --dry-run` 在应用前预览官方文件与投影变化。
-- `pactile detach cursor` 或 `pactile detach codex` 只移除一个 Adapter 的声明，仍被其他宿主使用的共享资源会保留。
+- `pactile detach codex` 移除当前 Adapter 的声明并保留 borrowed 资源；`pactile detach cursor` 仅用于审阅并清理旧安装。
 - `pactile uninstall --dry-run` 预览分离全部 Adapter，同时保留 canonical `.pactile/` 状态。
 - `pactile rollback <generation> --dry-run` 在切换前验证 sealed generation。
 - `pactile purge --dry-run` 只生成目标指纹；破坏性清理需要带同一指纹的第二次显式确认。

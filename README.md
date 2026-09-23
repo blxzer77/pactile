@@ -11,9 +11,9 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Pactile turns governed capability tiles into an evidence-backed workspace for Cursor and Codex.
+Pactile turns governed capability tiles into an evidence-backed workspace for Codex.
 
-It gives an AI coding project one host-neutral source of truth for instructions, tasks, ownership, and lifecycle state. Cursor and Codex receive projections suited to their own integration surfaces; neither host becomes the authority for the other.
+It gives an AI coding project one source of truth for instructions, tasks, ownership, and lifecycle state. The Codex integration receives a projection from that canonical state.
 
 ## Five-minute path
 
@@ -25,11 +25,11 @@ pactile --version
 
 mkdir my-pactile-project
 cd my-pactile-project
-pactile init --cursor --codex -y
+pactile init --codex -y
 pactile capability-smoke --json
 ```
 
-Use only the host flags you need: `--cursor`, `--codex`, or both. `init` creates canonical state under `.pactile/`, then reconciles the selected host adapters. The final command reports actual capability readiness; a degraded provider remains visible instead of being presented as native support.
+`init` creates canonical state under `.pactile/`, then reconciles the Codex adapter. The final command reports actual capability readiness; a degraded provider remains visible instead of being presented as native support.
 
 After initialization, ask the agent to work normally. For durable work it will use the generated workflow and task tools; you do not need to memorize an extra prompt language.
 
@@ -38,15 +38,14 @@ After initialization, ask the agent to work normally. For durable work it will u
 ```text
 my-pactile-project/
   .pactile/        canonical workflow, tasks, Tiles, runtime state, and Evidence
-  .agents/         shared Skills claimed by one or more host adapters
-  .cursor/         Cursor projection, when selected
-  .codex/          Optional Codex project projection when native support is ready
+  .agents/         projected Skills for Codex
+  .codex/          Optional Codex project configuration when native support is ready
   AGENTS.md        shared managed instructions plus preserved user content
 ```
 
 Pactile owns only the managed content recorded in its ownership ledger. Existing host-native Skills, MCP configuration, plugins, and user-authored files remain external or borrowed unless a reviewed plan says otherwise.
 
-The default Cursor product path is Native Cursor; Pactile does **not** embed BYOK.
+Existing Cursor files from earlier versions are left untouched by the active install path. Use `pactile detach cursor --dry-run` to review legacy cleanup.
 
 ## Mental model
 
@@ -62,11 +61,9 @@ Start with [Core concepts](docs/concepts/index.md), then read the focused pages 
 
 ## Hosts and capabilities
 
-| Host   | Project surface                                                   | Pactile behavior                                       |
-| ------ | ----------------------------------------------------------------- | ------------------------------------------------------ |
-| Cursor | `.cursor/` rules, commands, agents, hooks, and supported bindings | Reconciled from the active canonical generation.       |
-| Codex  | Optional `.codex/` project configuration and supported bindings  | Reconciled independently when native project support is ready; otherwise reported as degraded. |
-| Both   | Shared `.agents/` resources and managed `AGENTS.md` content       | Host-neutral identity with separate adapter claimants. |
+| Host  | Project surface                                                  | Pactile behavior                                                    |
+| ----- | ---------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Codex | Managed `AGENTS.md` and `.agents/skills/`; optional project config | Reconciled from canonical state; unavailable native bindings degrade. |
 
 Pactile reports capability origin (`native`, `provider`, `heuristic`, or `unsupported`) separately from assurance. An optional provider can improve a capability, but its presence never makes a claim verified without Evidence and a passing freshness-bounded probe.
 
@@ -75,7 +72,7 @@ See [Hosts](docs/hosts/index.md) and [Capabilities](docs/capabilities/index.md) 
 ## Lifecycle and safety
 
 - `pactile update --dry-run` previews official-file and projection changes before applying them.
-- `pactile detach cursor` or `pactile detach codex` removes one adapter's claims while preserving shared resources still in use.
+- `pactile detach codex` removes the active adapter's claims while preserving borrowed resources. `pactile detach cursor` remains available to clean up an older installation after preview.
 - `pactile uninstall --dry-run` previews detaching every adapter while retaining canonical `.pactile/` state.
 - `pactile rollback <generation> --dry-run` verifies a sealed generation before switching.
 - `pactile purge --dry-run` only produces a target fingerprint. Destructive cleanup requires a second, explicit confirmation using that exact fingerprint.

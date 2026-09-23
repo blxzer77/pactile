@@ -38,10 +38,9 @@ describe("cleanupEmptyDirs", () => {
   });
 
   it("removes empty subdirectory under managed path", () => {
-    // Create .cursor/commands/ (empty)
-    fs.mkdirSync(path.join(tmpDir, ".cursor", "commands"), { recursive: true });
-    cleanupEmptyDirs(tmpDir, ".cursor/commands");
-    expect(fs.existsSync(path.join(tmpDir, ".cursor", "commands"))).toBe(false);
+    fs.mkdirSync(path.join(tmpDir, ".codex", "generated"), { recursive: true });
+    cleanupEmptyDirs(tmpDir, ".codex/generated");
+    expect(fs.existsSync(path.join(tmpDir, ".codex", "generated"))).toBe(false);
   });
 
   it("does not remove non-empty directory", () => {
@@ -62,10 +61,9 @@ describe("cleanupEmptyDirs", () => {
   });
 
   it("[CR#1] does not delete managed root directories even if empty", () => {
-    // This is the bug that CR#1 identified: .cursor itself should never be deleted
-    fs.mkdirSync(path.join(tmpDir, ".cursor"), { recursive: true });
-    cleanupEmptyDirs(tmpDir, ".cursor");
-    expect(fs.existsSync(path.join(tmpDir, ".cursor"))).toBe(true);
+    fs.mkdirSync(path.join(tmpDir, ".codex"), { recursive: true });
+    cleanupEmptyDirs(tmpDir, ".codex");
+    expect(fs.existsSync(path.join(tmpDir, ".codex"))).toBe(true);
   });
 
   it("[CR#1] does not delete .pactile root even if empty", () => {

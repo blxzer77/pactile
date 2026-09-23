@@ -32,14 +32,6 @@ export const lifecycleConformanceCases = [
     expected: "idempotent",
   },
   {
-    id: "shared.detach",
-    origin: "canonical",
-    operation: "detach",
-    ownership: "shared",
-    faultPhase: "none",
-    expected: "other-claimant-preserved",
-  },
-  {
     id: "modified.detach",
     origin: "canonical",
     operation: "detach",

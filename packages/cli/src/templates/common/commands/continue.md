@@ -2,7 +2,7 @@
 
 Resume work **only** when this live session already has a `selected_task`. If no task is selected, show the Task Dashboard and ask for an explicit route. Do not auto-resume a previous or unique task.
 
-This command is a Cursor `/` escape hatch. It does not implement the Session compiler and does not treat `workflow.md` or `get_context.py --mode phase` as runtime SSOT. Run CLI yourself; do not ask the user to type `python`. Do not open with a “loaded” probe. No selected task → answer directly.
+This Skill does not implement the Session compiler and does not treat `workflow.md` or `get_context.py --mode phase` as runtime SSOT. Run the available CLI yourself. Do not open with a “loaded” probe. No selected task → answer directly.
 
 ---
 
@@ -44,14 +44,12 @@ When a task is selected, route by Kernel / Dashboard human phase and persisted `
 - **Open** → Intake / Open Proposal only; no product code
 - **Define** → Full: `SwitchMode(plan)` immediately; if the switch fails, one sentence (what happened, where `prd.md` landed) and keep writing artifacts. Lite may stay in Agent. Full follows `required_controls`, not mere file presence. Unlanded Plan is not Execute.
 - **Approve** → run `task.py start-execution <task> --check`, report PASS, ask for explicit Execute approval, then `task.py start-execution <task> --approved`. `--check` is not approval
-- **Execute** → implement under the approved contract in Agent. No product-code edits until this gate. Isolatable units: ask the user to open Multitask and hand worker packs; if they do not, `Task()` plus one sentence — do not block
+- **Execute** → implement under the approved contract. No product-code edits until this gate. Independent Codex tasks require explicit objective, write set, and evidence; the Pactile message bridge is not active yet
 - **Verify** → map every AC to evidence in `verify.md`; Debug when runtime-stuck
 - **Integrate?** (parent-child / already integrating) → Parent `integrate-child` path (`merge_limit: 1`), serial, not ordinary Child closeout. `parent_id` alone does **not** make a Child a Parent
 - **Close** → wrap-up via `{{CMD_REF:finish-work}}` when the user is ready; `UpdateGoal` complete or cancel (failure does not block)
 
 Return-to-Define when scope, AC, execution contract, verification strategy, or capability assumptions change.
-
-If this Cursor Task API has no `pactile-implement` / `pactile-check` enum, dispatch workers as `generalPurpose`. Never label that run `true-independent`.
 
 Official `/goal` / CreateGoal is **not** a Pactile Task. Do not restore `pactile-goal`.
 
@@ -59,4 +57,4 @@ Official `/goal` / CreateGoal is **not** a Pactile Task. Do not restore `pactile
 
 ## Reference
 
-Human overview: `.pactile/workflow.md` (not runtime SSOT). Native mode bindings: `.pactile/framework/cursor-native-modes-guide.md` (on-demand).
+Human overview: `.pactile/workflow.md` (not runtime SSOT). Codex worker boundary: `.pactile/framework/codex-worker-dispatch.md` (on demand).

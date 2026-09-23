@@ -149,7 +149,7 @@ describe("lifecycle command facade", () => {
     expect(fs.readFileSync(external, "utf8")).toBe("old-z\n");
   });
 
-  it("does not select detached or degraded adapters for an ordinary update", () => {
+  it("does not reactivate a legacy Cursor adapter during update", () => {
     expect(
       installedPactilePlatforms({
         schemaVersion: 1,
@@ -179,7 +179,7 @@ describe("lifecycle command facade", () => {
         createdAt: occurredAt,
         updatedAt: occurredAt,
       }),
-    ).toEqual(["cursor"]);
+    ).toEqual([]);
   });
 
   it("uses deterministic identities and reuses the active generation for reconcile", async () => {

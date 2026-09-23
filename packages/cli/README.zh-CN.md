@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-Pactile CLI 为 Cursor、Codex 或双宿主建立并维护可追溯证据的能力工作空间。Canonical 状态位于 `.pactile/`；宿主文件是可重建投影，并受显式 ownership 约束。
+Pactile CLI 为 Codex 建立并维护可追溯证据的能力工作空间。Canonical 状态位于 `.pactile/`；宿主文件是可重建投影，并受显式 ownership 约束。
 
 ## 安装
 
@@ -18,30 +18,29 @@ pactile --version
 ```bash
 mkdir my-pactile-project
 cd my-pactile-project
-pactile init --cursor --codex -y
+pactile init --codex -y
 pactile capability-smoke --json
 ```
 
-选择 `--cursor`、`--codex`，或同时使用两者。生成投影前会检查既有用户文件和原生资产。兼容的外部资产可以 borrowed 方式 adopt；冲突或 malformed 宿主文件保持原样，并返回恢复动作。
+使用 `--codex` 选择当前宿主。生成投影前会检查既有用户文件和原生资产。兼容的外部资产可以 borrowed 方式 adopt；冲突或 malformed 宿主文件保持原样，并返回恢复动作。
 
 ## 命令参考
 
 | 命令                                                 | 契约                                                           |
 | ---------------------------------------------------- | -------------------------------------------------------------- |
-| `pactile init --cursor [--codex]`                    | 创建 canonical 状态并协调所选 Adapter。                        |
+| `pactile init --codex`                               | 创建 canonical 状态并协调 Codex Adapter。                      |
 | `pactile capability-smoke [--json] [--write-status]` | 探测所选能力，并可写入 readiness。                             |
 | `pactile update --dry-run`                           | 预览官方文件、迁移与投影变化。                                 |
 | `pactile update`                                     | 应用一次确认过的事务，再独立协调各 Adapter。                   |
 | `pactile migrate`                                    | 生成可选迁移预览；实际写入仍由 `update` 完成。                 |
 | `pactile rollout`                                    | 对显式项目路径运行 `update` 并汇总证据。                       |
 | `pactile upgrade`                                    | 升级全局安装的 canonical CLI 包。                              |
-| `pactile detach cursor`                              | 移除一个 Adapter 的绑定与 claimant；保留共享和 borrowed 资源。 |
+| `pactile detach cursor`                              | 审阅并移除旧 Cursor Adapter，保留已修改的用户文件。            |
 | `pactile detach codex`                               | 对 Codex 应用相同的单 Adapter 契约。                           |
 | `pactile uninstall --dry-run`                        | 预览分离全部 Adapter，同时保留 `.pactile/`。                   |
 | `pactile rollback <generation> --dry-run`            | 验证并预览 sealed generation 切换。                            |
 | `pactile purge --dry-run`                            | 生成 inactive canonical root 的精确目标指纹，不删除。          |
 | `pactile workflow`                                   | 列出或选择 canonical workflow 模板。                           |
-| `pactile validate-rules`                             | 验证受支持的 Cursor rule 投影。                                |
 | `pactile kernel --json`                              | 运行生成项目脚本使用的机器 JSON 生命周期边界。                 |
 
 用 `pactile <command> --help` 查看当前参数。`detach` 使用位置参数指定 Adapter。`purge` 固定为两步：破坏性执行必须同时提供 `--yes` 和 preview 返回的精确指纹。
@@ -66,7 +65,7 @@ pactile rollback <generation> --dry-run
 pactile purge --dry-run
 ```
 
-Canonical generation 在宿主协调前提交。如果一个 Adapter 失败，canonical 状态和已成功的 sibling Adapter 保持有效；失败 Adapter 保留可重试 receipt。更新与退出决策会查询 ownership ledger，因此 modified、foreign、unknown、shared 与 borrowed 资源都会安全保留。
+Canonical generation 在宿主协调前提交。失败的 Adapter 保留可重试 receipt。更新与退出决策会查询 ownership ledger，因此 modified、foreign、unknown、shared 与 borrowed 资源都会安全保留。
 
 详细说明见[生命周期](../../docs/lifecycle/index.zh-CN.md)、[恢复](../../docs/troubleshooting/recovery.zh-CN.md)和 [Projection 与 Ownership](../../docs/concepts/projection-and-ownership.zh-CN.md)。
 

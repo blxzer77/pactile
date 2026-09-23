@@ -63,7 +63,7 @@ Use a concise title from the user's request. Use a slug without a date prefix. `
 | **A** | Discovery Before Questions + PRD draft | None until repo evidence is exhausted |
 | **B** | PRD Grill pass + Micro-grill unresolved | Only blocking business / risk / preference |
 
-External facts during Discovery or Research: load `smart-search-cli`; on CLI/doctor failure use Cursor WebSearch/WebFetch and persist under `{TASK}/research/` with `source: cursor-web-fallback`.
+External facts during Discovery or Research: load `smart-search-cli`; on CLI/doctor failure use an available web tool and persist its exact source under `{TASK}/research/`.
 
 ---
 
@@ -76,7 +76,7 @@ Inspect and record in `prd.md` (sections: **Confirmed facts**, initial **Out of 
 1. **Code & tests** — relevant modules, fixtures, configs, error paths.
 2. **Specs** — `.pactile/spec/` indexes and layer guides for touched packages.
 3. **History** — archived tasks, active task research, developer journal when useful.
-4. **Platform** — project platform hooks, agents, and skills (see `.pactile/framework/cursor-subagent-policy.md` when using Cursor); shared `.agents/skills/` when behavior spans platforms.
+4. **Platform** — Codex project instructions and `.agents/skills/`; see `.pactile/framework/codex-worker-dispatch.md` for the current worker boundary.
 5. **Parent/Child** — if multiple independent deliverables, note child split early in `prd.md`.
 
 Use retrieval per `.pactile/framework/retrieval-daily-guide.md` (rg for literals, codegraph for structure, fast-context for semantic sweep).
@@ -111,7 +111,7 @@ Treat `prd.md` (+ existing `design.md` fragments) as the **only document surface
 | 7 | **Research & external facts** — smart-search or documented fallback |
 | 8 | **Execution gate & artifacts** — `design.md` / `implement.md` / `verify.md` expectations |
 | 9 | **Durable Learning** — Phase 3.3 will need `update-spec` \| `no-update` \| `unsure` |
-| 10 | **Platform** — Cursor-first; PRD Grill in-session (no legacy grill-me / grill-with-docs subagent gate) |
+| 10 | **Platform** — Codex project entry; PRD Grill stays in the current task |
 | 11 | **Risk & rollback** for complex tasks |
 | 12 | **Open questions** — only **blocking** strategic/preference items remain |
 | 13 | **Root vs inherited assumptions** — every requirement traces to a user-facing root need; inherited assumptions (convention, analogy, "we've always done it") are flagged or removed (First Principles) |

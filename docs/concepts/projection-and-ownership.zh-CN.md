@@ -12,7 +12,7 @@ Projection 是一个 canonical generation 的宿主特定视图。Adapter 观察
 
 ### 职责
 
-- 把 canonical capabilities 与 instructions 转换为 Cursor 或 Codex 支持的集成面；
+- 把 canonical capabilities 与 instructions 转换为 Codex 支持的集成面；
 - 使用 `ensure`、`merge`、`remove`、`bind`、`detach` 等稳定 operation；
 - 声明期望内容与 fingerprint，但不直接写文件；
 - 为每个 Adapter 提供独立的 result、receipt 与 retry 边界；
@@ -54,14 +54,9 @@ Ownership 是 canonical ledger：它把一个逻辑 resource id 对应到唯一 
 
 ```text
 共享 Skill target
-  claimants: Cursor Adapter, Codex Adapter
+  claimant: Codex Adapter
 
-detach Cursor
-  -> 移除 Cursor claimant
-  -> Codex claimant 仍存在
-  -> 保留 Skill
-
-之后 detach Codex
+detach Codex
   -> claimant 清零
   -> 仅当 Pactile-owned 且 current == generated 时移除
   -> 否则按 ledger 规则保留或恢复
@@ -81,7 +76,7 @@ detach Cursor
 
 ## 用户场景
 
-一个先使用 Codex 的项目已有用户安装的共享 Skill。接入 Cursor 时，Pactile 发现并绑定同一个 external asset，不复制内容。Ledger 保留 user/host owner 和 borrowed control，并添加两个 Adapter claimant。之后 `pactile uninstall --dry-run` 可以描述将要 detach 的 bindings，但不能认领或删除已安装 Skill。
+一个 Codex 项目已有用户安装的 Skill。Pactile 发现并绑定该 external asset，不复制内容。Ledger 保留 user/host owner 和 borrowed control。之后 `pactile uninstall --dry-run` 可以描述将要 detach 的 binding，但不能认领或删除已安装 Skill。
 
 ## 应检查什么
 

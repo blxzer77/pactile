@@ -18,7 +18,6 @@ import {
   runWorkflowCommand,
   WorkflowCommandError,
 } from "../commands/workflow.js";
-import { runValidateRules } from "../commands/validate-rules.js";
 import { isWorkflowInitialized, workflowPath } from "../utils/workflow-dir.js";
 import { PACKAGE_NAME, VERSION } from "../constants/version.js";
 import { runKernelJsonCli } from "@blxzer/pactile-core/task";
@@ -66,7 +65,7 @@ function checkForUpdates(cwd: string): void {
 }
 
 // Check for updates at CLI startup when a workflow dir exists.
-// Never print to stdout when running an MCP stdio server — Cursor hosts
+// Never print to stdout when running an MCP stdio server — hosts
 // treat any non-framed stdout as a handshake failure.
 const cwd = process.cwd();
 const argvRest = process.argv.slice(2);
@@ -92,14 +91,13 @@ function collectOption(value: string, previous: string[]): string[] {
 program
   .name("pactile")
   .description(
-    "Evidence-backed governed capability workspace for Cursor and Codex",
+    "Evidence-backed governed capability workspace for Codex",
   )
   .version(VERSION, "-v, --version", "output the version number");
 
 program
   .command("init")
   .description("Initialize Pactile in the current project")
-  .option("--cursor", "Include Cursor commands")
   .option("--codex", "Include Codex project integration")
   .option(LEGACY_IMPORT_OPTION, LEGACY_IMPORT_DESCRIPTION)
   .option("-y, --yes", "Skip prompts and use defaults")
@@ -367,7 +365,7 @@ program
 
 program
   .command("detach <adapter>")
-  .description("Safely detach one Pactile Adapter (cursor or codex)")
+  .description("Safely detach a Codex or legacy Cursor Adapter")
   .option("--dry-run", "Preview ownership decisions without changing state")
   .action((adapter: string, options: Record<string, unknown>) => {
     try {
@@ -462,34 +460,6 @@ program
       if (debugEnabled()) {
         console.error(error instanceof Error ? error.stack : error);
       }
-      process.exit(1);
-    }
-  });
-
-program
-  .command("validate-rules")
-  .description(
-    "Validate Cursor .cursor/rules against the expected manifest (templates and/or installed rules)",
-  )
-  .option(
-    "--dir <rulesDir>",
-    "Validate rules in a specific directory instead of project .cursor/rules",
-  )
-  .option(
-    "--templates-only",
-    "Validate template rules from getAllRules() only (skip installed rules check)",
-  )
-  .action(async (options: Record<string, unknown>) => {
-    try {
-      await runValidateRules(process.cwd(), {
-        dir: options.dir as string | undefined,
-        templatesOnly: options.templatesOnly as boolean | undefined,
-      });
-    } catch (error) {
-      console.error(
-        chalk.red("Error:"),
-        error instanceof Error ? error.message : error,
-      );
       process.exit(1);
     }
   });

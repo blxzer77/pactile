@@ -122,21 +122,11 @@ export const frameworkIndexContent: string = readLocalTemplate(
 export const frameworkRetrievalDailyGuideContent: string = readLocalTemplate(
   "framework/retrieval-daily-guide.md.txt",
 );
-export const frameworkCursorSemanticComplianceContent: string =
-  readLocalTemplate("framework/cursor-semantic-compliance.md.txt");
-export const frameworkCursorSubagentPolicyContent: string = readLocalTemplate(
-  "framework/cursor-subagent-policy.md.txt",
-);
 export const frameworkCodexWorkerDispatchContent: string = readLocalTemplate(
   "framework/codex-worker-dispatch.md.txt",
 );
 export const frameworkExecutionStrategyContent: string = readLocalTemplate(
   "framework/execution-strategy.md.txt",
-);
-export const frameworkCursorContextInjectionGuideContent: string =
-  readLocalTemplate("framework/cursor-context-injection-guide.md.txt");
-export const frameworkCursorNativeModesGuideContent: string = readLocalTemplate(
-  "framework/cursor-native-modes-guide.md.txt",
 );
 export const frameworkVerificationStrengthGuideContent: string =
   readLocalTemplate("framework/verification-strength-guide.md.txt");
@@ -149,8 +139,6 @@ export const frameworkArtifactLocaleGuideContent: string = readLocalTemplate(
 export const frameworkPrdGrillFrontierGuideContent: string = readLocalTemplate(
   "framework/prd-grill-frontier.md.txt",
 );
-export const frameworkInternalSkillsReachabilityGuideContent: string =
-  readLocalTemplate("framework/internal-skills-cursor-reachability.md.txt");
 export const frameworkDogfoodOnlySurfacesGuideContent: string =
   readLocalTemplate("framework/dogfood-only-surfaces.md.txt");
 export const frameworkParallelFirstExecutionContent: string = readLocalTemplate(
@@ -181,26 +169,10 @@ export const frameworkDocs: readonly {
     content: frameworkRetrievalDailyGuideContent,
   },
   {
-    name: "cursor-semantic-compliance.md",
-    content: frameworkCursorSemanticComplianceContent,
-  },
-  {
-    name: "cursor-subagent-policy.md",
-    content: frameworkCursorSubagentPolicyContent,
-  },
-  {
     name: "codex-worker-dispatch.md",
     content: frameworkCodexWorkerDispatchContent,
   },
   { name: "execution-strategy.md", content: frameworkExecutionStrategyContent },
-  {
-    name: "cursor-context-injection-guide.md",
-    content: frameworkCursorContextInjectionGuideContent,
-  },
-  {
-    name: "cursor-native-modes-guide.md",
-    content: frameworkCursorNativeModesGuideContent,
-  },
   {
     name: "verification-strength-guide.md",
     content: frameworkVerificationStrengthGuideContent,
@@ -216,10 +188,6 @@ export const frameworkDocs: readonly {
   {
     name: "prd-grill-frontier.md",
     content: frameworkPrdGrillFrontierGuideContent,
-  },
-  {
-    name: "internal-skills-cursor-reachability.md",
-    content: frameworkInternalSkillsReachabilityGuideContent,
   },
   {
     name: "dogfood-only-surfaces.md",

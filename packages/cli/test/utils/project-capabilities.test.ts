@@ -11,7 +11,6 @@ import {
   parseProjectCapabilities,
   renderCapabilitiesJson,
   renderCapabilitiesMarkdown,
-  renderMcpJson,
   updateCapabilityReadinessStatus,
 } from "../../src/utils/project-capabilities.js";
 
@@ -75,105 +74,16 @@ describe("project capabilities", () => {
     }
   });
 
-  it("renders Claude/Cursor MCP JSON without credentials", () => {
-    const parsed = JSON.parse(
-      renderMcpJson(["codebase-retrieval", "fastctx"]),
-    ) as {
-      mcpServers: Record<string, { command: string; args: string[] }>;
-    };
-
-    expect(parsed.mcpServers["fast-context"]).toEqual({
-      command: "npx",
-      args: ["-y", "fast-context-mcp"],
-    });
-    expect(parsed.mcpServers.codegraph).toEqual({
-      command: "npx",
-      args: ["-y", "@colbymchenry/codegraph", "serve", "--mcp"],
-    });
-    // fastctx declares no MCP server: its stable binary lives at a
-    // machine-local path, which must never be written into project config.
-    expect(parsed.mcpServers.fastctx).toBeUndefined();
-    expect(JSON.stringify(parsed)).not.toContain(".fastctx");
-    expect(JSON.stringify(parsed)).not.toMatch(
-      /gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|test-token/i,
-    );
-  });
-
-  it("merges mcp.json preserving foreign servers and removing deselected managed servers", () => {
-    const merged = JSON.parse(
-      renderMcpJson(["fastctx"], {
-        "user-custom": {
-          command: "node",
-          args: ["custom-server.js"],
-        },
-        codegraph: {
-          command: "npx",
-          args: ["-y", "@colbymchenry/codegraph", "serve", "--mcp"],
-        },
-      }),
-    ) as {
-      mcpServers: Record<string, { command: string; args: string[] }>;
-    };
-
-    expect(merged.mcpServers["user-custom"]).toEqual({
-      command: "node",
-      args: ["custom-server.js"],
-    });
-    // managed codegraph deselected → removed
-    expect(merged.mcpServers.codegraph).toBeUndefined();
-  });
-
-  it("treats a retired server name as foreign instead of deleting it", () => {
-    // Retiring a capability removes it from the managed set, so an entry a
-    // project already carries stops being ours to delete. It stays, and the
-    // host keeps loading it until the user removes it.
-    const merged = JSON.parse(
-      renderMcpJson(["fastctx"], {
-        github: {
-          command: "npx",
-          args: ["-y", "@modelcontextprotocol/server-github"],
-        },
-      }),
-    ) as { mcpServers: Record<string, { command: string }> };
-
-    expect(merged.mcpServers.github).toEqual({
-      command: "npx",
-      args: ["-y", "@modelcontextprotocol/server-github"],
-    });
-  });
-
-  it("loads existing mcp.json when building cursor templates", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-mcp-merge-"));
+  it("preserves an existing Cursor MCP file while building Codex capability templates", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-legacy-mcp-"));
     try {
-      fs.mkdirSync(path.join(tmpDir, ".cursor"), { recursive: true });
-      fs.writeFileSync(
-        path.join(tmpDir, ".cursor", "mcp.json"),
-        JSON.stringify({
-          mcpServers: {
-            keepme: { command: "echo", args: ["ok"] },
-          },
-        }),
-      );
-
-      const files = buildProjectCapabilityTemplates(
-        ["codebase-retrieval"],
-        ["cursor"],
-        undefined,
-        { cwd: tmpDir },
-      );
-      const cursorMcpJson = files.get(".cursor/mcp.json");
-      expect(cursorMcpJson).toBeDefined();
-      if (cursorMcpJson === undefined) {
-        throw new Error("expected Cursor MCP template to be generated");
-      }
-      const parsed = JSON.parse(cursorMcpJson) as {
-        mcpServers: Record<string, { command: string; args: string[] }>;
-      };
-      expect(parsed.mcpServers.keepme).toEqual({
-        command: "echo",
-        args: ["ok"],
-      });
-      expect(parsed.mcpServers.codegraph.command).toBe("npx");
+      const legacyFile = path.join(tmpDir, ".cursor", "mcp.json");
+      fs.mkdirSync(path.dirname(legacyFile), { recursive: true });
+      fs.writeFileSync(legacyFile, '{"mcpServers":{"keepme":{"command":"node"}}}');
+      const before = fs.readFileSync(legacyFile);
+      const files = buildProjectCapabilityTemplates(["codebase-retrieval"], ["codex"]);
+      expect([...files.keys()].some((key) => key.startsWith(".cursor/"))).toBe(false);
+      expect(fs.readFileSync(legacyFile)).toEqual(before);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -322,28 +232,14 @@ describe("project capabilities", () => {
     expect(second.match(/PACTILE:PROJECT-CAPABILITIES:START/g)).toHaveLength(1);
   });
 
-  it("builds project capability templates only for selected platforms", () => {
+  it("builds capability metadata without writing host MCP files", () => {
     const files = buildProjectCapabilityTemplates(
       ["codebase-retrieval", "fastctx"],
-      ["cursor"],
+      ["codex"],
     );
-
-    expect(files.get(".pactile/capabilities.json")).toContain(
-      '"codebase-retrieval"',
-    );
-    expect(files.get(".pactile/capabilities.json")).toContain('"fastctx"');
-    expect(files.get(".pactile/capabilities.md")).toContain(
-      "## Fallback Guidance",
-    );
-    expect(files.get(".cursor/mcp.json")).toContain('"fast-context"');
-    expect(files.get(".cursor/mcp.json")).toContain('"codegraph"');
-    // fastctx must never be projected as a machine-local absolute path.
-    expect(files.get(".cursor/mcp.json")).not.toContain(".fastctx");
-    expect(files.get(".cursor/mcp.json")).not.toContain('"github"');
-    expect(files.get(".cursor/mcp.json")).not.toContain('"playwright"');
-    expect(files.get(".cursor/mcp.json")).not.toContain('"graphify"');
-    expect(files.has(".mcp.json")).toBe(false);
-    expect(files.has(".codex/config.toml")).toBe(false);
+    expect(files.get(".pactile/capabilities.json")).toContain('"codebase-retrieval"');
+    expect(files.get(".pactile/capabilities.md")).toContain("## Fallback Guidance");
+    expect([...files.keys()].every((key) => key.startsWith(".pactile/"))).toBe(true);
   });
 
   it("renders selected retrieval workflow and CLI routing", () => {

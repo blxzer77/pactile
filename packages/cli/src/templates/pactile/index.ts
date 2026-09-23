@@ -38,7 +38,6 @@ export const commonGitContext = readTemplate("scripts/common/git_context.py");
 export const commonTaskQueue = readTemplate("scripts/common/task_queue.py");
 export const commonTaskUtils = readTemplate("scripts/common/task_utils.py");
 export const commonActiveTask = readTemplate("scripts/common/active_task.py");
-export const commonCliAdapter = readTemplate("scripts/common/cli_adapter.py");
 export const commonCliEnvironment = readTemplate(
   "scripts/common/cli_environment.py",
 );
@@ -107,9 +106,6 @@ export const commonRetrievalEvidence = readTemplate(
 export const commonCodebaseRetrievalRouter = readTemplate(
   "scripts/common/codebase_retrieval_router.py",
 );
-export const commonCursorRetrievalEnv = readTemplate(
-  "scripts/common/cursor_retrieval_env.py",
-);
 export const commonProjectFileStats = readTemplate(
   "scripts/common/project_file_stats.py",
 );
@@ -134,9 +130,6 @@ export const rankRetrievalCandidatesScript = readTemplate(
 export const scoreEvidenceScript = readTemplate("scripts/score_evidence.py");
 export const injectionBudgetProbeScript = readTemplate(
   "scripts/injection_budget_probe.py",
-);
-export const generateDispatchPromptScript = readTemplate(
-  "scripts/generate_dispatch_prompt.py",
 );
 export const specHealthOutcomesScript = readTemplate(
   "scripts/spec_health_outcomes.py",
@@ -246,7 +239,6 @@ export function getAllTaskTemplates(): Map<string, string> {
  * Present under `templates/pactile/scripts/` but not shipped via init/update.
  */
 export const MAINTAINER_ONLY_SCRIPT_PATHS = new Set([
-  "cursor_retrieval_probe.py",
   "common/test_retrieval_arbitration.py",
   "common/test_observable_defaults.py",
   "common/test_task_dependencies.py",
@@ -265,7 +257,6 @@ export const MAINTAINER_ONLY_SCRIPT_PATHS = new Set([
   "common/smart_search_resolve.py",
   "common/retrieval_evidence.py",
   "common/codebase_retrieval_router.py",
-  "common/cursor_retrieval_env.py",
   "common/project_file_stats.py",
   "common/retrieval_tool_classification.py",
   "common/retrieval_agent_instructions.py",
@@ -308,7 +299,6 @@ export function getAllScripts(): Map<string, string> {
   scripts.set("common/task_queue.py", commonTaskQueue);
   scripts.set("common/task_utils.py", commonTaskUtils);
   scripts.set("common/active_task.py", commonActiveTask);
-  scripts.set("common/cli_adapter.py", commonCliAdapter);
   scripts.set("common/cli_environment.py", commonCliEnvironment);
   scripts.set("common/config.py", commonConfig);
   scripts.set("common/artifact_locale.py", commonArtifactLocale);
@@ -348,7 +338,6 @@ export function getAllScripts(): Map<string, string> {
   scripts.set("get_context.py", getContextScript);
   scripts.set("compile_session_pack.py", compileSessionPackScript);
   scripts.set("add_session.py", addSessionScript);
-  scripts.set("generate_dispatch_prompt.py", generateDispatchPromptScript);
 
   return scripts;
 }
@@ -364,7 +353,6 @@ export function getMaintainerScripts(): Map<string, string> {
   scripts.set("common/smart_search_resolve.py", commonSmartSearchResolve);
   scripts.set("common/retrieval_evidence.py", commonRetrievalEvidence);
   scripts.set("common/codebase_retrieval_router.py", commonCodebaseRetrievalRouter);
-  scripts.set("common/cursor_retrieval_env.py", commonCursorRetrievalEnv);
   scripts.set("common/project_file_stats.py", commonProjectFileStats);
   scripts.set(
     "common/retrieval_tool_classification.py",

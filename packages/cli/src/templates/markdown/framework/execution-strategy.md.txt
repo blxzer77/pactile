@@ -1,66 +1,14 @@
 # Execution strategy (execution_mode / isolation)
 
-> **Purpose**: Suggest a Development Strategy Contract before you freeze `implement.md`, and align Phase 2 dispatch with the approved contract.
+Choose who implements and checks, and where edits happen, before freezing `implement.md`. The approved task contract is authoritative.
 
-This file answers **who** implements/checks and **where** files are edited. It is **not** a parallel scheduler. Parallel-first (default native parallel, serial needs `serial_reason`) lives in `workflow.md` and `cursor-native-modes-guide.md`; declaration fields in `parallel-first-execution.md`.
-
----
-
-## Two orthogonal dimensions
-
-| Field | Question |
+| Field | Meaning |
 | --- | --- |
-| `execution_mode` | **Who** implements and checks? (`inline` main session, `worker` a typed implement/check worker, `child-task` Child worker) |
-| `isolation` | **Where** are files edited? (`main-worktree` vs `git-worktree` for Child) |
+| `execution_mode` | `inline` for the current task, `worker` for an independent task, or `child-task` for a task with a parent |
+| `isolation` | `main-worktree` or `git-worktree` |
 
-Non-git repo roots do **not** force `inline` for code Full tasks; they only affect whether `git-worktree` / `prepare-child-worktree` is recommended.
+For Codex, a future `worker` binding will use independent desktop tasks and cross-session messaging. The Pactile bridge is not implemented yet. Current runs can use `inline` or manually coordinated tasks with explicit evidence. Pactile does not dispatch Codex subagents. See `codex-worker-dispatch.md`.
 
-## Host binding — the slots are neutral, the binding is not
+The existing Python helper `task.py suggest-execution-strategy <task-dir> --json` gives an advisory suggestion. `task.py start-execution <task> --check` warns about drift without changing approval state. These helpers are scheduled for replacement by the Node runtime.
 
-`inline` / `worker` / `child-task` are **host-neutral slots**. What a slot resolves to depends on what the host can actually do, and the two supported hosts differ:
-
-| Slot | Cursor | Codex |
-| --- | --- | --- |
-| `inline` | Main session | Main session |
-| `worker` | Native **subagents** — `Task` with typed `pactile-implement` / `pactile-check` / `pactile-research` | Native **cross-session** — `codex agents` / `queue --thread` / `resume` / `fork` / `exec` |
-| `child-task` | Parent `integrate-child`, `merge_limit: 1` | Same (Kernel-side, host-independent) |
-
-**This asymmetry is deliberate, not a gap.** Cursor has no cross-session surface, so its `worker` slot binds to subagents. Codex has both a cross-session surface and its own subagent mechanism, and the product has decided to use the former — see the Codex adapter guide for why. Do not "fix" the difference by forcing symmetry; doing so would mean building something neither host asks for.
-
-Neither binding is a Pactile scheduler. Pactile declares **which native entry to use** and nothing else: no queue, no retry orchestration, no cross-host dispatch.
-
-| Host | Adapter guide |
-| --- | --- |
-| Cursor | `cursor-subagent-policy.md` |
-| Codex | `codex-worker-dispatch.md` |
-
-The bindings themselves live in those guides, never in this contract.
-
-## Suggest (planning)
-
-```bash
-python3 ./.pactile/scripts/task.py suggest-execution-strategy <task-dir>
-python3 ./.pactile/scripts/task.py suggest-execution-strategy <task-dir> --json
-```
-
-Run during brainstorm / before finalizing the YAML block in `implement.md`. Reconcile suggestion with product intent; the contract in `implement.md` is authoritative after approval.
-
-## Default policy (v1)
-
-| Profile / signal | Suggested `execution_mode` | Suggested `isolation` |
-| --- | --- | --- |
-| Lite | (no contract) | — |
-| Full + touches code | `worker` | `main-worktree` |
-| Full + doc-only capabilities | `inline` | `main-worktree` |
-| Parent / has children | `inline` | `main-worktree` |
-| Child (`task.json` parent set) | `child-task` | `git-worktree` when git package root resolves; else `main-worktree` + WARN |
-
-`touches_code` is deterministic: code `optional_capabilities`, `package`/`scope` path segments (`src`, `packages`, `scripts`, …), or Full with `design.md` and non-doc-only capabilities. Rules live in `.pactile/config/execution-strategy-rules.json`.
-
-## Drift warning (preflight)
-
-`task.py start-execution <task> --check` prints `[execution-strategy] WARN` when the approved contract differs from a fresh suggestion. **Advisory only** — does not fail the gate.
-
-## Phase 2 alignment
-
-See `workflow.md` Phase 2.1 / 2.2 tables: the `worker` slot is used only when `execution_mode: worker`. Which native entry that means depends on the host — bind it through the adapter guide named above.
+A non-Git project may still use a worker; it changes the isolation choices, not the execution mode. Parallel work must have independent write sets and a recorded integration owner.

@@ -7,7 +7,7 @@ then reconcile host projections. Pick the path that matches the project state:
 
 | State                                 | Entry                                           | First action                                                      |
 | ------------------------------------- | ----------------------------------------------- | ----------------------------------------------------------------- |
-| Fresh project                         | [Install](install.md)                           | `pactile init --cursor`, `--codex`, or both.                      |
+| Fresh project                         | [Install](install.md)                           | `pactile init --codex`.                                           |
 | Existing legacy project               | [Upgrade and migrate](upgrade-and-migrate.md)   | Preview first; use explicit legacy import only.                   |
 | Mixed or partially configured project | [Troubleshooting](../troubleshooting/index.md)  | Inspect ownership and readiness before update.                    |
 | Normal day-to-day work                | [Workflow](workflow.md)                         | Follow the canonical Task and Evidence gates.                     |

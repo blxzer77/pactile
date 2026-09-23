@@ -232,7 +232,7 @@ const SKILL_DESCRIPTIONS: Record<string, string> = {
   "before-dev":
     "Discovers and injects project-specific coding guidelines from .pactile/spec/ before implementation begins. Reads spec indexes, pre-development checklists, and shared thinking guides for the target package. Use when starting a new coding task, before writing any code, switching to a different package, or needing to refresh project conventions and standards.",
   brainstorm:
-    "Guides collaborative requirements discovery before implementation. Two-phase Cursor planning: Discovery Before Questions, PRD draft, then PRD Grill (document pass + micro-grill for blocking business questions). Use when requirements are unclear, multiple valid approaches exist, or the user describes a new feature or complex task.",
+    "Guides collaborative requirements discovery before implementation: Discovery Before Questions, PRD draft, then PRD Grill (document pass + micro-grill for blocking business questions). Use when requirements are unclear, multiple valid approaches exist, or the user describes a new feature or complex task.",
   check:
     "Comprehensive quality verification on two axes — Standards (spec compliance, lint, type-check, tests, code smells, cross-layer data flow) and Spec (prd fidelity, scope, learning/spec-sync). Use when code is written and needs quality verification, before committing changes, or to catch context drift during long sessions.",
   "break-loop":
@@ -265,7 +265,7 @@ export function wrapWithSkillFrontmatter(
  * SKILL_DESCRIPTIONS, which is long prose aimed at the skill matcher.
  */
 const COMMAND_DESCRIPTIONS: Record<string, string> = {
-  start: "Initialize a Pactile development session (dashboard; not a Cursor slash).",
+  start: "Initialize a Pactile development session from the dashboard.",
   continue: "Resume the selected task using Kernel/Dashboard.",
   "finish-work":
     "Wrap up: Verify evidence, Close/archive, journal.",
@@ -384,7 +384,7 @@ export function resolveSkills(ctx: TemplateContext): ResolvedTemplate[] {
 }
 
 /**
- * Emit selected command templates as skills (e.g. `finish-work` for Cursor auto-trigger).
+ * Emit selected command templates as skills.
  * Body comes from `common/commands/`; slash commands stay separate via {@link resolveCommands}.
  */
 export function resolveCommandAsSkills(

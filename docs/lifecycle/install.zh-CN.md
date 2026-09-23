@@ -8,11 +8,11 @@
 npm install -g @blxzer/pactile
 mkdir my-pactile-project
 cd my-pactile-project
-pactile init --cursor --codex -y
+pactile init --codex -y
 pactile capability-smoke --json
 ```
 
-使用 `--cursor`、`--codex` 或二者。`-y` 接受安全默认值；`--skip-existing` 保留已有文件，`--force` 只用于已审阅的覆盖。可选能力可重复传入 `--capability <id>`，不会静默安装外部 Provider。
+使用 `--codex` 选择当前宿主。`-y` 接受安全默认值；`--skip-existing` 保留已有文件，`--force` 只用于已审阅的覆盖。可选能力可重复传入 `--capability <id>`，不会静默安装外部 Provider。
 
 ## 新项目、legacy 与 mixed 项目
 

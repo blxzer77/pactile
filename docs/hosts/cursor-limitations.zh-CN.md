@@ -1,5 +1,7 @@
 # Cursor 限制与安全回退
 
+**历史资料（v0.5）：** Cursor 适配已退役。v0.6 开发线仅支持 Codex。旧安装可先运行 `pactile detach cursor --dry-run` 预览安全清理。
+
 [English](cursor-limitations.md) | 简体中文
 
 Cursor Adapter 采用保守策略。宿主功能可能存在，但其上下文通道只是尽力而为；Pactile 会标出这种差异，不把乐观探测直接升级为 assurance。

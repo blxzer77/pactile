@@ -2,7 +2,7 @@
 
 [English](skills.md) | 简体中文
 
-Skill 是可复用的能力表面，不是第二套 workflow。Pactile 可以将 Tile 投影到 `.agents/skills/`，Cursor 或 Codex 再提供发现它的宿主 binding。canonical Tile 定义与 Task 策略仍在 `.pactile/`。
+Skill 是可复用的能力表面，不是第二套 workflow。Pactile 可以将 Tile 投影到 `.agents/skills/`，Codex 提供发现它的宿主 binding。canonical Tile 定义与 Task 策略仍在 `.pactile/`。
 
 ## mode 与 evidence
 

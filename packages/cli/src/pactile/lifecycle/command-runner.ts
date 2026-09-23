@@ -181,7 +181,6 @@ export function installedPactilePlatforms(
   const platforms: PactilePlatform[] = [];
   for (const adapter of state.installedAdapters) {
     if (adapter.status !== "active") continue;
-    if (adapter.id === "adapter.cursor") platforms.push("cursor");
     if (adapter.id === "adapter.codex") platforms.push("codex");
   }
   return selectedPlatforms(platforms);

@@ -22,11 +22,6 @@ import {
   type SharedProjectionRequest,
 } from "./projection/shared/index.js";
 import {
-  buildCursorProjectionPlan,
-  type CursorProjectionRequest,
-  type CursorProjectionResult,
-} from "./adapters/cursor/index.js";
-import {
   buildCodexProjectionPlan,
   type CodexProjectionRequest,
   type CodexProjectionResult,
@@ -41,12 +36,6 @@ import {
 
 /** The adapters that Pactile can compose in this batch. */
 export const PACTILE_PLATFORM_REGISTRY = {
-  cursor: {
-    platform: "cursor",
-    adapterId: "adapter.cursor",
-    host: "cursor",
-    capabilities: ["commands", "rules", "agents", "hooks", "mcp"],
-  },
   codex: {
     platform: "codex",
     adapterId: "adapter.codex",
@@ -60,17 +49,13 @@ export type PactilePlatformDescriptor =
   (typeof PACTILE_PLATFORM_REGISTRY)[PactilePlatform];
 
 export function listPactilePlatforms(): readonly PactilePlatformDescriptor[] {
-  return [
-    PACTILE_PLATFORM_REGISTRY.cursor,
-    PACTILE_PLATFORM_REGISTRY.codex,
-  ];
+  return [PACTILE_PLATFORM_REGISTRY.codex];
 }
 
 export function getPactilePlatform(
   platform: string,
 ): PactilePlatformDescriptor | null {
-  if (platform === "cursor" || platform === "codex")
-    return PACTILE_PLATFORM_REGISTRY[platform];
+  if (platform === "codex") return PACTILE_PLATFORM_REGISTRY.codex;
   return null;
 }
 
@@ -95,9 +80,7 @@ export interface Batch2ComposeRequest {
   readonly selection: TileCompositionRequest;
   /** Shared request without the platform-derived adapter/claimant ids. */
   readonly shared: Omit<SharedProjectionRequest, "adapterId" | "claimantId">;
-  readonly adapter:
-    | Omit<CursorProjectionRequest, "shared">
-    | Omit<CodexProjectionRequest, "shared">;
+  readonly adapter: Omit<CodexProjectionRequest, "shared">;
 }
 
 export type Batch2DiagnosticCode =
@@ -258,17 +241,10 @@ export function composeBatch2Plan(
       ],
     };
 
-  let adapter: CursorProjectionResult | CodexProjectionResult;
-  if (request.platform === "cursor")
-    adapter = buildCursorProjectionPlan({
-      ...(request.adapter as Omit<CursorProjectionRequest, "shared">),
-      shared: shared.inputs,
-    });
-  else
-    adapter = buildCodexProjectionPlan({
-      ...(request.adapter as Omit<CodexProjectionRequest, "shared">),
-      shared: shared.inputs,
-    });
+  const adapter: CodexProjectionResult = buildCodexProjectionPlan({
+    ...request.adapter,
+    shared: shared.inputs,
+  });
 
   if (adapter.status === "ready")
     return {

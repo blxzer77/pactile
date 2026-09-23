@@ -291,7 +291,6 @@ function mapApplyFailure(result: ProjectionApplyResult): ExitFailure {
 }
 
 function platformForAdapter(adapterId: string): PactilePlatform | null {
-  if (adapterId === "adapter.cursor") return "cursor";
   if (adapterId === "adapter.codex") return "codex";
   return null;
 }

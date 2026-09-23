@@ -56,7 +56,7 @@ def evidence_score_from_record(record: dict[str, Any]) -> int:
 
 
 def enrich_record(raw: dict[str, Any]) -> dict[str, Any]:
-    platform = str(raw.get("platform", "cursor"))
+    platform = str(raw.get("platform", "codex"))
     tools = raw.get("tools_called") or []
     if not isinstance(tools, list):
         tools = []
