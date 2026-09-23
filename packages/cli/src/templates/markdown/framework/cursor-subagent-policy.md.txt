@@ -3,6 +3,12 @@
 > Current policy for dispatching Pactile research, implementation, and check
 > work through Cursor's supported native agent surfaces.
 
+This is the **Cursor binding** for the host-neutral `worker` slot. Codex binds
+the same slot to cross-session dispatch instead — see
+`codex-worker-dispatch.md`. That split is declared in `execution-strategy.md`
+and is deliberate: Cursor has no cross-session surface, so subagents are the
+native answer here.
+
 ## Invariants
 
 - Pactile never hardcodes vendor model identifiers in committed defaults.
@@ -12,6 +18,40 @@
 - The Parent owns decomposition, integration, and final acceptance.
 - A child does not recursively dispatch another Pactile child.
 - Model choice is not evidence. Source reads, diffs, tests, and receipts are.
+
+## What the host gives you, and what it does not
+
+| Property | Reality on Cursor |
+| --- | --- |
+| Topology | A tree: `parentComposerId` / `childComposerId`, with a root at `rootParentConversationId` |
+| Nesting | Host budget is 3 levels. Pactile is stricter: a Pactile child never dispatches another Pactile child, so in practice one level |
+| Returning to a child | Possible (`resumeAgentId`), but Pactile dispatch stays one-shot per child |
+| **Result flow** | **Results return only to the parent.** There is no sibling-to-sibling channel — children spawned together cannot see each other's output, and there is no shared inbox they can read |
+| Wake-up | The child wakes the parent (`background-task` or `file-inbox`); it cannot wake a sibling |
+
+**The result-flow constraint is the one that changes how you plan.** Two children
+dispatched in parallel are not a team: they cannot coordinate, split emerging
+work between them, or build on each other's findings. If a later unit needs an
+earlier unit's output, either dispatch it after the earlier child's result
+reaches the parent, or route the information through the parent explicitly.
+Planning that assumes peer-to-peer children will produce children working from
+stale assumptions.
+
+## Which tools a child can use
+
+A child's toolbox is the `tools:` list in its agent definition. Two rules apply:
+
+- The list may only name MCP servers that Pactile itself declares for the
+  project. A server the user configured is the user's to add; Pactile does not
+  assume it, and a whitelist naming a server that no one has would silently cost
+  the child a capability it was told it had.
+- Anything named must survive being absent. A missing MCP server degrades that
+  one lookup — exact search and direct reads still work, and the child should
+  say what it could not check rather than stall.
+
+The current definitions grant `mcp__codegraph__*` and `mcp__fast-context__*`
+for repository work, and `WebSearch` / `WebFetch` to the research child for
+external facts.
 
 ## Dispatch roles
 
@@ -88,3 +128,8 @@ The Parent records:
 Historical client-specific routing experiments are intentionally absent from
 generated runtime guidance. They belong in versioned history, not in a fresh
 Pactile installation.
+
+## Related
+
+- `execution-strategy.md` — host-neutral slots and both bindings
+- `codex-worker-dispatch.md` — the Codex binding for the same slot

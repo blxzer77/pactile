@@ -35,7 +35,7 @@ Start at `.pactile/framework/index.md`. Do not expand methodology here.
 - Pool → `.pactile/pool/`
 - Full Quality / graded verify → `.pactile/framework/verification-strength-guide.md`
 - Retrieval → `.pactile/framework/retrieval-daily-guide.md`
-- Subagent dispatch → `.pactile/framework/cursor-subagent-policy.md`
+- Worker dispatch → Cursor: `.pactile/framework/cursor-subagent-policy.md`; Codex: `.pactile/framework/codex-worker-dispatch.md`
 
 <!--
   Codex/Claude UserPromptSubmit parses [workflow-state:STATUS] blocks.

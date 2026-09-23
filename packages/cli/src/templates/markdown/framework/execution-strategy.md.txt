@@ -10,10 +10,31 @@ This file answers **who** implements/checks and **where** files are edited. It i
 
 | Field | Question |
 | --- | --- |
-| `execution_mode` | **Who** implements and checks? (`inline` main session, `worker` pactile-implement/check agents, `child-task` Child worker) |
+| `execution_mode` | **Who** implements and checks? (`inline` main session, `worker` a typed implement/check worker, `child-task` Child worker) |
 | `isolation` | **Where** are files edited? (`main-worktree` vs `git-worktree` for Child) |
 
 Non-git repo roots do **not** force `inline` for code Full tasks; they only affect whether `git-worktree` / `prepare-child-worktree` is recommended.
+
+## Host binding — the slots are neutral, the binding is not
+
+`inline` / `worker` / `child-task` are **host-neutral slots**. What a slot resolves to depends on what the host can actually do, and the two supported hosts differ:
+
+| Slot | Cursor | Codex |
+| --- | --- | --- |
+| `inline` | Main session | Main session |
+| `worker` | Native **subagents** — `Task` with typed `pactile-implement` / `pactile-check` / `pactile-research` | Native **cross-session** — `codex agents` / `queue --thread` / `resume` / `fork` / `exec` |
+| `child-task` | Parent `integrate-child`, `merge_limit: 1` | Same (Kernel-side, host-independent) |
+
+**This asymmetry is deliberate, not a gap.** Cursor has no cross-session surface, so its `worker` slot binds to subagents. Codex has both a cross-session surface and its own subagent mechanism, and the product has decided to use the former — see the Codex adapter guide for why. Do not "fix" the difference by forcing symmetry; doing so would mean building something neither host asks for.
+
+Neither binding is a Pactile scheduler. Pactile declares **which native entry to use** and nothing else: no queue, no retry orchestration, no cross-host dispatch.
+
+| Host | Adapter guide |
+| --- | --- |
+| Cursor | `cursor-subagent-policy.md` |
+| Codex | `codex-worker-dispatch.md` |
+
+The bindings themselves live in those guides, never in this contract.
 
 ## Suggest (planning)
 
@@ -42,4 +63,4 @@ Run during brainstorm / before finalizing the YAML block in `implement.md`. Reco
 
 ## Phase 2 alignment
 
-See `workflow.md` Phase 2.1 / 2.2 tables: spawn `pactile-implement` / `pactile-check` only when `execution_mode: worker`.
+See `workflow.md` Phase 2.1 / 2.2 tables: the `worker` slot is used only when `execution_mode: worker`. Which native entry that means depends on the host — bind it through the adapter guide named above.

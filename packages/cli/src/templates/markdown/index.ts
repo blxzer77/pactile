@@ -127,6 +127,9 @@ export const frameworkCursorSemanticComplianceContent: string =
 export const frameworkCursorSubagentPolicyContent: string = readLocalTemplate(
   "framework/cursor-subagent-policy.md.txt",
 );
+export const frameworkCodexWorkerDispatchContent: string = readLocalTemplate(
+  "framework/codex-worker-dispatch.md.txt",
+);
 export const frameworkExecutionStrategyContent: string = readLocalTemplate(
   "framework/execution-strategy.md.txt",
 );
@@ -184,6 +187,10 @@ export const frameworkDocs: readonly {
   {
     name: "cursor-subagent-policy.md",
     content: frameworkCursorSubagentPolicyContent,
+  },
+  {
+    name: "codex-worker-dispatch.md",
+    content: frameworkCodexWorkerDispatchContent,
   },
   { name: "execution-strategy.md", content: frameworkExecutionStrategyContent },
   {
