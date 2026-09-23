@@ -23,8 +23,6 @@ export const REQUIRED_LEGACY_CORE_RELEASE_FILES = [
   "LICENSE",
   "index.js",
   "index.d.ts",
-  "channel.js",
-  "channel.d.ts",
   "task.js",
   "task.d.ts",
   "testing.js",
