@@ -57,25 +57,31 @@ describe("P31–P36 product protocol docs", () => {
     expect(protocol).not.toMatch(/capability router.*bind/i);
   });
 
-  it("ships seven optional-or-required providers and does not leave Playwright/GitHub as Extra-unmanaged", () => {
+  it("registers only product-backed providers; retired MCPs stay Extra", () => {
     const protocol = doc("middleware-protocol.md");
     for (const id of [
       "smart-search",
       "codegraph",
       "fast-context",
-      "chrome-cdp",
-      "playwright",
-      "github",
       "cursor-ide-browser",
     ]) {
       expect(protocol).toContain(`id: ${id}`);
     }
-    expect(protocol).toContain("blaze-skills/chrome-cdp");
+    // The browser-session skill was retired; the protocol must not keep
+    // advertising it as a shipped provider.
+    expect(protocol).not.toContain("chrome-cdp");
+    // Playwright and GitHub were retired with the external-capability
+    // convergence work: no shipped-table row, no Manifest sample, no health
+    // entry. They are Extra — PACTILE does not manage them. Naming them as
+    // retired is allowed; registering them is not.
+    for (const retired of ["playwright", "github"]) {
+      expect(protocol).not.toMatch(new RegExp(`^\\| ${retired} \\|`, "m"));
+      expect(protocol).not.toContain(`id: ${retired}`);
+    }
+    expect(protocol).not.toContain("GITHUB_TOKEN");
     expect(protocol).toContain("host-platform");
-    expect(protocol).toContain("GITHUB_TOKEN");
-    expect(protocol).not.toMatch(/Playwright \/ GitHub \| 默认不集成/);
+    expect(protocol).toContain("属 Extra");
     expect(protocol).toContain("仅 **smart-search** = `required`");
-    expect(protocol).toContain("强制安装 Playwright / GitHub");
   });
 
   it("P36 user upgrade is a half-page with no Stage map and no local full-migrate", () => {

@@ -145,7 +145,7 @@ describe("init() integration", () => {
       yes: true,
       cursor: true,
       user: "dev",
-      capability: ["fast-context-mcp", "playwright"],
+      capability: ["fast-context-mcp", "fastctx"],
     });
 
     const capabilities = JSON.parse(
@@ -160,14 +160,14 @@ describe("init() integration", () => {
     };
     expect(capabilities.selected).toEqual([
       "codebase-retrieval",
-      "playwright-mcp",
+      "fastctx",
     ]);
     expect(capabilities.schema_version).toBe(3);
     expect(
       capabilities.capabilities["codebase-retrieval"]?.readiness_status,
     ).toBe("pending");
     expect(
-      capabilities.capabilities["playwright-mcp"]?.readiness_status,
+      capabilities.capabilities["fastctx"]?.readiness_status,
     ).toBe("pending");
 
     // Canonical capability facts are committed first. Init does not call the
@@ -182,37 +182,31 @@ describe("init() integration", () => {
     );
     expect(bootstrapPrd).toContain("## Capability readiness (required before archive)");
     expect(bootstrapPrd).toContain("`codebase-retrieval`");
-    expect(bootstrapPrd).toContain("`playwright-mcp`");
+    expect(bootstrapPrd).toContain("`fastctx`");
     expect(bootstrapPrd).toContain("watcher auto-syncs later edits");
   });
 
 
-  it("#1f.0 default init does NOT install optional skills (chrome-cdp absent)", async () => {
+  it("#1f.0 default init never writes the optional-skill directory", async () => {
     await init({ yes: true });
 
-    // 06-12 convention: assert the exact optional skill path never materializes.
-    expect(
-      fs.existsSync(path.join(tmpDir, ".cursor", "skills", "chrome-cdp")),
-    ).toBe(false);
+    // No optional skill ships today; the machinery must stay off by default.
     expect(fs.existsSync(path.join(tmpDir, ".cursor", "skills"))).toBe(false);
   });
 
   it("#1f.0a --with-optional fails before writing host or canonical state", async () => {
     await expect(
-      init({ yes: true, withOptional: ["chrome-cdp"] }),
+      init({ yes: true, withOptional: ["example-skill"] }),
     ).rejects.toThrow(/no longer writes host skill directories/);
     expect(fs.existsSync(path.join(tmpDir, ".cursor", "skills"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(false);
   });
 
-  it("#1f.1 records GitHub capability without persisting its token", async () => {
-    vi.stubEnv("GITHUB_TOKEN", "test-token");
-    vi.stubEnv("GITHUB_PERSONAL_ACCESS_TOKEN", "");
-
+  it("#1f.1 records fastctx without projecting a machine-local path", async () => {
     await init({
       yes: true,
       cursor: true,
-      capability: ["github-mcp"],
+      capability: ["fastctx"],
     });
 
     const capabilities = JSON.parse(
@@ -221,13 +215,10 @@ describe("init() integration", () => {
         "utf-8",
       ),
     ) as { selected: string[] };
-    expect(capabilities.selected).toEqual(["github-mcp"]);
+    expect(capabilities.selected).toEqual(["fastctx"]);
 
-    const canonicalCapabilityBytes = fs.readFileSync(
-      path.join(tmpDir, DIR_NAMES.WORKFLOW, "capabilities.json"),
-      "utf-8",
-    );
-    expect(canonicalCapabilityBytes).not.toContain("test-token");
+    // fastctx declares no MCP server, and its stable binary lives under the
+    // user profile. init must not invent a project-level MCP entry for it.
     expect(fs.existsSync(path.join(tmpDir, ".cursor", "mcp.json"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, ".mcp.json"))).toBe(false);
   });
@@ -541,21 +532,25 @@ describe("init() integration", () => {
     );
   });
 
-  it("#1k continues init when GitHub MCP token env is not visible", async () => {
-    vi.stubEnv("GITHUB_TOKEN", "");
-    vi.stubEnv("GITHUB_PERSONAL_ACCESS_TOKEN", "");
-    vi.stubEnv("GH_TOKEN", "legacy-token");
+  it("#1k continues init when a selected capability is not adopted yet", async () => {
+    // fastctx readiness depends on a machine-local stable binary, so this
+    // asserts the outcome-agnostic contract: a capability that is declared but
+    // not adopted must be reported, never treated as a hard stop.
+    await init({ yes: true, cursor: true, capability: ["fastctx"] });
 
-    await init({ yes: true, cursor: true, capability: ["github-mcp"] });
     expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(true);
     expect(
       fs.existsSync(
         path.join(tmpDir, ".cursor", "rules", "pactile.mdc"),
       ),
     ).toBe(true);
-    expect(console.warn).toHaveBeenCalledWith(
-      expect.stringMatching(/github-mcp capability unverified/),
-    );
+    const capabilities = JSON.parse(
+      fs.readFileSync(
+        path.join(tmpDir, DIR_NAMES.WORKFLOW, "capabilities.json"),
+        "utf-8",
+      ),
+    ) as { selected: string[] };
+    expect(capabilities.selected).toEqual(["fastctx"]);
   });
 
   it("#2 single platform creates only that platform directory", async () => {

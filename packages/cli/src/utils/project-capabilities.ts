@@ -16,8 +16,7 @@ export {
 
 export const PROJECT_CAPABILITY_IDS = [
   "codebase-retrieval",
-  "github-mcp",
-  "playwright-mcp",
+  "fastctx",
 ] as const;
 
 export type ProjectCapabilityId = (typeof PROJECT_CAPABILITY_IDS)[number];
@@ -246,50 +245,21 @@ export const PROJECT_CAPABILITIES: readonly ProjectCapability[] = [
     ],
   },
   {
-    id: "github-mcp",
-    aliases: ["github"],
-    title: "GitHub MCP",
+    id: "fastctx",
+    aliases: ["fast-ctx"],
+    title: "FastCtx tool runtime",
     description:
-      "GitHub repository, issue, pull request, and review operations.",
+      "Local tool runtime that serves file reads, search, replace, and command execution through one MCP surface, so the model spends attention on the repository instead of on shell quoting, path encoding, and output truncation.",
     routing:
-      "Use for explicit GitHub remote work; distinguish read-only inspection from write-capable issue, PR, branch, review, or merge actions.",
+      "Use for tool-level file, search, replace, and command work once the stable binary is present. This is a tool runtime, not a retrieval strategy: `codebase-retrieval` owns what evidence counts and how retrieval is routed, while FastCtx only performs the read/grep/glob/replace/run operations. Use its output tiers deliberately — compact for narrow lookups, standard by default, high only when a broad sweep is genuinely needed. Do not claim FastCtx output as proof on its own; source, Git, and tests remain the proof layer.",
     readiness:
-      "Configured GitHub API MCP package is visible and `GITHUB_TOKEN` or `GITHUB_PERSONAL_ACCESS_TOKEN` is present in the agent host environment before remote actions are claimed.",
+      "The official stable binary exists at `~/.fastctx/bin/fastctx.exe` (created by the upstream `fastctx apply` flow). Pactile never resolves npm, nvm, or version-manager paths to find it: a missing stable binary means the capability is simply not adopted yet, which is a normal state, not a broken install.",
     fallback: [
-      "Expose `GITHUB_TOKEN` or `GITHUB_PERSONAL_ACCESS_TOKEN` to the MCP server environment or configure the agent host explicitly.",
-      "Ensure `npx -y @modelcontextprotocol/server-github` can launch before selecting this capability.",
-      "Without a verified credential posture, use local Git only and do not claim GitHub remote actions.",
+      "Without FastCtx, use the host's native file tools, `rg`, and the shell directly; this costs more attention but loses no capability.",
+      "FastCtx configures Codex through its own `fastctx apply`; that writes a stable binary, a Codex profile, and a managed block in `~/.codex/AGENTS.md`. This is an upstream action performed by the user, never by `pactile init` or `pactile update`.",
+      "The upstream `apply` flow does not cover Cursor. On Cursor, register `fastctx serve` as an MCP server through user-level host configuration and point the command at the stable binary path. This host difference is declared, not a Pactile gap.",
     ],
-    mcpServers: [
-      {
-        name: "github",
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-github"],
-      },
-    ],
-  },
-  {
-    id: "playwright-mcp",
-    aliases: ["playwright"],
-    title: "Playwright MCP",
-    description:
-      "Browser automation, frontend behavior checks, screenshots, and UI smoke verification.",
-    routing:
-      "Use for browser/UI verification when the task requires rendered behavior evidence; keep browser/session startup explicit.",
-    readiness:
-      "Configured server and browser runtime are available without silently starting unrelated browsing sessions.",
-    fallback: [
-      "Verify the Playwright MCP package and browser runtime in the selected host before claiming rendered UI evidence.",
-      "If browser automation is unavailable, record the missing runtime and fall back to static checks or manual user verification.",
-    ],
-    mcpServers: [
-      {
-        name: "playwright",
-        command: "npx",
-        args: ["-y", "@playwright/mcp@latest"],
-        startupTimeoutSec: 120,
-      },
-    ],
+    mcpServers: [],
   },
 ];
 
@@ -693,8 +663,7 @@ export function renderCapabilitiesMarkdown(
     "- Semantic output is recall-only and must be converted into exact source checks before final claims.",
     "- Host identity or user-global routing state must not select a Provider or prove readiness.",
     "- Per-query tool order lives in on-demand retrieval docs, not an always-on rule.",
-    "- GitHub MCP uses the GitHub API server package; remote writes require explicit user intent and the host's credential/tool posture must be clear.",
-    "- Playwright MCP should be used for rendered UI evidence only when browser verification is part of the task.",
+    "- FastCtx is a tool runtime, not a retrieval strategy: it performs read/search/replace/run operations, while `codebase-retrieval` owns what counts as evidence.",
     "",
   );
 
