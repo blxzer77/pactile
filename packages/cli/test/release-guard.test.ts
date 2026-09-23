@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  allowedReleaseBranches,
   assertMatchingVersions,
   assertPublishProvenance,
   assertReleaseBranch,
@@ -87,7 +88,7 @@ function fakeRunner(options: FakeGitOptions = {}): {
     });
     if (command !== "git") return "";
     if (args[0] === "status") return options.status ?? "";
-    if (args[0] === "branch") return options.branch ?? "beta";
+    if (args[0] === "branch") return options.branch ?? "develop";
     if (args[0] === "rev-parse" && args[1] === "HEAD") return head;
     if (args[0] === "rev-parse") return options.tagCommit ?? head;
     if (args[0] === "merge-base") {
@@ -219,6 +220,16 @@ describe("release guard negative paths", () => {
     ).toThrow(/cannot be prepared/);
   });
 
+  it("cuts stable candidates from main and every prerelease from develop", () => {
+    // Two long-lived branches: main releases, develop develops. Retiring the
+    // old beta / release-x.y.z split is the point of this assertion — a stable
+    // candidate belongs to main, and any prerelease belongs to develop.
+    expect(allowedReleaseBranches("0.5.1")).toEqual(["main"]);
+    expect(allowedReleaseBranches("0.5.0-beta.6")).toEqual(["develop"]);
+    expect(allowedReleaseBranches("0.5.0-rc.1")).toEqual(["develop"]);
+    expect(allowedReleaseBranches("0.5.0-alpha.2")).toEqual(["develop"]);
+  });
+
   it("requires the exact pactile tag namespace", () => {
     expect(() => parseReleaseTag("v0.5.0-beta.5")).toThrow(
       /Invalid release tag/,
@@ -251,7 +262,7 @@ describe("release guard negative paths", () => {
         remote: "origin",
         isAncestor: () => false,
       }),
-    ).toThrow(/not contained in origin\/beta/);
+    ).toThrow(/not contained in origin\/develop/);
   });
 
   it("rejects package and target version mismatch", () => {
@@ -320,7 +331,7 @@ describe("credential wall and immutable publish DAG", () => {
 
   it("finishes every validator before sealing all package artifacts", () => {
     const fake = fakeRunner({
-      ancestors: ["candidate-head>private/beta"],
+      ancestors: ["candidate-head>private/develop"],
     });
     let callsAtPreparation = -1;
     const artifacts = fakeArtifacts();
@@ -645,8 +656,8 @@ describe("credential wall and immutable publish DAG", () => {
 
   it("supports a tag-free dry-run while retaining read-only continuity", () => {
     const fake = fakeRunner({
-      branch: "beta",
-      ancestors: ["candidate-head>private/beta", "private/beta>candidate-head"],
+      branch: "develop",
+      ancestors: ["candidate-head>private/develop", "private/develop>candidate-head"],
     });
     const artifacts = { ...fakeArtifacts(), releaseTag: null };
 
@@ -695,8 +706,8 @@ describe("credential wall and immutable publish DAG", () => {
   it("refuses to prepare artifacts if a validator changes the tracked tree", () => {
     let status = "";
     const fake = fakeRunner({
-      branch: "beta",
-      ancestors: ["candidate-head>private/beta", "private/beta>candidate-head"],
+      branch: "develop",
+      ancestors: ["candidate-head>private/develop", "private/develop>candidate-head"],
     });
     const runner = (
       command: string,
@@ -750,12 +761,12 @@ describe("release workflow wiring", () => {
     expect(source).not.toMatch(/\["commit"|\["tag"|\["push"/);
   });
 
-  it("runs beta/main PR and release-branch checks plus pack smoke on Linux and Windows", () => {
+  it("runs main/develop push and PR checks plus pack smoke on Linux and Windows", () => {
     const ci = fs.readFileSync(
       path.join(REPO_ROOT, ".github/workflows/ci.yml"),
       "utf-8",
     );
-    expect(ci).toContain('branches: [main, beta, "release/**"]');
+    expect(ci).toContain("branches: [main, develop]");
     expect(ci).toContain("ubuntu-latest");
     expect(ci).toContain("windows-latest");
     expect(ci).toContain("check:release-pack");

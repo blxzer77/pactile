@@ -209,7 +209,7 @@ describe("P45 release conformance matrix", () => {
   it("fails closed for wrong branch, tag, version, receipt, and provenance", () => {
     expect(() =>
       assertReleaseBranch({ branch: "feat/p45", version: VERSION }),
-    ).toThrow(/Allowed branches: beta/);
+    ).toThrow(/Allowed branches: develop/);
     expect(() => parseReleaseTag("v0.5.0-beta.5")).toThrow(
       /Expected pactile-v/,
     );
@@ -233,6 +233,6 @@ describe("P45 release conformance matrix", () => {
         remote: "private",
         isAncestor: () => false,
       }),
-    ).toThrow(/not contained in private\/beta/);
+    ).toThrow(/not contained in private\/develop/);
   });
 });
