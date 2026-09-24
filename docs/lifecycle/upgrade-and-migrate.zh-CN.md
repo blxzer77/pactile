@@ -15,3 +15,22 @@
 在 0.5.x compatibility window 中，经 receipt 与 ownership plan 允许时可以双读旧输入。新输出只使用 Pactile 名称与 `.pactile/`。modified 或 foreign 文件不会被静默迁移。preview 显示 checksum、manifest 或 ownership 冲突时，保留 preimage、记录 evidence，解决后再使用 `--force`。
 
 `pactile rollout --project <path> --dry-run --json` 可汇总显式列出的项目 preview；不要把它当成隐式全局扫描。
+
+## 已有安装迁到 Node 入口（v0.6.0）
+
+安装 v0.6.0 CLI 后，在每个已安装项目的根目录执行：
+
+```bash
+pactile update --dry-run --json
+pactile update --skip-all --json
+pactile task list
+```
+
+预览中的 `plan.files` 列出新增和刷新的 Node 版模板、`safeDeleted` 候选、
+本地改动后保留的 `legacyPythonPreserved` 文件，以及无归属或被跳过的
+`legacyPythonUnprocessed` 文件。`legacyPythonHashClaimsReleased` 列出已解除
+模板哈希归属的旧脚本，即使文件仍留在磁盘上。应用报告列出实际删除项。检查
+备份路径与 lifecycle/Adapter 状态；遇到 degraded 或 interrupted 应先排查，再依赖新入口。
+`--skip-all` 保留用户修改过的 managed 文件；之后逐项审阅，再决定是否覆盖。
+保留下来的 `.pactile/scripts/*.py` 不会进入活动 Node generation。更新过程
+不运行 Python，用户任务、spec、middleware 和外来文件不在替换范围内。

@@ -1,0 +1,8 @@
+{
+  "version": "0.6.0",
+  "description": "Existing Pactile installations move from generated Python task entrypoints to the Node CLI. Installed Python scripts are inventoried at update time because their recorded hashes vary by version and platform.",
+  "breaking": true,
+  "recommendMigrate": false,
+  "changelog": "Node.js is the only required runtime. Run `pactile update --dry-run --json` to review replacements and legacy scripts, then `pactile update --skip-all --json` to preserve locally modified files while applying unchanged templates. Hash-verified retired Python files are removed after the Node generation is active; modified, skipped and unclaimed files remain on disk but are excluded from active generations.",
+  "migrations": []
+}
