@@ -7,7 +7,7 @@ Choose who implements and checks, and where edits happen, before freezing `imple
 | `execution_mode` | `inline` for the current task, `worker` for an independent task, or `child-task` for a task with a parent |
 | `isolation` | `main-worktree` or `git-worktree` |
 
-Codex desktop planning and review tasks use native cross-task messaging with `pactile codex` request/receipt records. The desktop task must invoke its native tool; the Node CLI cannot invoke App tools by itself. Pi implementation workers use `pactile pi run` after execution approval. Pactile does not dispatch Codex subagents. See `codex-worker-dispatch.md`.
+Codex desktop planning, Execute, and review tasks use native cross-task messaging with `pactile codex` request/receipt records. Execute requires recorded approval and a project worktree. The desktop task must invoke its native tool; the Node CLI cannot invoke App tools by itself. Pi implementation workers use `pactile pi run` after execution approval. Parent batches can use `pactile parallel run <parent> --manifest <file>` with a cap of 2 by default (at most 4), declared Child write sets, and serial Parent integration. Pactile does not dispatch Codex subagents. See `codex-worker-dispatch.md`.
 
 The execution strategy is documented in `implement.md`. Review it against the task scope before running `pactile task start-execution <task> --check`; the Node CLI checks the transition without changing approval state.
 

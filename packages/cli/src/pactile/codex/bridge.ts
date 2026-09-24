@@ -3,9 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { readKernel } from "../../core/task/index.js";
 import { resolveTaskDir } from "../task/session.js";
+import { approvedTask } from "../pi/bridge.js";
+import { parallelChild, releaseParallelChild, reserveParallelChild } from "../parallel/policy.js";
 
 export type CodexBridgeTool = "create_thread" | "send_message_to_thread" | "wait_threads" | "read_thread";
-export type CodexBridgeRole = "plan" | "review";
+export type CodexBridgeRole = "plan" | "review" | "execute";
 
 export interface CodexBridgeRequest {
   schema_version: 1;
@@ -135,6 +137,7 @@ function latestWaitCursor(dir: string, threadId: string): string | null {
 function checkPhase(role: CodexBridgeRole, phase: string): void {
   if (role === "plan" && !["open", "define", "approve"].includes(phase)) throw new Error(`Codex planning requires an open/define/approve task; got ${phase}`);
   if (role === "review" && !["verify", "integrate"].includes(phase)) throw new Error(`Codex review requires a verify/integrate task; got ${phase}`);
+  if (role === "execute" && phase !== "execute") throw new Error(`Codex execution requires an approved Execute task; got ${phase}`);
 }
 
 function textFile(file: string): string {
@@ -144,9 +147,9 @@ function textFile(file: string): string {
 }
 
 function roleBoundary(role: CodexBridgeRole): string {
-  return role === "plan"
-    ? "Planning may update Pactile planning artifacts, but must not edit product code or approve Execute."
-    : "Review is read-only: inspect the change set and evidence, report findings, and do not alter code or declare acceptance.";
+  if (role === "plan") return "Planning may update Pactile planning artifacts, but must not edit product code or approve Execute.";
+  if (role === "review") return "Review is read-only: inspect the change set and evidence, report findings, and do not alter code or declare acceptance.";
+  return "Implement only the approved Execute contract and write set. Do not commit, integrate, archive, change Kernel approval, or declare acceptance.";
 }
 
 export function prepareCodexRequest(input: {
@@ -157,13 +160,22 @@ export function prepareCodexRequest(input: {
   const context = taskContext(input.root, input.task);
   const bound = input.threadId ? boundThreads(context.dir).get(input.threadId) : undefined;
   const role = input.tool === "create_thread" ? input.role : bound?.role;
-  if (!role) throw new Error(input.tool === "create_thread" ? "--role plan|review is required" : "Thread is not bound to this Pactile task");
-  if (role !== "plan" && role !== "review") throw new Error("Codex role must be plan or review");
+  if (!role) throw new Error(input.tool === "create_thread" ? "--role plan|review|execute is required" : "Thread is not bound to this Pactile task");
+  if (role !== "plan" && role !== "review" && role !== "execute") throw new Error("Codex role must be plan, review or execute");
   if (input.tool === "create_thread" || input.tool === "send_message_to_thread") checkPhase(role, context.phase);
+  if (role === "execute" && (input.tool === "create_thread" || input.tool === "send_message_to_thread")) approvedTask(input.root, input.task, "implement");
   if ((input.tool === "wait_threads" || input.tool === "read_thread") && input.promptFile) {
     throw new Error("wait/read do not accept --prompt-file");
   }
   const prompt = input.promptFile ? textFile(input.promptFile) : null;
+  const executeScope = role === "execute" && (input.tool === "create_thread" || input.tool === "send_message_to_thread")
+    ? parallelChild(input.root, context.dir) : null;
+  const scopeLine = executeScope ? `Parent-approved write set: ${executeScope.touches.join(", ")}. Integration owner: Parent.` : "";
+  const record: unknown = JSON.parse(fs.readFileSync(path.join(context.dir, "task.json"), "utf8"));
+  const baseBranch = record && typeof record === "object" && "base_branch" in record ? (record as { base_branch?: unknown }).base_branch : null;
+  if (role === "execute" && baseBranch && (typeof baseBranch !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(baseBranch) || baseBranch.includes(".."))) {
+    throw new Error("Invalid approved base_branch for Codex Execute");
+  }
   let args: Record<string, unknown>;
   if (input.tool === "create_thread") {
     if (!prompt) throw new Error("create requires --prompt-file");
@@ -172,16 +184,18 @@ export function prepareCodexRequest(input: {
     if (targetType === "project" && (!input.projectId || !idPattern.test(input.projectId) || !["local", "worktree"].includes(input.environment ?? ""))) {
       throw new Error("project create requires --project-id and --environment local|worktree");
     }
+    if (role === "execute" && (targetType !== "project" || input.environment !== "worktree")) throw new Error("Codex Execute requires a project worktree");
     const target = targetType === "projectless" ? { type: "projectless" } :
-      { type: "project", projectId: input.projectId, environment: { type: input.environment } };
-    args = { prompt: `Pactile task: ${context.task}\nCodex role: ${role}\nKernel revision: ${context.revision}\nUse Pactile as the task lifecycle and evidence source. ${roleBoundary(role)} Do not change Kernel approval or claim acceptance from a message alone. Do not dispatch Codex subagents.\n\n${prompt}`,
+      { type: "project", projectId: input.projectId, environment: { type: input.environment,
+        ...(role === "execute" && typeof baseBranch === "string" && baseBranch ? { startingState: { type: "branch", branchName: baseBranch } } : {}) } };
+    args = { prompt: `Pactile task: ${context.task}\nCanonical Pactile task directory: ${context.dir}\nCodex role: ${role}\nKernel revision: ${context.revision}\nUse Pactile as the task lifecycle and evidence source. ${roleBoundary(role)} ${scopeLine} Do not change Kernel approval or claim acceptance from a message alone. Do not dispatch Codex subagents.\n\n${prompt}`,
       target, ...(input.title ? { title: input.title } : {}) };
   } else {
     if (!bound) throw new Error("Thread is not bound to this Pactile task");
     if (input.tool === "send_message_to_thread") {
       if (!prompt) throw new Error("message requires --prompt-file");
       args = { threadId: bound.threadId, hostId: bound.hostId,
-        prompt: `Pactile task: ${context.task}\nKernel revision: ${context.revision}\n${roleBoundary(role)}\n\n${prompt}` };
+        prompt: `Pactile task: ${context.task}\nCanonical Pactile task directory: ${context.dir}\nKernel revision: ${context.revision}\n${roleBoundary(role)} ${scopeLine}\n\n${prompt}` };
     } else if (input.tool === "wait_threads") {
       const timeoutMs = input.timeoutMs ?? 120_000;
       if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 120_000) throw new Error("wait timeout must be 0 to 120000 ms");
@@ -198,7 +212,10 @@ export function prepareCodexRequest(input: {
     thread_id: bound?.threadId ?? null, host_id: bound?.hostId ?? null,
     arguments: args, prompt_sha256: prompt ? createHash("sha256").update(prompt).digest("hex") : null,
   };
-  writeNew(requestFile(context.dir, request.request_id), request);
+  const release = role === "execute" && input.tool === "create_thread"
+    ? reserveParallelChild(input.root, context.dir, { id: request.request_id, durable: true }) : null;
+  try { writeNew(requestFile(context.dir, request.request_id), request); }
+  catch (error) { release?.(); throw error; }
   return request;
 }
 
@@ -238,6 +255,15 @@ export function recordCodexReceipt(root: string, task: string, requestId: string
     recorded_at: new Date().toISOString(), assurance: "host-reported",
   };
   writeNew(result.outcome === "queued" ? queuedPath : receiptFile(context.dir, requestId), receipt);
+  if (request.role === "execute" && request.tool === "create_thread" && result.outcome === "failed") {
+    releaseParallelChild(root, context.dir, requestId);
+  }
+  if (request.role === "execute" && request.tool === "wait_threads" && result.outcome === "ok" && status === "completed") {
+    const create = requests(context.dir).find((candidate) => candidate.tool === "create_thread" && candidate.role === "execute"
+      && fs.existsSync(receiptFile(context.dir, candidate.request_id))
+      && readJson(receiptFile(context.dir, candidate.request_id)).thread_id === threadId);
+    if (create) releaseParallelChild(root, context.dir, create.request_id);
+  }
   return receipt;
 }
 

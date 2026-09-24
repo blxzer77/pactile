@@ -55,6 +55,8 @@ Worktree creation may first return only `clientThreadId`. Record `outcome: queue
 
 Receipts have `host-reported` assurance: they record the tool's reported identity and result, not implementation or acceptance. A changed Kernel revision marks a receipt `contract_stale`; recheck the task contract. Planning requests require Open/Define/Approve; review requests require Verify/Integrate. The Node CLI cannot call desktop tools directly. Do not substitute a Codex CLI/App Server/ACP session or Codex subagent for a desktop task. If native coordination is unavailable, continue serially and record why.
 
+For an independent implementation task, use `--role execute` after its Execute approval. Creation requires `--target project --environment worktree`. The request carries the canonical absolute Pactile task path, because an App worktree may not contain ignored task state. If the approved task has `base_branch`, the request starts from that branch. A Parent Child reserves one shared parallel slot before the desktop create request; failed creation or a completed `wait_threads` receipt releases it. The native task remains user-owned. A receipt does not prove its changes were accepted; Parent review and `integrate-child` remain separate.
+
 After Pactile archives the task, `pactile codex status <task>` remains read-only available and shows the archived receipts. New requests and receipts require an active task.
 
 ## Detach

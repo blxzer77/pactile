@@ -2,7 +2,7 @@
 
 > **Purpose**: Make “parallel by default, serial by written reason” a **product** principle and an executable planning contract. After a Task is Open, first judge isolatable units; if they exist, prefer **host-native** parallel. Pactile owns declaration + integration only.
 >
-> **Not a scheduler.** No queue, no new CLI, no host-parallel replacement, no cross-platform dispatch.
+> **Bounded batch, not a generic scheduler.** `pactile parallel run` dispatches approved Pi Child tasks from a Parent manifest. Codex desktop Execute tasks continue to use native App tools plus Pactile requests and receipts.
 >
 > **Scope:** Parent/Full fan-out, independent isolatable Tasks, and independent middleware / protocol / release tracks. **Not:** Lite / single-file (spawn not required); unisolatable write-sets; HITL / `start-execution --approved` / reviewer / `integrate-child`.
 >
@@ -58,7 +58,7 @@ conflict_surface: [path/that/collides]
 # serial_reason:  # omit when parallel groups are declared
 ```
 
-These fields are **planning declarations**. CLI may round-trip them on `task-map.md` writes; nothing in Pactile auto-dispatches workers from them.
+These fields remain planning declarations. A Parent can opt into an actual bounded batch with `pactile parallel run`; dispatch checks current approval, dependencies, declared write sets, review cost and the Parent cap before launch.
 
 ---
 
@@ -80,7 +80,7 @@ This is **not** a `pactile task start-execution --check` hard fail.
 
 Activate `worker-orchestration` when — and only when — isolatable groups are already declared **and** a dispatch window is open (Execute-approved implement workers; independent research slices under Define). Parent may not silently finish children in sequence without a written `serial_reason`.
 
-HITL, `start-execution --approved`, reviewer, and `integrate-child` (`merge_limit: 1`) stay serial. Human attention: batch questions on one frontier; do not multiply confirms by N.
+HITL, `start-execution --approved`, reviewer, and `integrate-child` (`merge_limit: 1`) stay serial. Human attention: batch questions on one frontier; do not multiply confirms by N. Run `pactile parallel status <parent>` to read wall time, queue wait, recorded rework events, Child outcomes, and current integration states.
 
 ---
 
@@ -109,7 +109,7 @@ Contrast (not edited): `.pactile/tasks/archive/2026-08/08-20-08-20-byok-headless
 
 ## Non-goals
 
-- Auto parallel dispatch, queues, or new CLI
+- Unapproved automatic dispatch or a persistent general-purpose queue
 - Forcing Lite tasks into parallel agents
 - Replacing the host-native parallel surface
 - Relaxing HITL / `start-execution --approved` / reviewer-gate serial semantics
