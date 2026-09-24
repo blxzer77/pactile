@@ -68,7 +68,15 @@ jobs:
         run: pnpm lint
 
       - name: Test
+        if: runner.os != 'Windows'
         run: pnpm test
+
+      # Hosted Windows runners can exceed the default 120s per case when
+      # several init/update integration files run together. Bound concurrency
+      # and allow those filesystem-heavy cases to finish before judging them.
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: pnpm --filter @blxzer/pactile exec vitest run --maxWorkers=2 --testTimeout=240000
 
       - name: Documentation smoke
         run: pnpm docs:smoke
