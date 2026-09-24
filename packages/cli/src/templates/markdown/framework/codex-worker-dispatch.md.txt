@@ -2,7 +2,7 @@
 
 Codex work uses independent desktop tasks and cross-session messaging. The main task owns planning, integration, review, and final acceptance. Pactile does not dispatch Codex subagents.
 
-Use `pactile codex prepare <task> --tool create|message|wait|read ...` to bind a Pactile Task and its Kernel revision to a native desktop tool request. The current Codex desktop task invokes the native tool, then records its returned identity and outcome with `pactile codex receipt <task> <request-id> --result-file <file>`. Inspect `pactile codex status <task>` for pending requests, bound desktop tasks, and stale contracts. Only create a new desktop task when the user explicitly requests one.
+Use `pactile codex prepare <task> --tool create|message|wait|read ...` to bind a Pactile Task and its Kernel revision to a native desktop tool request. Roles are `plan`, `execute`, and `review`; Execute requires recorded user approval and a project worktree. The current Codex desktop task invokes the native tool, then records its returned identity and outcome with `pactile codex receipt <task> <request-id> --result-file <file>`. Inspect `pactile codex status <task>` for pending requests, bound desktop tasks, and stale contracts. An Execute Child holds its Parent's bounded dispatch slot until a completed wait receipt; failed creation releases it. Only create a new desktop task when the user explicitly requests one.
 
 Each worker receives a bounded objective, write set, and acceptance evidence. Record the destination task identity and final evidence in the parent task. A worker message alone does not prove implementation or verification.
 

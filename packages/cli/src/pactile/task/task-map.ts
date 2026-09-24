@@ -18,6 +18,7 @@ export interface TaskMap {
   contract_epoch: number;
   execution_topology: string;
   merge_limit: number;
+  parallel_limit?: number;
   children: ChildEntry[];
   stages: Record<string, unknown>[];
   integration_queue: string[];
@@ -94,7 +95,7 @@ function defaultChild(id: string): ChildEntry {
 }
 
 function renderMap(data: TaskMap, body: string): string {
-  const scalarKeys = ["parent_id", "contract_epoch", "execution_topology", "merge_limit", "serial_reason", "parallel_groups", "merge_points", "conflict_surface", "graph_authority", "topology_kind"];
+  const scalarKeys = ["parent_id", "contract_epoch", "execution_topology", "merge_limit", "parallel_limit", "serial_reason", "parallel_groups", "merge_points", "conflict_surface", "graph_authority", "topology_kind"];
   const lines: string[] = ["---"];
   for (const key of scalarKeys) if (data[key] !== undefined && data[key] !== null) lines.push(`${key}: ${renderValue(data[key])}`);
   lines.push("children:");
@@ -163,7 +164,7 @@ export function childStateErrors(parentDir: string, parent: PactileTaskRecord, c
     const dependencies = Array.isArray(raw.depends_on) ? raw.depends_on.filter((item): item is string => typeof item === "string") : [];
     for (const dependency of dependencies) {
       const target = data.children.find((item) => item.id === dependency || item.id.endsWith(`-${dependency}`));
-      if (!target || !["integrated", "cancelled"].includes(target.state)) errors.push(`requires unmet: ${dependency}`);
+      if (target?.state !== "integrated") errors.push(`requires unmet: ${dependency}`);
     }
   }
   return errors;

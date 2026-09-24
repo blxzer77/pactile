@@ -23,6 +23,7 @@ import { PACKAGE_NAME, VERSION } from "../constants/version.js";
 import { runKernelJsonCli } from "../core/task/index.js";
 import { runTaskCli } from "../commands/task.js";
 import { runPiCli } from "../commands/pi.js";
+import { runParallelCli } from "../commands/parallel.js";
 import { runCodexCli } from "../commands/codex.js";
 import { runContextCli } from "../commands/context.js";
 import { runSessionCli } from "../commands/session.js";
@@ -514,6 +515,18 @@ program
   .argument("[arguments...]")
   .action(async () => {
     process.exitCode = await runPiCli(process.argv.slice(3));
+  });
+
+program
+  .command("parallel")
+  .description("Run approved Parent Child tasks with bounded Pi concurrency")
+  .addHelpText("after", "\n  run <parent> --manifest <file> | status <parent>\n")
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[operation]")
+  .argument("[arguments...]")
+  .action(async () => {
+    process.exitCode = await runParallelCli(process.argv.slice(3));
   });
 
 program

@@ -1,10 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { readKernel } from "../../core/task/index.js";
+import { readDependencyGraph, readKernel, unmetRequires } from "../../core/task/index.js";
 import { readStrategyContract } from "../task/strategy.js";
 import { checkStartExecution } from "../task/guards.js";
 import { resolveTaskDir } from "../task/session.js";
+import { parallelChild, reserveParallelChild, updateParallelChildPid } from "../parallel/policy.js";
 import { PiRpcClient, type PiRpcLaunch } from "./rpc.js";
 
 export type PiRunOutcome = "settled" | "needs_review" | "failed" | "cancelled" | "timed_out" | "interrupted";
@@ -90,7 +92,7 @@ function evidenceEvent(event: Record<string, unknown>): Record<string, unknown> 
   return safe;
 }
 
-function approvedTask(root: string, reference: string, role: PiRunInput["role"]): string {
+export function approvedTask(root: string, reference: string, role: PiRunInput["role"]): string {
   const dir = resolveTaskDir(root, reference);
   if (!fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`Task not found: ${reference}`);
   const { kernel } = readKernel({ taskDir: dir, cwd: root });
@@ -103,11 +105,16 @@ function approvedTask(root: string, reference: string, role: PiRunInput["role"])
   }
   const stamp = approval as Record<string, unknown>;
   const current = kernel.projection.record;
+  const satisfied = Array.isArray(kernel.projection.extras.dependency_satisfied)
+    ? kernel.projection.extras.dependency_satisfied.filter((item): item is string => typeof item === "string") : [];
+  const unmet = unmetRequires(readDependencyGraph(kernel.projection.extras), satisfied, current.id);
+  if (unmet.length) throw new Error(`requires unmet: ${unmet.join(", ")}`);
   const fingerprints = [current, { ...current, status: "planning" }]
     .map((candidate) => checkStartExecution(root, dir, candidate))
     .some((guard) => guard.contractFingerprint === stamp.contract_fingerprint && guard.artifactFingerprint === stamp.artifact_fingerprint);
   if (!fingerprints) throw new Error("Execution contract changed after approval; return to Define and renew approval");
   const implementation = path.join(dir, "implement.md");
+  if (role === "implement" && !fs.existsSync(implementation)) throw new Error("Pi implement dispatch requires implement.md");
   if (fs.existsSync(implementation)) {
     const parsed = readStrategyContract(dir);
     if (parsed.errors.length) throw new Error(`Invalid execution contract: ${parsed.errors.join("; ")}`);
@@ -119,22 +126,53 @@ function approvedTask(root: string, reference: string, role: PiRunInput["role"])
   return dir;
 }
 
+/** Resolve the approved execution location; never claim worktree isolation in the project root. */
+export function piWorkdir(root: string, dir: string, role: PiRunInput["role"]): string {
+  if (role !== "implement" && !fs.existsSync(path.join(dir, "implement.md"))) return root;
+  const parsed = readStrategyContract(dir);
+  if (parsed.errors.length || !parsed.contract) throw new Error(`Invalid execution contract: ${parsed.errors.join("; ")}`);
+  if (parsed.contract.isolation === "main-worktree") return root;
+  const task: unknown = JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8"));
+  const worktreePath = task && typeof task === "object" && "worktree_path" in task ? (task as { worktree_path?: unknown }).worktree_path : null;
+  if (typeof worktreePath !== "string") throw new Error("git-worktree isolation requires a prepared Child worktree");
+  const worktrees = path.resolve(root, ".pactile", "worktrees");
+  const candidate = path.resolve(root, worktreePath);
+  const relative = path.relative(worktrees, candidate);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Child worktree must stay under .pactile/worktrees");
+  if (!fs.statSync(candidate, { throwIfNoEntry: false })?.isDirectory()) throw new Error("Child worktree directory is missing");
+  const realRoot = fs.realpathSync(worktrees);
+  const realCandidate = fs.realpathSync(candidate);
+  const realRelative = path.relative(realRoot, realCandidate);
+  if (!realRelative || realRelative.startsWith("..") || path.isAbsolute(realRelative)) throw new Error("Child worktree resolves outside .pactile/worktrees");
+  let gitRoot: string;
+  try {
+    gitRoot = execFileSync("git", ["-c", `safe.directory=${realCandidate.replaceAll("\\", "/")}`, "-C", realCandidate, "rev-parse", "--show-toplevel"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  } catch { throw new Error("Child worktree is not a usable Git checkout"); }
+  const match = process.platform === "win32" ? path.resolve(gitRoot).toLowerCase() === realCandidate.toLowerCase() : path.resolve(gitRoot) === realCandidate;
+  if (!match) throw new Error("Child worktree Git root does not match its recorded path");
+  return realCandidate;
+}
+
 /** A reusable, one-task bridge. One Pi process can serve multiple sequential runs. */
 export class PiTaskBridge {
   private client: PiRpcClient | null = null;
   private taskDir: string | null = null;
+  private workdir: string | null = null;
   private role: PiRunInput["role"] | null = null;
   private locked = false;
 
   constructor(private readonly root: string, private readonly launch?: PiRpcLaunch) {}
 
-  private async ensureClient(dir: string, role: PiRunInput["role"], resumeFile: string | null): Promise<{ client: PiRpcClient; startupMs: number; mode: "cold" | "warm" }> {
+  private async ensureClient(dir: string, workdir: string, role: PiRunInput["role"], resumeFile: string | null): Promise<{ client: PiRpcClient; startupMs: number; mode: "cold" | "warm" }> {
     if (this.client && this.taskDir !== dir) throw new Error("Pi bridge is bound to one Pactile task");
+    if (this.client && this.workdir !== workdir) throw new Error("Pi bridge cannot reuse a process in another worktree");
     if (this.client && this.role !== role) throw new Error("Pi bridge cannot reuse a process across worker roles");
     if (this.client?.isStarted) return { client: this.client, startupMs: 0, mode: "warm" };
-    const client = new PiRpcClient({ cwd: this.root, sessionDir: path.join(dir, "pi-bridge", "sessions"), launch: this.launch, readOnly: role !== "implement" });
+    const client = new PiRpcClient({ cwd: workdir, sessionDir: path.join(dir, "pi-bridge", "sessions"), launch: this.launch, readOnly: role !== "implement" });
     this.client = client;
     this.taskDir = dir;
+    this.workdir = workdir;
     this.role = role;
     const startupMs = await client.start();
     if (resumeFile) await client.switchSession(resumeFile);
@@ -147,6 +185,15 @@ export class PiTaskBridge {
     if (!Number.isInteger(input.timeoutMs) || input.timeoutMs < 1_000 || input.timeoutMs > 86_400_000) throw new Error("Pi timeout must be 1 second to 24 hours");
     if (this.locked) throw new Error("Pi bridge already has an active run");
     const dir = approvedTask(this.root, input.task, input.role);
+    const workdir = piWorkdir(this.root, dir, input.role);
+    const scope = parallelChild(this.root, dir);
+    const leaseId = randomUUID();
+    const release = reserveParallelChild(this.root, dir, { id: leaseId });
+    try { return await this.runApproved(input, dir, workdir, scope?.touches ?? null, leaseId); }
+    finally { release(); }
+  }
+
+  private async runApproved(input: PiRunInput, dir: string, workdir: string, touches: string[] | null, leaseId: string): Promise<PiRunRecord> {
     const evidence = path.join(dir, "pi-bridge");
     const lockFile = path.join(evidence, "active.json");
     const latestFile = path.join(evidence, "latest.json");
@@ -208,7 +255,8 @@ export class PiTaskBridge {
     }, 200);
     try {
       const resumeFile = input.resume ? previousSession : null;
-      const { client, startupMs, mode } = await this.ensureClient(dir, input.role, resumeFile);
+      const { client, startupMs, mode } = await this.ensureClient(dir, workdir, input.role, resumeFile);
+      updateParallelChildPid(this.root, dir, leaseId, client.pid);
       fs.writeFileSync(lockFile, JSON.stringify({ parent_pid: process.pid, child_pid: client.pid, run_id: runId }), "utf8");
       record.process_mode = mode;
       record.startup_ms = startupMs;
@@ -226,16 +274,18 @@ export class PiTaskBridge {
         fs.appendFileSync(eventFile, `${JSON.stringify(summary)}\n`, { encoding: "utf8", mode: 0o600 });
         try { input.onProgress?.(summary); } catch { /* Observers cannot change the run outcome. */ }
       });
-      const taskPath = record.task;
+      const taskPath = dir;
       const contractPath = path.join(dir, "implement.md");
       const contractExcerpt = fs.existsSync(contractPath) ? fs.readFileSync(contractPath, "utf8").slice(0, 1_200) : "(no implement.md)";
       const instructions = [
         `Pactile task: ${taskPath}`,
+        `Execution worktree: ${workdir}`,
         `Role: ${input.role}`,
         `Definition: ${taskPath}/prd.md`,
         `Evidence: ${taskPath}/verify.md`,
         "Approved execution contract excerpt:", contractExcerpt,
         "Follow the approved task contract and its write set. Do not commit, archive, finalize, or mutate Pactile Kernel state. Report evidence and unresolved issues. Do not include credentials in the final answer.",
+        touches ? `Parent-declared write set: ${touches.join(", ")}. Do not change files outside it. Parent owns integration.` : "",
         input.role === "implement" ? "Implementation may change files only inside the approved write set." : "This role is read-only; do not change files.",
         "Worker assignment:", input.prompt,
       ].join("\n\n");
@@ -280,6 +330,7 @@ export class PiTaskBridge {
     await this.client?.close();
     this.client = null;
     this.taskDir = null;
+    this.workdir = null;
     this.role = null;
   }
 }

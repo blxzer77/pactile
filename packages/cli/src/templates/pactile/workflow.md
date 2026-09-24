@@ -36,6 +36,7 @@ Start at `.pactile/framework/index.md`. Do not expand methodology here.
 - Retrieval → `.pactile/framework/retrieval-daily-guide.md`
 - Codex desktop task bridge → `.pactile/framework/codex-worker-dispatch.md` and `pactile codex prepare|receipt|status`
 - Pi Agent dispatch → `pactile pi run <task> --role implement --prompt-file <file>` (requires recorded Execute approval)
+- Parent bounded parallel batch → `pactile parallel run <parent> --manifest <file>` and `pactile parallel status <parent>`
 
 <!--
   Codex/Claude UserPromptSubmit parses [workflow-state:STATUS] blocks.

@@ -47,6 +47,8 @@ pactile codex status <task>
 
 桥接回执标记为 `host-reported`：它记录桌面工具的返回身份与结果，不代替代码审查、Pi 结果检查、AC 证据或 Kernel gate。若收到回执时 Kernel revision 已变化，回执标记 `contract_stale`，应重新核对任务契约。规划仅允许在 Open/Define/Approve；审核仅允许在 Verify/Integrate。Pi 实现派发继续由 `pactile pi run` 校验已记录的用户批准和工作契约。不要把 Codex CLI/App Server/ACP 会话当作桌面任务，也不要派发 Codex subagent。桌面原生工具不可用时在当前任务串行工作，并记录原因。
 
+独立实现任务在 Execute 批准后可选 `--role execute`；创建必须采用 `--target project --environment worktree`。请求会附带 Pactile Task 的绝对路径，因为 App 工作树不一定包含被忽略的任务状态；若已批准合同有 `base_branch`，从该分支启动。Parent Child 在准备桌面创建请求时占用一个共享并发槽；创建失败或 `wait_threads` 的完成回执释放该槽。桌面任务归用户所有。回执并不证明代码已验收，Parent 仍需单独审核并逐个 `integrate-child`。
+
 Pactile 归档任务后，`pactile codex status <task>` 仍可只读查看归档回执；新请求和回执只允许写入活动任务。
 
 ## 分离
