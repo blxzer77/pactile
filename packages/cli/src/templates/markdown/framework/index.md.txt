@@ -6,7 +6,7 @@ These framework-owned files are refreshed by `pactile update` with conflict revi
 | --- | --- |
 | [prd-grill-frontier.md](./prd-grill-frontier.md) | Requirements and planning questions |
 | [dogfood-only-surfaces.md](./dogfood-only-surfaces.md) | Product versus maintainer-local files |
-| [codex-worker-dispatch.md](./codex-worker-dispatch.md) | Current Codex worker boundary and planned bridge |
+| [codex-worker-dispatch.md](./codex-worker-dispatch.md) | Codex desktop task request/receipt bridge and worker boundary |
 | [retrieval-daily-guide.md](./retrieval-daily-guide.md) | Source search and evidence routing |
 | [parallel-first-execution.md](./parallel-first-execution.md) | Parallel work declarations |
 | [middleware-protocol.md](./middleware-protocol.md) | Middleware overlay and provider contracts |

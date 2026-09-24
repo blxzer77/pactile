@@ -104,8 +104,8 @@ max_journal_lines: 2000
 #   command: smart-search
 
 #-------------------------------------------------------------------------------
-# Codex worker dispatch (documentation only — no Pactile-side switch)
+# Codex desktop task bridge (CLI and App-native tools; no config switch)
 #-------------------------------------------------------------------------------
-# The planned `worker` binding uses independent Codex desktop tasks and
-# cross-session messages. No bridge setting is active yet. Pactile does not
-# dispatch Codex subagents. See .pactile/framework/codex-worker-dispatch.md.
+# Use `pactile codex prepare|receipt|status` for native desktop task requests
+# and host-reported receipts. Pactile does not dispatch Codex subagents. See
+# .pactile/framework/codex-worker-dispatch.md.

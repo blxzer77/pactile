@@ -32,7 +32,7 @@ const DOGFOOD_FIXTURE = path.join(
   "pactile",
   "dogfood",
 );
-const MAX_OUTPUT_CHARS = 2400;
+const MAX_OUTPUT_CHARS = 4000;
 const COMMAND_TIMEOUT_MS = 120_000;
 
 const REQUIRED_COMMANDS = new Set([

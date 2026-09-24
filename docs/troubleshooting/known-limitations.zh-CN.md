@@ -4,7 +4,7 @@
 
 以下是明确边界，不是隐藏失败：
 
-- Codex 桌面任务协作仍是后续工作。Pi RPC 桥接要求另行安装、配置 `pi`；Pactile 不安装模型或 Provider 凭据。
+- Codex 桌面任务协作需要当前桌面任务调用 App 原生工具；Node CLI 只准备并记录请求。Pi RPC 桥接要求另行安装、配置 `pi`；Pactile 不安装模型或 Provider 凭据。
 - Pactile 不安装或授权可选 MCP 与检索 Provider。readiness 缺失可以诚实地是 `unsupported` 或 `degraded`。
 - Provider 结果在源码、Git、测试或受限 receipt 佐证前只是候选。
 - detach 与 uninstall 保留 canonical 状态；只有显式确认的 purge 才删除 canonical target 集。

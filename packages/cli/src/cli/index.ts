@@ -23,6 +23,7 @@ import { PACKAGE_NAME, VERSION } from "../constants/version.js";
 import { runKernelJsonCli } from "../core/task/index.js";
 import { runTaskCli } from "../commands/task.js";
 import { runPiCli } from "../commands/pi.js";
+import { runCodexCli } from "../commands/codex.js";
 import { runContextCli } from "../commands/context.js";
 import { runSessionCli } from "../commands/session.js";
 import {
@@ -489,6 +490,18 @@ program
   .argument("[arguments...]")
   .action(() => {
     process.exitCode = runSessionCli(process.argv.slice(3));
+  });
+
+program
+  .command("codex")
+  .description("Bridge Pactile tasks to native Codex desktop tasks")
+  .addHelpText("after", "\n  prepare <task> --tool create|message|wait|read [options]\n  receipt <task> <request-id> --result-file <file>\n  status <task>\n")
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[operation]")
+  .argument("[arguments...]")
+  .action(() => {
+    process.exitCode = runCodexCli(process.argv.slice(3));
   });
 
 program

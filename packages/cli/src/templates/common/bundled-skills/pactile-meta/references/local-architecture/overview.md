@@ -4,4 +4,4 @@
 
 Task artifacts contain requirements and evidence. Project rules belong in `.pactile/spec/`. A host integration is ready only after observed readiness and projection checks, not merely because a directory exists.
 
-The planned Codex cross-session bridge will connect task lifecycle to independent desktop tasks. It is not part of the current project-file projection.
+The Codex cross-session bridge connects independent desktop tasks to Pactile Task lifecycle through Node request and receipt records. The App host invokes its native tools; this bridge is separate from project-file projection.

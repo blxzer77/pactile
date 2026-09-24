@@ -4,9 +4,10 @@ English | [简体中文](known-limitations.zh-CN.md)
 
 These are explicit boundaries, not hidden failures:
 
-- Codex desktop task coordination is planned. The Pi RPC bridge requires an
-  independently installed and configured `pi` executable; it does not install
-  models or provider credentials.
+- Codex desktop task coordination requires the current desktop task to call
+  native App tools; the Node CLI only prepares and records requests. The Pi
+  RPC bridge requires an independently installed and configured `pi`
+  executable; it does not install models or provider credentials.
 - Optional MCP and retrieval Providers are not installed or authorized by
   Pactile. Missing readiness is a valid `unsupported` or `degraded` result.
 - A Provider result is a candidate until source, Git, tests, or a bounded

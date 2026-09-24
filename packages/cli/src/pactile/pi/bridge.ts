@@ -67,14 +67,15 @@ function redact(text: string): string {
     .replace(/\b(api[_-]?key|token|password|secret)\s*[:=]\s*\S+/gi, "$1=[redacted]");
 }
 
-function assistantText(event: Record<string, unknown>): { text: string; stopReason: string | null } {
+function assistantText(event: Record<string, unknown>): { text: string; stopReason: string | null; errorMessage: string | null } {
   const messages = Array.isArray(event.messages) ? event.messages : [];
   const assistant = [...messages].reverse().find((message) => message && typeof message === "object" && (message as Record<string, unknown>).role === "assistant") as Record<string, unknown> | undefined;
-  if (!assistant) return { text: "", stopReason: null };
+  if (!assistant) return { text: "", stopReason: null, errorMessage: null };
   const content = Array.isArray(assistant.content) ? assistant.content : [];
   const text = content.filter((part) => part && typeof part === "object" && (part as Record<string, unknown>).type === "text")
     .map((part) => String((part as Record<string, unknown>).text ?? "")).join("\n");
-  return { text: redact(text), stopReason: typeof assistant.stopReason === "string" ? assistant.stopReason : null };
+  return { text: redact(text), stopReason: typeof assistant.stopReason === "string" ? assistant.stopReason : null,
+    errorMessage: typeof assistant.errorMessage === "string" ? redact(assistant.errorMessage).slice(0, 500) : null };
 }
 
 function evidenceEvent(event: Record<string, unknown>): Record<string, unknown> {
@@ -240,9 +241,9 @@ export class PiTaskBridge {
       ].join("\n\n");
       const result = await client.prompt(instructions, input.timeoutMs, controller.signal);
       record.first_event_ms = result.firstEventMs;
-      const { text, stopReason } = assistantText(result.event);
+      const { text, stopReason, errorMessage } = assistantText(result.event);
       record.outcome = stopReason === "stop" && text && !record.tool_errors ? "settled" : "needs_review";
-      if (stopReason && stopReason !== "stop") record.reason = `Pi stopReason=${stopReason}`;
+      if (stopReason && stopReason !== "stop") record.reason = `Pi stopReason=${stopReason}${errorMessage ? `; ${errorMessage}` : ""}`;
       const resultFile = path.join(evidence, "results", `${runId}.md`);
       fs.mkdirSync(path.dirname(resultFile), { recursive: true });
       fs.writeFileSync(resultFile, `${text || "(Pi returned no assistant text.)"}\n`, { encoding: "utf8", mode: 0o600 });
