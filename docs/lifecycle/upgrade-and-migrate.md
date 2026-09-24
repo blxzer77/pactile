@@ -47,9 +47,11 @@ never included in the active Node generation. The update does not run Python,
 and user tasks, specs, middleware, and foreign files remain outside the
 replacement set.
 
-The unpublished `0.5.1-beta.0` pool preset is part of the `0.6.0` migration
-manifest. Only three old skeleton paths are candidates for hash-checked
-deletion: `.pactile/pool/README.md`, `.pactile/pool/plan.md`, and
+The unpublished `0.5.1-beta.0` pool preset is part of the `0.6.0-beta.1`
+migration manifest, also shipped with stable `0.6.0`. It runs for both direct
+`0.5.0` to stable upgrades and beta upgrades, without repeating during
+beta-to-stable upgrades. Only three old skeleton paths are candidates for
+hash-checked deletion: `.pactile/pool/README.md`, `.pactile/pool/plan.md`, and
 `.pactile/pool/items/.gitkeep`. User-written pool items are never targeted.
 There is no separate `0.5.1-beta.0` upgrade step.
 

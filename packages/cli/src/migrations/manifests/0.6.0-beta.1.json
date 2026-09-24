@@ -1,0 +1,35 @@
+{
+  "version": "0.6.0-beta.1",
+  "description": "Existing Pactile installations move from generated Python task entrypoints to the Node CLI. The unpublished 0.5.1-beta.0 review-pool cleanup is included in this beta. Installed Python scripts are inventoried at update time because their recorded hashes vary by version and platform.",
+  "breaking": true,
+  "recommendMigrate": false,
+  "changelog": "Node.js is the only required runtime. Run `pactile update --dry-run --json` to review replacements and legacy scripts, then `pactile update --skip-all --json` to preserve locally modified files while applying unchanged templates. Hash-verified retired Python files are removed after the Node generation is active; modified, skipped and unclaimed files remain on disk but are excluded from active generations. The retired review-pool skeleton is deleted only when its content matches a known Pactile template hash; user-authored pool items are preserved.",
+  "migrations": [
+    {
+      "type": "safe-file-delete",
+      "from": ".pactile/pool/README.md",
+      "description": "Retired review-pool documentation skeleton",
+      "allowed_hashes": [
+        "0a220c36b47b2208b2fec32232e9bdcb684b5d991e177f8a3bbd75c67fe59d14",
+        "d39880529889c651610f5fd8cc451b9dc39d89873cf5b609ffda6e9ad9e5996d"
+      ]
+    },
+    {
+      "type": "safe-file-delete",
+      "from": ".pactile/pool/plan.md",
+      "description": "Retired review-pool plan skeleton",
+      "allowed_hashes": [
+        "34a4c4c341450c52b05d9f6a8d51d095f73315194f87948adddbb9fbd5cd0f48"
+      ]
+    },
+    {
+      "type": "safe-file-delete",
+      "from": ".pactile/pool/items/.gitkeep",
+      "description": "Retired review-pool items placeholder; user items are never targeted",
+      "allowed_hashes": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ]
+    }
+  ],
+  "notes": "The pool migrations came from the unpublished 0.5.1-beta.0 preset. Hashes cover the original platform variants after CRLF normalization. No user-authored .pactile/pool/items/*.md is targeted. This manifest is preserved in stable 0.6.0 for direct upgrade paths."
+}

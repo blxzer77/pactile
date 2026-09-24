@@ -35,7 +35,9 @@ pactile task list
 保留下来的 `.pactile/scripts/*.py` 不会进入活动 Node generation。更新过程
 不运行 Python，用户任务、spec、middleware 和外来文件不在替换范围内。
 
-未发布的 `0.5.1-beta.0` pool 预置迁移已并入 `0.6.0` 清单。只有旧骨架的三个
+未发布的 `0.5.1-beta.0` pool 预置迁移已并入 `0.6.0-beta.1` 清单，正式版
+`0.6.0` 也保留该清单。从 `0.5.0` 直接升级正式版或升级 beta 都会执行，
+从 beta 升级正式版不会重复执行。只有旧骨架的三个
 路径是哈希校验后的删除候选：`.pactile/pool/README.md`、
 `.pactile/pool/plan.md`、`.pactile/pool/items/.gitkeep`。用户编写的 pool
 条目不在目标内，也无需先执行独立的 `0.5.1-beta.0` 升级。

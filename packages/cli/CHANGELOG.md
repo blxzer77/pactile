@@ -22,17 +22,29 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 - Codex is the supported host projection. Pi is the initial worker Agent;
   Pactile binds its runs to approved tasks and records bounded evidence.
   Codex desktop calls remain host native and require a recorded receipt.
-- The unpublished `0.5.1-beta.0` pool cleanup is folded into the `0.6.0`
-  migration manifest. It deletes only hash-matched pool skeleton files and
-  never targets user-authored pool items.
+- The unpublished `0.5.1-beta.0` pool cleanup is folded into the
+  `0.6.0-beta.1` migration manifest, which is retained in stable `0.6.0`.
+  It deletes only hash-matched pool skeleton files and never targets
+  user-authored pool items.
 - One npm package, `@blxzer/pactile`, includes CLI and Core. The release gate
   checks the sealed tarball, a Python-free Node path, installed task lifecycle,
   simulated Pi/Codex bridges, and bounded parallel dispatch. Live Pi provider
   and desktop-host acceptance are recorded separately.
 
-This entry describes the development target. No v0.6.0 package or tag has been
-published yet. Follow the [upgrade guide](../../docs/lifecycle/upgrade-and-migrate.md)
+This entry describes the development target. No stable v0.6.0 package or tag has
+been published yet. Follow the [upgrade guide](../../docs/lifecycle/upgrade-and-migrate.md)
 and [release procedure](../../docs/governance/releasing.md) for acceptance.
+
+---
+
+## [0.6.0-beta.1] - 2026-09-25
+
+First beta of the Node-only Pactile workflow and single-package release path.
+It includes the Codex desktop request/receipt bridge, the Pi RPC bridge,
+bounded parallel dispatch, and the migration from generated Python task
+entrypoints. The review-pool cleanup runs only for hash-matched skeleton files.
+The simulated Pi and Codex checks in the release gate do not attest to a live
+model provider or desktop-host run.
 
 ---
 
