@@ -34,7 +34,8 @@ Start at `.pactile/framework/index.md`. Do not expand methodology here.
 - Parallel first → `.pactile/framework/parallel-first-execution.md`
 - Full Quality / graded verify → `.pactile/framework/verification-strength-guide.md`
 - Retrieval → `.pactile/framework/retrieval-daily-guide.md`
-- Worker dispatch → `.pactile/framework/codex-worker-dispatch.md` (manual until the bridge is implemented)
+- Codex task dispatch → `.pactile/framework/codex-worker-dispatch.md` (manual until its desktop bridge is implemented)
+- Pi Agent dispatch → `pactile pi run <task> --role implement --prompt-file <file>` (requires recorded Execute approval)
 
 <!--
   Codex/Claude UserPromptSubmit parses [workflow-state:STATUS] blocks.

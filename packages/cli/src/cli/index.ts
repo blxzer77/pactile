@@ -22,6 +22,7 @@ import { isWorkflowInitialized, workflowPath } from "../utils/workflow-dir.js";
 import { PACKAGE_NAME, VERSION } from "../constants/version.js";
 import { runKernelJsonCli } from "../core/task/index.js";
 import { runTaskCli } from "../commands/task.js";
+import { runPiCli } from "../commands/pi.js";
 import { runContextCli } from "../commands/context.js";
 import { runSessionCli } from "../commands/session.js";
 import {
@@ -488,6 +489,18 @@ program
   .argument("[arguments...]")
   .action(() => {
     process.exitCode = runSessionCli(process.argv.slice(3));
+  });
+
+program
+  .command("pi")
+  .description("Run an approved Pactile task through Pi native RPC")
+  .addHelpText("after", "\n  run <task> --role implement|check|research --prompt-file <file> [--prompt-file <file> ...] [--timeout-ms <ms>] [--resume]\n  status <task> | cancel <task>\n")
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[operation]")
+  .argument("[arguments...]")
+  .action(async () => {
+    process.exitCode = await runPiCli(process.argv.slice(3));
   });
 
 program
