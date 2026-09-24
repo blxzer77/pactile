@@ -73,16 +73,11 @@ Canonical generation 在宿主协调前提交。失败的 Adapter 保留可重�
 
 详细说明见[生命周期](../../docs/lifecycle/index.zh-CN.md)、[恢复](../../docs/troubleshooting/recovery.zh-CN.md)和 [Projection 与 Ownership](../../docs/concepts/projection-and-ownership.zh-CN.md)。
 
-## 包关系
+## 包
 
-| 包                     | 角色                                                |
-| ---------------------- | --------------------------------------------------- |
-| `@blxzer/pactile`      | Canonical CLI、Adapters、模板、生命周期与项目集成。 |
-| `@blxzer/pactile-core` | Canonical 严格契约与宿主无关原语。                  |
-| 旧 CLI bridge          | 0.5.x 临时兼容包，委托给本 CLI。                    |
-| 旧 Core bridge         | 0.5.x 临时兼容包，重新导出 canonical Core。         |
-
-打包后的内部依赖必须是精确发布版本，不能残留 workspace protocol。发布 CLI 暴露 `pactile`；兼容 executable 不是推荐入口。
+v0.6.0 只发布 `@blxzer/pactile`。tarball 内含 CLI、Adapters、模板、生命周期和
+Core 任务/契约 API；不依赖外部 `@blxzer/pactile-core`，也不含 workspace
+协议。`pactile` 是推荐命令；旧命令拼写仅作为已有安装的提示性别名。
 
 ## 程序化导出
 
@@ -92,7 +87,9 @@ import { VERSION, listPactilePlatforms } from "@blxzer/pactile";
 console.log(VERSION, listPactilePlatforms());
 ```
 
-根导出提供受支持的库接口。`./cli` 是 package bridge 使用的 executable 入口，`./compat` 仅供这一临时 bridge，`./package.json` 供工具读取。宿主无关契约应从 `@blxzer/pactile-core` 及其已记录的 subpath 导入。
+根导出提供受支持的库接口，`./cli` 是可执行入口，`./package.json` 供工具
+读取。宿主无关契约从 `@blxzer/pactile/core` 或
+`@blxzer/pactile/core/task` 导入。
 
 ## 安全边界
 

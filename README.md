@@ -81,14 +81,11 @@ Migration inputs are read-only. Modified, foreign, unknown, or borrowed resource
 
 ## Packages
 
-| Package                | Status                                        | Purpose                                                       |
-| ---------------------- | --------------------------------------------- | ------------------------------------------------------------- |
-| `@blxzer/pactile`      | Canonical                                     | CLI, adapters, templates, lifecycle, and project integration. |
-| `@blxzer/pactile-core` | Canonical                                     | Strict host-neutral contracts and domain primitives.          |
-| Legacy CLI bridge      | Deprecated for the 0.5.x compatibility window | Delegates to the canonical CLI and emits a migration warning. |
-| Legacy core bridge     | Deprecated for the 0.5.x compatibility window | Re-exports canonical core contracts.                          |
-
-New documentation and automation should use only the canonical package and executable names. Historical release facts remain unchanged in the changelog.
+`@blxzer/pactile` is the single release package. It includes the CLI, templates,
+adapters, lifecycle, and host-neutral Core contracts. Import those contracts
+from `@blxzer/pactile/core` or `@blxzer/pactile/core/task`. The separate Core
+and legacy bridge packages remain only as previously published 0.5.x history;
+v0.6.0 does not publish them. Historical release facts remain in the changelog.
 
 ## Documentation
 

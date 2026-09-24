@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { parseMigrationJournalV1 } from "@blxzer/pactile-core";
+import { parseMigrationJournalV1 } from "../../core/index.js";
 
 export interface LegacyInitContext {
   readonly importedDeveloperFilePresent: boolean;

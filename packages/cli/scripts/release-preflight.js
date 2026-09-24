@@ -14,46 +14,36 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "../../..");
-const CORE_PKG = path.join(REPO_ROOT, "packages/core/package.json");
 const CLI_PKG = path.join(REPO_ROOT, "packages/cli/package.json");
-const LEGACY_CORE_PKG = path.join(
-  REPO_ROOT,
-  "packages/cursor-trellis-core-shim/package.json",
-);
-const LEGACY_CLI_PKG = path.join(
-  REPO_ROOT,
-  "packages/cursor-trellis-shim/package.json",
-);
 const CORE_DEPENDENCY = "@blxzer/pactile-core";
-const CLI_DEPENDENCY = "@blxzer/pactile";
+const LEGACY_DEPENDENCIES = [
+  CORE_DEPENDENCY,
+  "@blxzer/cursor-trellis-core",
+  "@blxzer/cursor-trellis",
+];
 
 function readJSON(file) {
   return JSON.parse(fs.readFileSync(file, "utf-8"));
 }
 
 export function readVersions() {
-  const core = readJSON(CORE_PKG);
   const cli = readJSON(CLI_PKG);
-  const legacyCore = readJSON(LEGACY_CORE_PKG);
-  const legacyCli = readJSON(LEGACY_CLI_PKG);
+  const packageRoot = path.join(REPO_ROOT, "packages");
+  const otherPublicPackages = fs.readdirSync(packageRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name !== "cli")
+    .map((entry) => path.join(packageRoot, entry.name, "package.json"))
+    .filter((file) => fs.existsSync(file) && readJSON(file).private !== true);
+  if (otherPublicPackages.length > 0) {
+    throw new Error(`Single-package release rejects other public packages: ${otherPublicPackages.join(", ")}`);
+  }
+  validatePackedCliPackage(cli, cli.version);
   return {
-    coreName: core.name,
-    coreVersion: core.version,
     cliName: cli.name,
     cliVersion: cli.version,
-    legacyCoreName: legacyCore.name,
-    legacyCoreVersion: legacyCore.version,
-    legacyCliName: legacyCli.name,
-    legacyCliVersion: legacyCli.version,
   };
 }
 
-export const RELEASE_PACKAGE_DAG = [
-  { key: "core", dependsOn: [] },
-  { key: "cli", dependsOn: ["core"] },
-  { key: "legacyCore", dependsOn: ["cli"] },
-  { key: "legacyCli", dependsOn: ["legacyCore"] },
-];
+export const RELEASE_PACKAGE_DAG = [{ key: "cli", dependsOn: [] }];
 
 export function assertReleasePackageOrder(order) {
   const expectedKeys = RELEASE_PACKAGE_DAG.map((node) => node.key);
@@ -91,49 +81,24 @@ export function assertReleasePackageOrder(order) {
 }
 
 export function releasePackageDefinitions(versions) {
-  const definitions = {
-    core: {
-      key: "core",
-      name: versions.coreName,
-      version: versions.coreVersion,
-    },
-    cli: {
-      key: "cli",
-      name: versions.cliName,
-      version: versions.cliVersion,
-    },
-    legacyCore: {
-      key: "legacyCore",
-      name: versions.legacyCoreName,
-      version: versions.legacyCoreVersion,
-    },
-    legacyCli: {
-      key: "legacyCli",
-      name: versions.legacyCliName,
-      version: versions.legacyCliVersion,
-    },
-  };
-  const order = assertReleasePackageOrder(
-    RELEASE_PACKAGE_DAG.map((node) => node.key),
-  );
-  return order.map((key) => definitions[key]);
+  assertMatchingVersions(versions);
+  assertReleasePackageOrder(["cli"]);
+  return [{ key: "cli", name: versions.cliName, version: versions.cliVersion }];
 }
 
 export function computeNpmTag(version) {
   if (/-beta\./.test(version)) return "beta";
-  if (/-rc\./.test(version)) return "rc";
-  if (/-alpha\./.test(version)) return "alpha";
-  return "latest";
+  if (/-rc\.|-alpha\./.test(version)) {
+    throw new Error("v0.6.0 release workflow supports beta and stable versions only.");
+  }
+  return "candidate";
 }
 
 /**
  * Resolve the npm dist-tag sealed into a release artifact.
  *
- * Prereleases always use their channel tag. A stable release normally uses
- * `latest`, but may be staged under the single explicitly supported
- * temporary tag `candidate`; promotion is a separate, manually authorized
- * operation. Keeping the allowlist here prevents an arbitrary CLI argument
- * from redirecting a stable package to an unexpected public channel.
+ * Beta tags publish to beta and stable tags publish to candidate. Only the
+ * separately authorized manual promotion job can move candidate to latest.
  */
 export function resolveNpmTag(version, explicitTag) {
   const defaultTag = computeNpmTag(version);
@@ -148,21 +113,12 @@ export function resolveNpmTag(version, explicitTag) {
       `Invalid npm dist-tag "${String(explicitTag)}". Expected a simple npm tag name.`,
     );
   }
-  if (defaultTag !== "latest") {
-    if (explicitTag !== defaultTag) {
-      throw new Error(
-        `Npm dist-tag override "${explicitTag}" is not allowed for ${version}; ` +
-          `prereleases must use "${defaultTag}".`,
-      );
-    }
-    return defaultTag;
-  }
-  if (explicitTag !== "candidate" && explicitTag !== "latest") {
+  if (explicitTag !== defaultTag) {
     throw new Error(
-      `Stable releases may use only "candidate" or "latest" as the npm dist-tag, not "${explicitTag}".`,
+      `Npm dist-tag "${explicitTag}" is not allowed for ${version}; expected "${defaultTag}".`,
     );
   }
-  return explicitTag;
+  return defaultTag;
 }
 
 function errorText(error) {
@@ -265,8 +221,7 @@ export function checkVersions({
   }
   if (!quiet) {
     console.log(
-      `ok versions match: ${versions.coreName}@${versions.coreVersion} = ` +
-        `${versions.cliName}@${versions.cliVersion}` +
+      `ok release package: ${versions.cliName}@${versions.cliVersion}` +
         (tag ? ` = git tag ${tag}` : ""),
     );
   }
@@ -343,24 +298,15 @@ function publishPlan({ output, npmTag, runner = createCommandRunner() }) {
       [
         `version=${plan.version}`,
         `tag=${plan.tag}`,
-        `core_publish=${plan.core.publish}`,
         `cli_publish=${plan.cli.publish}`,
-        `legacy_core_publish=${plan.legacyCore.publish}`,
-        `legacy_cli_publish=${plan.legacyCli.publish}`,
-        `core_already_on_npm=${plan.core.alreadyOnNpm}`,
         `cli_already_on_npm=${plan.cli.alreadyOnNpm}`,
-        `legacy_core_already_on_npm=${plan.legacyCore.alreadyOnNpm}`,
-        `legacy_cli_already_on_npm=${plan.legacyCli.alreadyOnNpm}`,
       ].join("\n") + "\n",
     );
   }
   const status = (pkg) => (pkg.publish ? "publish" : "skip (already on npm)");
   console.log(
     `plan for ${plan.version} -> npm tag "${plan.tag}":\n` +
-      `  ${plan.core.name}@${plan.version}: ${status(plan.core)}\n` +
-      `  ${plan.cli.name}@${plan.version}: ${status(plan.cli)}\n` +
-      `  ${plan.legacyCore.name}@${plan.version}: ${status(plan.legacyCore)}\n` +
-      `  ${plan.legacyCli.name}@${plan.version}: ${status(plan.legacyCli)}`,
+      `  ${plan.cli.name}@${plan.version}: ${status(plan.cli)}`,
   );
   return plan;
 }
@@ -417,11 +363,21 @@ export function assertPackedManifestUsesSemver(packedPackage) {
 export function validatePackedCliPackage(packedPackage, expectedVersion) {
   const errors = [];
   assertPackedManifestUsesSemver(packedPackage);
-  const dependency = packedPackage.dependencies?.[CORE_DEPENDENCY];
-  if (dependency !== expectedVersion) {
-    errors.push(
-      `packed CLI dependency ${CORE_DEPENDENCY} is "${dependency ?? "missing"}"; expected exact "${expectedVersion}"`,
-    );
+  if (packedPackage.name !== "@blxzer/pactile" || packedPackage.version !== expectedVersion) {
+    errors.push(`packed CLI identity must be @blxzer/pactile@${expectedVersion}`);
+  }
+  if (packedPackage.engines?.node !== ">=18.17.0") {
+    errors.push("packed Pactile must declare Node >=18.17.0");
+  }
+  for (const subpath of ["./core", "./core/task", "./core/compat"]) {
+    if (!packedPackage.exports?.[subpath]) {
+      errors.push(`packed Pactile is missing ${subpath} export`);
+    }
+  }
+  for (const dependency of LEGACY_DEPENDENCIES) {
+    if (packedPackage.dependencies?.[dependency] || packedPackage.optionalDependencies?.[dependency]) {
+      errors.push(`packed CLI must not depend on retired package ${dependency}`);
+    }
   }
   const bins = packedPackage.bin ?? {};
   if (normalizeBin(bins.pactile) !== "bin/pactile.js") {
@@ -436,34 +392,6 @@ export function validatePackedCliPackage(packedPackage, expectedVersion) {
     );
   }
   if (errors.length > 0) throw new Error(errors.join("\n"));
-}
-
-export function validatePackedShimPackage(
-  packedPackage,
-  { key, expectedVersion },
-) {
-  assertPackedManifestUsesSemver(packedPackage);
-  const dependencyName =
-    key === "legacyCore"
-      ? CORE_DEPENDENCY
-      : key === "legacyCli"
-        ? CLI_DEPENDENCY
-        : null;
-  if (!dependencyName) throw new Error(`Unknown shim package key "${key}".`);
-  const dependency = packedPackage.dependencies?.[dependencyName];
-  if (dependency !== expectedVersion) {
-    throw new Error(
-      `packed ${key} dependency ${dependencyName} is "${dependency ?? "missing"}"; expected exact "${expectedVersion}"`,
-    );
-  }
-  if (
-    key === "legacyCli" &&
-    normalizeBin(packedPackage.bin?.cstl) !== "bin/cstl.js"
-  ) {
-    throw new Error(
-      `packed legacy CLI bin "cstl" does not resolve to bin/cstl.js`,
-    );
-  }
 }
 
 export function verifyPackedCli({
@@ -490,7 +418,7 @@ export function verifyPackedCli({
     );
     validatePackedCliPackage(packedPackage, versions.cliVersion);
     console.log(
-      `ok packed CLI pins ${CORE_DEPENDENCY} to ${versions.cliVersion} and exposes canonical plus compatibility bins.`,
+      `ok packed ${versions.cliName}@${versions.cliVersion} has no external Core dependency and exposes its bins.`,
     );
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
@@ -507,6 +435,7 @@ async function verifyNpm({
   const packages = releasePackageDefinitions(versions).filter(
     (pkg) => packageFilter === "all" || pkg.key === packageFilter,
   );
+  if (packages.length !== 1) throw new Error(`Unknown release package ${packageFilter}.`);
 
   for (const pkg of packages) {
     await retry(`${pkg.name}@${versions.cliVersion}`, () => {
@@ -550,9 +479,9 @@ async function main() {
         "  check-versions [--require-tag] [--tag pactile-vX.Y.Z]\n" +
         "  check-provenance [--tag pactile-vX.Y.Z] [--remote origin]\n" +
         "  npm-tag\n" +
-        "  publish-plan [--json|--github] [--npm-tag candidate|latest|beta|rc|alpha]\n" +
+        "  publish-plan [--json|--github] [--npm-tag candidate|beta]\n" +
         "  verify-packed-cli\n" +
-        "  verify-npm [--package all|core|cli|legacyCore|legacyCli] [--npm-tag candidate|latest|beta|rc|alpha]",
+        "  verify-npm [--package all|cli] [--npm-tag candidate|beta]",
     );
     return;
   }
@@ -594,10 +523,10 @@ async function main() {
   if (command === "verify-npm") {
     const packageFilter = optionValue(args, "--package", "all");
     if (
-      !["all", "core", "cli", "legacyCore", "legacyCli"].includes(packageFilter)
+      !["all", "cli"].includes(packageFilter)
     ) {
       throw new Error(
-        "--package must be one of: all, core, cli, legacyCore, legacyCli.",
+        "--package must be one of: all, cli.",
       );
     }
     await verifyNpm({

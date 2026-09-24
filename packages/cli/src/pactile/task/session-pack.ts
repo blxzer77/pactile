@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { readKernel, type KernelPhase } from "@blxzer/pactile-core/task";
+import { readKernel, type KernelPhase } from "../../core/task/index.js";
 import { resolveSelectedTask, resolveTaskDir } from "./session.js";
 
 const BASELINE = ["intake-basic", "define-basic", "approval-personal", "execute-agent", "verify-basic", "close-basic", "context-progressive", "observability-local"];

@@ -73,16 +73,13 @@ Canonical generation commit happens before host reconciliation. A failed adapter
 
 See the repository guides for [Lifecycle](../../docs/lifecycle/index.md), [Recovery](../../docs/troubleshooting/recovery.md), and [Projection and Ownership](../../docs/concepts/projection-and-ownership.md).
 
-## Package graph
+## Package
 
-| Package                | Role                                                                    |
-| ---------------------- | ----------------------------------------------------------------------- |
-| `@blxzer/pactile`      | Canonical CLI, adapters, templates, lifecycle, and project integration. |
-| `@blxzer/pactile-core` | Canonical strict contracts and host-neutral primitives.                 |
-| Legacy CLI bridge      | Deprecated 0.5.x compatibility package delegating to this CLI.          |
-| Legacy core bridge     | Deprecated 0.5.x compatibility package re-exporting canonical Core.     |
-
-Packed internal dependencies are exact release versions and never retain a workspace protocol. The published CLI exposes `pactile`; compatibility executables are not the preferred interface.
+`@blxzer/pactile` is the only package published for v0.6.0. Its tarball contains
+the CLI, adapters, templates, lifecycle, and Core task/contracts API. It has no
+external `@blxzer/pactile-core` dependency or workspace protocol. The `pactile`
+bin is the preferred entry; the older command spelling remains a warning
+alias for existing installations.
 
 ## Programmatic exports
 
@@ -92,7 +89,10 @@ import { VERSION, listPactilePlatforms } from "@blxzer/pactile";
 console.log(VERSION, listPactilePlatforms());
 ```
 
-The root export contains the supported library surface. `./cli` is the executable entry used by the package bridge, `./compat` is reserved for that temporary bridge, and `./package.json` is exported for tooling. For host-neutral contracts, import from `@blxzer/pactile-core` and its documented subpaths.
+The root export contains the supported library surface. `./cli` is the
+executable entry, `./package.json` is exported for tooling, and the Core
+contracts are available from `@blxzer/pactile/core` and
+`@blxzer/pactile/core/task`.
 
 ## Security boundary
 

@@ -44,7 +44,7 @@
       "id": "legacy-package-name",
       "pattern": "@blxzer/(?:cursor-trellis(?:-core)?|trellis(?:-core)?)",
       "flags": "giu",
-      "replacement": "@blxzer/pactile or @blxzer/pactile-core"
+      "replacement": "@blxzer/pactile"
     },
     {
       "id": "legacy-environment-name",
@@ -97,8 +97,8 @@
     {
       "classification": "compat",
       "pathRegex": "^packages/cli/scripts/(?:docs-smoke|release-conformance)\\.js$",
-      "reason": "These two exact conformance runners verify the supported warning alias, shared-bin collision rejection, and explicit canonical/legacy install profiles. The publish workflow remains live.",
-      "exitCondition": "Remove legacy cases with the matching 0.5.x bridge behavior; retain canonical install and output checks."
+      "reason": "These exact runners verify retained command aliases and the single-package install contract. The publish workflow remains live.",
+      "exitCondition": "Remove old alias checks when the 0.5.x command compatibility window ends."
     },
     {
       "classification": "compat",
@@ -157,14 +157,14 @@
     {
       "classification": "compat",
       "pathRegex": "^(?:\\.gitignore|pnpm-lock\\.yaml)$",
-      "reason": "Repository metadata must keep ignoring legacy roots and resolve the two 0.5.x shim packages.",
-      "exitCondition": "Remove legacy root ignores and shim lock entries when the 0.5.x compatibility window closes."
+      "reason": "Repository metadata may still ignore legacy roots but the current lockfile contains only one Pactile package.",
+      "exitCondition": "Remove legacy root ignores when the 0.5.x compatibility window closes."
     },
     {
       "classification": "compat",
       "pathRegex": "^packages/cli/(?:package\\.json|bin/(?:cstl|compat-warning)\\.js|scripts/(?:bump-versions|check-release-pack-contents|publish-packages|release-preflight|release-validation|release)\\.js)$",
-      "reason": "These exact package, bin, and release-plan surfaces carry the supported 0.5.x alias and legacy shim graph.",
-      "exitCondition": "Delete the cstl alias and two legacy package edges after the 0.5.x compatibility window."
+      "reason": "These package, bin, and release-plan surfaces retain the old command alias while publishing only Pactile.",
+      "exitCondition": "Delete the old command alias after the 0.5.x compatibility window."
     },
     {
       "classification": "compat",
@@ -192,14 +192,14 @@
     },
     {
       "classification": "compat",
-      "pathRegex": "^packages/core/src/(?:compat/environment|pactile/(?:lifecycle|runtime))\\.ts$",
-      "reason": "Core contract readers model read-only legacy roots and environment aliases alongside the canonical Pactile root.",
+      "pathRegex": "^packages/cli/src/core/(?:compat/environment|pactile/(?:lifecycle|runtime))\\.ts$",
+      "reason": "Bundled Core contract readers model read-only legacy roots and environment aliases alongside the canonical Pactile root.",
       "exitCondition": "Drop the legacy variants after the 0.5.x compatibility window and a contract-version transition."
     },
     {
       "classification": "compat",
-      "pathRegex": "^packages/core/test/(?:compat/|pactile/(?:capability-projection\\.test|lifecycle-trace\\.test|samples|validation-runtime\\.test)\\.ts$)",
-      "reason": "These exact Core fixtures prove strict legacy parsing and canonical output behavior.",
+      "pathRegex": "^packages/cli/test/core/(?:compat/|pactile/(?:capability-projection\\.test|lifecycle-trace\\.test|samples|validation-runtime\\.test)\\.ts$)",
+      "reason": "These bundled Core fixtures prove strict legacy parsing and canonical output behavior.",
       "exitCondition": "Remove legacy cases only when the matching 0.5.x reader is retired."
     },
     {
@@ -228,23 +228,23 @@
     "^scripts/"
   ],
   "baselineSnapshot": {
-    "sha256": "492db700a752a3326d0ad4df7dc3cbf51bc38a78ea9833308dc63480a3b6e8de",
-    "occurrences": 4373,
-    "files": 306,
+    "sha256": "708d7679e32112a982ae0a1732912546b82bbc98250801aed265d545dced948f",
+    "occurrences": 4247,
+    "files": 288,
     "byClassification": {
       "attribution": 3,
-      "compat": 1017,
+      "compat": 891,
       "history": 3353
     },
     "byToken": {
       "cursor-plus-plus": 165,
-      "legacy-cstl-token": 710,
+      "legacy-cstl-token": 685,
       "legacy-environment-name": 61,
       "legacy-managed-marker": 27,
-      "legacy-package-name": 236,
-      "legacy-product-name": 246,
-      "legacy-runtime-path": 309,
-      "legacy-trellis-token": 2216,
+      "legacy-package-name": 224,
+      "legacy-product-name": 203,
+      "legacy-runtime-path": 306,
+      "legacy-trellis-token": 2173,
       "upstream-runtime-path": 403
     }
   }

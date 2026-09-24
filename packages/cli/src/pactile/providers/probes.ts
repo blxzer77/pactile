@@ -1,7 +1,7 @@
 import type {
   AssuranceLevelV1,
   ProviderRuntimeFactV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 
 export const PACTILE_PROVIDER_PROBE_IDS = [
   "rg",

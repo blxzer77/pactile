@@ -81,14 +81,10 @@ Pactile 将能力来源（`native`、`provider`、`heuristic`、`unsupported`）
 
 ## 包
 
-| 包                     | 状态                      | 用途                                      |
-| ---------------------- | ------------------------- | ----------------------------------------- |
-| `@blxzer/pactile`      | Canonical                 | CLI、Adapters、模板、生命周期与项目集成。 |
-| `@blxzer/pactile-core` | Canonical                 | 严格的宿主无关契约与领域原语。            |
-| 旧 CLI bridge          | 仅在 0.5.x 兼容窗口内保留 | 委托给 canonical CLI，并输出迁移提示。    |
-| 旧 Core bridge         | 仅在 0.5.x 兼容窗口内保留 | 重新导出 canonical Core 契约。            |
-
-新文档和自动化只能使用 canonical 包名与可执行名。历史发布事实保持在 changelog 中，不做追溯性改写。
+`@blxzer/pactile` 是唯一发布包，包含 CLI、模板、Adapters、生命周期和宿主无关的
+Core 契约。程序可从 `@blxzer/pactile/core` 或 `@blxzer/pactile/core/task`
+导入这些契约。独立 Core 与旧名称桥接包只属于已经发布的 0.5.x 历史；v0.6.0
+不再发布它们。历史发布事实保留在 changelog 中。
 
 ## 文档导航
 

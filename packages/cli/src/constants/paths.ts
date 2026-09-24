@@ -5,7 +5,7 @@
  * All paths should be relative to the project root.
  */
 
-import { DEFAULT_CANONICAL_PATHS_V1 } from "@blxzer/pactile-core";
+import { DEFAULT_CANONICAL_PATHS_V1 } from "../core/index.js";
 
 /** Canonical Pactile Runtime SSOT. */
 export const PACTILE_PATHS = DEFAULT_CANONICAL_PATHS_V1;

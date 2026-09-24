@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProjectionOperationV1 } from "@blxzer/pactile-core";
+import type { ProjectionOperationV1 } from "../../../src/core/index.js";
 import { ProjectionStore } from "../../../src/pactile/projection/store.js";
 import { fingerprintBytes } from "../../../src/pactile/projection/planner.js";
 import {

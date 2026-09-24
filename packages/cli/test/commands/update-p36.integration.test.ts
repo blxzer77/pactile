@@ -9,7 +9,7 @@ import {
   emptyTaskRecord,
   isWaveCConfirmed,
   WAVE_C_STATE_REL,
-} from "@blxzer/pactile-core/task";
+} from "../../src/core/task/index.js";
 
 vi.mock("figlet", () => ({
   default: { textSync: vi.fn(() => "PACTILE") },

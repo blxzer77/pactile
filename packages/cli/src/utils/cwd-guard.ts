@@ -20,7 +20,7 @@ import * as os from "node:os";
 import {
   PACTILE_ENVIRONMENT_KEYS,
   readPactileEnvironment,
-} from "@blxzer/pactile-core";
+} from "../core/index.js";
 
 /**
  * Returns true if `process.cwd()` is exactly the user's home directory.

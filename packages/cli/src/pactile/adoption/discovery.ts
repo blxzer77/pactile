@@ -1,6 +1,6 @@
 import { lstat } from "node:fs/promises";
 import path from "node:path";
-import type { ExternalAssetRefV1 } from "@blxzer/pactile-core";
+import type { ExternalAssetRefV1 } from "../../core/index.js";
 import {
   buildInventory,
   parseContext,

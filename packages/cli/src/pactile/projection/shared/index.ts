@@ -5,7 +5,7 @@ import {
   type ProjectionOperationV1,
   type ProjectionPlanV1,
   type TileManifestV1,
-} from "@blxzer/pactile-core";
+} from "../../../core/index.js";
 import { buildPactileAgentsBlock } from "../../../configurators/shared.js";
 import {
   canonicalOwnershipLedger,

@@ -6,7 +6,7 @@ import { handleRuntimePathRequest } from "../../../src/pactile/runtime/json-api.
 import {
   parseInstallStateV1,
   type InstallStateV1,
-} from "@blxzer/pactile-core";
+} from "../../../src/core/index.js";
 import {
   GenerationStore,
   InstallStateStore,

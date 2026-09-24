@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   parseExternalAssetRefV1,
   type ExternalAssetSourceV1,
-} from "@blxzer/pactile-core";
+} from "../../../src/core/index.js";
 import {
   buildInventory,
   discoverSnapshot,

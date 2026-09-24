@@ -1,7 +1,7 @@
 import { execFileSync, execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { applyKernelArchive, applyKernelCreate, applyKernelPatch, applyKernelRecordGate, applyKernelStart, assertFullQualityForPhase, buildAcEvidenceLedger, emptyTaskRecord, parseAcceptanceItems, qualityFingerprint, readDependencyGraph, readKernel, readTopology, resolveRequiredControls, unmetRequires, type PactileTaskRecord } from "@blxzer/pactile-core/task";
+import { applyKernelArchive, applyKernelCreate, applyKernelPatch, applyKernelRecordGate, applyKernelStart, assertFullQualityForPhase, buildAcEvidenceLedger, emptyTaskRecord, parseAcceptanceItems, qualityFingerprint, readDependencyGraph, readKernel, readTopology, resolveRequiredControls, unmetRequires, type PactileTaskRecord } from "../core/task/index.js";
 import { addContextEntry, CONTEXT_FILES, readContextEntries, validateContextFile } from "../pactile/task/context.js";
 import { readPactileConfig } from "../pactile/task/config.js";
 import { checkArchive, checkStartExecution, dependencyStatus } from "../pactile/task/guards.js";

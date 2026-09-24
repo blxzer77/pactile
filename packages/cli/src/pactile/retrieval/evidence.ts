@@ -8,7 +8,7 @@ import {
   type AssuranceLevelV1,
   type PactileIntentV1,
   type ResolvedProviderV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 
 import {
   RETRIEVAL_ABI_VERSION,

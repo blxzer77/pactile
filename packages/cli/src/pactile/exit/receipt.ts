@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import {
   canonicalizePactileJsonV1,
   fingerprintPactileContractV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 import {
   assertCanonicalWriteTarget,
   resolveCanonicalPaths,

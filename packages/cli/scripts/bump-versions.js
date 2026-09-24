@@ -1,38 +1,25 @@
 #!/usr/bin/env node
 /**
- * Bump the canonical Pactile packages and both 0.5.x compatibility shims to
- * the same next version. The release set must never drift.
+ * Bump the single @blxzer/pactile package for a maintainer-authored release PR.
  *
  * Usage:
  *   node scripts/bump-versions.js <type>
  *
  * <type>:
  *   patch | minor | major
- *   beta | rc                  -- prerelease bump using the given preid
- *   promote                    -- strip prerelease suffix (X.Y.Z-rc.N -> X.Y.Z)
+ *   beta                       -- prerelease bump
+ *   promote                    -- strip prerelease suffix
  *   x.y.z[-pre]                -- explicit target (e.g. 0.5.0-beta.0)
  *
- * Reads current version from packages/cli/package.json; refuses to run if
- * core and cli already disagree (call `release-preflight check-versions`
- * separately to diagnose). Writes the new version into both package.json
- * files atomically (read -> compute -> write both).
+ * Reads and writes only packages/cli/package.json. Lockfile and changelog
+ * changes remain explicit reviewable edits in the release PR.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, "../../..");
-const CORE_PKG = path.join(REPO_ROOT, "packages/core/package.json");
-const CLI_PKG = path.join(REPO_ROOT, "packages/cli/package.json");
-const LEGACY_CORE_PKG = path.join(
-  REPO_ROOT,
-  "packages/cursor-trellis-core-shim/package.json",
-);
-const LEGACY_CLI_PKG = path.join(
-  REPO_ROOT,
-  "packages/cursor-trellis-shim/package.json",
-);
+const CLI_PKG = path.resolve(__dirname, "../package.json");
 
 const RED = "\x1b[31m";
 const GREEN = "\x1b[32m";
@@ -105,8 +92,6 @@ export function computeNext(current, type) {
       return `${v.major + 1}.0.0`;
     case "beta":
       return bumpPrerelease(current, "beta");
-    case "rc":
-      return bumpPrerelease(current, "rc");
     case "promote":
       if (!v.prerelease) {
         fail(`promote requires a prerelease version (got ${current}).`);
@@ -122,42 +107,17 @@ function main() {
   const [type] = process.argv.slice(2);
   if (!type) {
     fail(
-      `usage: bump-versions.js <patch|minor|major|beta|rc|promote|x.y.z[-pre]>`,
+      `usage: bump-versions.js <patch|minor|major|beta|promote|x.y.z[-beta.N]>`,
     );
   }
 
-  const core = readJSON(CORE_PKG);
   const cli = readJSON(CLI_PKG);
-  const legacyCore = readJSON(LEGACY_CORE_PKG);
-  const legacyCli = readJSON(LEGACY_CLI_PKG);
-  const versions = [
-    ["core", core.version],
-    ["cli", cli.version],
-    ["legacy-core", legacyCore.version],
-    ["legacy-cli", legacyCli.version],
-  ];
-  if (versions.some(([, version]) => version !== cli.version)) {
-    fail(
-      `Pre-bump version mismatch: ${versions
-        .map(([key, version]) => `${key}=${version}`)
-        .join(" ")}.\n` +
-        `Reconcile all four package.json files to the same value\n` +
-        `before running release scripts again.`,
-    );
-  }
-
   const next = computeNext(cli.version, type);
-  core.version = next;
   cli.version = next;
-  legacyCore.version = next;
-  legacyCli.version = next;
-  writeJSON(CORE_PKG, core);
   writeJSON(CLI_PKG, cli);
-  writeJSON(LEGACY_CORE_PKG, legacyCore);
-  writeJSON(LEGACY_CLI_PKG, legacyCli);
   // Human message to stderr so stdout stays a clean machine-readable value.
   process.stderr.write(
-    `${GREEN}ok${RESET} bumped the four-package Pactile release set (${type}) -> ${next}\n`,
+    `${GREEN}ok${RESET} bumped @blxzer/pactile (${type}) -> ${next}; update pnpm-lock.yaml in the release PR\n`,
   );
   process.stdout.write(next + "\n");
 }

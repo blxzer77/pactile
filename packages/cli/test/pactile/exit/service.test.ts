@@ -9,7 +9,7 @@ import {
   type OwnershipOriginV1,
   type OwnershipSnapshotV1,
   type ProjectionPlanV1,
-} from "@blxzer/pactile-core";
+} from "../../../src/core/index.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PactileExitManager } from "../../../src/pactile/exit/service.js";
 import {

@@ -1,30 +1,56 @@
-# 发布
+# Pactile 发布
 
 [English](releasing.md) | 简体中文
 
-只有候选经过审查且发布负责人显式授权后才开始 release。Batch 4 RC candidate 不是已发布 release。
+v0.6.0 只有一个公开 npm 包：`@blxzer/pactile`。tarball 同时包含 CLI 与 Core
+契约。已发布的 0.5.x 独立 Core 和旧名称桥接包保留为 npm 历史；新流程不再构建或发布它们。
 
-## 候选 preflight
+## 分支与 PR
+
+`feat/*`、`fix/*`、`chore/*` PR 只进入 `develop`。分支 Push 和 PR 只触发
+CI 验证。beta 版本在 `develop` 准备，经明确授权后打
+`pactile-vX.Y.Z-beta.N` tag。tag 必须指向当前 `develop` 的精确 HEAD；发布
+工作流验证单包 tarball 后发到 npm `beta`。
+
+beta 验收后，只修改包版本到 `X.Y.Z` 以及发布文档/changelog，再开
+`develop` → `main` 发布 PR。PR 正文须包含以下字段：
+
+```text
+Beta tag: pactile-v0.6.0-beta.1
+Beta validation: https://github.com/blxzer77/pactile/actions/runs/<成功的发布运行 ID>
+Beta acceptance: <beta 实际安装和行为验收结果>
+Post-beta changes: packages/cli/package.json, packages/cli/CHANGELOG.md
+```
+
+PR 检查会核对 beta tag、对应提交成功的 Publish 运行、当前 `develop` HEAD、
+正式包版本及 beta 之后的全部变更。beta 后若改了产品代码、依赖、锁文件或
+工作流，必须重新发布并验收 beta。仅文档与版本字段可在 beta 后变化，且应
+逐项列在 `Post-beta changes`；完全没有变化时填 `none`。
+
+发布 PR 合入后，经单独明确授权，在当前 `main` 精确 HEAD 打正式版
+`pactile-vX.Y.Z` tag，唯一包先发到 `candidate`。之后单独确认并手动运行
+Publish 的 promotion，将核对过的 candidate 提升到 `latest`。实际远端晋级
+及发布验收由 v0.6.0 最终发布门槛负责。
+
+## 本地预检
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm build
 pnpm typecheck
 pnpm lint
+pnpm test
 pnpm release:check
 pnpm --filter @blxzer/pactile check:pack-files
 pnpm --filter @blxzer/pactile check:release-pack
-pnpm mirror-check
-node packages/cli/scripts/check-pactile-brand-surface.js --release
-pnpm --filter @blxzer/pactile exec vitest run test/docs/documentation-parity.test.ts
 pnpm docs:smoke
+node packages/cli/scripts/check-pactile-brand-surface.js --release
 node packages/cli/scripts/release-conformance.js
 ```
 
-在获批 release 前立即运行一次完整 Core 与 CLI suite。将 commit、package version、tarball manifest、conformance matrix、文档 gate 与全量结果一起记录。
+tag 工作流在封装 tarball 前重复质量门槛。准备阶段没有 npm 发布凭据；只有
+发布已封装字节的步骤持有凭据。manifest SHA-256 收据保存在 artifact 目录
+之外。来源、包图、tarball、收据或 npm 回读失败都会阻断发布或晋级。
 
-## 发布边界
-
-四包顺序是 core → CLI → legacy core bridge → legacy CLI bridge。每个 tarball 先 sealed 并检查，再进入下一个 package。发布需要精确 release tag、已验证 provenance、临时 registry credential 与发布后可见性检查。dry-run、plan 或 RC artifact 都不表示可以打 tag、publish、合入 release 分支或创建 GitHub Release。
-
-历史 changelog 条目、tag、manifest 与署名保持不变。
+计划、dry run、CI 通过或本地合入都不自动授权 Push、合入 `main`、打 tag、
+发包或晋级。历史 changelog、tag、迁移清单和署名保持原样。

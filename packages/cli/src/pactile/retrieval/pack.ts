@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fingerprintPactileContractV1 } from "@blxzer/pactile-core";
+import { fingerprintPactileContractV1 } from "../../core/index.js";
 import { buildEvidenceEnvelope } from "./envelope.js";
 import { buildRetrievalRequestV3, createRetrievalPlanV3, planRetrievalV3 } from "./planner.js";
 

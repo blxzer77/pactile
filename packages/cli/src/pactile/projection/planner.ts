@@ -8,7 +8,7 @@ import {
   type OwnershipLedgerV1,
   type OwnershipSnapshotV1,
   type ProjectionOperationV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 import { mergeManagedBlock } from "./managed-block.js";
 import {
   mergeJsonPointers,

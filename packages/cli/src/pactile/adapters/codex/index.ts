@@ -2,7 +2,7 @@ import {
   parseProjectionPlanV1,
   type ProjectionOperationV1,
   type ProjectionPlanV1,
-} from "@blxzer/pactile-core";
+} from "../../../core/index.js";
 import {
   fingerprintBytes,
   type ProjectionContent,

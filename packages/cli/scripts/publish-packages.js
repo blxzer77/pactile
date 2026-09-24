@@ -1,8 +1,8 @@
 /**
- * Prepare and publish the Core + CLI pair across an explicit credential wall.
+ * Prepare and publish one self-contained Pactile tarball across a credential wall.
  *
  * `--prepare-only` must run without publish credentials. It validates the full
- * candidate, creates both tarballs once, validates their packed contracts, and
+ * candidate, creates the tarball once, validates its packed contract, and
  * seals their byte hashes in a manifest. It also returns a SHA-256 receipt that
  * must travel outside the artifact directory. `--publish-only` requires that
  * receipt through `--expected-manifest-sha256`, verifies it before parsing the
@@ -36,6 +36,7 @@ import {
 import {
   createPublishPlan,
   npmVersionExists,
+  readVersions,
   releasePackageDefinitions,
   resolveNpmTag,
 } from "./release-preflight.js";
@@ -43,34 +44,14 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI_DIR = path.resolve(__dirname, "..");
 const REPO_ROOT = path.resolve(CLI_DIR, "../..");
-const CORE_DIR = path.resolve(CLI_DIR, "../core");
-const LEGACY_CORE_DIR = path.resolve(CLI_DIR, "../cursor-trellis-core-shim");
-const LEGACY_CLI_DIR = path.resolve(CLI_DIR, "../cursor-trellis-shim");
 
 export const PUBLISH_CREDENTIAL_ENV_KEYS = ["NODE_AUTH_TOKEN", "NPM_TOKEN"];
 
-function readPackage(file) {
-  return JSON.parse(fs.readFileSync(file, "utf-8"));
-}
-
 export function readPackageInfo() {
-  const cli = readPackage(path.join(CLI_DIR, "package.json"));
-  const core = readPackage(path.join(CORE_DIR, "package.json"));
-  const legacyCore = readPackage(path.join(LEGACY_CORE_DIR, "package.json"));
-  const legacyCli = readPackage(path.join(LEGACY_CLI_DIR, "package.json"));
+  const cli = readVersions();
   return {
-    cliName: cli.name,
-    cliVersion: cli.version,
+    ...cli,
     cliDir: CLI_DIR,
-    coreName: core.name,
-    coreVersion: core.version,
-    coreDir: CORE_DIR,
-    legacyCoreName: legacyCore.name,
-    legacyCoreVersion: legacyCore.version,
-    legacyCoreDir: LEGACY_CORE_DIR,
-    legacyCliName: legacyCli.name,
-    legacyCliVersion: legacyCli.version,
-    legacyCliDir: LEGACY_CLI_DIR,
   };
 }
 
@@ -174,7 +155,7 @@ function statusAfter(runner, repoRoot) {
   ).trim();
 }
 
-/** Credential-free source validation plus creation of the immutable pair. */
+/** Credential-free source validation plus creation of the immutable tarball. */
 export function runCandidatePreparation({
   dryRun = false,
   explicitTag,
@@ -323,11 +304,8 @@ export function runPreparedPublish({
   }
 
   log(
-    `publish plan: ${plan.version} -> ${plan.tag} ` +
-      `(core=${plan.core.publish ? "publish" : "skip"}, ` +
-      `cli=${plan.cli.publish ? "publish" : "skip"}, ` +
-      `legacyCore=${plan.legacyCore.publish ? "publish" : "skip"}, ` +
-      `legacyCli=${plan.legacyCli.publish ? "publish" : "skip"})`,
+    `publish plan: ${plan.cli.name}@${plan.version} -> ${plan.tag} ` +
+      `(${plan.cli.publish ? "publish" : "skip"})`,
   );
   const orderedPlan = releasePackageDefinitions(packageInfo).map(({ key }) => ({
     key,

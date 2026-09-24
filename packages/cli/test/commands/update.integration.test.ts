@@ -41,7 +41,7 @@ vi.mock("node:child_process", () => ({
 import {
   isWaveCConfirmed,
   WAVE_C_STATE_REL,
-} from "@blxzer/pactile-core/task";
+} from "../../src/core/task/index.js";
 import { init } from "../../src/commands/init.js";
 import { update } from "../../src/commands/update.js";
 import { VERSION } from "../../src/constants/version.js";

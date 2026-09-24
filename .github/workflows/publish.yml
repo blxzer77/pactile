@@ -1,19 +1,6 @@
-# Publish the two canonical Pactile packages and two 0.5.x compatibility shims
-# to npm when a Pactile release tag is pushed. Stable versions are published
-# under the temporary `candidate` dist-tag; a separate manual promotion job
-# moves an already-verified version to `latest` and creates the GitHub Release.
-#
-# Tag convention: pactile-v<semver>. Earlier tag families remain immutable
-# history and are never reused for new releases.
-#
-# Required repo secret: NPM_TOKEN (npm automation token with publish access to
-# the complete four-package release set).
-#
-# Manual fallback uses the same two-process credential wall: run
-# `publish-packages.js --prepare-only --receipt-output <outside-artifact-file>`
-# without a token, then pass that file's `manifest_sha256` value explicitly to
-# `publish-packages.js --publish-only --expected-manifest-sha256 <value>`.
-
+# Branch pushes and PRs validate in CI. Only a tag publishes the one Pactile
+# package: develop beta -> npm beta; main stable -> npm candidate. A separate
+# confirmed dispatch promotes an already published stable version to latest.
 name: Publish
 
 on:
@@ -23,11 +10,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Stable version to promote (for example 0.5.0)"
+        description: "Stable version to promote (for example 0.6.0)"
         required: true
         type: string
       confirmation:
-        description: "Type PROMOTE to authorize dist-tag, deprecation, and release actions"
+        description: "Type PROMOTE to move candidate to latest"
         required: true
         type: string
 
@@ -39,68 +26,42 @@ jobs:
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/pactile-v') }}
     runs-on: ubuntu-latest
     steps:
-      # Publish provenance needs the tag commit plus release branch ancestry.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          # Candidate preparation needs history, never a persisted write-capable token.
           persist-credentials: false
-
-      - name: Verify exact tag and commit provenance
+      - name: Verify exact tag, package, and source branch
         run: >-
           node packages/cli/scripts/release-preflight.js check-provenance
           --tag "${GITHUB_REF_NAME}" --remote origin
-
       - uses: pnpm/action-setup@v6
         with:
           version: 10.32.1
-
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
-
-      - name: Install dependencies
+      - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Ignore package-manager executable-bit normalization
+      - name: Ignore executable-bit normalization
         run: git config core.filemode false
-
-      - name: Select npm dist-tag
-        id: npm-tag
-        shell: bash
-        run: |
-          version="$(node -p "require('./packages/cli/package.json').version")"
-          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "value=candidate" >> "$GITHUB_OUTPUT"
-            echo "args=--npm-tag candidate" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=$(node packages/cli/scripts/release-preflight.js npm-tag)" >> "$GITHUB_OUTPUT"
-            echo "args=" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Validate candidate and prepare immutable tarballs
+      - name: Validate and seal the single tarball without publish credentials
         id: prepare
-        run: |
-          node packages/cli/scripts/publish-packages.js \
-            --prepare-only --artifact-dir "${RUNNER_TEMP}/release-artifacts" \
-            --receipt-output "${GITHUB_OUTPUT}" \
-            --tag "${GITHUB_REF_NAME}" --remote origin \
-            ${{ steps.npm-tag.outputs.args }}
-      - name: Publish verified tarballs
+        run: >-
+          node packages/cli/scripts/publish-packages.js
+          --prepare-only --artifact-dir "${RUNNER_TEMP}/release-artifacts"
+          --receipt-output "${GITHUB_OUTPUT}"
+          --tag "${GITHUB_REF_NAME}" --remote origin
+      - name: Publish the verified tarball
         run: >-
           node packages/cli/scripts/publish-packages.js
           --publish-only --artifact-dir "${RUNNER_TEMP}/release-artifacts"
           --expected-manifest-sha256 "${{ steps.prepare.outputs.manifest_sha256 }}"
           --tag "${GITHUB_REF_NAME}"
         env:
-          # The publish token exists only in this minimal artifact-consumer step.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Verify npm registry visibility
-        run: >-
-          node packages/cli/scripts/release-preflight.js verify-npm --package all
-          --npm-tag "${{ steps.npm-tag.outputs.value }}"
+      - name: Verify npm dist-tag readback
+        run: node packages/cli/scripts/release-preflight.js verify-npm --package cli
 
   promote:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.confirmation == 'PROMOTE' }}
@@ -112,223 +73,56 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "version must be a stable X.Y.Z semver" >&2
-            exit 1
-          fi
-
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
       - uses: actions/checkout@v7
         with:
           ref: pactile-v${{ inputs.version }}
           fetch-depth: 0
           persist-credentials: false
-
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
-
-      - name: Verify stable tag and package versions
+      - name: Verify main ancestry and the exact package version
         env:
           VERSION: ${{ inputs.version }}
-        run: node packages/cli/scripts/release-preflight.js check-versions --require-tag --tag "pactile-v${VERSION}"
-
-      - name: Resolve release package identities
-        env:
-          VERSION: ${{ inputs.version }}
-        shell: bash
         run: |
-          set -euo pipefail
+          git merge-base --is-ancestor HEAD origin/main
+          node packages/cli/scripts/release-preflight.js check-versions \
+            --require-tag --tag "pactile-v${VERSION}"
+      - name: Verify candidate is the requested version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          actual="$(npm view @blxzer/pactile@candidate version --json)"
+          [[ "$actual" == "\"$VERSION\"" || "$actual" == "$VERSION" ]] || exit 1
+      - name: Promote the single package to latest
+        env:
+          VERSION: ${{ inputs.version }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm dist-tag add "@blxzer/pactile@$VERSION" latest
+      - name: Verify latest, remove candidate, and verify readback
+        env:
+          VERSION: ${{ inputs.version }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          actual="$(npm view @blxzer/pactile@latest version --json)"
+          [[ "$actual" == "\"$VERSION\"" || "$actual" == "$VERSION" ]] || exit 1
+          candidate="$(npm view @blxzer/pactile@candidate version --json)"
+          [[ "$candidate" == "\"$VERSION\"" || "$candidate" == "$VERSION" ]] || exit 1
+          npm dist-tag rm @blxzer/pactile candidate
           node --input-type=module - <<'NODE'
-          import fs from "node:fs";
-          import { readPackageInfo } from "./packages/cli/scripts/publish-packages.js";
-          import { releasePackageDefinitions } from "./packages/cli/scripts/release-preflight.js";
-          const packages = releasePackageDefinitions(readPackageInfo());
-          const keys = { core: "CORE_PACKAGE", cli: "CLI_PACKAGE", legacyCore: "LEGACY_CORE_PACKAGE", legacyCli: "LEGACY_CLI_PACKAGE" };
-          for (const item of packages) {
-            if (!/^@[a-z0-9-]+\/[a-z0-9._-]+$/.test(item.name) || item.version !== process.env.VERSION) {
-              throw new Error(`Invalid release package identity for ${item.key}.`);
-            }
-          }
-          fs.appendFileSync(process.env.GITHUB_ENV, packages.map((item) => `${keys[item.key]}=${item.name}\n`).join(""));
-          NODE
-
-      - name: Verify every package is staged under candidate
-        env:
-          VERSION: ${{ inputs.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for package_name in \
-            "$CORE_PACKAGE" \
-            "$CLI_PACKAGE" \
-            "$LEGACY_CORE_PACKAGE" \
-            "$LEGACY_CLI_PACKAGE"; do
-            tags="$(npm view "$package_name" dist-tags --json)"
-            node - "$tags" "$VERSION" "$package_name" <<'NODE'
-          const [rawTags, expected, packageName] = process.argv.slice(2);
-          const tags = JSON.parse(rawTags);
-          if (!tags || typeof tags !== "object" || Array.isArray(tags)) {
-            throw new Error(`Invalid registry dist-tags for ${packageName}.`);
-          }
-          if (Object.hasOwn(tags, "candidate")) {
-            if (tags.candidate !== expected) {
-              throw new Error(`${packageName}@candidate does not resolve to ${expected}.`);
-            }
-          } else if (tags.latest !== expected) {
-            throw new Error(`${packageName} has no candidate and latest does not resolve to ${expected}.`);
-          } else {
-            console.log(`${packageName} has no candidate tag; latest already resolves to ${expected}`);
+          const tags = await fetch("https://registry.npmjs.org/-/package/%40blxzer%2Fpactile/dist-tags")
+            .then((response) => { if (!response.ok) throw new Error(`Registry HTTP ${response.status}`); return response.json(); });
+          if (tags.latest !== process.env.VERSION || Object.hasOwn(tags, "candidate")) {
+            throw new Error("Registry readback did not confirm latest promotion and candidate removal.");
           }
           NODE
-          done
-
-      - name: Promote canonical packages to latest
-        env:
-          VERSION: ${{ inputs.version }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm dist-tag add "$CORE_PACKAGE@$VERSION" latest
-          npm dist-tag add "$CLI_PACKAGE@$VERSION" latest
-
-      - name: Promote legacy shims to latest
-        env:
-          VERSION: ${{ inputs.version }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm dist-tag add "$LEGACY_CORE_PACKAGE@$VERSION" latest
-          npm dist-tag add "$LEGACY_CLI_PACKAGE@$VERSION" latest
-
-      - name: Verify latest points to the promoted version
-        env:
-          VERSION: ${{ inputs.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for package_name in \
-            "$CORE_PACKAGE" \
-            "$CLI_PACKAGE" \
-            "$LEGACY_CORE_PACKAGE" \
-            "$LEGACY_CLI_PACKAGE"; do
-            latest="$(npm view "${package_name}@latest" version --json)"
-            if [[ "$latest" != "\"$VERSION\"" && "$latest" != "$VERSION" ]]; then
-              echo "${package_name}@latest resolves to $latest, expected $VERSION" >&2
-              exit 1
-            fi
-          done
-
-      - name: Deprecate pre-Pactile shim versions
-        env:
-          VERSION: ${{ inputs.version }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          deprecation_message="Use $CORE_PACKAGE@$VERSION; the legacy package remains a compatibility bridge."
-          deprecate_and_verify() {
-            local package_name="$1"
-            local message="$2"
-            if npm deprecate "$package_name@<$VERSION" "$message"; then
-              echo "$package_name deprecation request completed"
-            else
-              echo "$package_name deprecation request returned non-zero; verifying registry state before continuing"
-            fi
-            node - "$message" "$package_name" "$VERSION" <<'NODE'
-          const [expected, packageName, stableVersion] = process.argv.slice(2);
-          async function verifyDeprecations() {
-            const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(packageName)}`, {
-              signal: AbortSignal.timeout(30000),
-            });
-            if (!response.ok) throw new Error(`Registry metadata read failed for ${packageName}: HTTP ${response.status}.`);
-            const metadata = await response.json();
-            if (metadata.name !== packageName || !metadata.versions ||
-              typeof metadata.versions !== "object" || Array.isArray(metadata.versions)
-            ) throw new Error(`Invalid registry metadata for ${packageName}.`);
-            const stable = metadata.versions[stableVersion];
-            if (!stable || stable.version !== stableVersion || stable.deprecated) {
-              throw new Error(`Stable version metadata changed for ${packageName}.`);
-            }
-            const target = stableVersion.split(".").map(BigInt);
-            const historical = Object.entries(metadata.versions).filter(([version]) => {
-              const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(version);
-              if (!match) throw new Error(`Invalid registry version for ${packageName}.`);
-              for (let index = 0; index < 3; index++) {
-                const part = BigInt(match[index + 1]);
-                if (part !== target[index]) return part < target[index];
-              }
-              return Boolean(match[4]);
-            });
-            if (historical.length === 0 || historical.some(([version, value]) =>
-              !value || value.version !== version || value.deprecated !== expected
-            )) throw new Error(`Registry deprecation state is incomplete for ${packageName}.`);
-            console.log(`${packageName} historical deprecations verified (${historical.length} versions, including prereleases)`);
-          }
-          verifyDeprecations().catch((error) => { console.error(error.message); process.exitCode = 1; });
-          NODE
-          }
-          deprecate_and_verify "$LEGACY_CORE_PACKAGE" "$deprecation_message"
-          deprecate_and_verify "$LEGACY_CLI_PACKAGE" \
-            "Use $CLI_PACKAGE@$VERSION; the legacy package remains a compatibility bridge."
-
-      - name: Remove temporary candidate dist-tag
-        env:
-          VERSION: ${{ inputs.version }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for package_name in \
-            "$CORE_PACKAGE" \
-            "$CLI_PACKAGE" \
-            "$LEGACY_CORE_PACKAGE" \
-            "$LEGACY_CLI_PACKAGE"; do
-            tags="$(npm view "$package_name" dist-tags --json)"
-            candidate_state="$(node - "$tags" "$VERSION" "$package_name" <<'NODE'
-          const [rawTags, expected, packageName] = process.argv.slice(2);
-          const tags = JSON.parse(rawTags);
-          if (!tags || typeof tags !== "object" || Array.isArray(tags) || tags.latest !== expected) {
-            throw new Error(`Invalid registry state before candidate cleanup for ${packageName}.`);
-          }
-          const present = Object.hasOwn(tags, "candidate");
-          if (present && tags.candidate !== expected) {
-            throw new Error(`Refusing to remove a different candidate version for ${packageName}.`);
-          }
-          console.log(present ? "present" : "absent");
-          NODE
-            )"
-            if [[ "$candidate_state" == "present" ]]; then
-              npm dist-tag rm "$package_name" candidate
-            else
-              echo "${package_name} has no candidate tag; continuing"
-            fi
-            after_tags="$(npm view "$package_name" dist-tags --json)"
-            node - "$tags" "$after_tags" "$package_name" <<'NODE'
-          const [rawBefore, rawAfter, packageName] = process.argv.slice(2);
-          const before = JSON.parse(rawBefore);
-          const after = JSON.parse(rawAfter);
-          const expected = { ...before };
-          delete expected.candidate;
-          if (!after || typeof after !== "object" || Array.isArray(after) ||
-            Object.hasOwn(after, "candidate") ||
-            Object.keys(after).length !== Object.keys(expected).length ||
-            Object.entries(expected).some(([tag, version]) => after[tag] !== version)
-          ) {
-            throw new Error(`Candidate cleanup readback does not match for ${packageName}.`);
-          }
-          NODE
-          done
-
       - name: Create GitHub Latest Release last
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
-        shell: bash
         run: |
-          set -euo pipefail
           notes_file="${RUNNER_TEMP}/pactile-release-notes.md"
           node - "$notes_file" <<'NODE'
           const fs = require("node:fs");

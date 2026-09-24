@@ -18,6 +18,26 @@
       "default": "./dist/index.js"
     },
     "./cli": "./dist/cli/index.js",
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js",
+      "default": "./dist/core/index.js"
+    },
+    "./core/task": {
+      "types": "./dist/core/task/index.d.ts",
+      "import": "./dist/core/task/index.js",
+      "default": "./dist/core/task/index.js"
+    },
+    "./core/compat": {
+      "types": "./dist/core/compat/index.d.ts",
+      "import": "./dist/core/compat/index.js",
+      "default": "./dist/core/compat/index.js"
+    },
+    "./core/testing": {
+      "types": "./dist/core/testing/index.d.ts",
+      "import": "./dist/core/testing/index.js",
+      "default": "./dist/core/testing/index.js"
+    },
     "./compat": "./bin/compat-warning.js"
   },
   "publishConfig": {
@@ -48,7 +68,6 @@
     "release:minor": "node scripts/release.js minor",
     "release:major": "node scripts/release.js major",
     "release:beta": "node scripts/release.js beta",
-    "release:rc": "node scripts/release.js rc",
     "release:promote": "node scripts/release.js promote",
     "release:prepare": "node scripts/publish-packages.js --prepare-only",
     "release:publish": "node scripts/publish-packages.js --publish-only",
@@ -69,7 +88,6 @@
   "author": "Mindfold LLC",
   "license": "AGPL-3.0-only",
   "dependencies": {
-    "@blxzer/pactile-core": "workspace:*",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "figlet": "^1.9.4",
