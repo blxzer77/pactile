@@ -44,7 +44,7 @@ When a task is selected, route by Kernel / Dashboard human phase and persisted `
 - **Open** → Intake / Open Proposal only; no product code
 - **Define** → Full: `SwitchMode(plan)` immediately; if the switch fails, one sentence (what happened, where `prd.md` landed) and keep writing artifacts. Lite may stay in Agent. Full follows `required_controls`, not mere file presence. Unlanded Plan is not Execute.
 - **Approve** → run `pactile task start-execution <task> --check`, report PASS, ask for explicit Execute approval, then `pactile task start-execution <task> --approved`. `--check` is not approval
-- **Execute** → implement under the approved contract. No product-code edits until this gate. Independent Codex tasks require explicit objective, write set, and evidence; the Pactile message bridge is not active yet
+- **Execute** → implement under the approved contract. No product-code edits until this gate. Pi worker dispatch uses `pactile pi run`; Codex desktop planning and review use `pactile codex` request/receipt records with native App tools
 - **Verify** → map every AC to evidence in `verify.md`; Debug when runtime-stuck
 - **Integrate?** (parent-child / already integrating) → Parent `integrate-child` path (`merge_limit: 1`), serial, not ordinary Child closeout. `parent_id` alone does **not** make a Child a Parent
 - **Close** → wrap-up via `{{CMD_REF:finish-work}}` when the user is ready; `UpdateGoal` complete or cancel (failure does not block)

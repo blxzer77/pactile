@@ -2,7 +2,7 @@
 
 [English](subagents.md) | 简体中文
 
-Pactile Task 可以交给独立 Agent 会话。Parent 拥有集成权，Kernel 拥有持久状态转换权。已批准的 Execute 任务可通过 Pi Agent 原生 RPC 执行；Codex 桌面任务协作是后续工作项。
+Pactile Task 可以交给独立 Agent 会话。Parent 拥有集成权，Kernel 拥有持久状态转换权。已批准的 Execute 任务可通过 Pi Agent 原生 RPC 执行；Codex 桌面任务协作使用 App 原生工具与 Pactile Node 请求/回执记录。
 
 ## Pi Agent 桥接
 

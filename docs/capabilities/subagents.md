@@ -5,7 +5,7 @@ English | [简体中文](subagents.zh-CN.md)
 Pactile tasks can be assigned to independent agent sessions. The parent task
 owns integration and the Kernel owns durable transitions. Pi Agent can run an
 approved Execute task through its native RPC protocol. Codex desktop task
-coordination is a separate, later work item.
+coordination uses native App tools with Pactile Node request/receipt records.
 
 ## Pi Agent bridge
 

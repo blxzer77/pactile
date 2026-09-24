@@ -52,6 +52,11 @@ process.stdin.on('data', chunk => {
       process.stdout.write(JSON.stringify({type:'agent_start'})+'\\n');
       if (request.message.includes('CRASH')) process.exit(7);
       if (request.message.includes('HANG')) continue;
+      if (request.message.includes('MODEL_ERROR')) {
+        const message = {role:'assistant',content:[],stopReason:'error',errorMessage:'402 Insufficient Balance'};
+        process.stdout.write(JSON.stringify({type:'agent_end',messages:[message]})+'\\n');
+        continue;
+      }
       if (request.message.includes('TOOL_ERROR')) process.stdout.write(JSON.stringify({type:'tool_execution_end',toolName:'bash',isError:true})+'\\n');
       const message = {role:'assistant',content:[{type:'text',text:'Work reported. secret=hidden-value'}],stopReason:'stop'};
       process.stdout.write(JSON.stringify({type:'agent_end',messages:[message]})+'\\n');
@@ -112,6 +117,10 @@ describe("Pi native RPC task bridge", () => {
     const review = new PiTaskBridge(root, launch);
     expect((await review.run({ root, task, role: "implement", prompt: "TOOL_ERROR", timeoutMs: 5000 })).outcome).toBe("needs_review");
     await review.close();
+    const provider = new PiTaskBridge(root, launch);
+    expect(await provider.run({ root, task, role: "implement", prompt: "MODEL_ERROR", timeoutMs: 5000 }))
+      .toMatchObject({ outcome: "needs_review", reason: "Pi stopReason=error; 402 Insufficient Balance" });
+    await provider.close();
     const crash = new PiTaskBridge(root, launch);
     expect((await crash.run({ root, task, role: "implement", prompt: "CRASH", timeoutMs: 5000 })).outcome).toBe("interrupted");
     await crash.close();

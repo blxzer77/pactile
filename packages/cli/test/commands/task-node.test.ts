@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runTaskCli } from "../../src/commands/task.js";
 
 const roots: string[] = [];
@@ -92,6 +92,29 @@ describe("Node task CLI", () => {
     expect(committed).toContain(`.pactile/tasks/archive/`);
     expect(committed).not.toContain("unrelated.txt");
     expect(git("diff", "--cached", "--name-only")).toContain("unrelated.txt");
+  });
+
+  it("archives ignored personal task state without attempting a Git commit", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-node-ignored-archive-"));
+    roots.push(root);
+    const git = (...args: string[]): string => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+    git("init", "-q");
+    fs.appendFileSync(path.join(root, ".git", "info", "exclude"), "\n/.pactile/\n");
+    fs.mkdirSync(path.join(root, ".pactile", "tasks", "locale", "en"), { recursive: true });
+    fs.writeFileSync(path.join(root, ".pactile", "tasks", "locale", "en", "default-prd.md"), "# {title}\n{goal}\n");
+    fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), "artifact_locale: en\n");
+    fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=tester\n");
+    expect(runTaskCli(["create", "Ignored archive", "--slug", "ignored-archive"], root)).toBe(0);
+    const task = fs.readdirSync(path.join(root, ".pactile", "tasks")).find((name) => name.endsWith("-ignored-archive")) ?? "";
+    expect(runTaskCli(["start-execution", task, "--approved"], root)).toBe(0);
+    fs.appendFileSync(path.join(root, ".pactile", "tasks", task, "verify.md"),
+      "\nValidation commands: local smoke passed\nFinal acceptance evidence: task archived\n");
+    const warning = vi.spyOn(console, "warn");
+    try {
+      expect(runTaskCli(["archive", task], root)).toBe(0);
+      expect(warning).not.toHaveBeenCalled();
+      expect(git("status", "--porcelain")).toBe("");
+    } finally { warning.mockRestore(); }
   });
 
   it("reports hard requires during preflight and records an explicit override without claiming satisfaction", () => {

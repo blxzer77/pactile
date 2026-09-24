@@ -689,9 +689,14 @@ function archiveTask(root: string, args: string[]): number {
     catch { /* Archive remains valid in a non-Git project. */ }
     try {
       if (isRepo) {
-        execFileSync("git", ["add", "-A", "--", relativeSource, relativeDestination], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
-        const message = `chore(task): archive ${path.basename(dir)}`;
-        execFileSync("git", ["commit", "--only", "-m", message, "--", relativeSource, relativeDestination], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+        let ignored = false;
+        try { execFileSync("git", ["check-ignore", "-q", "--", relativeDestination], { cwd: root, stdio: ["ignore", "pipe", "ignore"] }); ignored = true; }
+        catch { /* The archive path is not ignored. */ }
+        if (!ignored) {
+          execFileSync("git", ["add", "-A", "--", relativeSource, relativeDestination], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+          const message = `chore(task): archive ${path.basename(dir)}`;
+          execFileSync("git", ["commit", "--only", "-m", message, "--", relativeSource, relativeDestination], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+        }
       }
     } catch (error) {
       console.warn(`Archive state is complete, but scoped git auto-commit failed: ${error instanceof Error ? error.message : String(error)}`);

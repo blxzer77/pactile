@@ -552,8 +552,9 @@ code every session.
 - **Context**: load Kernel / Dashboard and the selected Task's \`prd.md\`
   plus recent activity. Do not treat a generated phase index as runtime
   authority.
-- **Coordination**: independent Codex desktop tasks and the Pi Agent bridge
-  are planned, but are not installed by this version.
+- **Coordination**: \`pactile codex\` records native desktop task requests and
+  receipts; the App task invokes its native tools. \`pactile pi\` dispatches
+  approved Execute work through Pi RPC.
 
 File layout (mention when they ask "where does what live"):
 - \`.pactile/.runtime/sessions/<session>.json\` — live-session selected-task state, gitignored
