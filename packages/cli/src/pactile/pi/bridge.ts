@@ -7,6 +7,7 @@ import { readStrategyContract } from "../task/strategy.js";
 import { checkStartExecution } from "../task/guards.js";
 import { resolveTaskDir } from "../task/session.js";
 import { parallelChild, reserveParallelChild, updateParallelChildPid } from "../parallel/policy.js";
+import { sameGitRoot } from "../../utils/git-root.js";
 import { PiRpcClient, type PiRpcLaunch } from "./rpc.js";
 
 export type PiRunOutcome = "settled" | "needs_review" | "failed" | "cancelled" | "timed_out" | "interrupted";
@@ -149,8 +150,7 @@ export function piWorkdir(root: string, dir: string, role: PiRunInput["role"]): 
     gitRoot = execFileSync("git", ["-c", `safe.directory=${realCandidate.replaceAll("\\", "/")}`, "-C", realCandidate, "rev-parse", "--show-toplevel"],
       { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   } catch { throw new Error("Child worktree is not a usable Git checkout"); }
-  const match = process.platform === "win32" ? path.resolve(gitRoot).toLowerCase() === realCandidate.toLowerCase() : path.resolve(gitRoot) === realCandidate;
-  if (!match) throw new Error("Child worktree Git root does not match its recorded path");
+  if (!sameGitRoot(gitRoot, realCandidate)) throw new Error("Child worktree Git root does not match its recorded path");
   return realCandidate;
 }
 
