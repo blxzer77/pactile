@@ -16,6 +16,9 @@ const EXCLUDED_PREFIXES = [
   ".pactile/workspace/",
   ".pactile/spec/",
   ".pactile/middleware/",
+  // Pre-Node installations can retain locally edited Python scripts. They are
+  // compatibility residue, not files in a new active generation.
+  ".pactile/scripts/",
   ".pactile/.backup-",
 ] as const;
 const EXCLUDED_FILES = new Set([

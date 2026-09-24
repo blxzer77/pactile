@@ -92,6 +92,7 @@ import { getWorkflowRootTemplateFiles } from "../configurators/workflow.js";
 import { pruneOrphanManifestKeys } from "../utils/manifest-prune.js";
 import { runPostUpdateSmoke } from "../utils/post-update-smoke.js";
 import { cleanupRetiredAlternateClientResidue } from "../pactile/compat/retired-alternate-client.js";
+import { listLegacyPythonScripts } from "../pactile/compat/node-entry-migration.js";
 import {
   buildFilePlanFromChanges,
   createBaseRolloutReport,
@@ -161,6 +162,34 @@ interface ChangeAnalysis {
 
 type ConflictAction = "overwrite" | "skip" | "create-new";
 
+function inspectSafeDeleteTarget(
+  cwd: string,
+  relativePath: string,
+): "file" | "missing" | "unsafe" {
+  const parts = relativePath.split("/");
+  if (
+    parts.some((part) => !part || part === "." || part === "..") ||
+    relativePath.includes("\\") ||
+    relativePath.includes(":") ||
+    path.posix.isAbsolute(relativePath)
+  ) {
+    return "unsafe";
+  }
+  let cursor = path.resolve(cwd);
+  for (let index = 0; index < parts.length; index++) {
+    cursor = path.join(cursor, parts[index]);
+    const stat = fs.lstatSync(cursor, { throwIfNoEntry: false });
+    if (!stat) return "missing";
+    if (stat.isSymbolicLink()) return "unsafe";
+    if (index < parts.length - 1) {
+      if (!stat.isDirectory()) return "unsafe";
+    } else if (!stat.isFile() || stat.nlink !== 1) {
+      return "unsafe";
+    }
+  }
+  return "file";
+}
+
 // Paths that should never be touched (true user data)
 // spec/ is user-customized content created during init; update should never modify it
 const PROTECTED_PATHS = [
@@ -189,14 +218,22 @@ interface SafeFileDeleteClassified {
     | "delete"
     | "skip-missing"
     | "skip-modified"
+    | "skip-unsafe"
     | "skip-protected"
     | "skip-update-skip";
 }
 
 /** Retire only Python scripts that still match the hash recorded at install. */
-export function retiredPythonScriptMigrations(hashes: TemplateHashes): MigrationItem[] {
+export function retiredPythonScriptMigrations(
+  hashes: TemplateHashes,
+): MigrationItem[] {
   return Object.entries(hashes)
-    .filter(([file, hash]) => /^\.pactile\/scripts\/(?:[^/]+\/)*[^/]+\.py$/.test(file) && /^[a-f0-9]{64}$/i.test(hash))
+    .filter(
+      ([file, hash]) =>
+        /^\.pactile\/scripts\/(?:[^/]+\/)*[^/]+\.py$/.test(file) &&
+        file.split("/").every((part) => part !== "." && part !== "..") &&
+        /^[a-f0-9]{64}$/i.test(hash),
+    )
     .map(([file, hash]) => ({
       type: "safe-file-delete" as const,
       from: file,
@@ -232,9 +269,14 @@ function collectSafeFileDeletes(
   for (const item of safeDeletes) {
     const fullPath = path.join(cwd, item.from);
 
-    // Check: file exists?
-    if (!fs.existsSync(fullPath)) {
-      results.push({ item, action: "skip-missing" });
+    // A link in any path component, or a multiply linked leaf, is never
+    // proof of Pactile ownership even if its bytes match a template hash.
+    const target = inspectSafeDeleteTarget(cwd, item.from);
+    if (target !== "file") {
+      results.push({
+        item,
+        action: target === "missing" ? "skip-missing" : "skip-unsafe",
+      });
       continue;
     }
 
@@ -288,11 +330,13 @@ function printSafeFileDeleteSummary(
 ): void {
   const toDelete = classified.filter((c) => c.action === "delete");
   const modified = classified.filter((c) => c.action === "skip-modified");
+  const unsafe = classified.filter((c) => c.action === "skip-unsafe");
   const updateSkip = classified.filter((c) => c.action === "skip-update-skip");
 
   if (
     toDelete.length === 0 &&
     modified.length === 0 &&
+    unsafe.length === 0 &&
     updateSkip.length === 0
   ) {
     return;
@@ -314,6 +358,12 @@ function printSafeFileDeleteSummary(
     for (const c of modified) {
       console.log(chalk.yellow(`    ? ${c.item.from} (modified, skipped)`));
     }
+  }
+
+  for (const c of unsafe) {
+    console.log(
+      chalk.yellow(`    ? ${c.item.from} (unsafe file or link, skipped)`),
+    );
   }
 
   if (updateSkip.length > 0) {
@@ -341,6 +391,7 @@ function executeSafeFileDeletes(
       // Re-check after staging. Adapter reconciliation may have touched the
       // same host path since classification; never delete bytes whose current
       // hash no longer matches the manifest allow-list.
+      if (inspectSafeDeleteTarget(cwd, c.item.from) !== "file") continue;
       const current = fs.readFileSync(fullPath, "utf-8");
       if (!c.item.allowed_hashes?.includes(computeHash(current))) continue;
       fs.unlinkSync(fullPath);
@@ -2178,6 +2229,25 @@ export async function update(options: UpdateOptions): Promise<void> {
       prunedManifest = true;
     }
   }
+  // The old hash manifest is migration evidence for this run, not continuing
+  // ownership of retired scripts. Capture it above, then remove those claims
+  // from the candidate generation even when a modified file stays on disk.
+  const retiredHashPaths = new Set(
+    retiredPythonMigrations.map((item) => item.from),
+  );
+  const releasedHashPaths = Object.keys(hashes).filter((relativePath) =>
+    retiredHashPaths.has(relativePath),
+  );
+  const retainedHashes = Object.entries(hashes).filter(
+    ([relativePath]) => !retiredHashPaths.has(relativePath),
+  );
+  if (releasedHashPaths.length > 0) {
+    hashes = Object.fromEntries(retainedHashes);
+    prunedManifest = true;
+    console.log(
+      chalk.gray(`   Released ${releasedHashPaths.length} retired Python hash claim(s)`),
+    );
+  }
 
   // For breaking releases with recommendMigrate + --migrate, bypass update.skip
   // across the board (safe-file-delete, new file writes, template updates).
@@ -2220,6 +2290,21 @@ export async function update(options: UpdateOptions): Promise<void> {
     skipPaths,
     breakingBypass,
   );
+  const legacyPythonPaths = listLegacyPythonScripts(cwd);
+  const retiredPythonPlanned = new Set(
+    safeFileDeletes
+      .filter((item) => item.action === "delete")
+      .map((item) => item.item.from),
+  );
+  const legacyPythonModified = new Set(
+    safeFileDeletes
+      .filter((item) => item.action === "skip-modified")
+      .map((item) => item.item.from),
+  );
+  const legacyPathPresent = (relativePath: string): boolean =>
+    fs.lstatSync(path.join(cwd, relativePath), {
+      throwIfNoEntry: false,
+    }) !== undefined;
   const hasSafeDeletes =
     safeFileDeletes.filter((c) => c.action === "delete").length > 0;
 
@@ -2396,17 +2481,30 @@ export async function update(options: UpdateOptions): Promise<void> {
     .filter((c) => c.action === "delete")
     .map((c) => c.item.from);
   const conflictsPending = changes.changedFiles.map((f) => f.relativePath);
-  const buildRolloutFilePlan = (): ReturnType<
+  const buildRolloutFilePlan = (applied = false): ReturnType<
     typeof buildFilePlanFromChanges
-  > =>
-    buildFilePlanFromChanges({
+  > => {
+    const remaining = applied
+      ? legacyPythonPaths.filter(legacyPathPresent)
+      : legacyPythonPaths;
+    return buildFilePlanFromChanges({
       newFiles: changes.newFiles,
       unchangedFiles: changes.unchangedFiles,
       autoUpdateFiles: changes.autoUpdateFiles,
       changedFiles: changes.changedFiles,
       userDeletedFiles: changes.userDeletedFiles,
       safeDeletePaths,
+      legacyPythonPreserved: remaining.filter((file) =>
+        legacyPythonModified.has(file),
+      ),
+      legacyPythonUnprocessed: remaining.filter(
+        (file) =>
+          !legacyPythonModified.has(file) &&
+          (applied || !retiredPythonPlanned.has(file)),
+      ),
+      legacyPythonHashClaimsReleased: releasedHashPaths,
     });
+  };
 
   const p36State: { report?: UpdateRolloutReport["p36"] } = {};
   let lifecycleResult: LifecycleResult | null = null;
@@ -2534,7 +2632,11 @@ export async function update(options: UpdateOptions): Promise<void> {
     !hasMaintainerArtifactWrites &&
     !hasWaveCPending
   ) {
+    const metadataChanged =
+      prunedManifest || missingTemplateHashes.size > 0 || !isSameVersion;
+    let noChangeBackup: string | null = null;
     if (!options.dryRun) {
+      if (metadataChanged) noChangeBackup = createFullBackup(cwd);
       const canonicalBuildRoot = fs.mkdtempSync(
         path.join(os.tmpdir(), "pactile-update-"),
       );
@@ -2565,7 +2667,15 @@ export async function update(options: UpdateOptions): Promise<void> {
     }
 
     if (isSameVersion) {
-      console.log(chalk.green("✓ Already up to date!"));
+      console.log(
+        chalk.green(
+          metadataChanged
+            ? options.dryRun
+              ? "✓ Metadata reconciliation ready"
+              : "✓ Metadata reconciled"
+            : "✓ Already up to date!",
+        ),
+      );
     } else {
       if (isUpgrade) {
         console.log(
@@ -2583,12 +2693,19 @@ export async function update(options: UpdateOptions): Promise<void> {
     }
     const afterVersion = getInstalledVersion(cwd);
     emitRollout(
-      lifecycleResult?.status === "degraded"
-        ? "applied_degraded"
-        : "no_changes",
+      options.dryRun
+        ? metadataChanged
+          ? "would_apply"
+          : "no_changes"
+        : lifecycleResult?.status === "degraded"
+          ? "applied_degraded"
+          : metadataChanged
+            ? "applied"
+            : "no_changes",
       {
         projectVersionAfter: afterVersion,
         files: buildRolloutFilePlan(),
+        backupPath: noChangeBackup ? path.relative(cwd, noChangeBackup) : null,
       },
     );
     return;
@@ -3265,7 +3382,7 @@ export async function update(options: UpdateOptions): Promise<void> {
     }
   }
 
-  const appliedFilePlan = buildRolloutFilePlan();
+  const appliedFilePlan = buildRolloutFilePlan(true);
   appliedFilePlan.added = changes.newFiles.map((f) => f.relativePath);
   appliedFilePlan.autoUpdated = changes.autoUpdateFiles.map(
     (f) => f.relativePath,
@@ -3273,11 +3390,9 @@ export async function update(options: UpdateOptions): Promise<void> {
   appliedFilePlan.overwritten = overwrittenPaths;
   appliedFilePlan.skipped = skippedConflictPaths;
   appliedFilePlan.createdNew = createdNewPaths;
-  if (safeDeleted > 0) {
-    appliedFilePlan.safeDeleted = safeFileDeletes
-      .filter((c) => c.action === "delete")
-      .map((c) => c.item.from);
-  }
+  appliedFilePlan.safeDeleted = safeFileDeletes
+    .filter((c) => c.action === "delete" && !legacyPathPresent(c.item.from))
+    .map((c) => c.item.from);
 
   const postSmoke = options.skipPostUpdateSmoke ? [] : runPostUpdateSmoke(cwd);
 

@@ -17,10 +17,22 @@ import {
   collectTemplateFiles,
   loadUpdateSkipPaths,
   removeUpdateSkipPathsFromConfig,
+  retiredPythonScriptMigrations,
   shouldExcludeFromBackup,
   sortMigrationsForExecution,
 } from "../../src/commands/update.js";
 import { FILE_NAMES, PATHS } from "../../src/constants/paths.js";
+
+describe("retired Python migration paths", () => {
+  it("rejects traversal and only considers tracked scripts", () => {
+    const hash = "a".repeat(64);
+    expect(retiredPythonScriptMigrations({
+      ".pactile/scripts/task.py": hash,
+      ".pactile/scripts/../../user.py": hash,
+      ".pactile/tasks/user.py": hash,
+    }).map((item) => item.from)).toEqual([".pactile/scripts/task.py"]);
+  });
+});
 
 // =============================================================================
 // cleanupEmptyDirs
