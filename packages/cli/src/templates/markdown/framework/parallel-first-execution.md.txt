@@ -72,7 +72,7 @@ Independent Check / typed Check worker (helper: `common.parallel_declaration.eva
 
 Lite missing the block is not FAIL. Archives are not backfilled.
 
-This is **not** a `task.py start-execution --check` hard fail.
+This is **not** a `pactile task start-execution --check` hard fail.
 
 ---
 

@@ -18,8 +18,8 @@ the required facts and fingerprints are current.
 ## Host-neutral checks
 
 ```bash
-python ./.pactile/scripts/task.py start-execution <task-dir> --check
-python ./.pactile/scripts/task.py record-gate <task-dir> --transition full-task-complete --gate code-review --result PASS --evidence verify.md
+pactile task start-execution <task-dir> --check
+pactile task record-gate <task-dir> --transition full-task-complete --gate code-review --result PASS --reviewer <reviewer-id> --evidence verify.md
 ```
 
 The exact gate options depend on the generated Task contract. Keep host hooks

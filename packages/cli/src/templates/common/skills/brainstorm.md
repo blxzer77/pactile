@@ -49,12 +49,12 @@ Use this skill only after task-creation consent has been given and the user is r
 If no task exists yet, create one:
 
 ```bash
-TASK_DIR=$(python ./.pactile/scripts/task.py create "<short task title>" --slug <slug>)
+TASK_DIR=$(pactile task create "<short task title>" --slug <slug>)
 ```
 
-Use a concise title from the user's request. Use a slug without a date prefix. `task.py create` adds the `MM-DD-` directory prefix automatically.
+Use a concise title from the user's request. Use a slug without a date prefix. `pactile task create` adds the `MM-DD-` directory prefix automatically.
 
-`task.py create` creates the default `prd.md`. Update that file with the current understanding before asking follow-up questions.
+`pactile task create` creates the default `prd.md`. Update that file with the current understanding before asking follow-up questions.
 
 ## Two-phase planning overview
 
@@ -178,10 +178,10 @@ Your recommended answer defaults to Occam's Razor: the **minimal sufficient** op
 - ordered implementation checklist
 - validation commands
 - risky files or rollback points
-- **Development Strategy Contract** (`execution_mode`, `isolation`, …): before finalizing, run `python3 ./.pactile/scripts/task.py suggest-execution-strategy <task-dir>` (or `--json`); reconcile suggestion with scope, then paste the approved YAML block into `implement.md`
-- follow-up checks before `task.py start-execution --check`
+- **Development Strategy Contract** (`execution_mode`, `isolation`, …): choose the execution and isolation strategy from the actual scope, then record the approved YAML block in `implement.md`.
+- follow-up checks before `pactile task start-execution --check`
 
-Lightweight tasks may have only `prd.md`. Complex tasks must have `prd.md`, `design.md`, and `implement.md` before `task.py start-execution --check`.
+Lightweight tasks may have only `prd.md`. Complex tasks must have `prd.md`, `design.md`, and `implement.md` before `pactile task start-execution --check`.
 
 `implement.md` is not a replacement for `implement.jsonl`. Use JSONL files only for manifest-style spec and research references when the task needs them.
 
@@ -195,7 +195,7 @@ Planning is ready for execution gate when **all** hold:
 - Complex tasks: `design.md` and `implement.md` present
 - User reviewed artifacts or explicitly approved proceeding
 
-Then proceed to Phase 1.2 Research (if needed), Phase 1.4 `task.py start-execution --check`, and implementation only after user approval.
+Then proceed to Phase 1.2 Research (if needed), Phase 1.4 `pactile task start-execution --check`, and implementation only after user approval.
 
 Do not start implementation until the user approves or asks for implementation.
 

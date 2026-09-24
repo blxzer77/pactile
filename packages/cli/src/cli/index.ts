@@ -21,6 +21,9 @@ import {
 import { isWorkflowInitialized, workflowPath } from "../utils/workflow-dir.js";
 import { PACKAGE_NAME, VERSION } from "../constants/version.js";
 import { runKernelJsonCli } from "@blxzer/pactile-core/task";
+import { runTaskCli } from "../commands/task.js";
+import { runContextCli } from "../commands/context.js";
+import { runSessionCli } from "../commands/session.js";
 import {
   PACTILE_ENVIRONMENT_KEYS,
   readPactileEnvironment,
@@ -213,7 +216,7 @@ program
   )
   .option(
     "--skip-post-update-smoke",
-    "Skip post-apply Python script smoke checks",
+    "Skip post-apply Node runtime smoke checks",
   )
   .option(
     "--write-artifacts",
@@ -462,6 +465,41 @@ program
       }
       process.exit(1);
     }
+  });
+
+program
+  .command("context")
+  .description("Read Pactile task, package, and session context with the Node runtime")
+  .addHelpText("after", "\nModes: default, record, packages, phase, lite, session, retrieval-pack\nExamples:\n  pactile context --mode packages --json\n  pactile context --mode session --json\n  pactile context --mode phase --step 1\n  pactile context --mode retrieval-pack --input collected-evidence.json --max-items 8 --json\n")
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[arguments...]")
+  .action(() => {
+    process.exitCode = runContextCli(process.argv.slice(3));
+  });
+
+program
+  .command("session")
+  .description("Record a Pactile journal session with the Node runtime")
+  .addHelpText("after", "\nOperations:\n  add --title <title> [--summary <text>] [--content-file <path>]\n  search --query <query> [--json]\n")
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[operation]")
+  .argument("[arguments...]")
+  .action(() => {
+    process.exitCode = runSessionCli(process.argv.slice(3));
+  });
+
+program
+  .command("task")
+  .description("Manage Pactile tasks with the Node runtime")
+  .addHelpText("after", "\nCore operations:\n  create <title> --slug <slug> [--rigor lite|full] [--parent <task>]\n  dashboard | list | list-archive [YYYY-MM] | select <task> | selected | exit\n  start-execution <task> --check|--approved [--ignore-deps]\n  archive <task> [--check] [--archive-integrated-children]\n  prepare-archive-evidence <task> [--dry-run] | prepare-learning-scaffold <task> [--trigger <text>]\n  set-deps <task> [required-task-id...]\n  add-subtask <parent> <child> | remove-subtask <parent> <child>\n  prepare-child-worktree <parent> <child> --branch <branch> [--check]\n  set-child-state <parent> <child> <state> --evidence <ref>\n  integrate-child <parent> <child> <state> --evidence <ref> --ref <git-ref> [--execute-merge]\n  record-ac-evidence | record-independent-check | record-gate\n  add-context | list-context | validate | artifact-locale\n")
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[operation]")
+  .argument("[arguments...]")
+  .action(() => {
+    process.exitCode = runTaskCli(process.argv.slice(3));
   });
 
 program

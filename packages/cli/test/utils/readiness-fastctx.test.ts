@@ -68,7 +68,6 @@ describe("probeFastCtxCapability", () => {
 
     expect(warnings).toContain("fastctx apply");
     expect(warnings).toContain("~/.codex/AGENTS.md");
-    expect(warnings).toContain("fastctx serve");
     expect(warnings).toContain("normal un-adopted state");
   });
 

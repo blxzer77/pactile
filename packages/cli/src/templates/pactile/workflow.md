@@ -13,7 +13,7 @@ Constraints live in artifacts and Kernel records:
 | `verify.md` | Evidence (when recorded) |
 | `task.json` | Status and metadata (accounting) |
 | `kernel.json` | Audit chain |
-| `task.py archive` | Close: `status=completed`, Kernel audit, notes projection |
+| `pactile task archive` | Close: `status=completed`, Kernel audit, notes projection |
 
 ## User commands
 
@@ -24,8 +24,8 @@ Constraints live in artifacts and Kernel records:
 
 ## Gates
 
-- **Execute:** `python ./.pactile/scripts/task.py start-execution <task> --approved` (`--check` is preflight only; it does not impersonate approval).
-- **Close:** `python ./.pactile/scripts/task.py archive <task>` — writes `completed`, Kernel audit, and notes projection.
+- **Execute:** `pactile task start-execution <task> --approved` (`--check` is preflight only; it does not impersonate approval).
+- **Close:** `pactile task archive <task>` — writes `completed`, Kernel audit, and notes projection.
 
 ## Pointers
 
@@ -49,15 +49,15 @@ This status is an accounting fact, not a step list.
 
 [workflow-state:planning]
 Selected task status is `planning`.
-Constraints are `prd.md` and optional `design.md`/`implement.md`; Execute starts only after `task.py start-execution --approved`.
+Constraints are `prd.md` and optional `design.md`/`implement.md`; Execute starts only after `pactile task start-execution --approved`.
 [/workflow-state:planning]
 
 [workflow-state:in_progress]
 Selected task status is `in_progress`.
-Implement against the approved artifacts; Close is `task.py archive` (Kernel audit plus notes projection).
+Implement against the approved artifacts; Close is `pactile task archive` (Kernel audit plus notes projection).
 [/workflow-state:in_progress]
 
 [workflow-state:completed]
 Task status is `completed`.
-`task.py archive` writes this status in the same call that moves the directory.
+`pactile task archive` writes this status in the same call that moves the directory.
 [/workflow-state:completed]

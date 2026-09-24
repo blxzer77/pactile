@@ -47,17 +47,6 @@ export function candidateValidationCommands({ repoRoot, cliDir }) {
     },
     {
       command: "pnpm",
-      args: [
-        "--filter",
-        "@blxzer/pactile",
-        "run",
-        "check:router-copy-sync:hash",
-      ],
-      cwd: repoRoot,
-      label: "router copy hash",
-    },
-    {
-      command: "pnpm",
       args: ["run", "build"],
       cwd: repoRoot,
       label: "build",

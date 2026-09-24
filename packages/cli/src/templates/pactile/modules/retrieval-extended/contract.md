@@ -22,7 +22,7 @@ Agent 看见：
 
 1. 搜索 ≠ 打分。没有收集到的材料，不得空跑 pack 充 Evidence。
 2. 命中是候选，直到被仓库 / 测试 / 第二源证实。Pack 整理已有材料的质量与来源，不代替 `verify-basic` 的 AC 映射。
-3. 钩 `inject-retrieval-plan.py` / `research-end-retrieval-pack.py` 仅本块激活时订阅；后者还要有 research 产物。Cursor `additional_context` 经常到不了模型：通道失败时只记 assurance / 本地遥测，**不得**假装计划已进 Prompt。成功标准是该打分时打分，不是每回合强制注入计划。
+3. 检索计划和 evidence pack 只在本块激活且有 research 产物时生成。桥接传递失败时只记 assurance / 本地遥测，**不得**假装计划已进 Prompt。成功标准是该打分时打分，不是每回合强制注入计划。
 4. 四意图标签来自编译器；本块不把 Agent 工具名（Grep、@codebase、codegraph、WebSearch…）写进 Baseline。Optional Provider 只有 Profile 选了才由 Adapter 绑定。
 5. 需要外部知识而 Provider 未就绪：走 Middleware 降级（平台 Web ≠ 等价）。不需要外部知识的 Task 仍可 Close。本块不实现爬虫。
 
@@ -32,6 +32,7 @@ Agent 看见：
 
 - 三层分界见下方 ABI 表。
 - 输入产物：`collected-evidence`（路径 + provider 标签 + 可选 freshness）。输出产物：`retrieval-pack`（排序、分数、provenance）；可选 `probe-report`（维护者）。
+- Node 入口：`pactile context --mode retrieval-pack --input <collected-evidence.json> --max-items 8 --output {TASK}/research/retrieval-pack-latest.json --json`；输入 `items[]` 或 `collectedEvidence[]`，每项提供 `path`、`provider`。只处理已有材料；`--include-diagnostics` 才把失败/不可用项纳入 pack 正文。默认排除这些项，且 `closeEvidenceEligible=false`。
 - 停止：未激活仍灌检索教战或 stop 打分钩；把 pack 当 AC Evidence；把 smart-search 收进本块；每回合强制检索计划；通道失败却声称已注入。
 - 评分算法细节用指针，不在本块另写上帝文档。算法/ranking 特征/pack schema 版本属于本块内部，后续可改。
 
@@ -62,7 +63,7 @@ Agent 看见：
 - 本块内部的评分算法、ranking 特征、pack schema 版本。
 - 维护者 probe / 评测矩阵。
 - 新 Optional Provider：Manifest + Adapter 绑定到已有意图，不新增第五个常驻意图，除非同时改编译器契约。
-- 注入通道：Cursor 若将来能稳定送达检索计划，本块消费；不能则继续 telemetry，产品不假绿。
+- 注入通道：仅在宿主已验证交付检索计划后消费；不能则记录未交付状态，产品不假绿。
 - smart-search 独立发版、独立 CLI。
 
 后续优化**不可以**改（改了等于放弃模块化）：
@@ -74,4 +75,4 @@ Agent 看见：
 - 把 `retrieval-daily-guide.md` 当 SessionStart SSOT。
 - 为了「检索好改」把三层重新合并进 `workflow.md`。
 
-现状债务（优化时面对；本需求不假装已修好）：`inject-retrieval-plan.py` 目前常是 telemetry；旧路由器仍带多于四意图的执行细节；搜索与 pack 在文档里仍易混用；codegraph / fast-context 曾被当成默认。完成态是所有权先分清，再在本块和 Provider 里演进算法。
+现状债务：Node 检索路由、证据打分与桥接仍需统一；搜索与 pack 在文档里仍易混用。完成态是所有权先分清，再在本块和 Provider 里演进算法。

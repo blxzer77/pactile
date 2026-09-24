@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { execSync, spawnSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -65,30 +65,6 @@ function readHashesV2(hashFile: string): Record<string, string> {
 
 function writeHashesV2(hashFile: string, hashes: Record<string, string>): void {
   fs.writeFileSync(hashFile, JSON.stringify({ __version: 2, hashes }, null, 2));
-}
-
-function closeoutProfile(
-  cwd: string,
-  taskDir: string,
-  payload: Record<string, unknown>,
-): string {
-  const result = spawnSync(
-    PY,
-    [
-      "-c",
-      [
-        "import json, sys",
-        "from pathlib import Path",
-        "sys.path.insert(0, '.pactile/scripts')",
-        "from common.task_gates import task_closeout_profile",
-        `data = json.loads(${JSON.stringify(JSON.stringify(payload))})`,
-        `print(task_closeout_profile(Path(${JSON.stringify(taskDir)}), data))`,
-      ].join("\n"),
-    ],
-    { cwd, encoding: "utf-8" },
-  );
-  expect(result.status).toBe(0);
-  return (result.stdout || "").trim();
 }
 
 describe("update() P36 A+B+C", () => {
@@ -203,14 +179,6 @@ describe("update() P36 A+B+C", () => {
     expect(disk.required_controls).toBeUndefined();
     expect(disk.status).toBe("in_progress");
     expect(fs.readFileSync(path.join(taskDir, "prd.md"), "utf-8")).toBe(PRD);
-    const leftover = {
-      parent: "some-parent",
-      children: [],
-      kind: "parent",
-      meta: { classification: "parent" },
-      topology: { kind: "single", parent_id: "some-parent", children: [] },
-    };
-    expect(closeoutProfile(tmpDir, taskDir, leftover)).toBe("lite");
   });
 
   it("smoke failure still reaches Proceed?; refuse writes no flag", async () => {
@@ -277,18 +245,6 @@ describe("update() P36 A+B+C", () => {
     expect(isWaveCConfirmed(tmpDir)).toBe(false);
     expect(fs.readFileSync(path.join(skipDir, "prd.md"), "utf-8")).toBe(PRD);
   }, 240_000);
-
-  it("unconfirmed leftover still dual-reads classification", async () => {
-    const taskDir = plantLegacySurfaces();
-    const leftover = {
-      parent: "some-parent",
-      children: [],
-      kind: "parent",
-      meta: { classification: "parent" },
-    };
-    expect(closeoutProfile(tmpDir, taskDir, leftover)).toBe("parent");
-    expect(isWaveCConfirmed(tmpDir)).toBe(false);
-  });
 
   it("maintainer flag writes B projections after confirm", async () => {
     const taskDir = plantLegacySurfaces();

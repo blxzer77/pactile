@@ -39,25 +39,10 @@ describe("createWorkflowStructure — retired alternate-client bundle is never w
     ).toBe(false);
   });
 
-  it("does NOT write maintainer-only scripts (probe, eval tools)", async () => {
+  it("does not install a Python script tree", async () => {
     await createWorkflowStructure(tmpDir, { projectType: "fullstack" });
     const scriptsDir = path.join(tmpDir, ".pactile", "scripts");
-    expect(
-      fs.existsSync(path.join(scriptsDir, "cursor_retrieval_probe.py")),
-    ).toBe(false);
-    expect(
-      fs.existsSync(path.join(scriptsDir, "cursor_retrieval_probe_prompt.md")),
-    ).toBe(false);
-    expect(
-      fs.existsSync(path.join(scriptsDir, "aggregate_retrieval_telemetry.py")),
-    ).toBe(false);
-    expect(
-      fs.existsSync(path.join(scriptsDir, "batch_plan_envelope.py")),
-    ).toBe(false);
-    expect(
-      fs.existsSync(path.join(scriptsDir, "common", "test_retrieval_arbitration.py")),
-    ).toBe(false);
-    expect(fs.existsSync(path.join(scriptsDir, "task.py"))).toBe(true);
+    expect(fs.existsSync(scriptsDir)).toBe(false);
   });
 
   it("creates the canonical .pactile base structure", async () => {
@@ -65,9 +50,7 @@ describe("createWorkflowStructure — retired alternate-client bundle is never w
       projectType: "fullstack",
     });
     expect(fs.existsSync(path.join(tmpDir, ".pactile"))).toBe(true);
-    expect(
-      fs.existsSync(path.join(tmpDir, ".pactile", "scripts")),
-    ).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, ".pactile", "scripts"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, ".pactile", "tasks"))).toBe(true);
     expect(
       fs.existsSync(path.join(tmpDir, ".pactile", "workflow.md")),

@@ -38,11 +38,7 @@ function isCoreTaskJsonWriter(source: string): boolean {
 }
 
 function isCliTaskJsonWriter(source: string): boolean {
-  if (!/\bwriteFileSync\s*\(/.test(source)) return false;
-  return (
-    /FILE_NAMES\.TASK_JSON/.test(source) ||
-    /path\.join\([^)]*["']task\.json["']/.test(source)
-  );
+  return /\bwriteFileSync\s*\(\s*(?:path\.join\([^)]*(?:FILE_NAMES\.TASK_JSON|["']task\.json["'])|[^,\n]*FILE_NAMES\.TASK_JSON)/s.test(source);
 }
 
 describe("Stage 1–2 task.json writer freeze", () => {

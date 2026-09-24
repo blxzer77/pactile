@@ -73,7 +73,6 @@ import {
 
 // Import templates for comparison
 import {
-  getAllScripts,
   // Configuration
   configYamlTemplate,
   gitignoreTemplate,
@@ -90,7 +89,6 @@ import {
   isManagedRootDir,
 } from "../configurators/index.js";
 import { getWorkflowRootTemplateFiles } from "../configurators/workflow.js";
-import { replacePythonCommandLiterals } from "../configurators/shared.js";
 import { pruneOrphanManifestKeys } from "../utils/manifest-prune.js";
 import { runPostUpdateSmoke } from "../utils/post-update-smoke.js";
 import { cleanupRetiredAlternateClientResidue } from "../pactile/compat/retired-alternate-client.js";
@@ -134,7 +132,7 @@ export interface UpdateOptions {
   skipReadiness?: boolean;
   /** Emit a single-line JSON rollout evidence object (dry-run or apply). */
   json?: boolean;
-  /** Skip post-apply Python script smoke checks (apply mode only). */
+  /** Skip post-apply Node runtime smoke checks (apply mode only). */
   skipPostUpdateSmoke?: boolean;
   /**
    * Maintainer / harness: after one confirm, write artifact B projections.
@@ -193,6 +191,18 @@ interface SafeFileDeleteClassified {
     | "skip-modified"
     | "skip-protected"
     | "skip-update-skip";
+}
+
+/** Retire only Python scripts that still match the hash recorded at install. */
+export function retiredPythonScriptMigrations(hashes: TemplateHashes): MigrationItem[] {
+  return Object.entries(hashes)
+    .filter(([file, hash]) => /^\.pactile\/scripts\/(?:[^/]+\/)*[^/]+\.py$/.test(file) && /^[a-f0-9]{64}$/i.test(hash))
+    .map(([file, hash]) => ({
+      type: "safe-file-delete" as const,
+      from: file,
+      allowed_hashes: [hash],
+      description: "Node-only runtime replaces this installed Python script",
+    }));
 }
 
 /**
@@ -699,11 +709,6 @@ export function collectTemplateFiles(
   bypassUpdateSkip = false,
 ): Map<string, string> {
   const files = new Map<string, string>();
-  // Python scripts (single source of truth: getAllScripts())
-  for (const [scriptPath, content] of getAllScripts()) {
-    files.set(`${PATHS.SCRIPTS}/${scriptPath}`, content);
-  }
-
   // P29 short contracts (index.json + <id>/contract.md). Not scripts.
   for (const [modulePath, content] of collectUserModuleTemplates()) {
     files.set(`${PATHS.MODULES}/${modulePath}`, content);
@@ -718,13 +723,12 @@ export function collectTemplateFiles(
   files.set(`${DIR_NAMES.WORKFLOW}/.gitignore`, gitignoreTemplate);
   // Retired alternate-client files are handled only by the explicit
   // compatibility residue cleaner and are never refreshed or injected.
-  // workflow.md is included here because it is runtime-parsed by
-  // get_context.py and shared hooks. Keep it on the normal template update
+  // workflow.md is included here because the Node context command reads it.
+  // Keep it on the normal template update
   // path: if the installed file still matches the tracked hash, update the
   // whole file. If the user edited it, the standard modified-file prompt /
   // --force behavior applies. Partial tag-block merging is unsafe because
-  // platform routing markers outside [workflow-state:*] blocks are also
-  // script-consumed.
+  // platform routing markers outside [workflow-state:*] blocks also matter.
   files.set(`${DIR_NAMES.WORKFLOW}/workflow.md`, workflowMdTemplate);
   // Framework docs are framework-owned and refreshed by update.
   // New files flow through the standard new/auto-update/hash-conflict
@@ -737,7 +741,7 @@ export function collectTemplateFiles(
   for (const [relativePath, content] of getWorkflowRootTemplateFiles()) {
     files.set(relativePath, content);
   }
-  // workspace/index.md stays excluded — it's runtime-appended by add_session.py
+  // workspace/index.md stays excluded — it is appended by the Node session command
   // (journal index) and has no script-parsed structure.
   for (const [filePath, content] of collectProjectCapabilityTemplates(
     cwd,
@@ -762,11 +766,6 @@ export function collectTemplateFiles(
         }
       }
     }
-  }
-
-  // Apply python3→python replacement for Windows consistency with init-time writes
-  for (const [filePath, content] of files) {
-    files.set(filePath, replacePythonCommandLiterals(content));
   }
 
   // User overlay is never a template — strip even if a future collector
@@ -2140,6 +2139,7 @@ export async function update(options: UpdateOptions): Promise<void> {
 
   // Load template hashes for modification detection
   let hashes = loadHashes(cwd);
+  const retiredPythonMigrations = retiredPythonScriptMigrations(hashes);
   const isFirstHashTracking = Object.keys(hashes).length === 0;
 
   // Handle unknown version - skip regular migrations but safe-file-delete still runs
@@ -2215,7 +2215,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   // This runs regardless of version — unknown version still gets safe cleanup
   const allMigrations = getAllMigrations();
   const safeFileDeletes = collectSafeFileDeletes(
-    allMigrations,
+    [...allMigrations, ...retiredPythonMigrations.filter((item) => !allMigrations.some((existing) => existing.type === "safe-file-delete" && existing.from === item.from))],
     cwd,
     skipPaths,
     breakingBypass,
@@ -3133,7 +3133,7 @@ export async function update(options: UpdateOptions): Promise<void> {
         fs.mkdirSync(taskDir, { recursive: true });
 
         // Get current developer for assignee.
-        // `.developer` is a key=value file (written by init_developer.py):
+        // `.developer` is a key=value file written during init:
         //   name=<developer-name>
         //   initialized_at=<iso8601>
         // Reading it raw and .trim()-ing embeds the entire file contents

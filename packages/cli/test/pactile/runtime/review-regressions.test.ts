@@ -1,8 +1,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { handleRuntimePathRequest } from "../../../src/pactile/runtime/json-api.js";
 import {
@@ -35,7 +33,6 @@ function state(generationId: string): InstallStateV1 {
   };
 }
 
-const here = path.dirname(fileURLToPath(import.meta.url));
 const roots: string[] = [];
 function fixture(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-review-fix-"));
@@ -174,17 +171,6 @@ describe("independent-review regression contracts", () => {
     expect(
       requests.map((request) => handleRuntimePathRequest(request)),
     ).toEqual(expected);
-    const command = process.platform === "win32" ? "py" : "python3";
-    const args = process.platform === "win32" ? ["-3.12"] : [];
-    expect(
-      JSON.parse(
-        execFileSync(command, [...args, path.join(here, "parity_runner.py")], {
-          input: JSON.stringify(requests),
-          encoding: "utf8",
-          windowsHide: true,
-        }),
-      ),
-    ).toEqual(expected);
   });
 
   it.each(["missing", "missing-store", "unsealed", "tampered"])(
@@ -266,15 +252,5 @@ describe("independent-review regression contracts", () => {
     expect(
       requests.map((request) => handleRuntimePathRequest(request)),
     ).toEqual(expected);
-    const command = process.platform === "win32" ? "py" : "python3";
-    const args = process.platform === "win32" ? ["-3.12"] : [];
-    const mirror = JSON.parse(
-      execFileSync(command, [...args, path.join(here, "parity_runner.py")], {
-        input: JSON.stringify(requests),
-        encoding: "utf8",
-        windowsHide: true,
-      }),
-    );
-    expect(mirror).toEqual(expected);
   });
 });

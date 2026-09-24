@@ -47,13 +47,13 @@ Optional planning note (not sufficient alone): `Spec update needed: <reason>` â€
 
 ```bash
 # Draft missing archive sections (append-only)
-python ./.pactile/scripts/task.py prepare-archive-evidence .pactile/tasks/<task>
+pactile task prepare-archive-evidence .pactile/tasks/<task>
 
 # Print spec-capture checklist (stdout only; does not edit specs)
-python ./.pactile/scripts/task.py prepare-learning-scaffold .pactile/tasks/<task> --trigger "parent review changes"
+pactile task prepare-learning-scaffold .pactile/tasks/<task> --trigger "parent review changes"
 
 # Parent review surfaces missing child learning lines
-python ./.pactile/scripts/task.py review-child <parent> <child> --check
+pactile task review-child <parent> <child> --check
 ```
 
 ---

@@ -48,11 +48,13 @@ Open -> Define -> Approve -> Execute -> Verify -> Integrate? -> Close
 两个命令边界刻意保持显式：
 
 ```bash
-python ./.pactile/scripts/task.py start-execution <task> --check
-python ./.pactile/scripts/task.py start-execution <task> --approved
+pactile task start-execution <task> --check
+pactile task start-execution <task> --approved
 ```
 
 第一条是 read-only readiness preflight；第二条记录显式批准并进入 Execute。类似地，`archive <task> --check` 只是 preflight；`archive <task>` 执行 Close、写入 completion/audit 状态并把目录移入 archive。
+
+`pactile task set-deps <task> <required-task-id>` 声明 Kernel 的硬 `requires` 边。依赖未满足时，预检与执行默认都会阻断。CLI 会从活动或已归档任务核实完成状态；只有已完成的任务才能满足依赖，取消不算完成。只有用户明确批准，才能用 `--ignore-deps` 记录覆盖，且不会伪称依赖已经满足。
 
 ## Gates 与 Evidence
 
@@ -65,6 +67,8 @@ Closeout Evidence 通常标识：
 - manual 或 independent review notes；
 - 精确的 reviewed change set 或 ref；
 - durable-learning decision：更新项目 spec、带理由拒绝更新，或解决一次有界不确定性。
+
+`pactile task prepare-archive-evidence <task>` 会把缺失的 `verify.md` 栏位草拟为 `TODO`；占位符不能通过归档门槛。`pactile task prepare-learning-scaffold <task>` 只打印 spec 决策清单。Parent 可先用 `pactile task review-child <parent> <child> --check` 检查 Child handoff，再记录接受或返工决定。
 
 ## Parent 与 Child tasks
 

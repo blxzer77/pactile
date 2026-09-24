@@ -69,7 +69,7 @@ Each question must include: the decision needed, why it matters, your recommende
 
 - `prd.md` records requirements + acceptance (goal, confirmed facts, requirements, acceptance criteria, out of scope, blocking open questions).
 - `design.md` records technical design for complex tasks (architecture, data flow, contracts, trade-offs, rollback).
-- `implement.md` records execution planning (ordered checklist, validation commands, Development Strategy Contract via `task.py suggest-execution-strategy`).
+- `implement.md` records execution planning (ordered checklist, validation commands, and Development Strategy Contract).
 - Complex tasks need all three before `start-execution --check`; lightweight tasks may be PRD-only.
 
 ## Stop — AC ambiguity face = 0
@@ -96,7 +96,7 @@ Planning is ready for the execution gate when **all** hold:
 - Complex tasks: `design.md` and `implement.md` present
 - User reviewed artifacts or explicitly approved proceeding
 
-Then proceed to Research (if needed), `task.py start-execution <task> --check`, and implementation **only after** explicit user execution approval. Do not start implementation until the user approves or asks for implementation.
+Then proceed to Research (if needed), `pactile task start-execution <task> --check`, and implementation **only after** explicit user execution approval. Do not start implementation until the user approves or asks for implementation.
 
 ## Related
 

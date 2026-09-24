@@ -2,13 +2,13 @@
 
 Wrap up the current session: archive the selected task (and any other completed-but-unarchived tasks the user wants to clean up) and record the session journal. Product-code commits are **not** done here — those belong to Close / Finalize (`vcs-integration`) **before** you invoke this command.
 
-Before archive, confirm `verify.md` includes a **Durable learning decision** (`update-spec` | `no-update` | `unsure`, or a grep-friendly `Durable learning decision:` / `no durable learning` line) and gate-compatible evidence per `.pactile/spec/guides/durable-learning-decision-guide.md`. Run `task.py archive <task> --check` when unsure.
+Before archive, confirm `verify.md` includes a **Durable learning decision** (`update-spec` | `no-update` | `unsure`, or a grep-friendly `Durable learning decision:` / `no durable learning` line) and gate-compatible evidence per `.pactile/spec/guides/durable-learning-decision-guide.md`. Run `pactile task archive <task> --check` when unsure.
 
 Human lifecycle names: Open / Define / Approve / Execute / Verify / Integrate? / Close. This command is the Close wrap-up hatch, not Execute. On Close, `UpdateGoal` complete or cancel plus one sentence; Goal failure does not block Close. Do not ask the user to type `python`.
 
 ## Evidence pack reference (optional — graceful skip)
 
-When the selected task has `{TASK}/research/retrieval-pack-latest.json` (written by the research-end `stop` hook via `get_context --mode retrieval-pack`, or by an explicit pack run during Verify):
+When the selected task already has `{TASK}/research/retrieval-pack-latest.json`:
 
 1. Read the JSON; note top `contextPack.selected` items (`title`, `source`, `reference`, `score`) and `collection` counts.
 2. Ensure `verify.md` includes an `## Evidence pack reference` section citing those ranked sources or documenting explicit gaps.
@@ -16,12 +16,14 @@ When the selected task has `{TASK}/research/retrieval-pack-latest.json` (written
 
 If the file does not exist: **skip silently** — no error, no user prompt. Pack absence is normal when the task did not use research/smart-search.
 
-Pack format: `version`, `source` (`retrieval-pack-orchestrator`), `contextPack.selected[]`, `scoredEvidence`, `collection`. Smart-search manifests that feed scoring live under `{TASK}/research/smart-search/<run-id>/` (from `run_smart_search.py`).
+Pack format: `version`, `source` (`retrieval-pack-orchestrator`), `contextPack.selected[]`, `scoredEvidence`, `collection`. Smart Search manifests that feed scoring live under `{TASK}/research/smart-search/<run-id>/`.
+
+When research evidence has already been collected, generate or refresh the file with `pactile context --mode retrieval-pack --input <collected-evidence.json> --output {TASK}/research/retrieval-pack-latest.json --json`. Each input item needs `path` and `provider`; the Node quality layer scores, arbitrates, and budgets the collected items. It does not search, and its pack is never AC or Close evidence.
 
 ## Step 1: Survey current state
 
 ```bash
-{{PYTHON_CMD}} ./.pactile/scripts/get_context.py --mode record
+pactile context --mode record
 ```
 
 This prints:
@@ -40,7 +42,7 @@ Run:
 git status --porcelain
 ```
 
-Filter out paths under `.pactile/workspace/` and `.pactile/tasks/` — those are managed by `add_session.py` and `task.py archive` auto-commits and will appear dirty as part of this skill's own work.
+Filter out paths under `.pactile/workspace/` and `.pactile/tasks/` — those are managed by `pactile session add` and `pactile task archive` auto-commits and will appear dirty as part of this skill's own work.
 
 For each remaining dirty path, decide whether it belongs to **the selected task** or to **other parallel work** (e.g., another terminal window editing the same repo). Heuristics:
 
@@ -61,7 +63,7 @@ Then route:
 ## Step 3: Archive task(s)
 
 ```bash
-{{PYTHON_CMD}} ./.pactile/scripts/task.py archive <task-name>
+pactile task archive <task-name>
 ```
 
 At minimum: the selected task (if any). Plus any extra tasks the user confirmed in Step 1. Each archive produces a `chore(task): archive ...` commit via the script's auto-commit.
@@ -71,7 +73,7 @@ If there is no selected task and the user did not confirm any cleanup archives, 
 ## Step 4: Record session journal
 
 ```bash
-{{PYTHON_CMD}} ./.pactile/scripts/add_session.py \
+pactile session add \
   --title "Session Title" \
   --commit "hash1,hash2" \
   --summary "Brief summary"

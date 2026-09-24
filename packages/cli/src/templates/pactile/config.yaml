@@ -8,7 +8,7 @@
 #-------------------------------------------------------------------------------
 
 # Commit message used when auto-committing journal/index changes
-# after running add_session.py
+# after running pactile session add
 session_commit_message: "chore: record journal"
 
 # Maximum lines per journal file before rotating to a new one
@@ -20,7 +20,7 @@ max_journal_lines: 2000
 
 # Auto-commit behavior for session journal + task archive operations.
 # - true (default): scripts auto-stage and auto-commit journal / task changes
-#   after add_session.py / task.py archive runs.
+#   after pactile session add / pactile task archive runs.
 # - false: scripts do not touch git. Files (journal-*.md, task archive moves)
 #   are still written to disk; you decide whether to git add / commit.
 #
@@ -97,7 +97,7 @@ max_journal_lines: 2000
 #-------------------------------------------------------------------------------
 # Smart Search CLI (optional per-machine override)
 #-------------------------------------------------------------------------------
-# run_smart_search.py resolves: env PACTILE_SMART_SEARCH_COMMAND, then this
+# The Smart Search adapter resolves env PACTILE_SMART_SEARCH_COMMAND, then this
 # setting, then PATH, then node_modules/.bin and repo wrappers. No .runtime cache.
 #
 # smart_search:

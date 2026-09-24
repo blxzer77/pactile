@@ -50,8 +50,8 @@ Monorepo example:
 Adding a spec does not mean every task automatically reads it. The selected task must reference it in JSONL:
 
 ```bash
-python3 ./.pactile/scripts/task.py add-context <task> implement ".pactile/spec/webapp/security/index.md" "Security conventions"
-python3 ./.pactile/scripts/task.py add-context <task> check ".pactile/spec/webapp/security/index.md" "Security review rules"
+pactile task add-context <task> implement ".pactile/spec/webapp/security/index.md" "Security conventions"
+pactile task add-context <task> check ".pactile/spec/webapp/security/index.md" "Security review rules"
 ```
 
 ## Change Monorepo Packages
@@ -70,7 +70,7 @@ default_package: webapp
 After editing, run:
 
 ```bash
-python3 ./.pactile/scripts/get_context.py --mode packages
+pactile context --mode packages
 ```
 
 Use this output to confirm AI can see the correct packages and spec layers.

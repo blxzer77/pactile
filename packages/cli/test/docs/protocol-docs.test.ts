@@ -59,10 +59,10 @@ describe("P31–P36 product protocol docs", () => {
       "smart-search",
       "codegraph",
       "fast-context",
-      "cursor-ide-browser",
     ]) {
       expect(protocol).toContain(`id: ${id}`);
     }
+    expect(protocol).not.toContain("id: cursor-ide-browser");
     // The browser-session skill was retired; the protocol must not keep
     // advertising it as a shipped provider.
     expect(protocol).not.toContain("chrome-cdp");
@@ -75,7 +75,7 @@ describe("P31–P36 product protocol docs", () => {
       expect(protocol).not.toContain(`id: ${retired}`);
     }
     expect(protocol).not.toContain("GITHUB_TOKEN");
-    expect(protocol).toContain("host-platform");
+    expect(protocol).toContain("宿主 MCP / Agent 配置");
     expect(protocol).toContain("属 Extra");
     expect(protocol).toContain("仅 **smart-search** = `required`");
   });

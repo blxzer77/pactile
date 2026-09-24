@@ -92,7 +92,7 @@ $env:TEMP\pactile-handoff-{yyyyMMdd-HHmmss}-{slug}.md
 ## Pointers (reference paths only, never copy bodies)
 - Task: `.pactile/tasks/<task>/` (prd.md / design.md / implement.md / verify.md)
 - Context: `CONTEXT.md` · Research: `<task>/research/`
-- Prototype evidence (if a prototype was involved): `<task>/research/prototype-<slug>.py` (see `.pactile/spec/guides/prototype-guide.md` §9)
+- Prototype evidence (if a prototype was involved): `<task>/research/prototype-<slug>.mjs` (see `.pactile/spec/guides/prototype-guide.md` §9)
 - Other: ADR / issue / commit / diff paths or URLs
 
 ## Suggested skills (for the continuing agent)

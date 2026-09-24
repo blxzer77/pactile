@@ -30,7 +30,6 @@ import { init } from "../../src/commands/init.js";
 import { VERSION } from "../../src/constants/version.js";
 import { DIR_NAMES, FILE_NAMES, PATHS } from "../../src/constants/paths.js";
 import { frameworkDocs } from "../../src/templates/markdown/index.js";
-import { replacePythonCommandLiterals } from "../../src/configurators/shared.js";
 import {
   PACTILE_BLOCK_END,
   PACTILE_BLOCK_START,
@@ -91,7 +90,7 @@ describe("init() integration", () => {
 
     // Core workflow structure
     expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(true);
-    expect(fs.existsSync(path.join(tmpDir, PATHS.SCRIPTS))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, PATHS.SCRIPTS))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, PATHS.WORKSPACE))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, PATHS.TASKS))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, PATHS.SPEC))).toBe(true);
@@ -654,60 +653,16 @@ describe("init() integration", () => {
     ).toEqual(afterFirstReinit);
   });
 
-  it("#7 passes developer name to init_developer script", async () => {
+  it("#7 initializes identity and guidance without a Python probe", async () => {
     await init({ yes: true, user: "testdev" });
-
-    const calls = vi.mocked(execSync).mock.calls;
-    const match = calls.find(
-      ([cmd]) => typeof cmd === "string" && cmd.includes("init_developer.py"),
-    );
-    expect(match).toBeDefined();
-    const command = String((match as [unknown])[0]);
-    const expectedPythonCmd =
-      process.platform === "win32" ? "python" : "python3";
-    expect(command).toContain(`${expectedPythonCmd} "`);
-    expect(command).toContain('"testdev"');
-  });
-
-  it("#7b throws when the selected Python command is below 3.9", async () => {
-    // v0.5.7: init now tries a fallback chain (#236). Mock every candidate to
-    // return the same too-old version so all candidates fail uniformly.
-    vi.mocked(execSync).mockImplementation(
-      (() => "Python 3.8.18") as typeof execSync,
-    );
-
-    await expect(init({ yes: true, codex: true })).rejects.toThrow(
-      /No supported Python command found.*Python 3\.8\.18 \(< 3\.9\)/s,
-    );
-    expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(false);
-  });
-
-  it("#7c throws when the selected Python command is missing", async () => {
-    // v0.5.7: init now tries a fallback chain (#236). Mock every candidate to
-    // throw "not found" so all candidates fail.
-    vi.mocked(execSync).mockImplementation((() => {
-      throw new Error("not found");
-    }) as typeof execSync);
-
-    await expect(init({ yes: true, codex: true })).rejects.toThrow(
-      /No supported Python command found.*not found/s,
-    );
-    expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(false);
-  });
-
-  it("#7d renders the platform Python command into canonical generated text", async () => {
-    const expectedPythonCmd =
-      process.platform === "win32" ? "python" : "python3";
-
-    await init({ yes: true, codex: true });
-
+    expect(fs.readFileSync(path.join(tmpDir, ".pactile", ".developer"), "utf8")).toContain("name=testdev");
+    expect(vi.mocked(execSync).mock.calls.every(([command]) => !/\bpython(?:3)?\b/i.test(String(command)))).toBe(true);
     const workspaceIndex = fs.readFileSync(
       path.join(tmpDir, PATHS.WORKSPACE, "index.md"),
       "utf-8",
     );
-    expect(workspaceIndex).toContain(
-      `${expectedPythonCmd} ./.pactile/scripts/init_developer.py`,
-    );
+    expect(workspaceIndex).toContain("pactile init --user <your-name>");
+    expect(workspaceIndex).not.toContain(".pactile/scripts/");
   });
 
   it("#8 writes correct version file", async () => {
@@ -771,7 +726,7 @@ describe("init() integration", () => {
       // same-version updates are a true no-op
       expect(
         fs.readFileSync(path.join(frameworkDir, doc.name), "utf-8"),
-      ).toBe(replacePythonCommandLiterals(doc.content));
+      ).toBe(doc.content);
     }
     expect(fs.existsSync(path.join(frameworkDir, "index.md"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, PATHS.MIDDLEWARE))).toBe(false);
@@ -969,19 +924,13 @@ describe("init() integration", () => {
 
     // prd.md mentions packages + renders per-package checklist items
     const prd = fs.readFileSync(path.join(taskDir, "prd.md"), "utf-8");
-    const expectedPythonCmd =
-      process.platform === "win32" ? "python" : "python3";
     expect(prd).toContain("core");
     expect(prd).toContain("ui");
     expect(prd).toContain("spec/");
     expect(prd).toContain("- [ ] Fill guidelines for core");
     expect(prd).toContain("- [ ] Fill guidelines for ui");
-    expect(prd).not.toContain(
-      `${expectedPythonCmd} ./.pactile/scripts/task.py finish`,
-    );
-    expect(prd).toContain(
-      `${expectedPythonCmd} ./.pactile/scripts/task.py archive 00-bootstrap-guidelines`,
-    );
+    expect(prd).not.toContain("pactile task finish");
+    expect(prd).toContain("pactile task archive 00-bootstrap-guidelines");
   });
 
   it("#16 --no-monorepo skips detection even with workspace config", async () => {

@@ -9,6 +9,6 @@ Choose who implements and checks, and where edits happen, before freezing `imple
 
 For Codex, a future `worker` binding will use independent desktop tasks and cross-session messaging. The Pactile bridge is not implemented yet. Current runs can use `inline` or manually coordinated tasks with explicit evidence. Pactile does not dispatch Codex subagents. See `codex-worker-dispatch.md`.
 
-The existing Python helper `task.py suggest-execution-strategy <task-dir> --json` gives an advisory suggestion. `task.py start-execution <task> --check` warns about drift without changing approval state. These helpers are scheduled for replacement by the Node runtime.
+The execution strategy is documented in `implement.md`. Review it against the task scope before running `pactile task start-execution <task> --check`; the Node CLI checks the transition without changing approval state.
 
 A non-Git project may still use a worker; it changes the isolation choices, not the execution mode. Parallel work must have independent write sets and a recorded integration owner.

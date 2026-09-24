@@ -50,9 +50,9 @@ If the user wants only one platform to avoid sub-agents, first confirm whether t
 | `status` | Artifact state | Resume at |
 | --- | --- | --- |
 | `planning` | `prd.md` missing | Phase 1.1 (load `pactile-brainstorm`) |
-| `planning` | lightweight task with `prd.md` complete | run `task.py start-execution <task> --check`, ask for explicit execution approval, then run `--approved` |
+| `planning` | lightweight task with `prd.md` complete | run `pactile task start-execution <task> --check`, ask for explicit execution approval, then run `--approved` |
 | `planning` | complex task missing `design.md` or `implement.md` | complete missing planning artifacts |
-| `planning` | complex task has `prd.md`, `design.md`, and `implement.md` | run `task.py start-execution <task> --check`, ask for explicit execution approval, then run `--approved` |
+| `planning` | complex task has `prd.md`, `design.md`, and `implement.md` | run `pactile task start-execution <task> --check`, ask for explicit execution approval, then run `--approved` |
 | `in_progress` | no implementation in conversation history | Phase 2.1 (`pactile-implement`) |
 | `in_progress` | implementation done, no `pactile-check` run | Phase 2.2 (`pactile-check`) |
 | `in_progress` | check passed | Phase 3.1 (verify quality + spec update) |

@@ -21,7 +21,7 @@ quality_gates:
 4. Run non-mutating guards and validation (manifest, build, focused tests, typecheck, pack dry-run).
 5. Fill `verify.md` using the evidence contract in `design.md`.
 6. Write `handoff.md` with **Ready to publish**, **Not published**, and **Blockers** tables.
-7. Run `python ./.pactile/scripts/task.py validate <this-task>` and `archive --check` when finishing.
+7. Run `pactile task validate <this-task>` and `archive --check` when finishing.
 
 ## Validation
 

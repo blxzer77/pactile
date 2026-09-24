@@ -547,10 +547,14 @@ export function assertStage5ForPhase(
     asStringArray(extras.dependency_satisfied),
     typeof record.id === "string" ? record.id : undefined,
   );
-  if (missing.length > 0) {
+  const override = isPlainObject(extras.dependency_override) ? extras.dependency_override : null;
+  const waived = override?.approved_by === "user" && override.transition === "start-execution"
+    ? asStringArray(override.dependencies) : [];
+  const unwaived = missing.filter((dependency) => !waived.includes(dependency));
+  if (unwaived.length > 0) {
     throw new KernelError(
       "INVALID_TRANSITION",
-      `requires unmet: ${missing.join(", ")}`,
+      `requires unmet: ${unwaived.join(", ")}`,
     );
   }
 

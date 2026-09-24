@@ -9,16 +9,10 @@ export const REQUIRED_RELEASE_FILES = [
   "bin/compat-warning.js",
   "bin/smart-search.js",
   "dist/cli/index.js",
-  "dist/templates/pactile/scripts/task.py",
-  "dist/templates/pactile/scripts/get_context.py",
-  "dist/templates/pactile/scripts/common/retrieval_pack.py",
-  "dist/templates/pactile/scripts/common/codebase_retrieval_router.py",
-  "dist/templates/pactile/scripts/common/retrieval_adapter_metadata.py",
+  "dist/templates/pactile/index.js",
   "dist/templates/pactile/workflow.md",
   "dist/templates/pactile/modules/index.json",
   "dist/templates/pactile/modules/intake-basic/contract.md",
-  "dist/templates/pactile/scripts/compile_session_pack.py",
-  "dist/templates/shared-hooks/session-start.py",
   "scripts/postinstall.js",
   "README.md",
   "LICENSE",
@@ -30,7 +24,7 @@ const FORBIDDEN_FRAGMENTS = [
   "__pycache__",
   ".egg-info",
 ];
-const FORBIDDEN_SUFFIXES = [".pyc", ".pyo"];
+const FORBIDDEN_SUFFIXES = [".py", ".pyc", ".pyo"];
 
 export function validateReleasePackPaths(inputPaths) {
   const paths = new Set(

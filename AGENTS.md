@@ -1,27 +1,15 @@
-<!-- PACTILE:START -->
-# Pactile
+# Pactile developer guide
 
-Pactile is an evidence-backed capability workspace for Cursor and Codex.
-
-This checkout is thin-connected to the `D:\MyHarness` harness. It has no
-independent task-control instance: follow `D:\MyHarness\AGENTS.md`, use the
-harness root's selected task and framework guidance, including its current
-package identifier for this checkout.
-
-User commands are `pactile-start`, `pactile-continue`,
-`pactile-finish-work`, and `pactile-handoff`.
-
-Managed by Pactile. Edits outside this block are preserved; edits inside may
-be overwritten by a future `pactile update`.
-<!-- PACTILE:END -->
+This repository contains the Pactile product. Node.js is its only required
+runtime. Generated host state and personal task data stay outside Git.
 
 ## Repository policy
 
 - The existing `private` Git remote is authoritative. Do not add or push to an
   upstream remote.
-- `main` is integration and release only. Feature work uses a short-lived
-  `feat/*`, `fix/*`, or `chore/*` branch and integrates into `beta` during an
-  open prerelease round.
+- `main` is the release line and `develop` is the development line. Feature
+  work starts from `develop` on a short-lived `feat/*`, `fix/*`, or `chore/*`
+  branch and integrates only into `develop`.
 - Do not commit, push, tag, publish, merge, or create a release unless the user
   explicitly authorizes that action.
 - The worktree may contain unrelated user changes. Preserve them; never reset,
@@ -47,7 +35,8 @@ host adapters, projection, migrations, templates, and release validation.
 
 Canonical project state is under `.pactile/`. Host projections are receipts-
 and-ledger governed: preserve foreign, borrowed, shared, and user-modified
-resources. Cursor and Codex share one small `PACTILE` block in `AGENTS.md`.
+resources. The active host projection targets Codex; older Cursor claims are
+read only so `pactile detach cursor` can remove them safely.
 
 Compatibility rules for the 0.5.x line:
 
@@ -74,14 +63,12 @@ Use Node.js 18.17 or newer and pnpm. Build order is core before CLI.
 | `pnpm check:pack-files` | Validate packed artifact contents |
 
 Source is strict ESM with NodeNext resolution and explicit `.js` specifiers.
-Python templates support Python 3.9 and newer and are checked with the configured
-type checker.
+Node.js is the only required runtime for generated Pactile projects.
 
 ## Change rules
 
 - Treat `packages/cli/src/templates/` as the generated-project source of truth.
-  Keep checked-in dogfood assets in `.agents/` and `.cursor/` byte- or
-  semantics-equivalent where the mirror contract requires it.
+  Keep generated host files and personal task state out of this repository.
 - A fresh project must expose only `.pactile`, `pactile-*`, `PACTILE:*`, and
   `PACTILE_*` identifiers.
 - Never add host files through init/update directly. Route all host mutations

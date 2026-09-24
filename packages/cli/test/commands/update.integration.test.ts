@@ -49,7 +49,6 @@ import { DIR_NAMES, FILE_NAMES, PATHS } from "../../src/constants/paths.js";
 import { computeHash } from "../../src/utils/template-hash.js";
 import { workflowMdTemplate } from "../../src/templates/pactile/index.js";
 import { frameworkDocs } from "../../src/templates/markdown/index.js";
-import { replacePythonCommandLiterals } from "../../src/configurators/shared.js";
 import { compareVersions } from "../../src/utils/compare-versions.js";
 import { getConfigSectionsAddedBetween } from "../../src/migrations/index.js";
 import * as migrations from "../../src/migrations/index.js";
@@ -67,8 +66,8 @@ const sessionAutoCommitConfigMigrationApplies =
     (entry) => entry.sectionHeading === "Session Auto-Commit",
   );
 
-// A managed template file that update always handles (Python script)
-const MANAGED_FILE = `${PATHS.SCRIPTS}/get_context.py`;
+// A managed Node-era template file that update always handles.
+const MANAGED_FILE = ".pactile/modules/intake-basic/contract.md";
 
 function capabilityLookupCommand(command: string): string {
   return process.platform === "win32"
@@ -309,6 +308,23 @@ describe("update() integration", () => {
     },
     120_000,
   );
+
+  it("retires hash-matched installed Python scripts and preserves user edits", async () => {
+    await setupProject();
+    const clean = ".pactile/scripts/task.py";
+    const modified = ".pactile/scripts/get_context.py";
+    writeProjectFile(clean, "# official task script\n");
+    writeProjectFile(modified, "# official context script\n");
+    const hashes = readHashesV2(hashFilePath());
+    hashes[clean] = computeHash(readProjectFile(clean));
+    hashes[modified] = computeHash(readProjectFile(modified));
+    writeHashesV2(hashFilePath(), hashes);
+    writeProjectFile(modified, "# user edit\n");
+
+    await runUpdate({ skipAll: true });
+    expect(fs.existsSync(projectFile(clean))).toBe(false);
+    expect(readProjectFile(modified)).toBe("# user edit\n");
+  });
 
   it("#1b verifies Smart Search readiness during update", async () => {
     await setupProject();
@@ -826,7 +842,7 @@ describe("update() integration", () => {
   it("#12b versioned upgrade scenario applies auto-updates, additive config sections, and modified-file skips", async () => {
     await setupProject();
 
-    const expectedWorkflow = replacePythonCommandLiterals(workflowMdTemplate);
+    const expectedWorkflow = workflowMdTemplate;
     const expectedGetContext = readProjectFile(MANAGED_FILE);
     const userModifiedScript = `${PATHS.SCRIPTS}/add_session.py`;
     const userModifiedScriptContent = "# user customized add_session.py\n";
@@ -985,26 +1001,26 @@ describe("update() integration", () => {
   it("#17 config.yaml update.skip with directory path skips all files under it", async () => {
     await setupProject();
 
-    // Add skip config for the scripts/common/ directory
+    // Add skip config for a managed Node module directory.
     const configPath = path.join(tmpDir, DIR_NAMES.WORKFLOW, "config.yaml");
     const configContent = fs.readFileSync(configPath, "utf-8");
-    const skipDir = `${PATHS.SCRIPTS}/common/`;
+    const skipDir = ".pactile/modules/intake-basic/";
     fs.writeFileSync(
       configPath,
       configContent + `\nupdate:\n  skip:\n    - ${skipDir}\n`,
     );
 
     // Modify a file under the skipped directory
-    const targetPath = path.join(tmpDir, PATHS.SCRIPTS, "common", "paths.py");
+    const targetPath = path.join(tmpDir, MANAGED_FILE);
     expect(fs.existsSync(targetPath)).toBe(true);
-    fs.writeFileSync(targetPath, "# user modified paths.py\n");
+    fs.writeFileSync(targetPath, "# user modified module\n");
 
     // Run update
     await runUpdate({ force: true });
 
     // File should NOT be overwritten (its directory is in skip list)
     expect(fs.readFileSync(targetPath, "utf-8")).toBe(
-      "# user modified paths.py\n",
+      "# user modified module\n",
     );
   });
 
@@ -1306,13 +1322,13 @@ describe("update() integration", () => {
   it("#27 backup skips managed node_modules dependency trees", async () => {
     await setupProject();
 
-    const cursorRoot = path.join(tmpDir, ".cursor");
-    fs.mkdirSync(path.join(cursorRoot, "node_modules", "zod"), {
+    const workflowRoot = path.join(tmpDir, ".pactile");
+    fs.mkdirSync(path.join(workflowRoot, "node_modules", "zod"), {
       recursive: true,
     });
-    fs.writeFileSync(path.join(cursorRoot, "package.json"), "{}\n");
+    fs.writeFileSync(path.join(workflowRoot, "package.json"), "{}\n");
     fs.writeFileSync(
-      path.join(cursorRoot, "node_modules", "zod", "index.js"),
+      path.join(workflowRoot, "node_modules", "zod", "index.js"),
       "module.exports = {};\n",
     );
 
@@ -1331,10 +1347,10 @@ describe("update() integration", () => {
       backupDirs[0] as string,
     );
     expect(
-      fs.existsSync(path.join(backupDir, ".cursor", "package.json")),
+      fs.existsSync(path.join(backupDir, ".pactile", "package.json")),
     ).toBe(true);
     expect(
-      fs.existsSync(path.join(backupDir, ".cursor", "node_modules")),
+      fs.existsSync(path.join(backupDir, ".pactile", "node_modules")),
     ).toBe(false);
   });
 
@@ -1369,7 +1385,7 @@ describe("update() integration", () => {
     await runUpdate({ force: true });
 
     const updated = fs.readFileSync(workflowPath, "utf-8");
-    expect(updated).toBe(replacePythonCommandLiterals(workflowMdTemplate));
+    expect(updated).toBe(workflowMdTemplate);
     expect(updated).toMatch(/Human overview[^\n]*not runtime SSOT/i);
     expect(updated).toContain("## Interfaces");
     expect(updated).toContain("[workflow-state:in_progress]");
@@ -1468,9 +1484,8 @@ describe("update() integration", () => {
 
       await runUpdate({ force: true });
 
-      // Pristine file deleted by safe-file-delete; empty dir cleaned up
+      // Pristine file deleted by safe-file-delete.
       expect(fs.existsSync(skillFile)).toBe(false);
-      expect(fs.existsSync(skillDir)).toBe(false);
     } finally {
       allMigrationsSpy.mockRestore();
     }
@@ -1603,7 +1618,7 @@ describe("update() integration", () => {
     for (const doc of frameworkDocs) {
       expect(
         fs.readFileSync(projectFile(`${PATHS.FRAMEWORK}/${doc.name}`), "utf-8"),
-      ).toBe(replacePythonCommandLiterals(doc.content));
+      ).toBe(doc.content);
     }
 
     // User-edited spec guide untouched; old guide copies remain

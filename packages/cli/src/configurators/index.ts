@@ -21,10 +21,6 @@ export function getConfiguredPlatforms(cwd: string): Set<AITool> {
   );
 }
 
-export function getPlatformsWithPythonHooks(): AITool[] {
-  return PLATFORM_IDS.filter((id) => AI_TOOLS[id].hasPythonHooks);
-}
-
 export function isManagedPath(dirPath: string): boolean {
   const normalized = dirPath.replace(/\\/g, "/");
   return ALL_MANAGED_DIRS.some(

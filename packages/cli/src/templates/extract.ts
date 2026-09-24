@@ -1,13 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureDir, writeFile } from "../utils/file-writer.js";
-import { replacePythonCommandLiterals } from "../configurators/shared.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-type TemplateCategory = "scripts" | "markdown" | "commands";
+type TemplateCategory = "markdown" | "commands";
 
 /**
  * Get the path to the pactile templates directory (.pactile/ scaffolding).
@@ -47,54 +45,12 @@ export function readTemplate(
   return fs.readFileSync(templatePath, "utf-8");
 }
 
-export function readScript(relativePath: string): string {
-  return readPactileFile(`scripts/${relativePath}`);
-}
-
 export function readMarkdown(relativePath: string): string {
   return readPactileFile(relativePath);
 }
 
 export function readCommand(filename: string): string {
   return readTemplate("commands", filename);
-}
-
-/**
- * Copy a directory from pactile templates to target, making scripts executable.
- */
-export async function copyPactileDir(
-  srcRelativePath: string,
-  destPath: string,
-  options?: { executable?: boolean },
-): Promise<void> {
-  const pactilePath = getPactileSourcePath();
-  const srcPath = path.join(pactilePath, srcRelativePath);
-  await copyDirRecursive(srcPath, destPath, options);
-}
-
-async function copyDirRecursive(
-  src: string,
-  dest: string,
-  options?: { executable?: boolean },
-): Promise<void> {
-  ensureDir(dest);
-
-  for (const entry of fs.readdirSync(src)) {
-    const srcPath = path.join(src, entry);
-    const destPath = path.join(dest, entry);
-    const stat = fs.statSync(srcPath);
-
-    if (stat.isDirectory()) {
-      await copyDirRecursive(srcPath, destPath, options);
-    } else {
-      const content = fs.readFileSync(srcPath, "utf-8");
-      const isExecutable =
-        options?.executable && (entry.endsWith(".sh") || entry.endsWith(".py"));
-      await writeFile(destPath, replacePythonCommandLiterals(content), {
-        executable: isExecutable,
-      });
-    }
-  }
 }
 
 const USER_MODULE_INDEX = "index.json";

@@ -137,8 +137,8 @@ describe("init() joiner onboarding", () => {
     expect(prd).toContain("workflow.md");
     expect(prd).toContain(".pactile/spec/");
     expect(prd).toContain("00-join-bob");
-    expect(prd).toContain("/pactile-continue");
-    expect(prd).toContain("/pactile-finish-work");
+    expect(prd).toContain("pactile task list");
+    expect(prd).toContain("pactile task archive");
     expect(prd).toContain("not runtime SSOT");
     expect(prd).not.toContain("/cstl:continue");
     expect(prd).not.toContain("/cstl:finish-work");
@@ -146,14 +146,9 @@ describe("init() joiner onboarding", () => {
     expect(prd).not.toMatch(/loads the Phase Index/i);
     // Fallback text for empty archive
     expect(prd).toContain("archive is empty");
-    const expectedPythonCmd = process.platform === "win32" ? "python" : "python3";
-    expect(prd).toContain(
-      `${expectedPythonCmd} ./.pactile/scripts/task.py list --assignee bob`,
-    );
-    expect(prd).not.toContain(`${expectedPythonCmd} ./.pactile/scripts/task.py finish`);
-    expect(prd).toContain(
-      `${expectedPythonCmd} ./.pactile/scripts/task.py archive 00-join-bob`,
-    );
+    expect(prd).toContain('pactile task list --assignee "bob"');
+    expect(prd).not.toContain("pactile task finish");
+    expect(prd).toContain("pactile task archive 00-join-bob");
 
     // init creates the joiner task but does not set repo-global current-task state.
     expect(fs.existsSync(path.join(tmpDir, PATHS.CURRENT_TASK_FILE))).toBe(

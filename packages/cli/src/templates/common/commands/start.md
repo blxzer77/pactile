@@ -10,18 +10,18 @@ This entry is available as a Codex Skill. It does not dispatch another task.
 Identity, git status, selected task, Kernel / Task Dashboard, journal location.
 
 ```bash
-{{PYTHON_CMD}} ./.pactile/scripts/get_context.py
+pactile context
 ```
 
 If this output includes a line beginning `Pactile update available:`, copy the full line verbatim when summarizing session context. Do not shorten operational command hints.
 
-If a compiled session pack is already in context, use it. Do **not** implement the Session compiler. Do **not** treat `get_context.py --mode phase` Phase Index as runtime SSOT.
+If a compiled session pack is already in context, use it. Do **not** implement the Session compiler. Do **not** treat `pactile context --mode phase` Phase Index as runtime SSOT.
 
 ## Step 2: Guideline indexes
 Discover packages + spec layers, then read each relevant index file.
 
 ```bash
-{{PYTHON_CMD}} ./.pactile/scripts/get_context.py --mode packages
+pactile context --mode packages
 cat .pactile/spec/guides/index.md
 cat .pactile/spec/<package>/<layer>/index.md   # for each relevant layer
 ```
@@ -39,7 +39,7 @@ If `Selected task: none`, ask the user to choose: select a task, create a task, 
 If a task is selected, check Kernel / Dashboard:
 
 - **Open / Define** → stay in definition until AC exists; prefer Plan for Define when useful
-- **Approve** → Execution gate (`task.py start-execution <task> --check`); `--check` is not approval
+- **Approve** → Execution gate (`pactile task start-execution <task> --check`); `--check` is not approval
 - **Execute** → implement under contract
 - **Verify / Close** → evidence then wrap-up (`pactile-finish-work`)
 - **No selected task** → use dashboard routing. Do not auto-select an existing task
