@@ -32,7 +32,6 @@ import {
   commonInit,
   taskScript,
   addSessionScript,
-  commonCliAdapter,
   commonTaskUtils,
   commonDeveloper,
   commonGitContext,
@@ -463,11 +462,11 @@ ${separator}
 describe("regression: Windows path separator (beta.12)", () => {
   it("[beta.12] isManagedPath handles Windows backslash paths", () => {
     expect(isManagedPath(".pactile\\spec\\backend")).toBe(true);
-    expect(isManagedPath(".cursor\\commands\\start.md")).toBe(true);
+    expect(isManagedPath(".codex\\config.toml")).toBe(true);
   });
 
   it("[beta.12] isManagedPath handles mixed separators", () => {
-    expect(isManagedPath(".cursor\\commands/foo.md")).toBe(true);
+    expect(isManagedPath(".agents\\skills/pactile-start/SKILL.md")).toBe(true);
   });
 });
 
@@ -485,10 +484,6 @@ describe("regression: task directory paths (0.2.14, 0.2.15, beta.13)", () => {
 
 
 
-  it("[beta.13] cli_adapter.py does not contain hardcoded developer paths", () => {
-    expect(commonCliAdapter).not.toMatch(/workspace\/taosu/);
-    expect(commonCliAdapter).not.toMatch(/workspace\/[a-z]+\/tasks/);
-  });
 
   it("[0.2.15] no script templates contain hardcoded 'taosu' in path patterns", () => {
     const scripts = getAllScripts();

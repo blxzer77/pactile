@@ -3,31 +3,31 @@
  *
  * Defines supported AI coding tools and which command templates they can use.
  *
- * The legacy template registry remains Cursor-scoped; the Pactile Adapter
- * registry owns current Cursor and Codex projection.
+ * The host registry describes active installation targets. Pactile Adapter
+ * projection owns their actual generated surfaces.
  */
 
 /**
  * Supported AI coding tools
  */
-export type AITool = "cursor";
+export type AITool = "codex";
 
 /**
  * Template directory categories
  */
-export type TemplateDir = "common" | "cursor";
+export type TemplateDir = "common";
 
 /**
- * CLI flag names for platform selection (e.g., --cursor)
+ * CLI flag names for platform selection (currently --codex).
  * Must match keys in InitOptions (src/commands/init.ts)
  */
-export type CliFlag = "cursor";
+export type CliFlag = "codex";
 
 /**
  * Platform support tier.
  *
  * First-class platforms are the actively targeted framework surfaces for this
- * fork. Retained for structural compatibility; only Cursor is registered.
+ * fork.
  */
 export type PlatformTier = "first-class" | "legacy";
 
@@ -50,7 +50,7 @@ export interface TemplateContext {
   /** Platform has hook system (SessionStart, PreToolUse) */
   hasHooks: boolean;
   /**
-   * CLI flag value for this platform (e.g. "cursor").
+   * CLI flag value for this platform (e.g. "codex").
    * Substituted into template commands via {{CLI_FLAG}} so rendered skill /
    * command files can pass `--platform <flag>` to scripts that need to know
    * the invoking platform, removing the need to re-detect at runtime.
@@ -70,7 +70,7 @@ export interface AIToolConfig {
   tier: PlatformTier;
   /** Command template directory names to include */
   templateDirs: TemplateDir[];
-  /** Config directory name in the project root (e.g., ".cursor") */
+  /** Config directory name in the project root (e.g., ".codex") */
   configDir: string;
   /**
    * Whether the platform supports the shared `.agents/skills/` layer
@@ -80,7 +80,7 @@ export interface AIToolConfig {
   supportsAgentSkills?: boolean;
   /** Additional managed paths beyond configDir (e.g., .github/hooks for Copilot) */
   extraManagedPaths?: string[];
-  /** CLI flag name for --flag options (e.g., "cursor" for --cursor) */
+  /** CLI flag name for --flag options (e.g., "codex" for --codex) */
   cliFlag: CliFlag;
   /** Whether this tool is checked by default in interactive init prompt */
   defaultChecked: boolean;
@@ -94,24 +94,26 @@ export interface AIToolConfig {
  * Registry of all supported AI tools and their configurations.
  * This is the single source of truth for platform data.
  *
- * Cursor-only fork: only the Cursor entry is registered.
+ * Codex is the only current host; legacy Cursor state is handled by exit
+ * compatibility paths rather than this install registry.
  */
 export const AI_TOOLS: Record<AITool, AIToolConfig> = {
-  cursor: {
-    name: "Cursor",
+  codex: {
+    name: "Codex (ChatGPT desktop app)",
     tier: "first-class",
-    templateDirs: ["common", "cursor"],
-    configDir: ".cursor",
-    cliFlag: "cursor",
+    templateDirs: ["common"],
+    configDir: ".codex",
+    supportsAgentSkills: true,
+    cliFlag: "codex",
     defaultChecked: true,
     hasPythonHooks: true,
     templateContext: {
-      cmdRefPrefix: "/pactile-",
-      executorAI: "Bash scripts or Task calls",
-      userActionLabel: "Slash commands",
-      agentCapable: true,
+      cmdRefPrefix: "$",
+      executorAI: "Bash scripts or tool calls",
+      userActionLabel: "Skills",
+      agentCapable: false,
       hasHooks: true,
-      cliFlag: "cursor",
+      cliFlag: "codex",
     },
   },
 };

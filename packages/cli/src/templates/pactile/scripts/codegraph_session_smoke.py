@@ -46,7 +46,7 @@ def main() -> int:
         "codegraph_index_paths": [str(p) for p in indexes],
         "checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "mcp_note": (
-            "Cursor: enable codegraph MCP in project settings; this script only checks "
+            "Enable codegraph MCP in host settings; this script only checks "
             "on-disk .codegraph/ directories."
         ),
         "run_header_fields": {

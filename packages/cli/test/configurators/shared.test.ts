@@ -514,14 +514,14 @@ describe("resolvePlaceholdersNeutral", () => {
 // ---------------------------------------------------------------------------
 
 describe("resolveSkillsNeutral / resolveAllAsSkillsNeutral", () => {
-  it("resolveSkillsNeutral produces stable shared skill set for Cursor context", () => {
-    const cursorSkills = resolveSkillsNeutral(AI_TOOLS.cursor.templateContext);
-    expect(cursorSkills.length).toBeGreaterThan(0);
-    expect(cursorSkills.map((s) => s.name)).toContain("pactile-before-dev");
+  it("resolveSkillsNeutral produces a stable Codex skill set", () => {
+    const codexSkills = resolveSkillsNeutral(AI_TOOLS.codex.templateContext);
+    expect(codexSkills.length).toBeGreaterThan(0);
+    expect(codexSkills.map((s) => s.name)).toContain("pactile-before-dev");
   });
 
   it("resolveSkillsNeutral renders CMD_REF without platform-specific prefix", () => {
-    const neutral = resolveSkillsNeutral(AI_TOOLS.cursor.templateContext);
+    const neutral = resolveSkillsNeutral(AI_TOOLS.codex.templateContext);
     const cmdRefNames = [
       "start",
       "brainstorm",
@@ -549,8 +549,8 @@ describe("resolveSkillsNeutral / resolveAllAsSkillsNeutral", () => {
   });
 
   it("resolveAllAsSkillsNeutral keeps shared skills byte-identical to resolveSkillsNeutral", () => {
-    const all = resolveAllAsSkillsNeutral(AI_TOOLS.cursor.templateContext);
-    const fiveOnly = resolveSkillsNeutral(AI_TOOLS.cursor.templateContext);
+    const all = resolveAllAsSkillsNeutral(AI_TOOLS.codex.templateContext);
+    const fiveOnly = resolveSkillsNeutral(AI_TOOLS.codex.templateContext);
     const sharedNames = new Set(fiveOnly.map((s) => s.name));
     const allShared = all.filter((s) => sharedNames.has(s.name));
     expect(allShared.length).toBe(fiveOnly.length);

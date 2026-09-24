@@ -18,7 +18,6 @@
     "release:promote": "pnpm --filter @blxzer/pactile release:promote",
     "release:check": "node packages/cli/scripts/release-preflight.js check-versions",
     "release:plan": "node packages/cli/scripts/release-preflight.js publish-plan",
-    "mirror-check": "pnpm --filter @blxzer/pactile mirror-check",
     "docs:smoke": "pnpm --filter @blxzer/pactile docs:smoke"
   }
 }

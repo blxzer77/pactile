@@ -37,11 +37,9 @@ const COMMAND_TIMEOUT_MS = 120_000;
 
 const REQUIRED_COMMANDS = new Set([
   "pactile --version",
-  "pactile init --cursor",
   "pactile init --codex",
   "pactile update",
   "pactile capability-smoke --json",
-  "pactile detach cursor",
   "pactile detach codex",
   "pactile uninstall",
 ]);
@@ -173,7 +171,7 @@ function assertExists(root, relative) {
     throw new Error(`missing generated surface: ${relative}`);
 }
 
-function assertCanonicalSurface(root, { cursor, codex }) {
+function assertCanonicalSurface(root) {
   assertExists(root, "AGENTS.md");
   const agents = fs.readFileSync(path.join(root, "AGENTS.md"), "utf8");
   if (
@@ -194,25 +192,10 @@ function assertCanonicalSurface(root, { cursor, codex }) {
       throw new Error(`non-canonical shared skill surface: ${id}`);
   }
 
-  if (cursor) {
-    for (const relative of [
-      ".cursor/agents/pactile.md",
-      ".cursor/commands/pactile.md",
-      ".cursor/rules/pactile.mdc",
-    ]) {
-      assertExists(root, relative);
-      const text = fs.readFileSync(
-        path.join(root, ...relative.split("/")),
-        "utf8",
-      );
-      if (
-        !/\bPactile\b|\bpactile\b/u.test(text) ||
-        /\bcstl\b|Cursor\+\+/iu.test(text)
-      )
-        throw new Error(`non-canonical Cursor surface: ${relative}`);
-    }
+  if (fs.existsSync(path.join(root, ".cursor"))) {
+    throw new Error("Codex init unexpectedly created a Cursor tree");
   }
-  if (codex && fs.existsSync(path.join(root, ".codex"))) {
+  if (fs.existsSync(path.join(root, ".codex"))) {
     throw new Error("Codex baseline unexpectedly created a native .codex tree");
   }
 }
@@ -225,9 +208,7 @@ function compareFixture(actualRoot, fixtureRoot) {
         (file) =>
           file === "AGENTS.md" ||
           file.startsWith(".agents/skills/") ||
-          file.startsWith(".cursor/agents/") ||
-          file.startsWith(".cursor/commands/") ||
-          file.startsWith(".cursor/rules/"),
+          file.startsWith(".codex/"),
       )
       .sort();
   const actual = relativeSurfaceFiles(actualRoot);
@@ -330,9 +311,11 @@ function assertHelpParity(contract, env) {
   }
   const initHelp =
     results.find((item) => item.caseId === "help.init")?.stdout ?? "";
-  for (const flag of ["--cursor", "--codex", "--yes"]) {
+  for (const flag of ["--codex", "--yes"]) {
     if (!initHelp.includes(flag)) throw new Error(`init help omitted ${flag}`);
   }
+  if (initHelp.includes("--cursor"))
+    throw new Error("retired Cursor init flag remains in CLI help");
   const detachHelp =
     results.find((item) => item.caseId === "help.detach")?.stdout ?? "";
   if (!detachHelp.includes("<adapter>"))
@@ -399,21 +382,8 @@ async function main() {
     assertExit(version);
     results.push(version);
 
-    const cursor = path.join(runRoot, "cursor");
     const codex = path.join(runRoot, "codex");
-    const coexistence = path.join(runRoot, "coexistence");
-    for (const root of [cursor, codex, coexistence])
-      fs.mkdirSync(root, { recursive: true });
-
-    const initCursor = runCli(
-      "docs.init.cursor",
-      cursor,
-      ["init", "--cursor", "--yes", "--skip-readiness"],
-      env,
-    );
-    assertExit(initCursor);
-    assertCanonicalSurface(cursor, { cursor: true, codex: false });
-    results.push(initCursor);
+    fs.mkdirSync(codex, { recursive: true });
 
     const initCodex = runCli(
       "docs.init.codex",
@@ -422,48 +392,27 @@ async function main() {
       env,
     );
     assertExit(initCodex);
-    assertCanonicalSurface(codex, { cursor: false, codex: true });
+    assertCanonicalSurface(codex);
     results.push(initCodex);
 
-    const initBoth = runCli(
-      "docs.init.coexistence",
-      coexistence,
-      [
-        "init",
-        "--cursor",
-        "--codex",
-        "--capability",
-        "none",
-        "--yes",
-        "--skip-readiness",
-      ],
-      env,
-    );
-    assertExit(initBoth);
-    assertCanonicalSurface(coexistence, { cursor: true, codex: true });
-    results.push(initBoth);
+    const sourceParity = await assertSourceSkillParity(codex);
+    const fixtureParity = compareFixture(codex, DOGFOOD_FIXTURE);
 
-    const sourceParity = await assertSourceSkillParity(coexistence);
-    const fixtureParity = compareFixture(coexistence, DOGFOOD_FIXTURE);
-
-    writeEmptyCapabilityManifest(coexistence);
+    writeEmptyCapabilityManifest(codex);
     for (const entry of contract) {
       const command = entry.command;
       if (
         command === "pactile --version" ||
-        command === "pactile init --cursor" ||
         command === "pactile init --codex"
       )
         continue;
       const tokens = command.split(/\s+/u).slice(1);
       let args;
-      let cwd = coexistence;
+      let cwd = codex;
       if (command === "pactile update")
         args = ["update", "--dry-run", "--json", "--skip-readiness"];
       else if (command === "pactile capability-smoke --json")
         args = ["capability-smoke", "--json"];
-      else if (command === "pactile detach cursor")
-        args = ["detach", "cursor", "--dry-run"];
       else if (command === "pactile detach codex")
         args = ["detach", "codex", "--dry-run"];
       else if (command === "pactile uninstall")

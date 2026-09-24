@@ -728,7 +728,7 @@ they engage.
 
 ### 1. What Pactile is + the workflow
 
-Pactile is a governed capability workspace for Cursor and Codex that keeps AI
+Pactile is a governed capability workspace for Codex that keeps AI
 agents consistent with project-specific conventions instead of writing generic
 code every session.
 
@@ -737,31 +737,16 @@ code every session.
   \`.pactile/workflow.md\` is a human overview, **not runtime SSOT**.
 - **Task files** live under \`.pactile/tasks/\`. \`status\` is a projection, not
   the only truth.
-- **User slash (Native Cursor)**:
-  - \`/pactile-continue\` — resume only when this live session already has a
-    selected task
-  - \`/pactile-finish-work\` — wrap up a finished task
-  - \`/pactile-handoff\` — session handoff to a temp path (not the task's
-    \`handoff.md\`)
-  SessionStart covers entry. \`/pactile-start\` is not installed as a slash on
-  agent-capable Cursor. Official \`/goal\` is not a Pactile Task.
+- **Codex session**: read the Task record, project instructions, and current
+  Evidence before resuming. The Task record remains durable authority.
 
 ### 2. Runtime mechanics (explain when they ask "how does it know what to do")
 
-- **SessionStart hook** injects identity, git status, selected task, Task
-  Dashboard, and a compiled session pack when Event Bridge subscribers
-  produce one. It must not dump \`workflow.md\` Phase Index as the runtime
-  program.
-- **\`/pactile-continue\`** loads Kernel / Dashboard (or the compiled pack if
-  already in context), reads \`prd.md\` + recent activity, and routes by
-  Kernel human phase. Do **not** treat \`get_context.py --mode phase\` (Phase
-  Index) as runtime SSOT. Internal skills (brainstorm, check, …) are not
-  user slash commands.
-- **Workers**: if this Cursor Task API has no \`pactile-implement\` /
-  \`pactile-check\` enum, dispatch as \`generalPurpose\`. Never label that run
-  \`true-independent\`. When a check worker is available, it follows
-  \`check.jsonl\` — reviews against specs, auto-fixes issues, runs
-  lint/typecheck.
+- **Context**: load Kernel / Dashboard and the selected Task's \`prd.md\`
+  plus recent activity. Do not treat a generated phase index as runtime
+  authority.
+- **Coordination**: independent Codex desktop tasks and the Pi Agent bridge
+  are planned, but are not installed by this version.
 
 File layout (mention when they ask "where does what live"):
 - \`.pactile/.runtime/sessions/<session>.json\` — live-session selected-task state, gitignored
@@ -786,8 +771,7 @@ File layout (mention when they ask "where does what live"):
   their journal from another machine and worth mentioning.
 - Run \`${pythonCmd} ./.pactile/scripts/task.py list --assignee ${developer}\` to
   show tasks assigned to them. (Quote the name if it contains spaces.)
-- Remind them that the "My Tasks" section appears in the SessionStart context
-  on every new session.
+- Remind them to inspect assigned Tasks at the start of each session.
 
 ---
 
@@ -796,8 +780,8 @@ ${capabilitySection}
 ## Optional: walk through a small task end-to-end
 
 If they want to practice before touching real work, offer to pick a tiny
-P3 task or a typo fix and run the full cycle together: \`/pactile-continue\`
-→ implement in Agent → \`/pactile-finish-work\`.
+P3 task or a typo fix and run the full cycle together: define → approve →
+execute → verify → close.
 
 ---
 
@@ -860,7 +844,7 @@ async function handleReinit(
       .map((adapter) => adapter.id.replace(/^adapter\./, ""))
       .filter(
         (platform): platform is PactilePlatform =>
-          platform === "cursor" || platform === "codex",
+          platform === "codex",
       ),
   );
   const configuredNames = [...configuredPlatforms]
@@ -882,7 +866,7 @@ async function handleReinit(
       console.log(chalk.gray(`Already initialized with: ${configuredNames}`));
       console.log(
         chalk.gray(
-          "Use platform flags (e.g., --cursor) or -u <name> to add platforms/developer.",
+          "Use --codex or -u <name> to add a platform/developer.",
         ),
       );
       return true;
@@ -1041,7 +1025,6 @@ async function handleReinit(
 }
 
 interface InitOptions {
-  cursor?: boolean;
   codex?: boolean;
   importCstl?: boolean;
   yes?: boolean;
@@ -1061,24 +1044,12 @@ interface InitOptions {
 }
 
 function getPactileInitToolChoices(): {
-  key: "cursor" | "codex";
+  key: "codex";
   name: string;
   defaultChecked: boolean;
   platformId: PactilePlatform;
 }[] {
-  return [
-    ...getInitToolChoices().map((choice) => ({
-      ...choice,
-      key: choice.key as "cursor",
-      platformId: choice.platformId as "cursor",
-    })),
-    {
-      key: "codex",
-      name: "Codex (ChatGPT desktop app)",
-      defaultChecked: true,
-      platformId: "codex",
-    },
-  ];
+  return getInitToolChoices();
 }
 
 /**
@@ -1198,7 +1169,7 @@ export async function init(options: InitOptions): Promise<void> {
   console.log(chalk.cyan(`\n${banner.trimEnd()}`));
   console.log(
     chalk.gray(
-      "\n   Cross-platform AI workflow framework for Cursor & Codex\n",
+      "\n   Governed AI workflow for Codex\n",
     ),
   );
 
@@ -1507,7 +1478,7 @@ export async function init(options: InitOptions): Promise<void> {
     // Explicit flags take precedence (works with or without -y)
     tools = explicitTools;
   } else if (options.yes) {
-    // No explicit tools + -y: default to Cursor and Codex
+    // No explicit tools + -y: use the active host default.
     tools = TOOLS.filter((t) => t.defaultChecked).map((t) => t.key);
   } else {
     // Interactive mode

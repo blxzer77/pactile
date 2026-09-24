@@ -2,12 +2,12 @@
 
 English | [简体中文](codex.zh-CN.md)
 
-The Codex adapter consumes the same `.pactile/` generation as Cursor. When the
+The Codex adapter consumes the canonical `.pactile/` generation. When the
 ChatGPT desktop app reports native project support, it may project supported
 Codex files under `.codex/`; a baseline install with an unavailable app keeps
 that native tree absent and reports the adapter as degraded. The adapter does
 not copy the canonical Task database into a second authority. `AGENTS.md` and
-shared Skills may be claimed by both hosts.
+shared Skills remain subject to ownership checks.
 
 ## Install and inspect
 
@@ -24,13 +24,11 @@ ambiguous; the ownership ledger is the deciding evidence.
 | ----------------------------------- | ------------------------------------------------------------------------ |
 | `.codex/` project configuration     | Conditional rebuildable projection; absent when native project support is unavailable. |
 | `AGENTS.md`                         | One shared managed block; user text outside the block is preserved.      |
-| `.agents/skills/`                   | Shared Skill projection; each host is a claimant, not a duplicate owner. |
+| `.agents/skills/`                   | Shared Skill projection; a claimant does not become the owner. |
 | External MCP/provider configuration | Resolved by Middleware and the host; never copied into canonical state.  |
 
-Codex may expose a different set of native tools or context channels than
-Cursor. Read each capability's origin and assurance instead of assuming parity.
-Use [capability readiness](../capabilities/index.md) for the mode matrix and
-[coexistence](coexistence.md) when attaching the second host.
+Read each capability's origin and assurance before relying on it. Use
+[capability readiness](../capabilities/index.md) for the mode matrix.
 
 ## Detach
 

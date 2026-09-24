@@ -2,7 +2,7 @@
 
 [English](codex.md) | 简体中文
 
-Codex Adapter 使用与 Cursor 相同的 `.pactile/` generation。ChatGPT desktop app 报告原生项目支持时，才可能把受支持的 Codex 文件投影到 `.codex/`；baseline install 在宿主不可用时会保持该原生目录不存在，并把 Adapter 明确报告为 degraded。Adapter 不会把 canonical Task 数据库复制成第二份权威。`AGENTS.md` 与共享 Skill 可以由两个宿主共同 claim。
+Codex Adapter 使用 canonical `.pactile/` generation。ChatGPT desktop app 报告原生项目支持时，才可能把受支持的 Codex 文件投影到 `.codex/`；baseline install 在宿主不可用时会保持该原生目录不存在，并把 Adapter 明确报告为 degraded。Adapter 不会把 canonical Task 数据库复制成第二份权威。`AGENTS.md` 与共享 Skill 仍受 ownership 检查约束。
 
 ## 安装与检查
 
@@ -20,7 +20,7 @@ pactile capability-smoke --json
 | `.agents/skills/`      | 共享 Skill 投影；每个宿主是 claimant，而不是重复 owner。 |
 | 外部 MCP/Provider 配置 | 由 Middleware 与宿主解析，不复制进 canonical 状态。      |
 
-Codex 暴露的原生工具或上下文通道可能与 Cursor 不同。应读取每项能力的 origin 与 assurance，不要默认对称。模式矩阵见[能力 readiness](../capabilities/index.zh-CN.md)；连接第二个宿主时见[共存](coexistence.zh-CN.md)。
+依赖某项能力前，应读取其 origin 与 assurance。模式矩阵见[能力 readiness](../capabilities/index.zh-CN.md)。
 
 ## 分离
 

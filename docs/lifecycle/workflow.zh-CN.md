@@ -2,7 +2,7 @@
 
 [English](workflow.md) | 简体中文
 
-Workflow 是与宿主无关的 intent、definition、approval、execution、verification、integration 与 close 顺序。Cursor 斜杠命令和 Codex task conversation 都只是投影，任何宿主都不是权威。
+Workflow 是与宿主无关的 intent、definition、approval、execution、verification、integration 与 close 顺序。Codex task conversation 消费这个顺序；canonical Task 记录才是权威。
 
 ```text
 triage -> define -> approve -> execute -> verify -> integrate -> close

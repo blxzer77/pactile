@@ -5,21 +5,13 @@
  *
  * This script copies src/templates/ to dist/templates/ (excluding .ts files).
  *
- * The templates are GENERIC templates for user projects:
- * - src/templates/pactile/ - Workflow scripts and config
- * - src/templates/claude/ - Claude Code commands, agents, hooks
- * - src/templates/cursor/ - Cursor commands
- * - src/templates/iflow/ - iFlow CLI commands, agents, hooks
- * - src/templates/opencode/ - OpenCode commands, agents, hooks
- * - src/templates/codex/ - Codex skills
- * - src/templates/kilo/ - Kilo CLI commands
- * - src/templates/antigravity/ - Antigravity workflows
- * - src/templates/kiro/ - Kiro Code skills
- * - src/templates/gemini/ - Gemini CLI commands (TOML)
+ * The templates are product templates for user projects:
+ * - src/templates/pactile/ - workflow scripts and config
+ * - src/templates/common/ - shared Codex Skills and commands
  * - src/templates/markdown/ - Markdown templates (spec, guides)
  *
- * Note: We do not copy from the project's own .pactile/, .cursor/, or .claude/
- * because those may be customized for this Pactile project itself.
+ * The source is the package template tree, never a maintainer checkout's
+ * project-local configuration.
  */
 
 import { cpSync, readdirSync, statSync, mkdirSync } from "node:fs";

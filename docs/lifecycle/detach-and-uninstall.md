@@ -8,7 +8,8 @@ Both are non-destructive to canonical state; destructive cleanup is a separate
 
 | Operation         | Preview                           | Apply                                | Preserved                                                  |
 | ----------------- | --------------------------------- | ------------------------------------ | ---------------------------------------------------------- |
-| One host          | `pactile detach cursor --dry-run` | `pactile detach cursor` (or `codex`) | `.pactile/`, other claimants, borrowed and modified files. |
+| Current host      | `pactile detach codex --dry-run`  | `pactile detach codex`             | `.pactile/`, borrowed and modified files.                 |
+| Legacy Cursor     | `pactile detach cursor --dry-run` | `pactile detach cursor`            | User files and other claimants from older installations.   |
 | All hosts         | `pactile uninstall --dry-run`     | `pactile uninstall --yes`            | Full `.pactile/` state and receipts.                       |
 | Canonical cleanup | [Purge](rollback-and-purge.md)    | Separate fingerprint + confirmation  | Nothing inside the confirmed canonical target set.         |
 

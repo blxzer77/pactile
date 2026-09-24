@@ -51,7 +51,7 @@ afterEach(() => {
 
 async function initialize(
   projectRoot: string,
-  platforms: readonly ("cursor" | "codex")[] = [],
+  platforms: readonly "codex"[] = [],
   files: readonly LifecycleGenerationFile[] = versionOne,
 ) {
   const result = await runLifecycleCommand({
@@ -184,39 +184,14 @@ async function executeCase(testCase: LifecycleConformanceCase): Promise<void> {
       return;
     }
 
-    case "shared.detach": {
-      await initialize(projectRoot, ["cursor", "codex"]);
-      const sharedPath = path.join(projectRoot, "AGENTS.md");
-      const sharedBefore = fs.readFileSync(sharedPath);
-      const manager = new PactileExitManager(projectRoot, {
-        now: () => occurredAt,
-      });
-      const plan = manager.planDetach("adapter.cursor");
-      expect(plan.status).toBe("ready");
-      if (plan.status !== "ready") throw new Error(plan.reason);
-      expect(manager.applyDetach(plan).status).toBe("applied");
-      expect(fs.readFileSync(sharedPath)).toEqual(sharedBefore);
-      expect(
-        new ProjectionStore(projectRoot)
-          .readLedger()
-          ?.ledger.entries.filter((entry) =>
-            entry.resourceId.startsWith("shared."),
-          )
-          .every((entry) =>
-            entry.claimants.some(({ id }) => id === "adapter.codex"),
-          ),
-      ).toBe(true);
-      return;
-    }
-
     case "modified.detach": {
-      await initialize(projectRoot, ["cursor"]);
+      await initialize(projectRoot, ["codex"]);
       const agentsPath = path.join(projectRoot, "AGENTS.md");
       fs.appendFileSync(agentsPath, "user-owned-tail\n");
       const manager = new PactileExitManager(projectRoot, {
         now: () => occurredAt,
       });
-      const plan = manager.planDetach("adapter.cursor");
+      const plan = manager.planDetach("adapter.codex");
       expect(plan.status).toBe("ready");
       if (plan.status !== "ready") throw new Error(plan.reason);
       expect(plan.preview.decisions).toContainEqual(
@@ -228,7 +203,7 @@ async function executeCase(testCase: LifecycleConformanceCase): Promise<void> {
     }
 
     case "borrowed.detach": {
-      const initialized = await initialize(projectRoot, ["cursor"]);
+      const initialized = await initialize(projectRoot, ["codex"]);
       const assetPath = path.join(projectRoot, "native-skill.txt");
       fs.writeFileSync(assetPath, "external body must stay\n");
       const store = new ProjectionStore(projectRoot);
@@ -237,7 +212,7 @@ async function executeCase(testCase: LifecycleConformanceCase): Promise<void> {
         plan: {
           schemaVersion: 1,
           id: "conformance.borrowed.bind",
-          adapterId: "adapter.cursor",
+          adapterId: "adapter.codex",
           generationId: initialized.installState.state.generationId,
           canonicalFingerprint: initialized.generationFingerprint,
           expectedLedgerFingerprint: ledger?.fingerprint ?? null,
@@ -245,7 +220,7 @@ async function executeCase(testCase: LifecycleConformanceCase): Promise<void> {
             {
               id: "conformance.borrowed.bind.operation",
               resourceId: "conformance.native-skill",
-              claimantId: "adapter.cursor",
+              claimantId: "adapter.codex",
               action: "bind",
               control: "borrowed",
               targetPath: null,
@@ -273,7 +248,7 @@ async function executeCase(testCase: LifecycleConformanceCase): Promise<void> {
         now: () => occurredAt,
         projectionStore: store,
       });
-      const plan = manager.planDetach("adapter.cursor");
+      const plan = manager.planDetach("adapter.codex");
       expect(plan.status).toBe("ready");
       if (plan.status !== "ready") throw new Error(plan.reason);
       expect(manager.applyDetach(plan).status).toBe("applied");
@@ -289,7 +264,7 @@ async function executeCase(testCase: LifecycleConformanceCase): Promise<void> {
     }
 
     case "safe.uninstall": {
-      await initialize(projectRoot, ["cursor", "codex"]);
+      await initialize(projectRoot, ["codex"]);
       const userPath = path.join(projectRoot, ".pactile/spec/user-owned.md");
       fs.mkdirSync(path.dirname(userPath), { recursive: true });
       fs.writeFileSync(userPath, "keep me\n");
@@ -339,7 +314,7 @@ async function executeCase(testCase: LifecycleConformanceCase): Promise<void> {
     }
 
     case "detached.reinstall": {
-      await initialize(projectRoot, ["cursor", "codex"]);
+      await initialize(projectRoot, ["codex"]);
       const manager = new PactileExitManager(projectRoot, {
         now: () => occurredAt,
       });
@@ -351,7 +326,7 @@ async function executeCase(testCase: LifecycleConformanceCase): Promise<void> {
         operation: "reconcile",
         runtimeVersion,
         files: versionOne,
-        platforms: ["cursor", "codex"],
+        platforms: ["codex"],
         occurredAt,
       });
       expect(result.status).toBe("completed");
@@ -359,7 +334,6 @@ async function executeCase(testCase: LifecycleConformanceCase): Promise<void> {
         status: "active",
         installedAdapters: [
           { id: "adapter.codex", status: "active" },
-          { id: "adapter.cursor", status: "active" },
         ],
       });
       expect(fs.existsSync(path.join(projectRoot, "AGENTS.md"))).toBe(true);
@@ -367,7 +341,7 @@ async function executeCase(testCase: LifecycleConformanceCase): Promise<void> {
     }
 
     case "stale.purge-preview": {
-      await initialize(projectRoot, ["cursor"]);
+      await initialize(projectRoot, ["codex"]);
       const manager = new PactileExitManager(projectRoot, {
         now: () => occurredAt,
       });
@@ -400,7 +374,7 @@ async function executeCase(testCase: LifecycleConformanceCase): Promise<void> {
           projectRoot,
           "generation.before-canonical-commit",
           runtimeVersion,
-          ["cursor"],
+          ["codex"],
         ),
       };
       const calls: string[] = [];
@@ -436,7 +410,7 @@ async function executeCase(testCase: LifecycleConformanceCase): Promise<void> {
           projectRoot,
           generationId,
           runtimeVersion,
-          ["cursor", "codex"],
+          ["codex"],
         ),
       };
       let injected = false;
@@ -462,11 +436,6 @@ async function executeCase(testCase: LifecycleConformanceCase): Promise<void> {
           attempts: 1,
           retryable: true,
         }),
-        expect.objectContaining({
-          adapterId: "adapter.cursor",
-          status: "succeeded",
-          attempts: 1,
-        }),
       ]);
       const recovered = await runLifecycleTransaction(request);
       expect(recovered.status).toBe("completed");
@@ -477,11 +446,6 @@ async function executeCase(testCase: LifecycleConformanceCase): Promise<void> {
           adapterId: "adapter.codex",
           status: "succeeded",
           attempts: 2,
-        }),
-        expect.objectContaining({
-          adapterId: "adapter.cursor",
-          status: "succeeded",
-          attempts: 1,
         }),
       ]);
       return;
@@ -515,7 +479,6 @@ describe("Pactile lifecycle conformance matrix", () => {
     for (const required of [
       "pactile-owned",
       "foreign",
-      "shared",
       "modified",
       "borrowed",
       "user-state",

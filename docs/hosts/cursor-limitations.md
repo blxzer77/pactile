@@ -1,5 +1,7 @@
 # Cursor limitations and safe fallbacks
 
+**Historical v0.5 reference:** The Cursor adapter is retired in the v0.6 development line, which targets Codex. For an older installation, preview safe cleanup with `pactile detach cursor --dry-run`.
+
 English | [简体中文](cursor-limitations.zh-CN.md)
 
 The Cursor adapter is intentionally conservative. A host feature can be

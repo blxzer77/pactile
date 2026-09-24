@@ -87,7 +87,7 @@ describe("uninstall() integration", () => {
   });
 
   it("detaches hosts, marks the install inactive, and preserves canonical user state", async () => {
-    await init({ yes: true, cursor: true, force: true });
+    await init({ yes: true, codex: true, force: true });
     const task = path.join(tmpDir, ".pactile", "tasks", "user", "notes.md");
     const workspace = path.join(tmpDir, ".pactile", "workspace", "user.txt");
     const userHost = path.join(tmpDir, ".cursor", "user-data", "notes.txt");
@@ -118,7 +118,7 @@ describe("uninstall() integration", () => {
   });
 
   it("returns a deterministic dry-run without prompting or changing bytes", async () => {
-    await init({ yes: true, cursor: true, force: true });
+    await init({ yes: true, codex: true, force: true });
     const before = treeSnapshot(tmpDir);
 
     const result = await uninstall({ dryRun: true });
@@ -138,7 +138,7 @@ describe("uninstall() integration", () => {
   });
 
   it("honors an interactive cancellation without changing state", async () => {
-    await init({ yes: true, cursor: true, force: true });
+    await init({ yes: true, codex: true, force: true });
     const before = treeSnapshot(tmpDir);
     vi.mocked(inquirer.prompt).mockResolvedValueOnce({ proceed: false });
 
@@ -148,8 +148,8 @@ describe("uninstall() integration", () => {
   });
 
   it("releases claims but preserves a user-modified projected file", async () => {
-    await init({ yes: true, cursor: true, force: true });
-    const target = path.join(tmpDir, ".cursor", "commands", "pactile.md");
+    await init({ yes: true, codex: true, force: true });
+    const target = path.join(tmpDir, ".agents", "skills", "intake-basic", "SKILL.md");
     fs.appendFileSync(target, "\nUSER MODIFICATION\n");
 
     await uninstall({ yes: true });
@@ -159,7 +159,7 @@ describe("uninstall() integration", () => {
     expect(
       new ProjectionStore(tmpDir)
         .readLedger()
-        ?.ledger.entries.find(({ targetPath }) => targetPath === ".cursor/commands/pactile.md")
+        ?.ledger.entries.find(({ targetPath }) => targetPath === ".agents/skills/intake-basic/SKILL.md")
         ?.claimants,
     ).toEqual([]);
   });
@@ -167,7 +167,7 @@ describe("uninstall() integration", () => {
   it("preserves an adopted AGENTS.md asset and only releases its claim", async () => {
     const agents = path.join(tmpDir, "AGENTS.md");
     fs.writeFileSync(agents, "# User policy\n");
-    await init({ yes: true, cursor: true, skipExisting: true });
+    await init({ yes: true, codex: true, skipExisting: true });
     expect(hasPactileBlock(fs.readFileSync(agents, "utf8"))).toBe(true);
 
     await uninstall({ yes: true });
@@ -184,7 +184,7 @@ describe("uninstall() integration", () => {
   });
 
   it("deletes an unchanged AGENTS.md created wholly by Pactile", async () => {
-    await init({ yes: true, cursor: true, force: true });
+    await init({ yes: true, codex: true, force: true });
     const agents = path.join(tmpDir, "AGENTS.md");
     expect(hasPactileBlock(fs.readFileSync(agents, "utf8"))).toBe(true);
 

@@ -504,8 +504,8 @@ def _default_body() -> str:
     return (
         "# Task Map\n\n"
         "## Orchestration notes\n\n"
-        "- **parallel-first:** Prefer Cursor Multitask / Build in Parallel / Agent `Task` / native "
-        "worktree. Pactile does not schedule workers or replace Multitask.\n"
+        "- **parallel-first:** Use independent, bounded work only when dependencies and "
+        "write sets allow it. Pactile does not yet schedule Codex tasks or Pi workers.\n"
         "- `execution_topology: parallel` — default when ≥2 children have empty `depends_on`. "
         "Parent `integrate-child`, HITL, `start-execution --approved`, and reviewer gates stay "
         "serial (`merge_limit`).\n"

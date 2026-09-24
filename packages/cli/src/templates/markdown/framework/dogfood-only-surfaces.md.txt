@@ -1,28 +1,7 @@
-# Dogfood-Only vs Default Install Surfaces
+# Product and maintainer-local surfaces
 
-> **Purpose**: An inventory of surfaces that exist in the **maintainer harness** (MyHarness) but are **not** shipped by a default `pactile init` / `pactile update`. Use it to avoid the false conclusion "the product feature disappeared" when comparing a consumer repo to the harness. A file missing from a consumer project is **by design**, not a regression — the CLI/script/guide surface still carries the capability.
+A default `pactile init --codex` creates canonical files under `.pactile/` and projects managed instructions and Skills into `AGENTS.md` and `.agents/skills/`. Native Codex bindings depend on host readiness. `pactile update` refreshes framework-owned files after conflict review; `.pactile/spec/` remains user-owned.
 
-## Rule of thumb
+The maintainer's local harness can contain private tasks, research, indexes, worktrees, and host configuration. Those files are not product templates and are not copied into a consumer project.
 
-- **Shipped by default** = written by `pactile init --cursor` and refreshed by `pactile update` (workflow, `.pactile/framework/` docs, scripts, AGENTS.md PACTILE block, `.cursor/{commands,rules,agents,hooks}`). `.pactile/spec/` seeds are init-only and **never** refreshed — update never touches that directory.
-- **Dogfood-only / harness-only** = present only in the maintainer harness or after manual copy. Absence in a consumer repo is expected.
-
-## Inventory
-
-| Surface | Where it exists | Why dogfood-only | Decision |
-| --- | --- | --- | --- |
-| `.claude/skills/*` full suite | `.claude/skills/` in the harness | Cursor default install is **commands-only**; Claude skill files are for Claude platforms, not Cursor consumers | **non-Cursor** (not in Cursor default install) |
-| Private task research / narratives | `{TASK}/research/` in the harness | Personal or project-specific content; the task **mechanism** ships, the notes do not | **narrative not packaged** — mechanism ships, content stays local |
-| `.codegraph/`, `.worktrees/`, scratch/analysis files | Harness root | Per-machine index / tooling state | **local only** |
-
-## If a capability seems missing in a consumer repo
-
-1. Check the [internal-skills-cursor-reachability.md](./internal-skills-cursor-reachability.md) matrix — the capability's load channel (guide / script / agent / CLI) should be present.
-2. Check AGENTS.md `Invocation map (short)` — the intended entry point (`/pactile-handoff`, etc.).
-3. If the entry point is a harness-only file from the table above, the capability is intentionally **not** shipped to consumers — do not backfill it by copying harness files.
-
-## Related
-
-- [internal-skills-cursor-reachability.md](./internal-skills-cursor-reachability.md) — reachability of internal skill names.
-- [prd-grill-frontier.md](./prd-grill-frontier.md) — P11 grilling on-demand path.
-- AGENTS.md `Invocation map (short)` — session handoff = `/pactile-handoff`.
+If a capability seems absent, inspect the package's generated files and the output of `pactile capability-smoke --json`. Do not copy files from a maintainer workspace into a consumer project.

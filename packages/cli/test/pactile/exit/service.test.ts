@@ -432,7 +432,7 @@ describe("Pactile exit public seam", () => {
   it("materializes the target before reconciling an active Adapter during rollback", async () => {
     const older = generation("generation.active-older", "older\n");
     const newer = generation("generation.active-newer", "newer\n");
-    install(newer, [{ id: "adapter.cursor", status: "active" }]);
+    install(newer, [{ id: "adapter.codex", status: "active" }]);
     const live = path.join(root, ".pactile/framework/index.md");
     fs.mkdirSync(path.dirname(live), { recursive: true });
     fs.writeFileSync(live, "newer\n");

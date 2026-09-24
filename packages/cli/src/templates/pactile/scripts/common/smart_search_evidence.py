@@ -175,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
         if "timed out" in error.lower() or "timeout" in error.lower():
             error = (
                 f"{error} Retry with --timeout 120 or --intent docs; "
-                "or use Cursor WebSearch/WebFetch and persist source: cursor-web-fallback."
+                "or use an available web source and persist its citation."
             )
 
     manifest = build_manifest(

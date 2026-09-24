@@ -32,7 +32,6 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { collectPlatformTemplates } from "../configurators/index.js";
 import { getWorkflowRootTemplateFiles } from "../configurators/workflow.js";
 import { FILE_NAMES, isUserMiddlewareOverlayPath } from "../constants/paths.js";
 import { getAllMigrations } from "../migrations/index.js";
@@ -63,13 +62,7 @@ export interface PruneResult {
  */
 function buildKnownKeys(configuredPlatforms: readonly AITool[]): Set<string> {
   const known = new Set<string>();
-  for (const id of configuredPlatforms) {
-    const templates = collectPlatformTemplates(id);
-    if (!templates) continue;
-    for (const key of templates.keys()) {
-      known.add(toPosix(key));
-    }
-  }
+  void configuredPlatforms;
   // Root-level files written by the workflow configurator (CONTEXT.md,
   // docs/adr/README.md) — they live outside platform config dirs but are
   // Pactile-owned, so lifecycle reconciliation must recognize them.

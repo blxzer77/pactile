@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-The Pactile CLI creates and maintains an evidence-backed capability workspace for Cursor, Codex, or both. Canonical state lives in `.pactile/`; host files are rebuildable projections governed by explicit ownership.
+The Pactile CLI creates and maintains an evidence-backed capability workspace for Codex. Canonical state lives in `.pactile/`; host files are rebuildable projections governed by explicit ownership.
 
 ## Install
 
@@ -18,30 +18,29 @@ Node.js 18.17 or newer is required. Generated Python scripts and host hooks requ
 ```bash
 mkdir my-pactile-project
 cd my-pactile-project
-pactile init --cursor --codex -y
+pactile init --codex -y
 pactile capability-smoke --json
 ```
 
-Choose `--cursor`, `--codex`, or both. Existing user files and native assets are inspected before projection. A compatible external asset may be adopted as borrowed; a conflict or malformed host file remains untouched and produces a recovery action.
+Use `--codex` to select the active host. Existing user files and native assets are inspected before projection. A compatible external asset may be adopted as borrowed; a conflict or malformed host file remains untouched and produces a recovery action.
 
 ## Command reference
 
 | Command                                              | Contract                                                                          |
 | ---------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `pactile init --cursor [--codex]`                    | Create canonical state and reconcile the selected adapters.                       |
+| `pactile init --codex`                               | Create canonical state and reconcile the Codex adapter.                          |
 | `pactile capability-smoke [--json] [--write-status]` | Probe selected capabilities and optionally persist readiness.                     |
 | `pactile update --dry-run`                           | Preview official-file, migration, and projection changes.                         |
 | `pactile update`                                     | Apply one confirmed transaction, then reconcile adapters independently.           |
 | `pactile migrate`                                    | Produce the optional migration preview; actual writes remain in `update`.         |
 | `pactile rollout`                                    | Run `update` across explicit project paths and aggregate evidence.                |
 | `pactile upgrade`                                    | Upgrade the globally installed canonical CLI package.                             |
-| `pactile detach cursor`                              | Remove one adapter's bindings and claims; preserve shared and borrowed resources. |
+| `pactile detach cursor`                              | Review and remove a legacy Cursor adapter without deleting modified user files.  |
 | `pactile detach codex`                               | Apply the same single-adapter contract to Codex.                                  |
 | `pactile uninstall --dry-run`                        | Preview detaching all adapters while retaining `.pactile/`.                       |
 | `pactile rollback <generation> --dry-run`            | Verify and preview a sealed generation switch.                                    |
 | `pactile purge --dry-run`                            | Produce the exact inactive-root target fingerprint; does not delete.              |
 | `pactile workflow`                                   | List or select a canonical workflow template.                                     |
-| `pactile validate-rules`                             | Validate supported Cursor rule projections.                                       |
 | `pactile kernel --json`                              | Run the machine JSON lifecycle boundary used by generated project scripts.        |
 
 Run `pactile <command> --help` for current flags. `detach` takes the adapter as a positional argument. `purge` is intentionally two-step: a destructive run requires `--yes` plus the exact fingerprint returned by the preview.
@@ -66,7 +65,7 @@ pactile rollback <generation> --dry-run
 pactile purge --dry-run
 ```
 
-Canonical generation commit happens before host reconciliation. If one adapter fails, canonical state and successful sibling adapters remain intact; the failed adapter keeps a retryable receipt. Update and exit decisions consult the ownership ledger, so modified, foreign, unknown, shared, and borrowed resources fail safe.
+Canonical generation commit happens before host reconciliation. A failed adapter keeps a retryable receipt. Update and exit decisions consult the ownership ledger, so modified, foreign, unknown, shared, and borrowed resources fail safe.
 
 See the repository guides for [Lifecycle](../../docs/lifecycle/index.md), [Recovery](../../docs/troubleshooting/recovery.md), and [Projection and Ownership](../../docs/concepts/projection-and-ownership.md).
 

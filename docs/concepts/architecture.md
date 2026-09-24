@@ -2,7 +2,7 @@
 
 English | [简体中文](architecture.zh-CN.md)
 
-Pactile has one canonical runtime and multiple host projections. This is the central architectural constraint: Adapters can describe and reconcile what a host needs, but they cannot redefine durable project truth.
+Pactile has one canonical runtime and a rebuildable Codex host projection. Adapters can describe and reconcile what a host needs, but they cannot redefine durable project truth.
 
 ## Components
 
@@ -28,11 +28,11 @@ model selection -> compiler diagnostics -> Kernel/lifecycle validation
         +---------------- canonical commit ----+
                                                v
                                  sealed .pactile generation
-                                      /                 \
-                             Cursor Adapter         Codex Adapter
-                                  |                      |
-                           Projection Plan        Projection Plan
-                                  \                      /
+                                               |
+                                         Codex Adapter
+                                               |
+                                         Projection Plan
+                                               |
                                    Ownership-aware Reconciler
                                               |
                                   host files + bindings + receipts
@@ -40,7 +40,7 @@ model selection -> compiler diagnostics -> Kernel/lifecycle validation
                                       Evidence + Trace
 ```
 
-Each adapter has its own result and retry count. A committed generation may therefore be healthy while one adapter is degraded. The successful adapter is not rolled back merely to make the status look uniform.
+The adapter has its own result and retry count. A committed generation may remain healthy while its host projection is degraded.
 
 ## Authority rules
 
@@ -58,13 +58,13 @@ Each adapter has its own result and retry count. A committed generation may ther
 | Invalid Tile or policy escalation                   | Reject before invocation; emit diagnostics.                                         |
 | Provider absent or stale                            | Report the actual lower assurance or degraded/unsupported state with a user action. |
 | Canonical commit fails                              | Do not start adapter reconciliation.                                                |
-| One adapter fails after commit                      | Preserve canonical truth and successful siblings; retain a retryable receipt.       |
+| Adapter fails after commit                          | Preserve canonical truth; retain a retryable receipt.                               |
 | Current host bytes differ from the managed snapshot | Preserve and route to review; do not overwrite or delete.                           |
 | Interrupted migration                               | Recover from the journal and retained backup without writing legacy sources.        |
 
 ## User scenario
 
-A project starts with Codex and later adds Cursor. Pactile seals no duplicate project truth: it reads the active generation, builds a Cursor Projection Plan, notices that a shared Skill and `AGENTS.md` block already exist, adds the Cursor claimant, and writes only Cursor-specific leaves. Removing Cursor later drops that claimant while Codex keeps the shared resources.
+A project starts with Codex and has a user-owned Skill. Pactile reads the active generation, builds a Codex Projection Plan, and records a borrowed binding for the Skill. Detaching Codex removes its claim while preserving the user-owned asset.
 
 ## Boundaries
 

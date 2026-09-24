@@ -7,15 +7,10 @@ import {
 } from "../../../src/pactile/providers/probes.js";
 
 describe("provider probe matrix public seam", () => {
-  it("normalizes six providers across ready/degraded/unavailable/stale and drops all raw secret output", async () => {
+  it("normalizes active providers across ready/degraded/unavailable/stale and drops raw secret output", async () => {
     const now = "2026-09-10T00:00:00.000Z";
     const cases: Record<PactileProviderProbeId, ProviderProbeRunnerResult> = {
       rg: { exitCode: 0, observedAt: now, capabilityAvailable: true },
-      "cursor-semantic": {
-        exitCode: 0,
-        observedAt: now,
-        capabilityAvailable: false,
-      },
       "codex-explorer": {
         exitCode: 127,
         observedAt: now,
@@ -26,7 +21,7 @@ describe("provider probe matrix public seam", () => {
         observedAt: "2026-09-09T22:00:00.000Z",
         stdout: "oauth_state=canary-state",
       },
-      "fast-context": { exitCode: 0, observedAt: now },
+      "fast-context": { exitCode: 0, observedAt: now, capabilityAvailable: false },
       "smart-search": {
         exitCode: 0,
         observedAt: now,
@@ -45,7 +40,6 @@ describe("provider probe matrix public seam", () => {
     expect(result.probes.map(({ providerId }) => providerId)).toEqual([
       "codegraph",
       "codex-explorer",
-      "cursor-semantic",
       "fast-context",
       "rg",
       "smart-search",
@@ -55,8 +49,7 @@ describe("provider probe matrix public seam", () => {
     ).toEqual({
       codegraph: "stale",
       "codex-explorer": "unavailable",
-      "cursor-semantic": "degraded",
-      "fast-context": "ready",
+      "fast-context": "degraded",
       rg: "ready",
       "smart-search": "ready",
     });

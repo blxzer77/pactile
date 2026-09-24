@@ -282,7 +282,7 @@ To get structured package info, run: `python ./{DIR_WORKFLOW}/scripts/get_contex
 
 - Spec files: `{spec_path}/**/*.md`
 - Code search: Use Glob and Grep tools
-- External facts / docs: load `smart-search-cli` skill and use Bash (`smart-search` CLI), not Cursor WebSearch/WebFetch by default"""
+- External facts / docs: use the `smart-search-cli` skill and persist source citations."""
     context_parts.append(project_structure)
     return "\n\n".join(context_parts)
 
@@ -405,7 +405,7 @@ Conversations get compacted; files do not. Every research topic MUST be written 
 
 ## Dispatch contract
 
-- External facts: load `smart-search-cli` skill + Bash — default **not** Cursor `WebSearch`/`WebFetch`.
+- External facts: use the `smart-search-cli` skill and persist source citations.
 - Do NOT spawn nested `pactile-implement` / `pactile-check` / `pactile-research` sub-agents.
 
 ## Project Info

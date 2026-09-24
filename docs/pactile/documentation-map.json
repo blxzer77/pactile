@@ -1842,11 +1842,6 @@
       "surfaces": ["windows", "posix"]
     },
     {
-      "command": "pactile init --cursor",
-      "availableAfter": "cursor-adapter",
-      "surfaces": ["windows", "posix"]
-    },
-    {
       "command": "pactile init --codex",
       "availableAfter": "codex-adapter",
       "surfaces": ["windows", "posix"]
@@ -1854,22 +1849,17 @@
     {
       "command": "pactile update",
       "availableAfter": "batch-3-brand-runtime",
-      "surfaces": ["clean", "legacy", "coexistence"]
+      "surfaces": ["clean", "legacy", "codex"]
     },
     {
       "command": "pactile capability-smoke --json",
       "availableAfter": "batch-2-vertical-capabilities",
-      "surfaces": ["cursor", "codex", "coexistence"]
-    },
-    {
-      "command": "pactile detach cursor",
-      "availableAfter": "projection-lifecycle",
-      "surfaces": ["coexistence"]
+      "surfaces": ["codex"]
     },
     {
       "command": "pactile detach codex",
       "availableAfter": "projection-lifecycle",
-      "surfaces": ["coexistence"]
+      "surfaces": ["codex"]
     },
     {
       "command": "pactile uninstall",

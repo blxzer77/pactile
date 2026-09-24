@@ -395,7 +395,7 @@ export function probeFastCtxCapability(probeOptions?: {
       `official stable binary is not present at \`${stableBinaryPath}\`; FastCtx has not been applied in this profile`,
     ],
     warnings: [
-      "This is the normal un-adopted state, not a broken install: the capability is declared and selectable, but its tools are unavailable until the upstream flow runs. Adopt it with `fastctx apply` (Codex path; it writes the stable binary, a Codex profile, and a managed block in `~/.codex/AGENTS.md`). The upstream flow does not cover Cursor: register `fastctx serve` through user-level host MCP configuration, pointing the command at the stable binary path.",
+      "This is the normal un-adopted state, not a broken install: the capability is declared and selectable, but its tools are unavailable until the upstream flow runs. Adopt it with `fastctx apply` (Codex path; it writes the stable binary, a Codex profile, and a managed block in `~/.codex/AGENTS.md`).",
     ],
   };
 }

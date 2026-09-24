@@ -4,10 +4,8 @@ English | [简体中文](known-limitations.zh-CN.md)
 
 These are explicit boundaries, not hidden failures:
 
-- Cursor hook context is best-effort; rules, canonical workflow, and CLI
-  dispatch prompts remain the fallback.
-- Codex and Cursor can expose different native tools. Capability parity is
-  reported per host, not inferred from similar names.
+- Codex desktop task coordination and the Pi Agent bridge are planned, not
+  currently installed by this CLI.
 - Optional MCP and retrieval Providers are not installed or authorized by
   Pactile. Missing readiness is a valid `unsupported` or `degraded` result.
 - A Provider result is a candidate until source, Git, tests, or a bounded

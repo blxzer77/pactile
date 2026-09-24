@@ -15,7 +15,7 @@ MCP 是传输与工具边界，不自动等同于能力声明。Pactile 记录�
 只在项目需要时于 init 选择能力：
 
 ```bash
-pactile init --cursor --codex --capability codebase-retrieval -y
+pactile init --codex --capability codebase-retrieval -y
 pactile capability-smoke --json
 ```
 

@@ -24,87 +24,23 @@ export interface HookScript {
   content: string;
 }
 
-export type SharedHookName =
-  | "session-start.py"
-  | "event-bridge.py"
-  | "inject-shell-session-context.py"
-  | "rename-session-for-task.py"
-  | "inject-retrieval-plan.py"
-  | "inject-workflow-state.py"
-  | "inject-subagent-context.py"
-  | "research-end-retrieval-pack.py"
-  | "spec-write-audit.py";
+export type SharedHookName = "inject-workflow-state.py";
 
-export type SharedHookPlatform =
-  | "claude"
-  | "cursor"
-  | "codex"
-  | "gemini"
-  | "qoder"
-  | "copilot"
-  | "codebuddy"
-  | "droid"
-  | "kiro";
+export type SharedHookPlatform = "codex";
 
 /**
  * Which shared hooks each platform actually invokes. Single source of truth
  * for shared-hook distribution — both `writeSharedHooks` (runtime install)
  * and `collectSharedHooks` (`pactile update` diff) read from this table.
  *
- * Routing rules encoded here:
- * - `session-start.py` — shipped by every platform with a SessionStart
- *   hook event *except* codex + copilot, which bundle a platform-specific
- *   session-start.py under their own template dirs.
- * - `inject-workflow-state.py` — every platform with a UserPromptSubmit
- *   (or equivalent) event. Kiro + codex self-included; platforms without
- *   per-turn main-session hooks are excluded.
- * - `inject-subagent-context.py` — class-1 (push-based) platforms only.
- *   Class-2 (pull-based) platforms (codex, copilot, gemini, qoder) can't
- *   have hooks mutate sub-agent prompts — their sub-agents load context
- *   via a prelude instead.
- * - Kiro supports only `agentSpawn` (no SessionStart / UserPromptSubmit
- *   event), so it takes just `inject-subagent-context.py`.
- * - Claude Code `statusLine` is intentionally not installed by default.
- *   Users can add their own statusLine command in `.claude/settings.json`
- *   without Pactile owning a generated hook file.
+ * Only the Codex hook currently ships. Other historical scripts remain
+ * available to migration code until the Node-only runtime lands.
  */
 export const SHARED_HOOKS_BY_PLATFORM: Record<
   SharedHookPlatform,
   readonly SharedHookName[]
 > = {
-  claude: [
-    "session-start.py",
-    "inject-workflow-state.py",
-    "inject-subagent-context.py",
-    "research-end-retrieval-pack.py",
-  ],
-  cursor: [
-    "session-start.py",
-    "event-bridge.py",
-    "inject-shell-session-context.py",
-    "rename-session-for-task.py",
-    "inject-retrieval-plan.py",
-    "inject-subagent-context.py",
-    "research-end-retrieval-pack.py",
-    "spec-write-audit.py",
-  ],
   codex: ["inject-workflow-state.py"],
-  gemini: ["session-start.py", "inject-workflow-state.py"],
-  qoder: ["session-start.py", "inject-workflow-state.py"],
-  copilot: ["inject-workflow-state.py"],
-  codebuddy: [
-    "session-start.py",
-    "inject-workflow-state.py",
-    "inject-subagent-context.py",
-    "research-end-retrieval-pack.py",
-  ],
-  droid: [
-    "session-start.py",
-    "inject-workflow-state.py",
-    "inject-subagent-context.py",
-    "research-end-retrieval-pack.py",
-  ],
-  kiro: ["inject-subagent-context.py"],
 };
 
 /**

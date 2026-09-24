@@ -10,7 +10,7 @@
 | --- | --- |
 | Workspace / task `artifact_locale` | Full CLI `--help` / stderr i18n |
 | `task.py create` PRD seed language | Auto-translating archived tasks |
-| Session / planning hints for artifact language | Bilingual mirrors of `workflow.md` or `.cursor/rules` |
+| Session / planning hints for artifact language | Managed `AGENTS.md` block or project spec |
 | `prd.md` / `design.md` / `implement.md` / `verify.md` / `handoff.md` | `task.json` field names or gate enums |
 
 **Rollback:** `python ./.pactile/scripts/task.py artifact-locale set zh` or remove `artifact_locale` from `.pactile/config.yaml`. For a single task, delete `task.json` → `meta.artifact_locale`.

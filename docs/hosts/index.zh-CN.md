@@ -2,16 +2,14 @@
 
 [English](index.md) | 简体中文
 
-Pactile 只保留一份项目 canonical 状态，再投影到实际使用的宿主。项目可以只连接一个宿主，也可以在 Cursor 与 Codex 间共存。宿主页面描述可观察的支持契约，不把宿主原生工具或 Provider 的安装状态假定为已满足。
+Pactile 只保留一份项目 canonical 状态，并向 Codex 投影。宿主页面描述可观察的支持契约，不把宿主原生工具或 Provider 的安装状态假定为已满足。
 
 ## 选择路径
 
-| 需求        | 从这里开始                                 | 结果                                                         |
-| ----------- | ------------------------------------------ | ------------------------------------------------------------ |
-| 只用 Cursor | [Cursor](cursor.zh-CN.md)                  | `.pactile/` 加 `.cursor/` 下的 Cursor 投影。                 |
-| 只用 Codex  | [Codex](codex.zh-CN.md)                    | `.pactile/` 加原生支持就绪时才生成的可选 `.codex/` 投影。     |
-| 两个宿主    | [共存](coexistence.zh-CN.md)               | 一份 canonical generation、共享 claimant，以及宿主专属叶子。 |
-| Cursor 限制 | [Cursor 限制](cursor-limitations.zh-CN.md) | 已知注入与 Provider 边界及安全回退。                         |
+| 需求 | 从这里开始 | 结果 |
+| --- | --- | --- |
+| 新项目 | [Codex](codex.zh-CN.md) | `.pactile/`、受管 `AGENTS.md` 和 `.agents/skills/`；原生绑定取决于 readiness。 |
+| 旧 Cursor 安装 | [生命周期安全](../lifecycle/index.zh-CN.md) | 先用 `pactile detach cursor --dry-run` 预览清理。 |
 
 所有宿主都遵循同一顺序：
 
@@ -25,8 +23,8 @@ detect -> install or adopt -> bind -> reconcile -> report readiness
 
 ```bash
 npm install -g @blxzer/pactile
-pactile init --cursor --codex -y
+pactile init --codex -y
 pactile capability-smoke --json
 ```
 
-只传入需要的宿主 flag。先阅读 JSON 中的 readiness 与 user action，再判断能力是否可用。接下来阅读[能力来源与 Provider](../capabilities/index.zh-CN.md)或[生命周期安全](../lifecycle/index.zh-CN.md)。
+先阅读 JSON 中的 readiness 与 user action，再判断能力是否可用。接下来阅读[能力来源与 Provider](../capabilities/index.zh-CN.md)或[生命周期安全](../lifecycle/index.zh-CN.md)。

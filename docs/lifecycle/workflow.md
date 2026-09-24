@@ -3,9 +3,8 @@
 English | [简体中文](workflow.zh-CN.md)
 
 The workflow is a host-neutral sequence of intent, definition, approval,
-execution, verification, integration, and close. Cursor slash commands and
-Codex task conversations are projections of this sequence; neither host is the
-authority.
+execution, verification, integration, and close. Codex task conversations
+consume this sequence; the canonical task record remains the authority.
 
 ```text
 triage -> define -> approve -> execute -> verify -> integrate -> close
