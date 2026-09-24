@@ -1,51 +1,31 @@
-import { execSync } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-import { PATHS } from "../constants/paths.js";
-import { replacePythonCommandLiterals } from "../configurators/shared.js";
 import type { UpdateSmokeCheckResult } from "./update-rollout-report.js";
 
-function runCheck(command: string, cwd: string): UpdateSmokeCheckResult {
+const cliBin = fileURLToPath(new URL("../../bin/pactile.js", import.meta.url));
+
+function runCheck(args: string[], cwd: string): UpdateSmokeCheckResult {
+  const command = `node pactile ${args.join(" ")}`;
   try {
-    execSync(command, {
+    execFileSync(process.execPath, [cliBin, ...args], {
       cwd,
-      encoding: "utf-8",
+      encoding: "utf8",
       stdio: "pipe",
       timeout: 120_000,
     });
     return { command, ok: true };
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "command failed";
+    const message = error instanceof Error ? error.message : "command failed";
     return { command, ok: false, detail: message.replace(/\s+/g, " ").trim() };
   }
 }
 
-/**
- * Repeatable, non-destructive checks after a successful `pactile update` apply.
- * Verifies generated Pactile Python entrypoints compile and respond to --help.
- */
+/** Non-destructive Node CLI checks after an update. */
 export function runPostUpdateSmoke(cwd: string): UpdateSmokeCheckResult[] {
-  const results: UpdateSmokeCheckResult[] = [];
-  const pyScript = path.join(cwd, PATHS.SCRIPTS, "get_context.py");
-  const taskScript = path.join(cwd, PATHS.SCRIPTS, "task.py");
-
-  const py = process.platform === "win32" ? "python" : "python3";
-
-  if (fs.existsSync(pyScript)) {
-    const cmd = replacePythonCommandLiterals(
-      `${py} ./${PATHS.SCRIPTS}/get_context.py --help`,
-    );
-    results.push(runCheck(cmd, cwd));
-  }
-
-  if (fs.existsSync(taskScript)) {
-    const cmd = replacePythonCommandLiterals(
-      `${py} ./${PATHS.SCRIPTS}/task.py --help`,
-    );
-    results.push(runCheck(cmd, cwd));
-  }
-
-  return results;
+  return [
+    runCheck(["--help"], cwd),
+    runCheck(["task", "dashboard"], cwd),
+    runCheck(["context", "--mode", "packages", "--json"], cwd),
+  ];
 }

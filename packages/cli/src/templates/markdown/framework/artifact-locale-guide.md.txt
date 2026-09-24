@@ -9,11 +9,11 @@
 | In scope | Out of scope |
 | --- | --- |
 | Workspace / task `artifact_locale` | Full CLI `--help` / stderr i18n |
-| `task.py create` PRD seed language | Auto-translating archived tasks |
+| `pactile task create` PRD seed language | Auto-translating archived tasks |
 | Session / planning hints for artifact language | Managed `AGENTS.md` block or project spec |
 | `prd.md` / `design.md` / `implement.md` / `verify.md` / `handoff.md` | `task.json` field names or gate enums |
 
-**Rollback:** `python ./.pactile/scripts/task.py artifact-locale set zh` or remove `artifact_locale` from `.pactile/config.yaml`. For a single task, delete `task.json` → `meta.artifact_locale`.
+**Rollback:** `pactile task artifact-locale set zh` or remove `artifact_locale` from `.pactile/config.yaml`. For a single task, delete `task.json` → `meta.artifact_locale`.
 
 ---
 
@@ -32,17 +32,17 @@ Default when unset: **`zh`** (matches current dogfood and User Rules for Simplif
 
 ```powershell
 # Resolved locale (workspace default)
-python ./.pactile/scripts/task.py artifact-locale get
+pactile task artifact-locale get
 
 # Resolved locale for one task (includes task override)
-python ./.pactile/scripts/task.py artifact-locale get --task .pactile/tasks/<dir>
+pactile task artifact-locale get --task .pactile/tasks/<dir>
 
 # Workspace default
-python ./.pactile/scripts/task.py artifact-locale set en
-python ./.pactile/scripts/task.py artifact-locale set zh
+pactile task artifact-locale set en
+pactile task artifact-locale set zh
 
 # Per-task override
-python ./.pactile/scripts/task.py artifact-locale set zh --task .pactile/tasks/<dir>
+pactile task artifact-locale set zh --task .pactile/tasks/<dir>
 ```
 
 Invalid values print a warning and fall back to the next layer (`task` → `workspace` → `zh`).
@@ -53,7 +53,7 @@ Invalid values print a warning and fall back to the next layer (`task` → `work
 
 | Artifact | Mechanism |
 | --- | --- |
-| `prd.md` on `task.py create` | Locale template under `.pactile/tasks/locale/{zh,en}/default-prd.md` |
+| `prd.md` on `pactile task create` | Locale template under `.pactile/tasks/locale/{zh,en}/default-prd.md` |
 | `design.md` / `implement.md` | Agent planning (session context + `pactile-brainstorm`) |
 | `verify.md` / `handoff.md` | Agent execution / finish (same session hint) |
 | Optional `tasks/templates/*` copies | Agent follows guide; English paths stay canonical |
@@ -64,8 +64,8 @@ Invalid values print a warning and fall back to the next layer (`task` → `work
 
 ## 4. Dogfood checklist
 
-1. `artifact-locale set en` → `task.py create "Locale EN" --slug locale-dogfood-en` → `prd.md` uses `## Goal`, `## Requirements`.
-2. `artifact-locale set zh` → `task.py create "Locale ZH" --slug locale-dogfood-zh` → `prd.md` uses `## 目标`, `## 需求`.
+1. `artifact-locale set en` → `pactile task create "Locale EN" --slug locale-dogfood-en` → `prd.md` uses `## Goal`, `## Requirements`.
+2. `artifact-locale set zh` → `pactile task create "Locale ZH" --slug locale-dogfood-zh` → `prd.md` uses `## 目标`, `## 需求`.
 3. With workspace `en`, `artifact-locale set zh --task <dir>` → next create for that task only uses Chinese if `meta.artifact_locale` was set before create (override applies to resolved locale for that task).
 
 ---

@@ -63,15 +63,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Materialize dogfood for release validation
-        run: |
-          printf '\n# Release validation dogfood\n/.pactile/\n' >> .git/info/exclude
-          rm -rf .cursor/rules .cursor/agents .pactile/scripts
-          mkdir -p .cursor/rules .cursor/agents .pactile/scripts
-          cp packages/cli/src/templates/cursor/rules/* .cursor/rules/
-          cp packages/cli/src/templates/cursor/agents/* .cursor/agents/
-          cp -r packages/cli/src/templates/pactile/scripts/* .pactile/scripts/
-
       - name: Ignore package-manager executable-bit normalization
         run: git config core.filemode false
 
@@ -96,10 +87,6 @@ jobs:
             --receipt-output "${GITHUB_OUTPUT}" \
             --tag "${GITHUB_REF_NAME}" --remote origin \
             ${{ steps.npm-tag.outputs.args }}
-        env:
-          # Candidate tests call Kernel before either package is published.
-          PACTILE_KERNEL_CLI: node ${{ github.workspace }}/packages/cli/bin/pactile.js kernel --json
-
       - name: Publish verified tarballs
         run: >-
           node packages/cli/scripts/publish-packages.js

@@ -11,7 +11,7 @@ npm install -g @blxzer/pactile
 pactile --version
 ```
 
-需要 Node.js 18.17 或更高版本。生成的 Python 脚本与宿主 hooks 需要 Python 3.9 或更高版本。Smart Search 等 Middleware Provider 是可选、独立探测的能力；Pactile 不会静默安装宿主原生资产，也不会复制凭据。
+需要 Node.js 18.17 或更高版本。Pactile 的任务、上下文和会话命令使用 Node.js，不要求 Python。Smart Search 等 Middleware Provider 是可选、独立探测的能力；Pactile 不会静默安装宿主原生资产，也不会复制凭据。
 
 ## 第一个项目
 
@@ -41,6 +41,10 @@ pactile capability-smoke --json
 | `pactile rollback <generation> --dry-run`            | 验证并预览 sealed generation 切换。                            |
 | `pactile purge --dry-run`                            | 生成 inactive canonical root 的精确目标指纹，不删除。          |
 | `pactile workflow`                                   | 列出或选择 canonical workflow 模板。                           |
+| `pactile task <command>`                            | 用 Node 管理任务生命周期、证据门槛与 Parent/Child 审核。        |
+| `pactile context --mode session`                    | 编译按阶段裁剪的会话上下文包。                                 |
+| `pactile context --mode retrieval-pack --input <file>` | 对已收集证据评分并按预算选取；可用 `--output <file>` 写出。   |
+| `pactile session <command>`                         | 记录和查看本地会话连续性。                                     |
 | `pactile kernel --json`                              | 运行生成项目脚本使用的机器 JSON 生命周期边界。                 |
 
 用 `pactile <command> --help` 查看当前参数。`detach` 使用位置参数指定 Adapter。`purge` 固定为两步：破坏性执行必须同时提供 `--yes` 和 preview 返回的精确指纹。

@@ -8,10 +8,6 @@ import figlet from "figlet";
 import inquirer from "inquirer";
 import { createWorkflowStructure } from "../configurators/workflow.js";
 import { getInitToolChoices } from "../configurators/index.js";
-import {
-  getPythonCommandForPlatform,
-  setResolvedPythonCommand,
-} from "../configurators/shared.js";
 import { DIR_NAMES, FILE_NAMES, PATHS } from "../constants/paths.js";
 import { VERSION } from "../constants/version.js";
 import {
@@ -25,11 +21,8 @@ import {
   applyKernelStart,
   writeWaveCConfirmed,
 } from "@blxzer/pactile-core/task";
-import {
-  PACTILE_ENVIRONMENT_KEYS,
-  readPactileEnvironment,
-} from "@blxzer/pactile-core";
 import { emptyTaskJson, type TaskJson } from "../utils/task-json.js";
+import { initializeDeveloper, readDeveloper } from "../utils/developer.js";
 import {
   detectProjectType,
   detectMonorepo,
@@ -92,188 +85,6 @@ import {
   inspectLegacyInitContext,
   legacyImportPreparedMessage,
 } from "../pactile/compat/init-context.js";
-
-const MIN_PYTHON_MAJOR = 3;
-const MIN_PYTHON_MINOR = 9;
-const PYTHON_VERSION_RE = /Python (\d+)\.(\d+)/;
-
-export function isSupportedPythonVersion(versionOutput: string): boolean {
-  const match = versionOutput.match(PYTHON_VERSION_RE);
-  if (!match) return false;
-
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  return (
-    major > MIN_PYTHON_MAJOR ||
-    (major === MIN_PYTHON_MAJOR && minor >= MIN_PYTHON_MINOR)
-  );
-}
-
-// Sentinel returned when child_process spawn is blocked by a sandbox / kernel
-// policy (e.g. seccomp inside Codex's Linux sandbox). EPERM/EACCES here mean
-// "the kernel refused the spawn" — NOT "python3 isn't installed". The host
-// usually has python3 on PATH; we just can't probe it from this Node process.
-type PythonProbe = string | null | "sandbox-restricted";
-
-function detectPythonVersion(command: string): PythonProbe {
-  try {
-    return execSync(`${command} --version`, {
-      encoding: "utf-8",
-      stdio: "pipe",
-    }).trim();
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException)?.code;
-    if (code === "EPERM" || code === "EACCES") {
-      return "sandbox-restricted";
-    }
-    return null;
-  }
-}
-
-export function requireSupportedPython(command: string): string {
-  // Final escape hatch — set when the user knows python3 is on PATH but
-  // the probe keeps failing for environment-specific reasons.
-  if (
-    readPactileEnvironment(PACTILE_ENVIRONMENT_KEYS.skipPythonCheck) === "1"
-  ) {
-    return `version check skipped (PACTILE_SKIP_PYTHON_CHECK=1)`;
-  }
-
-  const versionOutput = detectPythonVersion(command);
-
-  if (versionOutput === "sandbox-restricted") {
-    console.warn(
-      chalk.yellow(
-        `⚠ Python version check skipped — sandboxed environment blocked ` +
-          `child_process spawn (EPERM/EACCES). Assuming "${command}" is on ` +
-          `PATH. If init fails later, re-run on the host or set ` +
-          `PACTILE_SKIP_PYTHON_CHECK=1.`,
-      ),
-    );
-    return `version unknown (sandbox-restricted)`;
-  }
-
-  if (!versionOutput) {
-    throw new Error(
-      `Python command "${command}" not found. Pactile init requires Python ≥ 3.9.`,
-    );
-  }
-
-  if (!isSupportedPythonVersion(versionOutput)) {
-    throw new Error(
-      `${versionOutput} detected via "${command}", but Pactile init requires Python ≥ 3.9.`,
-    );
-  }
-
-  return versionOutput;
-}
-
-/**
- * Candidate Python command list per platform.
- *
- * Windows: `python` is the usual python.org installer choice, but Microsoft
- * Store ships `python3`, and the `py` launcher is `py -3`. We try all three
- * before giving up — fixes #236 where users with only `python3` (not
- * `python`) had `pactile init` fail outright.
- *
- * Non-Windows: `python3` is canonical; `python` is a fallback for systems
- * where Python 3 is the only Python and is named `python` (some Arch
- * configs, conda envs).
- */
-const PYTHON_CANDIDATES: Record<"win32" | "other", readonly string[]> = {
-  win32: ["python", "python3", "py -3"],
-  other: ["python3", "python"],
-};
-
-/**
- * Detect a working Python ≥ 3.9 command on the host platform.
- *
- * Honors `PACTILE_PYTHON_CMD` (explicit override, no probe) and
- * `PACTILE_SKIP_PYTHON_CHECK=1` (skip probe, trust platform default).
- *
- * Otherwise tries each candidate in `PYTHON_CANDIDATES` in order and returns
- * the first whose `--version` matches `Python ≥ 3.9`. Caches the result via
- * `setResolvedPythonCommand` so all downstream template / configurator
- * writes pick up the resolved value.
- *
- * Throws a helpful, Windows-aware error if no candidate works.
- */
-export function resolveSupportedPython(): {
-  command: string;
-  version: string;
-} {
-  // Explicit override — user knows their environment.
-  const override = readPactileEnvironment(
-    PACTILE_ENVIRONMENT_KEYS.pythonCommand,
-  )?.trim();
-  if (override) {
-    setResolvedPythonCommand(override);
-    return { command: override, version: "set via PACTILE_PYTHON_CMD" };
-  }
-
-  // Skip probe entirely.
-  if (
-    readPactileEnvironment(PACTILE_ENVIRONMENT_KEYS.skipPythonCheck) === "1"
-  ) {
-    const fallback = getPythonCommandForPlatform();
-    setResolvedPythonCommand(fallback);
-    return {
-      command: fallback,
-      version: "version check skipped (PACTILE_SKIP_PYTHON_CHECK=1)",
-    };
-  }
-
-  const candidates =
-    process.platform === "win32"
-      ? PYTHON_CANDIDATES.win32
-      : PYTHON_CANDIDATES.other;
-
-  const probeFailures: string[] = [];
-  for (const candidate of candidates) {
-    const probe = detectPythonVersion(candidate);
-    if (probe === "sandbox-restricted") {
-      console.warn(
-        chalk.yellow(
-          `⚠ Python version check skipped — sandboxed environment blocked ` +
-            `child_process spawn (EPERM/EACCES). Assuming "${candidate}" is ` +
-            `on PATH. If init fails later, re-run on the host or set ` +
-            `PACTILE_SKIP_PYTHON_CHECK=1.`,
-        ),
-      );
-      setResolvedPythonCommand(candidate);
-      return {
-        command: candidate,
-        version: "version unknown (sandbox-restricted)",
-      };
-    }
-    if (!probe) {
-      probeFailures.push(`${candidate}: not found`);
-      continue;
-    }
-    if (!isSupportedPythonVersion(probe)) {
-      probeFailures.push(`${candidate}: ${probe} (< 3.9)`);
-      continue;
-    }
-    setResolvedPythonCommand(candidate);
-    return { command: candidate, version: probe };
-  }
-
-  const isWindows = process.platform === "win32";
-  const installHint = isWindows
-    ? `Install Python ≥ 3.9 from https://www.python.org/downloads/windows/ — make sure ` +
-      `"Add Python to PATH" is checked in the installer. Or, if Python is ` +
-      `installed under a different name, set PACTILE_PYTHON_CMD=<your-cmd> ` +
-      `before re-running init (e.g. \`set PACTILE_PYTHON_CMD=py -3\`).`
-    : `Install Python ≥ 3.9 from https://www.python.org/downloads/ or via your ` +
-      `package manager. Or set PACTILE_PYTHON_CMD=<your-cmd> before re-running.`;
-
-  throw new Error(
-    `No supported Python command found. Tried: ${candidates.join(", ")}.\n` +
-      `Probe results:\n  ${probeFailures.join("\n  ")}\n\n` +
-      `Pactile init requires Python ≥ 3.9. ${installHint}\n` +
-      `Last-resort escape hatch: set PACTILE_SKIP_PYTHON_CHECK=1 to skip the probe entirely.`,
-  );
-}
 
 // =============================================================================
 // Bootstrap Task Creation
@@ -344,8 +155,7 @@ function writeTaskSkeleton(
  * Compute the bootstrap checklist items (previously stored as structured
  * `subtasks: [{name, status}]` in task.json). Per task 04-21-task-schema-unify
  * (D1), these live as markdown `- [ ]` items in prd.md instead, so task.json
- * stays canonical with `subtasks: string[]` (child task dir names, same as
- * task_store.py).
+ * stays canonical with `subtasks: string[]` (child task dir names).
  */
 function getBootstrapChecklistItems(
   projectType: ProjectType,
@@ -423,7 +233,6 @@ function getBootstrapRelatedFiles(
 
 function getBootstrapPrdContent(
   projectType: ProjectType,
-  pythonCmd: string,
   selectedCapabilities: readonly ProjectCapabilityId[],
   packages?: DetectedPackage[],
 ): string {
@@ -554,7 +363,8 @@ When the developer confirms the checklist items above are done with real
 examples (not placeholders), guide them to run:
 
 \`\`\`bash
-${pythonCmd} ./.pactile/scripts/task.py archive 00-bootstrap-guidelines
+pactile task archive 00-bootstrap-guidelines --check
+pactile task archive 00-bootstrap-guidelines
 \`\`\`
 
 After archive, every new developer who joins this project will get a
@@ -634,7 +444,6 @@ function getBootstrapTaskJson(
 function createBootstrapTask(
   cwd: string,
   developer: string,
-  pythonCmd: string,
   projectType: ProjectType,
   selectedCapabilities: readonly ProjectCapabilityId[],
   packages?: DetectedPackage[],
@@ -642,7 +451,6 @@ function createBootstrapTask(
   const taskJson = getBootstrapTaskJson(developer, projectType, packages);
   const prdContent = getBootstrapPrdContent(
     projectType,
-    pythonCmd,
     selectedCapabilities,
     packages,
   );
@@ -683,7 +491,6 @@ function getJoinerTaskJson(developer: string, taskName: string): TaskJson {
  */
 function getJoinerPrdContent(
   developer: string,
-  pythonCmd: string,
   selectedCapabilities: readonly ProjectCapabilityId[],
 ): string {
   const slug = slugifyDeveloperName(developer);
@@ -769,7 +576,7 @@ File layout (mention when they ask "where does what live"):
 
 - Check if \`.pactile/workspace/${developer}/\` already exists — if yes, it's
   their journal from another machine and worth mentioning.
-- Run \`${pythonCmd} ./.pactile/scripts/task.py list --assignee ${developer}\` to
+- Run \`pactile task list --assignee "${developer}"\` to
   show tasks assigned to them. (Quote the name if it contains spaces.)
 - Remind them to inspect assigned Tasks at the start of each session.
 
@@ -791,7 +598,8 @@ When they feel oriented (or after you've covered the four topics with
 reasonable back-and-forth), guide them to run:
 
 \`\`\`bash
-${pythonCmd} ./.pactile/scripts/task.py archive 00-join-${slug}
+pactile task archive 00-join-${slug} --check
+pactile task archive 00-join-${slug}
 \`\`\`
 
 ---
@@ -813,14 +621,12 @@ hood, summarize the team's spec, or jump to what you're already curious about
 function createJoinerOnboardingTask(
   cwd: string,
   developer: string,
-  pythonCmd: string,
 ): boolean {
   const slug = slugifyDeveloperName(developer);
   const taskName = `00-join-${slug}`;
   const taskJson = getJoinerTaskJson(developer, taskName);
   const prdContent = getJoinerPrdContent(
     developer,
-    pythonCmd,
     loadProjectCapabilities(cwd),
   );
   return writeTaskSkeleton(cwd, taskName, taskJson, prdContent);
@@ -834,7 +640,6 @@ async function handleReinit(
   cwd: string,
   options: InitOptions,
   developerName: string | undefined,
-  pythonCmd: string,
 ): Promise<boolean> {
   const TOOLS = getPactileInitToolChoices();
   const installState = new InstallStateStore(cwd).read();
@@ -978,35 +783,24 @@ async function handleReinit(
     }
 
     // Capture pre-init state: if .developer did not exist before we ran
-    // init_developer.py, this checkout had no identity → treat as a new
+    // the Node identity writer, this checkout had no identity → treat as a new
     // joiner onboarding onto an existing Pactile project.
     const hadDeveloperFileBefore = fs.existsSync(
       path.join(cwd, DIR_NAMES.WORKFLOW, FILE_NAMES.DEVELOPER),
     );
 
     try {
-      const scriptPath = path.join(cwd, PATHS.SCRIPTS, "init_developer.py");
-      execSync(`${pythonCmd} "${scriptPath}" "${devName}"`, {
-        cwd,
-        stdio: "pipe",
-      });
+      initializeDeveloper(cwd, devName);
       console.log(chalk.green(`✓ Developer "${devName}" initialized`));
-    } catch {
-      console.log(
-        chalk.yellow("⚠ Could not initialize developer. Run manually:"),
-      );
-      console.log(
-        chalk.gray(
-          `  ${pythonCmd} .pactile/scripts/init_developer.py ${devName}`,
-        ),
-      );
+    } catch (err) {
+      console.log(chalk.yellow(`⚠ Could not initialize developer: ${err instanceof Error ? err.message : String(err)}`));
     }
 
     // Create joiner onboarding task for fresh checkouts (no prior .developer).
     // Runs outside the init_developer try/catch so failures surface as warnings.
     if (!hadDeveloperFileBefore) {
       try {
-        if (!createJoinerOnboardingTask(cwd, devName, pythonCmd)) {
+        if (!createJoinerOnboardingTask(cwd, devName)) {
           console.warn(
             chalk.yellow("⚠ Failed to create joiner onboarding task"),
           );
@@ -1216,8 +1010,6 @@ export async function init(options: InitOptions): Promise<void> {
     console.log(chalk.blue("👤 Developer:"), chalk.gray(developerName));
   }
 
-  const { command: pythonCmd } = resolveSupportedPython();
-
   // ==========================================================================
   // Re-init fast path: skip full flow when .pactile/ already exists.
   // ==========================================================================
@@ -1241,7 +1033,6 @@ export async function init(options: InitOptions): Promise<void> {
       cwd,
       options,
       developerName,
-      pythonCmd,
     );
     if (reinitDone) return;
     // reinitDone === false means user chose "full re-initialize" → fall through
@@ -2060,16 +1851,12 @@ export async function init(options: InitOptions): Promise<void> {
     writeWaveCConfirmed(cwd);
   }
 
-  // Initialize developer identity (silent - no output)
+  // Initialize developer identity with Node (silent - no output).
   if (developerName) {
     try {
-      const scriptPath = path.join(cwd, PATHS.SCRIPTS, "init_developer.py");
-      execSync(`${pythonCmd} "${scriptPath}" "${developerName}"`, {
-        cwd,
-        stdio: "pipe", // Silent
-      });
+      if (!readDeveloper(cwd)) initializeDeveloper(cwd, developerName);
     } catch {
-      // Silent failure - user can run init_developer.py manually
+      // Preserve init's best-effort identity creation boundary.
     }
 
     // Three-branch dispatch using flags captured at init() start (before
@@ -2095,7 +1882,6 @@ export async function init(options: InitOptions): Promise<void> {
       const bootstrapCreated = createBootstrapTask(
         cwd,
         developerName,
-        pythonCmd,
         projectType,
         selectedCapabilities,
         monorepoPackages,
@@ -2109,7 +1895,7 @@ export async function init(options: InitOptions): Promise<void> {
       }
     } else if (!hadDeveloperFileAtStart) {
       try {
-        if (!createJoinerOnboardingTask(cwd, developerName, pythonCmd)) {
+        if (!createJoinerOnboardingTask(cwd, developerName)) {
           console.warn(
             chalk.yellow("⚠ Failed to create joiner onboarding task"),
           );

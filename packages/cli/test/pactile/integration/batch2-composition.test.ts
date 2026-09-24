@@ -55,28 +55,6 @@ describe("Batch 2 parent composition seam", () => {
       requestedSelection: ["intake-basic"],
       capabilities: [],
     };
-    const cursor = composeBatch2Plan({
-      platform: "cursor",
-      catalog: catalog.data,
-      selection,
-      shared,
-      adapter: {
-        hostCapabilities: { commands: true },
-        composition: ["commands"],
-      },
-    });
-    expect(cursor.status).toBe("ready");
-    if (cursor.status !== "ready") throw new Error(JSON.stringify(cursor));
-    expect(cursor.adapterId).toBe("adapter.cursor");
-    expect(cursor.composition.requestedSelection).toEqual(["intake-basic@1.0.0"]);
-    expect(cursor.projection.plan).toMatchObject({ adapterId: "adapter.cursor" });
-    const cursorPreview = planProjection(cursor.projection);
-    expect(cursorPreview.status).toBe("ready");
-    if (cursorPreview.status !== "ready") throw new Error(JSON.stringify(cursorPreview));
-    expect(cursorPreview.mutations.map(({ targetPath }) => targetPath)).toContain(
-      ".cursor/commands/pactile.md",
-    );
-
     const codex = composeBatch2Plan({
       platform: "codex",
       catalog: catalog.data,

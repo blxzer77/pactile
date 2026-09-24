@@ -17,7 +17,7 @@ Pactile 把受契约约束的能力积木，按需拼成 Codex 可用、且有�
 
 ## 五分钟上手
 
-前置条件：Node.js 18.17 或更高版本。生成项目中的脚本和 hooks 需要 Python 3.9 或更高版本。
+前置条件：Node.js 18.17 或更高版本。Pactile 的任务、上下文和会话命令使用 Node.js，不要求 Python。
 
 ```bash
 npm install -g @blxzer/pactile

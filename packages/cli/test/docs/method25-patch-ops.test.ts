@@ -21,10 +21,10 @@ describe("Method 2.5 / Cursor++ docs retired (P23)", () => {
     for (const docPath of DOC_PATHS) {
       const content = readUtf8(docPath);
       expect(content, docPath).toMatch(
-        /alternate client is retired|替代客户端已废弃/i,
+        /(?:alternate client|Cursor adapter) is retired|(?:替代客户端|Cursor 适配器)已退役/i,
       );
       expect(content, docPath).toMatch(
-        /do not run|勿.*运行|retired|已废弃|not a current product path|不是当前产品路径/i,
+        /do not run|勿.*运行|retired|已退役|已废弃|not a current product path|不是当前产品路径/i,
       );
       expect(content, docPath).not.toMatch(/cstl init --cursor --cursor2plus/);
       expect(content, docPath).not.toMatch(

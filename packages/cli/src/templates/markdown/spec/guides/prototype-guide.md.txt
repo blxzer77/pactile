@@ -1,6 +1,6 @@
 # Prototype Guide（原型纪律）
 
-> **Purpose**: 用一次性代码回答**设计问题**——先写清问题，再由问题决定原型形态；答案折叠进真实代码（**重写不 mv**），原型留证后清理，不留工作区腐烂。默认形态 **LOGIC / Python 单脚本**；若项目有 UI 面，UI 原型按项目约定执行（见 §5 / §6）。
+> **Purpose**: 用一次性代码回答**设计问题**——先写清问题，再由问题决定原型形态；答案折叠进真实代码（**重写不 mv**），原型留证后清理，不留工作区腐烂。默认形态 **LOGIC / Node 单脚本**；若项目有 UI 面，UI 原型按项目约定执行（见 §5 / §6）。
 
 ---
 
@@ -18,7 +18,7 @@
 
 - **不接真实 DB / 服务**：原型依赖一律假数据 / 内存 / 显式标记的临时本地文件。
 - **不直接升生产**：原型的代码路径不是生产代码的捷径；折叠时**重写**，不 `mv`。
-- **不做 UI（默认）**：默认形态是 LOGIC / Python 单脚本；除非项目明确有 UI 面且约定 UI 原型（见 §6）。
+- **不做 UI（默认）**：默认形态是 LOGIC / Node 单脚本；除非项目明确有 UI 面且约定 UI 原型（见 §6）。
 - **不替代测试 / 调试 / 需求发现**：见 §12 边界（单向链）。
 
 ## 3. Hard rules
@@ -37,22 +37,22 @@
 
 回答不了这个问题，就说明原型还没开始对。
 
-## 5. Shape: LOGIC（Python）— default
+## 5. Shape: LOGIC（Node）— default
 
-默认形态 **LOGIC / Python 单脚本**（可替代单 HTML 默认；项目无 UI 面时即此形态）：
+默认形态 **LOGIC / Node 单脚本**（可替代单 HTML 默认；项目无 UI 面时即此形态）：
 
 - **单个可运行脚本**，路径二选一：
-  - `.tmp/prototypes/<slug>/run.py`（工作区 scratch；**惰性创建，不预建空目录**）
-  - 任务 `research/prototype-<slug>.py`（工作位置即留证位置，见 §9）
+  - `.tmp/prototypes/<slug>/run.mjs`（工作区 scratch；**惰性创建，不预建空目录**）
+  - 任务 `research/prototype-<slug>.mjs`（工作位置即留证位置，见 §9）
 - **逻辑与 demo 入口分离**：文件内分两段——
-  - `# --- logic (portable) ---`：纯逻辑函数（无副作用、依赖从参数注入），折叠时可提起进真实代码
-  - `# --- demo entry ---`：构造输入、调用、打印状态，只服务于「跑起来看答案」
-- **运行**：`python run.py` 即得可观察输出，无额外步骤。
+  - `// --- logic (portable) ---`：纯逻辑函数（无副作用、依赖从参数注入），折叠时可提起进真实代码
+  - `// --- demo entry ---`：构造输入、调用、打印状态，只服务于「跑起来看答案」
+- **运行**：`node run.mjs` 即得可观察输出，无额外步骤。
 - 最小骨架示例见 §13。
 
 ## 6. Shape: UI — opt-in by project convention
 
-默认**不做 UI 原型**（LOGIC / Python 单脚本优先）。仅当项目明确有 UI 面且已有 UI 原型约定时，才按项目约定写 UI 脚手架 / UI 变体原型；否则**不写 UI 脚手架**、不做 UI 变体原型、不引入 UI 分支。若不确定项目是否需要 UI 原型，先问，不默认开写。
+默认**不做 UI 原型**（LOGIC / Node 单脚本优先）。仅当项目明确有 UI 面且已有 UI 原型约定时，才按项目约定写 UI 脚手架 / UI 变体原型；否则**不写 UI 脚手架**、不做 UI 变体原型、不引入 UI 分支。若不确定项目是否需要 UI 原型，先问，不默认开写。
 
 ## 7. Visibility of state
 
@@ -76,9 +76,9 @@
 | 层 | 手段 | 适用 |
 | --- | --- | --- |
 | A | git **throwaway 分支**提交（如 `proto/<slug>`，离开 main），留上下文指针 | git 仓库 |
-| B | **路径快照**：复制到 `.pactile/tasks/<task>/research/prototype-<slug>.py`（或任务目录等价位置），并在 handoff.md / verify.md 记录路径 | **非 git 仓库的默认手段** |
+| B | **路径快照**：复制到 `.pactile/tasks/<task>/research/prototype-<slug>.mjs`（或任务目录等价位置），并在 handoff.md / verify.md 记录路径 | **非 git 仓库的默认手段** |
 
-- 工作位置本身是任务 `research/prototype-<slug>.py` 时，即工作即留证，无需再复制。
+- 工作位置本身是任务 `research/prototype-<slug>.mjs` 时，即工作即留证，无需再复制。
 - A / B 可并用。
 
 ## 10. Cleanup / archive（清理：不留腐烂）
@@ -105,32 +105,30 @@
 - **brainstorm**：brainstorm 管需求发现（用户想要什么）；原型管设计验证（机制怎么实现才对）。原型**不替代** brainstorm。
 - 衔接点：原型的可运行骨架可能成为 debug-loop 反馈环的起点或真实测试的输入样例——那是**下游复用**，不是原型的职责。
 
-## 13. Minimal skeleton（LOGIC, Python）
+## 13. Minimal skeleton（LOGIC, Node）
 
-```python
-# prototype: <slug> — throwaway，回答：「________________」  （§4 设计问题）
-# 运行: python run.py；不接真实依赖；答案折叠后清理或留证（§9/§10）
+```js
+// prototype: <slug> — throwaway，回答：「________________」
+// 运行: node run.mjs；不接真实依赖；答案折叠后清理或留证（§9/§10）
 
-# --- logic (portable) ---
-def next_state(current: str, event: str) -> str:
-    transitions = {
-        ("idle", "start"): "running",
-        ("running", "stop"): "stopped",
-    }
-    return transitions.get((current, event), current)
+// --- logic (portable) ---
+function nextState(current, event) {
+  const transitions = { "idle:start": "running", "running:stop": "stopped" };
+  return transitions[`${current}:${event}`] ?? current;
+}
 
-# --- demo entry ---
-if __name__ == "__main__":
-    state = "idle"
-    for event in ["start", "pause", "stop"]:
-        state = next_state(state, event)
-        print(f"{event:>8} -> {state}")   # 状态可见：每次 action 后打印
+// --- demo entry ---
+let state = "idle";
+for (const event of ["start", "pause", "stop"]) {
+  state = nextState(state, event);
+  console.log(`${event.padStart(8)} -> ${state}`);
+}
 ```
 
 ## 14. Checklist
 
 - [ ] §4 设计问题已写清（一句话，在文件头）
-- [ ] 形态：LOGIC / Python 单脚本；UI 原型仅按项目约定（默认不做）
+- [ ] 形态：LOGIC / Node 单脚本；UI 原型仅按项目约定（默认不做）
 - [ ] 不接真实 DB / 服务；无持久化（或显式临时文件且会清理）
 - [ ] 无测试、无泛化——可跑即可
 - [ ] 状态可见：关键状态每次 action 后打印

@@ -142,7 +142,7 @@ For quality-critical tasks, implement validation:
 
 ```markdown
 1. Make edits
-2. Validate: `python scripts/validate.py output/`
+2. Validate: `node scripts/validate.mjs output/`
 3. If validation fails → fix and re-validate
 4. Only proceed when validation passes
 ```

@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -18,11 +17,6 @@ import {
 } from "../../../../core/src/task/adapter-middleware.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repositoryRoot = path.resolve(here, "../../../../..");
-const pythonModule = path.join(
-  repositoryRoot,
-  "packages/cli/src/templates/pactile/scripts/common/adapter_middleware.py",
-);
 
 interface GoldenCase {
   name: string;
@@ -63,80 +57,12 @@ function materialize(testCase: GoldenCase): ProviderResolutionInputV1 {
   return input;
 }
 
-function pythonResolve(
-  inputs: readonly unknown[],
-): ProviderResolutionResultV1[] {
-  const script = [
-    "import importlib.util, json, sys",
-    "spec = importlib.util.spec_from_file_location('adapter_middleware', sys.argv[1])",
-    "module = importlib.util.module_from_spec(spec)",
-    "spec.loader.exec_module(module)",
-    "payload = json.load(sys.stdin)",
-    "json.dump([module.resolve_provider_v1(item) for item in payload], sys.stdout, separators=(',', ':'))",
-  ].join("; ");
-  const result = spawnSync("python", ["-c", script, pythonModule], {
-    cwd: repositoryRoot,
-    input: JSON.stringify(inputs),
-    encoding: "utf8",
-    env: { ...process.env, PYTHONIOENCODING: "utf-8" },
-  });
-  if (result.status !== 0) {
-    throw new Error(`Python resolver failed with status ${result.status}`);
-  }
-  return JSON.parse(result.stdout) as ProviderResolutionResultV1[];
-}
 
-function pythonReasonCodes(): string[] {
-  const script = [
-    "import importlib.util, json, sys",
-    "spec = importlib.util.spec_from_file_location('adapter_middleware', sys.argv[1])",
-    "module = importlib.util.module_from_spec(spec)",
-    "spec.loader.exec_module(module)",
-    "json.dump(list(module.PROVIDER_RESOLUTION_REASON_CODES_V1), sys.stdout, separators=(',', ':'))",
-  ].join("; ");
-  const result = spawnSync("python", ["-c", script, pythonModule], {
-    cwd: repositoryRoot,
-    encoding: "utf8",
-    env: { ...process.env, PYTHONIOENCODING: "utf-8" },
-  });
-  if (result.status !== 0) {
-    throw new Error(
-      `Python reason-code export failed with status ${result.status}`,
-    );
-  }
-  return JSON.parse(result.stdout) as string[];
-}
-
-function pythonLegacyFacadeSnapshot(): Record<string, unknown> {
-  const script = [
-    "import importlib.util, json, sys",
-    "spec = importlib.util.spec_from_file_location('adapter_middleware', sys.argv[1])",
-    "module = importlib.util.module_from_spec(spec)",
-    "spec.loader.exec_module(module)",
-    "payload = {'providers': module.default_middleware_providers(), 'router': module.default_capability_router(), 'fact': module.probe_shipped_provider_readiness('provider.alpha', present=True, capability='search.semantic', evidence='evidence://probe/provider.alpha/1')}",
-    "json.dump(payload, sys.stdout, separators=(',', ':'))",
-  ].join("; ");
-  const result = spawnSync("python", ["-c", script, pythonModule], {
-    cwd: repositoryRoot,
-    encoding: "utf8",
-    env: { ...process.env, PYTHONIOENCODING: "utf-8" },
-  });
-  if (result.status !== 0) {
-    throw new Error(`Python legacy facade failed with status ${result.status}`);
-  }
-  return JSON.parse(result.stdout) as Record<string, unknown>;
-}
-
-describe("Provider resolver TypeScript/Python golden parity", () => {
-  it("keeps public JSON ABI, reason codes, ordering, and fingerprints identical", () => {
+describe("Provider resolver Node golden contracts", () => {
+  it("keeps public JSON ABI, reason codes, ordering, and fingerprints stable", () => {
     const inputs = corpus.cases.map(materialize);
     const typescript = inputs.map(resolveProviderV1);
-    const python = pythonResolve(inputs);
-
-    expect(python).toEqual(typescript);
-    expect(pythonReasonCodes()).toEqual([
-      ...PROVIDER_RESOLUTION_REASON_CODES_V1,
-    ]);
+    expect(PROVIDER_RESOLUTION_REASON_CODES_V1).toContain("provider-input-invalid");
     corpus.cases.forEach((testCase, index) => {
       expect(typescript[index]).toMatchObject({
         status: testCase.expectedStatus,
@@ -153,7 +79,6 @@ describe("Provider resolver TypeScript/Python golden parity", () => {
       runtimeFacts: [...input.runtimeFacts].reverse(),
     }));
     expect(permuted.map(resolveProviderV1)).toEqual(typescript);
-    expect(pythonResolve(permuted)).toEqual(typescript);
   });
 
   it("shares strict RFC3339 calendar, offset, and fractional-second semantics", () => {
@@ -283,7 +208,6 @@ describe("Provider resolver TypeScript/Python golden parity", () => {
     });
     const typescript = inputs.map(resolveProviderV1);
 
-    expect(pythonResolve(inputs)).toEqual(typescript);
     timestampCases.forEach((testCase, index) => {
       expect(typescript[index]?.status, testCase.name).toBe(
         testCase.expectedStatus,
@@ -308,10 +232,9 @@ describe("Provider resolver TypeScript/Python golden parity", () => {
       index === 0 ? { ...fact, evidenceRefs: [canary] } : fact,
     );
 
-    const [python] = pythonResolve([input]);
-    expect(python).toEqual(resolveProviderV1(input));
-    expect(JSON.stringify(python)).not.toContain(canary);
-    expect(JSON.stringify(python)).not.toMatch(/token|do-not-print/i);
+    const result = resolveProviderV1(input);
+    expect(JSON.stringify(result)).not.toContain(canary);
+    expect(JSON.stringify(result)).not.toMatch(/token|do-not-print/i);
 
     const policyInput = materialize(corpus.cases[0] as GoldenCase);
     const policyCanary = "api.example.com?token=do-not-print";
@@ -321,19 +244,17 @@ describe("Provider resolver TypeScript/Python golden parity", () => {
       privacy: "external",
       egressDestinations: [policyCanary],
     };
-    const [pythonPolicy] = pythonResolve([policyInput]);
-    expect(pythonPolicy).toEqual(resolveProviderV1(policyInput));
-    expect(JSON.stringify(pythonPolicy)).not.toContain(policyCanary);
-    expect(JSON.stringify(pythonPolicy)).not.toMatch(/token=|do-not-print/i);
+    const policyResult = resolveProviderV1(policyInput);
+    expect(JSON.stringify(policyResult)).not.toContain(policyCanary);
+    expect(JSON.stringify(policyResult)).not.toMatch(/token=|do-not-print/i);
 
     const unknownEnvironment = {
       ...materialize(corpus.cases[0] as GoldenCase),
       environment: canary,
     } as ProviderResolutionInputV1;
-    const [pythonUnknown] = pythonResolve([unknownEnvironment]);
-    expect(pythonUnknown).toEqual(resolveProviderV1(unknownEnvironment));
-    expect(pythonUnknown?.status).toBe("invalid");
-    expect(JSON.stringify(pythonUnknown)).not.toContain(canary);
+    const unknownResult = resolveProviderV1(unknownEnvironment);
+    expect(unknownResult?.status).toBe("invalid");
+    expect(JSON.stringify(unknownResult)).not.toContain(canary);
   });
 
   it("rejects malformed JSON containers and forbidden record keys identically", () => {
@@ -363,9 +284,6 @@ describe("Provider resolver TypeScript/Python golden parity", () => {
       nestedConstructor,
     ];
     const typescript = inputs.map(resolveProviderV1);
-    const python = pythonResolve(inputs);
-
-    expect(python).toEqual(typescript);
     for (const result of typescript) {
       expect(result).toEqual({
         schemaVersion: 1,
@@ -389,8 +307,8 @@ describe("Provider resolver TypeScript/Python golden parity", () => {
     }
   });
 
-  it("keeps the host-neutral legacy facade JSON-compatible", () => {
-    expect(pythonLegacyFacadeSnapshot()).toEqual({
+  it("keeps the host-neutral facade JSON-compatible", () => {
+    expect({
       providers: defaultMiddlewareProviders(),
       router: defaultCapabilityRouter(),
       fact: probeShippedProviderReadiness("provider.alpha", {
@@ -456,7 +374,6 @@ describe("Provider resolver TypeScript/Python golden parity", () => {
 
     const inputs = [missing, composed, invalid];
     const typescript = inputs.map(resolveProviderV1);
-    expect(pythonResolve(inputs)).toEqual(typescript);
     expect(typescript[0]?.explain.candidates[0]?.reasonCodes).toEqual([
       "provider-binding-unavailable",
     ]);

@@ -1,12 +1,12 @@
 # Local Context Injection System
 
-Pactile context injection aims to make AI read the right files at the right time instead of relying on model memory. In a user project, injection is implemented by `.pactile/` scripts together with platform hooks, agents, and skills.
+Pactile context injection aims to make AI read the right files at the right time instead of relying on model memory. The Node CLI compiles context from `.pactile/` artifacts for the host and worker bridge.
 
 ## Injected Context Types
 
 | Type | Source | Purpose |
 | --- | --- | --- |
-| session context | `.pactile/scripts/get_context.py` | Current developer, git status, selected task, Task Dashboard, active tasks, journal, packages. |
+| session context | `pactile context` | Current developer, git status, selected task, Task Dashboard, active tasks, journal, packages. |
 | workflow context | `.pactile/workflow.md` | Current Pactile flow and next action. |
 | spec context | `.pactile/spec/` + task JSONL | Specs that must be followed during implementation/checking. |
 | task context | `.pactile/tasks/<task>/prd.md`, `design.md`, `implement.md`, `research/` | Selected task requirements, design, execution plan, and research. |
@@ -53,7 +53,7 @@ Readers should skip seed rows without a `file` field. When configuring JSONL, th
 
 Selected task state lives in `.pactile/.runtime/sessions/` and is isolated per session. Hooks try to resolve the context key from platform events, environment variables, transcript paths, or `PACTILE_CONTEXT_ID`.
 
-If shell commands cannot see the same context key, `task.py selected --source` may report no selected task. In that case, check whether the platform passes session identity into the shell instead of hand-writing a global current-task file.
+If shell commands cannot see the same context key, `pactile task selected --source` may report no selected task. In that case, check whether the platform passes session identity into the shell instead of hand-writing a global current-task file.
 
 ## Local Customization Points
 
@@ -62,7 +62,7 @@ If shell commands cannot see the same context key, `task.py selected --source` m
 | Change session-start injected content | The platform's `session-start` hook or plugin file. |
 | Change per-turn workflow-state rules | `[workflow-state:STATUS]` block in `.pactile/workflow.md`. The platform workflow-state hook parses these blocks verbatim and embeds no fallback text. |
 | Change how sub-agents read context | Platform agent definitions, the `inject-subagent-context` hook, or agent preludes. |
-| Change JSONL validation/display | `.pactile/scripts/common/task_context.py`. |
-| Change selected task resolution | `.pactile/scripts/common/active_task.py`. |
+| Change JSONL validation/display | Pactile CLI Node implementation. |
+| Change selected task resolution | Pactile CLI Node implementation and platform session bridge. |
 
 When modifying context injection, verify two things: new sessions can see the correct task, and sub-agents can see the correct task artifacts/spec/research.

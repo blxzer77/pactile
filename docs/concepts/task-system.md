@@ -48,11 +48,13 @@ Open -> Define -> Approve -> Execute -> Verify -> Integrate? -> Close
 Two command boundaries are deliberately explicit:
 
 ```bash
-python ./.pactile/scripts/task.py start-execution <task> --check
-python ./.pactile/scripts/task.py start-execution <task> --approved
+pactile task start-execution <task> --check
+pactile task start-execution <task> --approved
 ```
 
 The first command is a read-only readiness preflight. The second records explicit approval and starts Execute. Likewise, `archive <task> --check` is a preflight, while `archive <task>` performs Close, writes completion and audit state, and moves the directory into the archive.
+
+`pactile task set-deps <task> <required-task-id>` declares a Kernel hard `requires` edge. An unmet dependency blocks both preflight and execution by default. Only a completed task, checked from active or archived records, satisfies it; cancellation does not. `--ignore-deps` requires explicit user approval and records an override rather than claiming the dependency was satisfied.
 
 ## Gates and Evidence
 
@@ -65,6 +67,8 @@ Closeout Evidence normally identifies:
 - manual or independent review notes;
 - the exact reviewed change set or reference;
 - a durable-learning decision: update a project spec, decline with a reason, or resolve one bounded uncertainty.
+
+`pactile task prepare-archive-evidence <task>` drafts missing `verify.md` slots with `TODO` markers; those markers never pass the archive gate. `pactile task prepare-learning-scaffold <task>` prints a read-only spec decision checklist. For Child work, the Parent can inspect the handoff with `pactile task review-child <parent> <child> --check` before recording an acceptance or change decision.
 
 ## Parent and Child tasks
 

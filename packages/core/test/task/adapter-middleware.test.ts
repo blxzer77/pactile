@@ -308,28 +308,13 @@ describe("Stage 6 Adapter and Middleware", () => {
   });
 
   it("default templates do not force codegraph/fast-context or revive retired alternate client / pactile-byok live entries", () => {
-    const bootstrap = fs.readFileSync(
-      path.join(cliTemplates, "cursor/rules/pactile-bootstrap.mdc"),
+    expect(fs.existsSync(path.join(cliTemplates, "cursor"))).toBe(false);
+    const retrieval = fs.readFileSync(
+      path.join(cliTemplates, "pactile/modules/retrieval-extended/contract.md"),
       "utf-8",
     );
-    expect(bootstrap).toContain("exact");
-    expect(bootstrap).toContain("semantic");
-    expect(bootstrap).toContain("structural");
-    expect(bootstrap).toContain("external");
-    expect(bootstrap).toMatch(/Optional/i);
-    expect(bootstrap).not.toMatch(/always-on codegraph/i);
-
-    const ruleNames = fs
-      .readdirSync(path.join(cliTemplates, "cursor/rules"))
-      .filter((name) => name.endsWith(".mdc"));
-    expect(ruleNames).toEqual(["pactile-bootstrap.mdc"]);
-
-    const commandsDir = path.join(cliTemplates, "cursor/commands");
-    const commandFiles = fs.existsSync(commandsDir)
-      ? fs.readdirSync(commandsDir)
-      : [];
-    expect(commandFiles).not.toContain("pactile-retired-alternate-client-setup.md");
-    expect(commandFiles.some((name) => name.includes("pactile-byok"))).toBe(false);
+    expect(retrieval).toMatch(/optional/i);
+    expect(retrieval).not.toMatch(/always-on codegraph/i);
 
     const workflow = fs.readFileSync(
       path.join(cliTemplates, "pactile/workflow.md"),

@@ -11,7 +11,7 @@ npm install -g @blxzer/pactile
 pactile --version
 ```
 
-Node.js 18.17 or newer is required. Generated Python scripts and host hooks require Python 3.9 or newer. Smart Search and other middleware providers are optional, independently probed capabilities; Pactile does not silently install host-native assets or copy credentials.
+Node.js 18.17 or newer is required. Pactile's task, context, and session commands use Node.js; Python is not required. Smart Search and other middleware providers are optional, independently probed capabilities; Pactile does not silently install host-native assets or copy credentials.
 
 ## First project
 
@@ -41,6 +41,10 @@ Use `--codex` to select the active host. Existing user files and native assets a
 | `pactile rollback <generation> --dry-run`            | Verify and preview a sealed generation switch.                                    |
 | `pactile purge --dry-run`                            | Produce the exact inactive-root target fingerprint; does not delete.              |
 | `pactile workflow`                                   | List or select a canonical workflow template.                                     |
+| `pactile task <command>`                             | Manage Node-backed task lifecycle, evidence gates, and Parent/Child review.       |
+| `pactile context --mode session`                     | Compile the phase-scoped session pack.                                            |
+| `pactile context --mode retrieval-pack --input <file>` | Score and budget collected evidence; optionally write it with `--output <file>`. |
+| `pactile session <command>`                          | Record and inspect local session continuity.                                     |
 | `pactile kernel --json`                              | Run the machine JSON lifecycle boundary used by generated project scripts.        |
 
 Run `pactile <command> --help` for current flags. `detach` takes the adapter as a positional argument. `purge` is intentionally two-step: a destructive run requires `--yes` plus the exact fingerprint returned by the preview.

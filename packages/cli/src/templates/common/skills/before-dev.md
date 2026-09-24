@@ -9,7 +9,7 @@ Execute these steps:
 
 2. **Discover packages and their spec layers**:
    ```bash
-   python3 ./.pactile/scripts/get_context.py --mode packages
+   pactile context --mode packages
    ```
 
 3. **Identify which specs apply** to your task based on:

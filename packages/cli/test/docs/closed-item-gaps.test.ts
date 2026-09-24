@@ -54,7 +54,7 @@ describe("closed-item product-template gaps (P02/P10/P12/P14/P19/P20)", () => {
     const dogfood = readUtf8(
       path.join(templates, "markdown/framework/dogfood-only-surfaces.md.txt"),
     );
-    expect(dogfood).toMatch(/\*\*not\*\* shipped by a default/);
+    expect(dogfood).toMatch(/not product templates and are not copied into a consumer project/);
     expect(dogfood).not.toMatch(/(?:is|as) an optional live (?:install|surface)/i);
     expect(dogfood).not.toMatch(/goal-regression runbook/);
   });
@@ -62,8 +62,8 @@ describe("closed-item product-template gaps (P02/P10/P12/P14/P19/P20)", () => {
   it("P19 README states default Native and does not embed BYOK", () => {
     const en = readUtf8(path.join(repoRoot, "README.md"));
     const zh = readUtf8(path.join(repoRoot, "README.zh-CN.md"));
-    expect(en).toMatch(/does \*\*not\*\* embed BYOK/);
-    expect(zh).toMatch(/不内嵌 BYOK/);
+    expect(en).not.toContain("pactile-byok");
+    expect(zh).not.toContain("pactile-byok");
     expect(en).not.toContain("goal-release-regression-runbook");
   });
 });

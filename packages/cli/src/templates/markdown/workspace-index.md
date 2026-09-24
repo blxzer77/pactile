@@ -35,10 +35,10 @@ workspace/
 
 ### For New Developers
 
-Run the initialization script:
+Initialize Pactile with your developer identity:
 
 ```bash
-python3 ./.pactile/scripts/init_developer.py <your-name>
+pactile init --user <your-name>
 ```
 
 This will:
@@ -51,13 +51,10 @@ This will:
 
 1. Get your developer name:
    ```bash
-   python3 ./.pactile/scripts/get_developer.py
+   pactile context --json
    ```
 
-2. Read your personal index:
-   ```bash
-   cat .pactile/workspace/$(python3 ./.pactile/scripts/get_developer.py)/index.md
-   ```
+2. Open `.pactile/workspace/<developer>/index.md` using the name reported in the context JSON.
 
 ---
 

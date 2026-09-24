@@ -43,7 +43,7 @@ post_create:
 # Pre-Merge Checks
 #-------------------------------------------------------------------------------
 
-# Pre-merge validation (used by create_pr.py)
+# Pre-merge validation (used by the Pactile CLI)
 pre_merge:
   # Type checking (uncomment based on your setup)
   # - npm run typecheck

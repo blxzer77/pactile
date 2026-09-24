@@ -23,7 +23,7 @@ P29 表名：`worker-orchestration`（不得改名）。层：on-demand。
 Agent 看见：
 
 1. 三种角色，槽位仍归别人：implement → Execute（`execute-agent` 的非 inline 绑定）；check → 只读第二遍（服从 `independent-check`，工人默认不改代码）；research → Define 深研（服从 `define-extended`）。
-2. 每个工人 prompt 必须带显式 `.pactile/tasks/<dir>`，不依赖 dispatcher 的 `selected_task`。工人包 = 该任务路径 + 合同片段；不继承整份梯子。钩 `inject-subagent-context.py` 只在本块激活时订阅。
+2. 每个 Pi Agent 工人 prompt 必须带显式 `.pactile/tasks/<dir>`，不依赖 dispatcher 的 `selected_task`。工人包 = 该任务路径 + 合同片段；不继承整份梯子。Pactile 的 Node 桥接按本块激活状态提供上下文。
 3. 禁止套娃：implement / check / research 工人不得再 spawn 同类或彼此。只有主会话（或 Parent 主会话）派工。
 4. 工人不 `git commit`、不 Finalize、不 `integrate-child`、不改 Kernel 核心状态。
 5. 能并行则并行（P18 / P38），但 HITL / Execute 门 / Check / 集成仍串行。串行必须写 `serial_reason`（共享写集 / 门禁 / 依赖未满足 / 用户要求 / 冲突面无法隔离）。平台没有并行面 → 顺序派工或降回 inline，记 assurance，不得假装已隔离或已并行。

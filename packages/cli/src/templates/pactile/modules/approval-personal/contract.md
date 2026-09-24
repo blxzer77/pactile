@@ -16,7 +16,7 @@ Human Attention 的三道人门，不是 Kernel 状态机本身。Kernel 校验�
 
 Agent 看见：
 
-1. 未过 Open：不得 `task.py create`（Intake 只出 Proposal）。
+1. 未过 Open：不得 `pactile task create`（Intake 只出 Proposal）。
 2. 未过 Execute：不得把 Phase 推进到 Execute、不得 `--approved`、不得开始改产品代码。
 3. 预检 PASS 只可用来**请求** Execute 门，不可宣称已批准。
 4. 日常「ok / 开始 / 确认」若不是在回答明确的门，不得当成 Execute 授权。

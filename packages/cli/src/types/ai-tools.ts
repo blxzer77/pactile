@@ -84,8 +84,6 @@ export interface AIToolConfig {
   cliFlag: CliFlag;
   /** Whether this tool is checked by default in interactive init prompt */
   defaultChecked: boolean;
-  /** Whether this tool uses Python hooks (affects Windows encoding detection) */
-  hasPythonHooks: boolean;
   /** Template context for placeholder resolution in common templates */
   templateContext: TemplateContext;
 }
@@ -106,7 +104,6 @@ export const AI_TOOLS: Record<AITool, AIToolConfig> = {
     supportsAgentSkills: true,
     cliFlag: "codex",
     defaultChecked: true,
-    hasPythonHooks: true,
     templateContext: {
       cmdRefPrefix: "$",
       executorAI: "Bash scripts or tool calls",
