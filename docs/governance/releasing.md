@@ -54,6 +54,15 @@ node packages/cli/scripts/check-pactile-brand-surface.js --release
 node packages/cli/scripts/release-conformance.js
 ```
 
+The conformance check runs the sealed package in a PATH with Node and no
+Python or Pi executable. It exercises init, update preview/apply, task
+start/archive, a simulated Codex desktop receipt, simulated Pi RPC, and a
+two-child parallel batch. Its timing line is a local baseline, not a latency
+promise. For an offline local rehearsal after `pnpm install --offline`, set
+`PACTILE_CONFORMANCE_OFFLINE=1`; this unpacks the sealed tarball and links the
+already locked local dependencies. The CI/default path performs a clean npm
+install. Record real desktop-host and model-provider acceptance separately.
+
 The tag workflow repeats these gates before it seals the tarball. Release
 preparation has no npm publish token; the token exists only in the step that
 publishes the previously sealed bytes. The manifest SHA-256 receipt travels

@@ -34,3 +34,14 @@ pactile task list
 `--skip-all` 保留用户修改过的 managed 文件；之后逐项审阅，再决定是否覆盖。
 保留下来的 `.pactile/scripts/*.py` 不会进入活动 Node generation。更新过程
 不运行 Python，用户任务、spec、middleware 和外来文件不在替换范围内。
+
+未发布的 `0.5.1-beta.0` pool 预置迁移已并入 `0.6.0` 清单。只有旧骨架的三个
+路径是哈希校验后的删除候选：`.pactile/pool/README.md`、
+`.pactile/pool/plan.md`、`.pactile/pool/items/.gitkeep`。用户编写的 pool
+条目不在目标内，也无需先执行独立的 `0.5.1-beta.0` 升级。
+
+发布前维护者运行封装 tarball 的
+[`release-conformance.js`](../../packages/cli/scripts/release-conformance.js)
+验收。它在无 Python 的 PATH 中记录 CLI 冷启动、后续调用、Pi RPC 冷/热启动、
+并行批次与整体耗时。此验收使用模拟的 Codex 回执和 Pi 响应；真实桌面宿主与
+模型 Provider 的结果应另行记录。
