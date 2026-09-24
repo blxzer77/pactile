@@ -7,6 +7,7 @@
  * primitive; this module is the new core-state write entry.
  */
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -384,7 +385,7 @@ export function applyKernelTransition(
     const nextState = deriveStateForPhase(request.targetPhase);
     const nextRevision = current.kernel.revision + 1;
     const audit: KernelAuditEvent = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       at: new Date().toISOString(),
       actor,
       idempotencyKey,
@@ -734,7 +735,7 @@ function hopKernelSnapshot(
       outcome: current.outcome,
     };
     const audit: KernelAuditEvent = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       at: new Date().toISOString(),
       actor: meta.actor,
       idempotencyKey: meta.idempotencyKey,
@@ -775,7 +776,7 @@ function hopKernelSnapshot(
     const nextState = deriveStateForPhase(target);
     const nextRevision = snapshot.revision + 1;
     lastAudit = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       at: new Date().toISOString(),
       actor: meta.actor,
       idempotencyKey: key,
@@ -902,7 +903,7 @@ export function applyKernelCreate(
     const openState = deriveStateForPhase("open");
     const defineState = deriveStateForPhase("define");
     const audit: KernelAuditEvent = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       at: new Date().toISOString(),
       actor,
       idempotencyKey,
