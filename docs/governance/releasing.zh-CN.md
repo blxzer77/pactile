@@ -48,6 +48,13 @@ node packages/cli/scripts/check-pactile-brand-surface.js --release
 node packages/cli/scripts/release-conformance.js
 ```
 
+一致性检查在仅含 Node、没有 Python 或 Pi 可执行文件的 PATH 中运行封装包，
+覆盖 init、update 预览/应用、任务启动/归档、模拟的 Codex 桌面回执、模拟的
+Pi RPC 和两个 Child 的并行批次。耗时输出是本机基线，不是延迟承诺。
+本机离线预演可在 `pnpm install --offline` 后设置
+`PACTILE_CONFORMANCE_OFFLINE=1`；该模式解开封装包，并链接本地锁定的依赖。
+CI/默认模式会执行全新 npm 安装。真实桌面宿主及模型 Provider 验收应分开记录。
+
 tag 工作流在封装 tarball 前重复质量门槛。准备阶段没有 npm 发布凭据；只有
 发布已封装字节的步骤持有凭据。manifest SHA-256 收据保存在 artifact 目录
 之外。来源、包图、tarball、收据或 npm 回读失败都会阻断发布或晋级。

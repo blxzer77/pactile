@@ -1,11 +1,38 @@
 # Changelog
 
-All notable changes to **@blxzer/cursor-trellis** are documented in this file.
+All notable changes to **@blxzer/pactile** are documented in this file. Older
+entries retain the package names used when they were published.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
 SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
-> This is a **new npm product line**. Prior internal releases shipped as `@blxzer/trellis` (1.x). They remain on npm for history; use `@blxzer/cursor-trellis` for new installs.
+> Prior internal releases shipped as `@blxzer/trellis` (1.x) and later as
+> `@blxzer/cursor-trellis`. They remain on npm for history. New installs use
+> `@blxzer/pactile`.
+
+---
+
+## [Unreleased] - v0.6.0
+
+- Node.js is the only required runtime. The task lifecycle, context and
+  retrieval path, Codex desktop request/receipt bridge, Pi RPC bridge, and
+  bounded parallel dispatch run in Node. Legacy generated Python entrypoints
+  are retired; the update preview inventories modified and unclaimed files
+  before any safe deletion.
+- Codex is the supported host projection. Pi is the initial worker Agent;
+  Pactile binds its runs to approved tasks and records bounded evidence.
+  Codex desktop calls remain host native and require a recorded receipt.
+- The unpublished `0.5.1-beta.0` pool cleanup is folded into the `0.6.0`
+  migration manifest. It deletes only hash-matched pool skeleton files and
+  never targets user-authored pool items.
+- One npm package, `@blxzer/pactile`, includes CLI and Core. The release gate
+  checks the sealed tarball, a Python-free Node path, installed task lifecycle,
+  simulated Pi/Codex bridges, and bounded parallel dispatch. Live Pi provider
+  and desktop-host acceptance are recorded separately.
+
+This entry describes the development target. No v0.6.0 package or tag has been
+published yet. Follow the [upgrade guide](../../docs/lifecycle/upgrade-and-migrate.md)
+and [release procedure](../../docs/governance/releasing.md) for acceptance.
 
 ---
 
