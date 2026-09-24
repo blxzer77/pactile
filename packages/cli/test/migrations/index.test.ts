@@ -24,17 +24,22 @@ afterEach(() => {
 // =============================================================================
 
 describe("getAllMigrationVersions", () => {
-  it("folds the unpublished pool preset into the 0.6.0 migration chain", () => {
+  it("applies the pool cleanup in beta and exactly once through stable", () => {
     const versions = getAllMigrationVersions();
+    expect(versions).toContain("0.6.0-beta.1");
     expect(versions).toContain("0.6.0");
     expect(versions).not.toContain("0.5.1-beta.0");
-    expect(getMigrationsForVersion("0.5.0", "0.6.0").filter((item) =>
+    const poolPaths = (from: string, to: string) => getMigrationsForVersion(from, to).filter((item) =>
       item.type === "safe-file-delete" && item.from.startsWith(".pactile/pool/"),
-    ).map((item) => item.from)).toEqual([
+    ).map((item) => item.from);
+    const expected = [
       ".pactile/pool/README.md",
       ".pactile/pool/plan.md",
       ".pactile/pool/items/.gitkeep",
-    ]);
+    ];
+    expect(poolPaths("0.5.0", "0.6.0-beta.1")).toEqual(expected);
+    expect(poolPaths("0.5.0", "0.6.0")).toEqual(expected);
+    expect(poolPaths("0.6.0-beta.1", "0.6.0")).toEqual([]);
   });
 
   it("returns an array of version strings", () => {
