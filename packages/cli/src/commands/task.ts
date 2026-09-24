@@ -9,6 +9,7 @@ import { exitTask, resolveSelectedTask, resolveTaskDir, selectTask } from "../pa
 import { artifactFingerprint, contractFingerprint, currentGateErrors, readStrategyContract, requiredGates } from "../pactile/task/strategy.js";
 import { CHILD_STATES, childStateErrors, ensureTaskMap, readTaskMap, writeTaskMap, type ChildState } from "../pactile/task/task-map.js";
 import { readDeveloper } from "../utils/developer.js";
+import { sameGitRoot } from "../utils/git-root.js";
 import { localDate } from "../utils/local-date.js";
 import { getAllTaskTemplates } from "../templates/pactile/index.js";
 import { learningScaffold, prepareArchiveEvidence } from "../pactile/task/scaffold.js";
@@ -231,7 +232,7 @@ function prepareChildWorktree(root: string, args: string[]): number {
   if (typeof base !== "string" || base.startsWith("-") || /[\r\n]/.test(base)) errors.push("invalid base ref");
   const git = (...gitArgs: string[]): string => execFileSync("git", gitArgs, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   try {
-    if (git("rev-parse", "--show-toplevel").toLowerCase() !== path.resolve(root).replaceAll("\\", "/").toLowerCase()) errors.push("prepare-child-worktree requires the project Git root");
+    if (!sameGitRoot(git("rev-parse", "--show-toplevel"), root)) errors.push("prepare-child-worktree requires the project Git root");
     git("check-ref-format", "--branch", branch);
     if (typeof base === "string" && !base.startsWith("-")) git("rev-parse", "--verify", `${base}^{commit}`);
   } catch { errors.push("Git repository, branch, or base ref validation failed"); }
@@ -286,7 +287,7 @@ function updateChildState(root: string, args: string[], integrated: boolean): nu
     if (!ref || ref.startsWith("-") || /[\r\n]/.test(ref)) errors.push("--execute-merge requires a valid --ref");
     const git = (...gitArgs: string[]): string => execFileSync("git", gitArgs, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
     try {
-      if (git("rev-parse", "--show-toplevel").toLowerCase() !== path.resolve(root).replaceAll("\\", "/").toLowerCase()) errors.push("merge execution requires the project Git root");
+      if (!sameGitRoot(git("rev-parse", "--show-toplevel"), root)) errors.push("merge execution requires the project Git root");
       if (ref) git("rev-parse", "--verify", `${ref}^{commit}`);
     } catch { errors.push(`merge ref does not resolve to a commit: ${ref ?? "(missing)"}`); }
     try {
