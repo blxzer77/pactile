@@ -39,6 +39,7 @@ import {
   removeHash,
   renameHash,
   computeHash,
+  shouldExcludeFromHash,
 } from "../utils/template-hash.js";
 import { compareVersions } from "../utils/compare-versions.js";
 import { toPosix } from "../utils/posix.js";
@@ -58,7 +59,7 @@ import {
   planWaveC,
   scanContractMigration,
   writeWaveCConfirmed,
-} from "@blxzer/pactile-core/task";
+} from "../core/task/index.js";
 import { emptyTaskJson } from "../utils/task-json.js";
 import {
   applyOfficialRetire,
@@ -89,7 +90,7 @@ import {
   isManagedRootDir,
 } from "../configurators/index.js";
 import { getWorkflowRootTemplateFiles } from "../configurators/workflow.js";
-import { pruneOrphanManifestKeys } from "../utils/manifest-prune.js";
+import { isHostProjectionPath, pruneOrphanManifestKeys } from "../utils/manifest-prune.js";
 import { runPostUpdateSmoke } from "../utils/post-update-smoke.js";
 import { cleanupRetiredAlternateClientResidue } from "../pactile/compat/retired-alternate-client.js";
 import { listLegacyPythonScripts } from "../pactile/compat/node-entry-migration.js";
@@ -915,7 +916,8 @@ export function collectMissingTemplateHashes(
   const files = new Map<string, string>();
 
   for (const file of changes.unchangedFiles) {
-    if (isUserMiddlewareOverlayPath(file.relativePath)) {
+    if (shouldExcludeFromHash(file.relativePath) ||
+        isHostProjectionPath(file.relativePath)) {
       continue;
     }
     if (!hashes[file.relativePath]) {

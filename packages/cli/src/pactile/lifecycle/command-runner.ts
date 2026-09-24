@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import {
   canonicalizePactileJsonV1,
   type InstallStateV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 import { fingerprintBytes } from "../projection/planner.js";
 import { GenerationStore, InstallStateStore } from "../runtime/stores.js";
 import type { PactilePlatform } from "../registry.js";

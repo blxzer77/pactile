@@ -17,7 +17,7 @@ import {
   formatWaveCVernacular,
   type ArtifactMigratePlan,
   type WaveCPlan,
-} from "@blxzer/pactile-core/task";
+} from "../core/task/index.js";
 import type { TemplateHashes } from "../types/migration.js";
 import { computeHash, removeHash } from "./template-hash.js";
 import { toPosix } from "./posix.js";

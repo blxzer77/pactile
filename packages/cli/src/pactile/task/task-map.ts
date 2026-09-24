@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { readKernel, type PactileTaskRecord } from "@blxzer/pactile-core/task";
+import { readKernel, type PactileTaskRecord } from "../../core/task/index.js";
 
 export const CHILD_STATES = ["open", "working", "blocked", "review", "changes", "accepted", "integrating", "integrated", "cancelled"] as const;
 export type ChildState = typeof CHILD_STATES[number];

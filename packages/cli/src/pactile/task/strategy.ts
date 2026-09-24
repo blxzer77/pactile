@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { PactileTaskRecord } from "@blxzer/pactile-core/task";
+import type { PactileTaskRecord } from "../../core/task/index.js";
 
 export interface StrategyContract {
   execution_mode: string;

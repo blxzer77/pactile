@@ -9,12 +9,12 @@ import {
   resolveProviderV1,
   type ProviderResolutionInputV1,
   type ProviderResolutionResultV1,
-} from "../../../../core/src/pactile/middleware/resolver.js";
+} from "../../../src/core/pactile/middleware/resolver.js";
 import {
   defaultCapabilityRouter,
   defaultMiddlewareProviders,
   probeShippedProviderReadiness,
-} from "../../../../core/src/task/adapter-middleware.js";
+} from "../../../src/core/task/adapter-middleware.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 

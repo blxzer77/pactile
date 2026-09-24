@@ -19,7 +19,7 @@ import {
   type TileEvidenceKindV1,
   type TileManifestV1,
   type TileStopConditionV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 import {
   buildTileCatalog,
   compareTileRefs,

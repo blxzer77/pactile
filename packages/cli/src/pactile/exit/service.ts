@@ -7,7 +7,7 @@ import {
   type InstallStateV1,
   type OwnershipLedgerEntryV1,
   type ProjectionOperationV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 import {
   fingerprintBytes,
   MAX_PROJECTION_BYTES,

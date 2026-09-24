@@ -23,23 +23,16 @@ import { runCandidateValidation } from "./release-validation.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI_DIR = path.resolve(__dirname, "..");
 const REPO_ROOT = path.resolve(CLI_DIR, "../..");
-const CORE_DIR = path.join(REPO_ROOT, "packages/core");
-const LEGACY_CORE_DIR = path.join(
-  REPO_ROOT,
-  "packages/cursor-trellis-core-shim",
-);
-const LEGACY_CLI_DIR = path.join(REPO_ROOT, "packages/cursor-trellis-shim");
 
 const RELEASE_TYPES = new Set([
   "patch",
   "minor",
   "major",
   "beta",
-  "rc",
   "promote",
 ]);
 const EXPLICIT_VERSION =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:beta|rc|alpha)\.(0|[1-9]\d*))?$/;
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.(0|[1-9]\d*))?$/;
 
 export function computeReleaseTarget(current, type) {
   let target;
@@ -65,7 +58,7 @@ export function computeReleaseTarget(current, type) {
         );
       }
       target = parsed.baseVersion;
-    } else if (type === "beta" || type === "rc") {
+    } else if (type === "beta") {
       if (parsed.channel === type) {
         const currentNumber = Number(
           current.slice(current.lastIndexOf(".") + 1),
@@ -94,24 +87,9 @@ function readPackageInfo() {
   const cli = JSON.parse(
     fs.readFileSync(path.join(CLI_DIR, "package.json"), "utf-8"),
   );
-  const core = JSON.parse(
-    fs.readFileSync(path.join(CORE_DIR, "package.json"), "utf-8"),
-  );
-  const legacyCore = JSON.parse(
-    fs.readFileSync(path.join(LEGACY_CORE_DIR, "package.json"), "utf-8"),
-  );
-  const legacyCli = JSON.parse(
-    fs.readFileSync(path.join(LEGACY_CLI_DIR, "package.json"), "utf-8"),
-  );
   return {
     cliName: cli.name,
     cliVersion: cli.version,
-    coreName: core.name,
-    coreVersion: core.version,
-    legacyCoreName: legacyCore.name,
-    legacyCoreVersion: legacyCore.version,
-    legacyCliName: legacyCli.name,
-    legacyCliVersion: legacyCli.version,
   };
 }
 
@@ -119,7 +97,7 @@ export function buildReleaseCandidatePlan({ type, packageInfo, git }) {
   assertMatchingVersions(packageInfo);
   if (!RELEASE_TYPES.has(type) && !EXPLICIT_VERSION.test(type)) {
     throw new Error(
-      "usage: release.js <patch|minor|major|beta|rc|promote|x.y.z[-beta.N|-rc.N]>",
+      "usage: release.js <patch|minor|major|beta|promote|x.y.z[-beta.N]>",
     );
   }
   const targetVersion = computeReleaseTarget(packageInfo.cliVersion, type);
@@ -149,7 +127,7 @@ export function runReleaseCandidate({
   assertMatchingVersions(packageInfo);
   if (!RELEASE_TYPES.has(type) && !EXPLICIT_VERSION.test(type)) {
     throw new Error(
-      "usage: release.js <patch|minor|major|beta|rc|promote|x.y.z[-beta.N|-rc.N]>",
+      "usage: release.js <patch|minor|major|beta|promote|x.y.z[-beta.N]>",
     );
   }
   const targetVersion = computeReleaseTarget(packageInfo.cliVersion, type);

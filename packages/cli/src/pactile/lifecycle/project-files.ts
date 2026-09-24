@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { canonicalizePactileJsonV1 } from "@blxzer/pactile-core";
+import { canonicalizePactileJsonV1 } from "../../core/index.js";
 import type { PactilePlatform } from "../registry.js";
 import { assertCanonicalWriteTarget } from "../runtime/paths.js";
 import type {

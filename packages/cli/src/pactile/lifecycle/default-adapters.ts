@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { CapabilityBindingV1 } from "@blxzer/pactile-core";
+import type { CapabilityBindingV1 } from "../../core/index.js";
 import { planBinding } from "../adoption/bindings.js";
 import { discoverSnapshot } from "../adoption/inventory.js";
 import {

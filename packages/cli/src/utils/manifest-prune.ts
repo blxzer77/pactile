@@ -16,10 +16,9 @@
  * Rules:
  *   - Canonical `.pactile/*` entries are kept only for framework-managed
  *     content; user task/workspace/spec and middleware state is excluded.
- *   - Root-level `AGENTS.md` is kept only when it still looks Pactile-managed
- *     (contains the managed block markers) or is missing on disk. This
- *     self-heals old poisoned manifests for user-owned AGENTS.md files that
- *     predated init and were skipped.
+ *   - Canonical host projections, including `AGENTS.md`, belong to the
+ *     projection ledger and are removed from template hashes. Legacy
+ *     `AGENTS.md` claims are retained only when their managed markers remain.
  *   - Paths referenced by `from`/`to` of any migration manifest entry
  *     (rename, rename-dir, delete, safe-file-delete) are preserved. Pruning
  *     them would prevent legitimate pending migrations from finding their
@@ -51,6 +50,15 @@ export interface PruneResult {
   pruned: string[];
   /** The post-prune manifest (saved to disk only when `pruned.length > 0`). */
   hashes: TemplateHashes;
+}
+
+/** Host projections are owned by the projection ledger, never template hashes. */
+export function isHostProjectionPath(rawPath: string): boolean {
+  const key = toPosix(rawPath);
+  return key === FILE_NAMES.AGENTS ||
+    [".agents", ".cursor", ".codex"].some(
+      (root) => key === root || key.startsWith(`${root}/`),
+    );
 }
 
 /**
@@ -140,21 +148,9 @@ export function pruneOrphanManifestKeys(
   const pruned: string[] = [];
   const kept: TemplateHashes = {};
   const canonicalInstall = fs.existsSync(path.join(cwd, ".pactile"));
-  const projectionOwned = [
-    "AGENTS.md",
-    ".agents/",
-    ".cursor/",
-    ".codex/",
-  ];
-
   for (const [rawKey, value] of Object.entries(hashes)) {
     const key = toPosix(rawKey);
-    if (
-      canonicalInstall &&
-      projectionOwned.some(
-        (prefix) => key === prefix || key.startsWith(prefix),
-      )
-    ) {
+    if (canonicalInstall && isHostProjectionPath(key)) {
       pruned.push(key);
       continue;
     }

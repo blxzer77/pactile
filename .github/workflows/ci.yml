@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, "feat/**", "fix/**", "chore/**"]
   pull_request:
     branches: [main, develop]
 
@@ -11,6 +11,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  pr-policy:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Verify PR target and beta evidence for a release PR
+        run: node packages/cli/scripts/release-pr-check.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   test:
     name: test (${{ matrix.os }})
     strategy:
@@ -50,8 +70,8 @@ jobs:
       - name: Test
         run: pnpm test
 
-      - name: Mirror-check
-        run: pnpm mirror-check
+      - name: Documentation smoke
+        run: pnpm docs:smoke
 
       - name: Verify package file contract
         run: pnpm --filter @blxzer/pactile check:pack-files
@@ -85,8 +105,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build release packages
+      - name: Build the single release package
         run: pnpm build
 
-      - name: Verify four-package release and isolated installs
+      - name: Verify single-package tarball and isolated Node install
         run: node packages/cli/scripts/release-conformance.js

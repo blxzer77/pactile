@@ -20,7 +20,7 @@ import {
   applyKernelCreate,
   applyKernelStart,
   writeWaveCConfirmed,
-} from "@blxzer/pactile-core/task";
+} from "../core/task/index.js";
 import { emptyTaskJson, type TaskJson } from "../utils/task-json.js";
 import { initializeDeveloper, readDeveloper } from "../utils/developer.js";
 import {

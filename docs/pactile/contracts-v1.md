@@ -2,7 +2,7 @@
 
 Pactile v1 defines the host-neutral JSON boundary shared by Runtime, Tiles,
 Kernel, Middleware, Adapters, migration, and exit operations. The contracts in
-`packages/core/src/pactile/` contain data validation only: they do not read or
+`packages/cli/src/core/pactile/` contain data validation only: they do not read or
 write files, select Providers, compile Tiles, reconcile projections, or perform
 migrations.
 
@@ -35,7 +35,7 @@ import {
   parseTileManifestV1,
   type PactileContractParseResultV1,
   type TileManifestV1,
-} from "@blxzer/pactile-core";
+} from "@blxzer/pactile/core";
 
 const result: PactileContractParseResultV1<TileManifestV1> =
   parseTileManifestV1(input);

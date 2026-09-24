@@ -3,7 +3,7 @@ import type {
   PactileIntentV1,
   PolicyCeilingV1,
   ProviderReadinessV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 
 export const RETRIEVAL_ABI_VERSION = 3 as const;
 

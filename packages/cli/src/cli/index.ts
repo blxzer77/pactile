@@ -20,14 +20,14 @@ import {
 } from "../commands/workflow.js";
 import { isWorkflowInitialized, workflowPath } from "../utils/workflow-dir.js";
 import { PACKAGE_NAME, VERSION } from "../constants/version.js";
-import { runKernelJsonCli } from "@blxzer/pactile-core/task";
+import { runKernelJsonCli } from "../core/task/index.js";
 import { runTaskCli } from "../commands/task.js";
 import { runContextCli } from "../commands/context.js";
 import { runSessionCli } from "../commands/session.js";
 import {
   PACTILE_ENVIRONMENT_KEYS,
   readPactileEnvironment,
-} from "@blxzer/pactile-core";
+} from "../core/index.js";
 import { compareVersions } from "../utils/compare-versions.js";
 import {
   LEGACY_IMPORT_DESCRIPTION,

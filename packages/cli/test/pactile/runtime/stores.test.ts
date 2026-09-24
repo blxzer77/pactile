@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
-import type { InstallStateV1 } from "@blxzer/pactile-core";
+import type { InstallStateV1 } from "../../../src/core/index.js";
 import {
   GenerationStore,
   InstallStateStore,

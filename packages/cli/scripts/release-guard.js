@@ -131,34 +131,17 @@ export function resolveReleaseTag({ explicitTag, env = process.env } = {}) {
 }
 
 export function assertMatchingVersions({
-  coreVersion,
   cliVersion,
-  legacyCoreVersion,
-  legacyCliVersion,
+  cliName,
   expectedVersion,
 }) {
-  const versions = [
-    ["core", coreVersion],
-    ["cli", cliVersion],
-    ...(legacyCoreVersion === undefined
-      ? []
-      : [["legacy-core", legacyCoreVersion]]),
-    ...(legacyCliVersion === undefined
-      ? []
-      : [["legacy-cli", legacyCliVersion]]),
-  ];
-  for (const [, version] of versions) parseReleaseVersion(version);
-  const mismatched = versions.filter(([, version]) => version !== cliVersion);
-  if (mismatched.length > 0) {
-    throw new Error(
-      `Version mismatch: ${versions
-        .map(([key, version]) => `${key}=${version}`)
-        .join(", ")}. All release packages must share the exact version.`,
-    );
+  parseReleaseVersion(cliVersion);
+  if (cliName !== undefined && cliName !== "@blxzer/pactile") {
+    throw new Error(`Release package must be @blxzer/pactile, got ${cliName}.`);
   }
   if (expectedVersion !== undefined && cliVersion !== expectedVersion) {
     throw new Error(
-      `Version mismatch: tag/target=${expectedVersion}, packages=${cliVersion}.`,
+      `Version mismatch: tag/target=${expectedVersion}, package=${cliVersion}.`,
     );
   }
   return cliVersion;
@@ -195,10 +178,6 @@ export function assertReleaseBranch({ branch, version }) {
         `Allowed branches: ${allowed.join(", ")}.`,
     );
   }
-}
-
-function requireAncestor(isAncestor, ancestor, descendant, message) {
-  if (!isAncestor(ancestor, descendant)) throw new Error(message);
 }
 
 function requireSameCommit(isAncestor, head, remoteRef) {
@@ -244,7 +223,6 @@ export function assertPublishProvenance({
 }) {
   const parsed = parseReleaseTag(tag);
   assertMatchingVersions({
-    coreVersion: packageVersion,
     cliVersion: packageVersion,
     expectedVersion: parsed.version,
   });
@@ -257,20 +235,10 @@ export function assertPublishProvenance({
   const developRef = `${remote}/develop`;
   const mainRef = `${remote}/main`;
   if (parsed.channel === "stable") {
-    requireAncestor(
-      isAncestor,
-      head,
-      mainRef,
-      `Stable tag ${tag} is not contained in ${mainRef}.`,
-    );
+    requireSameCommit(isAncestor, head, mainRef);
     return parsed;
   }
-  requireAncestor(
-    isAncestor,
-    head,
-    developRef,
-    `${parsed.channel} tag ${tag} is not contained in ${developRef}.`,
-  );
+  requireSameCommit(isAncestor, head, developRef);
   return parsed;
 }
 

@@ -1,7 +1,7 @@
 import {
   parseCapabilityBindingV1,
   parseTileManifestV1,
-} from "@blxzer/pactile-core";
+} from "../core/index.js";
 import type {
   CompiledComposition,
   TileCompositionRequest,

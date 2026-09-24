@@ -3,7 +3,7 @@ import {
   parseTileManifestV1,
   type AssuranceLevelV1,
   type TileTriggerV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 import {
   tileFingerprint,
   type TileCatalogEntry,

@@ -1,7 +1,7 @@
 import type {
   ProjectionOperationV1,
   ProjectionPlanV1,
-} from "@blxzer/pactile-core";
+} from "../../../src/core/index.js";
 import {
   fingerprintBytes,
   type ProjectionContent,

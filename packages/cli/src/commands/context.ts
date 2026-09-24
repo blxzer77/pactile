@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { buildLiteContextPack, readKernel, type LitePackArtifact, type KernelPhase } from "@blxzer/pactile-core/task";
+import { buildLiteContextPack, readKernel, type LitePackArtifact, type KernelPhase } from "../core/task/index.js";
 import { readPactileConfig, type PactileConfig } from "../pactile/task/config.js";
 import { resolveSelectedTask, resolveTaskDir } from "../pactile/task/session.js";
 import { compileSessionPack } from "../pactile/task/session-pack.js";

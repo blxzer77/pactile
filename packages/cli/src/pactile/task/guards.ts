@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { assertFullQualityForPhase, parseAcceptanceItems, readDependencyGraph, readKernel, unmetRequires, type PactileTaskRecord } from "@blxzer/pactile-core/task";
+import { assertFullQualityForPhase, parseAcceptanceItems, readDependencyGraph, readKernel, unmetRequires, type PactileTaskRecord } from "../../core/task/index.js";
 import { currentGateErrors, readStrategyContract, requiredGates } from "./strategy.js";
 import { parentArchiveErrors, readTaskMap } from "./task-map.js";
 

@@ -7,7 +7,7 @@ import {
   parseInstallHintV1,
   type CapabilityBindingV1,
   type InstallHintV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 import { assetIdentity, sanitizeAssetRef } from "./inventory.js";
 import {
   digest,

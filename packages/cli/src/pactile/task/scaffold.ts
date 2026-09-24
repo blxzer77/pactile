@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { PactileTaskRecord } from "@blxzer/pactile-core/task";
+import type { PactileTaskRecord } from "../../core/task/index.js";
 import { checkArchive } from "./guards.js";
 
 const DRAFT_MARKER = "<!-- pactile:archive-evidence-draft -->";

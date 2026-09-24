@@ -421,7 +421,7 @@ describe("collectMissingTemplateHashes", () => {
     expect(missing.get(modulePath)).toBe("# intake-basic\n");
   });
 
-  it("still records AGENTS.md when the file matches and the hash is missing", () => {
+  it("does not re-add excluded files or host projections after pruning", () => {
     const missing = collectMissingTemplateHashes(
       {
         unchangedFiles: [
@@ -431,11 +431,23 @@ describe("collectMissingTemplateHashes", () => {
             newContent: "block\n",
             status: "unchanged",
           },
+          {
+            path: "/tmp/.agents/skills/intake-basic/SKILL.md",
+            relativePath: ".agents/skills/intake-basic/SKILL.md",
+            newContent: "skill\n",
+            status: "unchanged",
+          },
+          {
+            path: "/tmp/.pactile/.gitignore",
+            relativePath: ".pactile/.gitignore",
+            newContent: "runtime/\n",
+            status: "unchanged",
+          },
         ],
       },
       {},
     );
-    expect(missing.get(FILE_NAMES.AGENTS)).toBe("block\n");
+    expect(missing.size).toBe(0);
   });
 
   it("skips unchanged files that already have a hash", () => {

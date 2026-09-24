@@ -24,7 +24,7 @@ import {
   type PolicyCeilingV1,
   type ResolvedProviderV1,
   policyWithinCeilingV1,
-} from "@blxzer/pactile-core";
+} from "../../../src/core/index.js";
 
 const YAML = `schemaVersion: 1
 identity:
