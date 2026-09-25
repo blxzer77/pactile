@@ -1,6 +1,6 @@
 {
   "name": "@blxzer/pactile",
-  "version": "0.6.0-beta.1",
+  "version": "0.6.0-beta.2",
   "description": "Pactile composes portable AI development capabilities across supported agent platforms",
   "type": "module",
   "main": "./dist/index.js",

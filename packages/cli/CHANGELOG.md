@@ -37,6 +37,16 @@ and [release procedure](../../docs/governance/releasing.md) for acceptance.
 
 ---
 
+## [0.6.0-beta.2] - 2026-09-25
+
+The Node-only, single-package beta now publishes through npm Trusted Publisher.
+The sealed release artifact is prepared without publish credentials and verified
+in a separate OIDC-enabled job. The beta.1 tag passed validation but did not
+publish to npm because the token path required an OTP. Runtime behavior and
+migration rules are unchanged from beta.1.
+
+---
+
 ## [0.6.0-beta.1] - 2026-09-25
 
 First beta of the Node-only Pactile workflow and single-package release path.
