@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { StringDecoder } from "node:string_decoder";
@@ -19,6 +19,22 @@ export interface PiRpcOptions {
   readOnly?: boolean;
 }
 
+export interface PiRpcProcessExitReceipt {
+  processId: number;
+  stopRequestedAt: string;
+  killRequestedAt: string | null;
+  exitObservedAt: string | null;
+  exitCode: number | null;
+  signalCode: string | null;
+  terminationVerified: boolean;
+}
+
+interface PiRpcCloseEvent {
+  exitCode: number | null;
+  signalCode: string | null;
+  observedAt: string;
+}
+
 /** Pi's native RPC is strict LF-delimited JSON, including on Windows. */
 export class PiRpcClient {
   private child: ChildProcessWithoutNullStreams | null = null;
@@ -28,6 +44,10 @@ export class PiRpcClient {
   private listeners = new Set<(event: RpcObject) => void>();
   private ended: Error | null = null;
   private startupMs = 0;
+  private childClose: Promise<PiRpcCloseEvent> | null = null;
+  private stopRequestedAt: string | null = null;
+  private killRequestedAt: string | null = null;
+  private verifiedClose: PiRpcProcessExitReceipt | null = null;
 
   constructor(private readonly options: PiRpcOptions) {
     if (options.onEvent) this.listeners.add(options.onEvent);
@@ -119,6 +139,15 @@ export class PiRpcClient {
       windowsHide: true,
     });
     this.child = child;
+    this.childClose = new Promise((resolve) => {
+      child.once("close", (code, signal) => {
+        resolve({
+          exitCode: code,
+          signalCode: signal,
+          observedAt: new Date().toISOString(),
+        });
+      });
+    });
     child.stdout.on("data", (data: Buffer) => this.read(data));
     // Stderr may contain provider secrets or prompt text; retain no raw stderr.
     child.stderr.resume();
@@ -196,20 +225,58 @@ export class PiRpcClient {
     }
   }
 
-  async close(): Promise<void> {
+  async closeAndObserve(): Promise<PiRpcProcessExitReceipt | null> {
+    if (this.verifiedClose) return this.verifiedClose;
     const child = this.child;
-    if (!child) return;
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    child.stdin.end();
-    const exited = (): Promise<boolean> => new Promise((resolve) => {
-      const timer = setTimeout(() => { child.removeListener("exit", onExit); resolve(false); }, 2_000);
-      const onExit = (): void => { clearTimeout(timer); resolve(true); };
-      child.once("exit", onExit);
-    });
-    if (await exited()) return;
-    child.kill();
-    if (!(await exited()) && child.exitCode === null && child.signalCode === null) {
-      throw new Error("Pi RPC process did not stop after termination request");
+    const processId = child?.pid;
+    const closeEvent = this.childClose;
+    if (!child || typeof processId !== "number" || !Number.isSafeInteger(processId) || !closeEvent) return null;
+    this.stopRequestedAt ??= new Date().toISOString();
+    try { child.stdin.end(); } catch { /* The process may already have closed its input. */ }
+    const waitForClose = async (timeoutMs: number): Promise<PiRpcCloseEvent | null> => {
+      let timer: NodeJS.Timeout | undefined;
+      const timeout = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+        timer.unref?.();
+      });
+      const result = await Promise.race([closeEvent, timeout]);
+      if (timer) clearTimeout(timer);
+      return result;
+    };
+    let closed = await waitForClose(2_000);
+    if (!closed) {
+      this.killRequestedAt ??= new Date().toISOString();
+      if (process.platform === "win32") {
+        try {
+          execFileSync("taskkill.exe", ["/PID", String(processId), "/T", "/F"], {
+            stdio: "ignore",
+            windowsHide: true,
+          });
+        } catch {
+          try { child.kill(); } catch { /* The close event remains the authority. */ }
+        }
+      } else {
+        try { child.kill(); } catch { /* The close event remains the authority. */ }
+      }
+      closed = await waitForClose(3_000);
+    }
+    const receipt: PiRpcProcessExitReceipt = {
+      processId,
+      stopRequestedAt: this.stopRequestedAt,
+      killRequestedAt: this.killRequestedAt,
+      exitObservedAt: closed?.observedAt ?? null,
+      exitCode: closed?.exitCode ?? child.exitCode,
+      signalCode: closed?.signalCode ?? child.signalCode,
+      terminationVerified: closed !== null,
+    };
+    if (receipt.terminationVerified) this.verifiedClose = receipt;
+    return receipt;
+  }
+
+  async close(): Promise<void> {
+    const receipt = await this.closeAndObserve();
+    if (receipt && !receipt.terminationVerified) {
+      throw new Error("Pi RPC process did not report child close");
     }
   }
 }
