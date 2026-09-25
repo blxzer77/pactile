@@ -229,11 +229,15 @@ function normalizeWritePath(value: unknown, taskId: string): string {
     .replace(/^\.\//, "")
     .replace(/\/$/, "");
   const segments = slashed.split("/");
+  const hasWindowsAlternateDataStream =
+    process.platform === "win32" &&
+    segments.some((segment) => segment.includes(":"));
   if (
     !slashed ||
     slashed === "." ||
     slashed.startsWith("/") ||
     /^[A-Za-z]:/.test(slashed) ||
+    hasWindowsAlternateDataStream ||
     slashed.includes("*") ||
     slashed.includes("?") ||
     slashed.includes("[") ||

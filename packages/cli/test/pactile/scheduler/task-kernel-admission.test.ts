@@ -19,6 +19,7 @@ import {
   type TaskKernelRunDispatchOwnerV1,
   type TaskKernelRunDispatchStopProofV1,
 } from "../../../src/pactile/scheduler/index.js";
+import { normalizeProjectWriteSet } from "../../../src/pactile/scheduler/project-lease-store.js";
 
 const roots: string[] = [];
 
@@ -419,6 +420,78 @@ function admit(
 }
 
 describe("Task Kernel V2 Run dispatch admission", () => {
+  it.skipIf(process.platform !== "win32")(
+    "rejects NTFS alternate data stream paths without changing ordinary or drive-path rules",
+    () => {
+      expect(normalizeProjectWriteSet(["src/a.ts"])).toEqual(["src/a.ts"]);
+      expect(() => normalizeProjectWriteSet(["src/a.ts:stream"])).toThrow(
+        /concrete project-relative paths/,
+      );
+      expect(() => normalizeProjectWriteSet(["src:stream/a.ts"])).toThrow(
+        /concrete project-relative paths/,
+      );
+      expect(() => normalizeProjectWriteSet(["C:/src/a.ts"])).toThrow(
+        /concrete project-relative paths/,
+      );
+      expect(() => normalizeProjectWriteSet(["C:\\src\\a.ts"])).toThrow(
+        /concrete project-relative paths/,
+      );
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "rejects ADS paths in Task Run declarations and fails closed on durable legacy ADS leases",
+    () => {
+      const declaredRoot = makeRoot();
+      createTask(declaredRoot, "v2-ads-declared", {
+        writeSet: ["src/a.ts:stream"],
+        host: true,
+      });
+      expect(() =>
+        scheduleTaskKernelGraph(declaredRoot, ["v2-ads-declared"]),
+      ).toThrow(/concrete project-relative paths/);
+
+      const leaseRoot = makeRoot();
+      const task = createTask(leaseRoot, "v2-ads-lease", {
+        writeSet: ["src/a.ts"],
+        host: true,
+      });
+      const schedule = scheduleTaskKernelGraph(leaseRoot, ["v2-ads-lease"]);
+      const legacyActive = path.join(
+        leaseRoot,
+        ".pactile",
+        "tasks",
+        "legacy-parent",
+        "parallel",
+        "active",
+      );
+      fs.mkdirSync(legacyActive, { recursive: true });
+      fs.writeFileSync(
+        path.join(legacyActive, "legacy-ads.json"),
+        `${JSON.stringify({
+          id: "legacy-ads",
+          pid: process.pid,
+          durable: true,
+          touches: ["src/a.ts:stream"],
+        })}\n`,
+      );
+
+      const result = admit(
+        leaseRoot,
+        schedule.receipt.receiptFingerprint,
+        "v2-ads-lease",
+        task.runId,
+      );
+      expect(result).toMatchObject({
+        permitted: false,
+        receipt: {
+          reasonCodes: ["project-active-leases-unreadable"],
+          leaseId: null,
+        },
+      });
+    },
+  );
+
   it("persists a replayable Task/Run receipt, honors simulated critical-path planning but rechecks hard dependencies before dispatch", () => {
     const root = makeRoot();
     createTask(root, "v2-priority-short", {
