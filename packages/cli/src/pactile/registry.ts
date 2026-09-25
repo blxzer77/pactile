@@ -703,10 +703,26 @@ export function prepareSelectedTaskBatch2TileSelection(
   );
 }
 
+function applySelectedTaskAgentTileProfile(
+  surface: SelectedTaskTileSelectionSurface,
+): TileResult<TileSelectionRequest> {
+  const base = taskTileSelectionRequest(surface.taskLifecycle.phase);
+  const authority = surface.authority;
+  const request = authority.fact.source === "task-kernel-approval-snapshot"
+    ? {
+        ...base,
+        policyCeiling: authority.policyCeiling,
+        capabilities: authority.capabilities,
+        providerFacts: authority.providerFacts,
+      }
+    : base;
+  return applyTaskSelectionAuthority(surface, request);
+}
+
 /** Agent session profile: read-only default, widened only by a recorded active Run grant. */
 export function prepareSelectedTaskAgentTileSelection(
   root: string,
-  expectedLifecycle: {
+  expectedLifecycle?: {
     readonly taskId: string;
     readonly phase: TileTaskLifecycleFact["phase"];
     readonly revision: number;
@@ -719,24 +735,50 @@ export function prepareSelectedTaskAgentTileSelection(
   // call. If the selection, phase, or revision changed in between, avoid
   // mixing facts from two Tasks or Kernel snapshots.
   if (
-    surface.data.taskLifecycle.taskId !== expectedLifecycle.taskId ||
-    surface.data.taskLifecycle.phase !== expectedLifecycle.phase ||
-    surface.data.taskLifecycle.revision !== expectedLifecycle.revision
+    expectedLifecycle && (
+      surface.data.taskLifecycle.taskId !== expectedLifecycle.taskId ||
+      surface.data.taskLifecycle.phase !== expectedLifecycle.phase ||
+      surface.data.taskLifecycle.revision !== expectedLifecycle.revision
+    )
   )
     return taskLifecycleFailure("tile-selection-task-read-failed", surface.data.taskLifecycle);
-  const base = taskTileSelectionRequest(surface.data.taskLifecycle.phase);
-  const authority = surface.data.authority;
-  const request = authority.fact.source === "task-kernel-approval-snapshot"
-    ? {
-        ...base,
-        policyCeiling: authority.policyCeiling,
-        capabilities: authority.capabilities,
-        providerFacts: authority.providerFacts,
-      }
-    : base;
-  const effective = applyTaskSelectionAuthority(surface.data, request);
+  const effective = applySelectedTaskAgentTileProfile(surface.data);
   if (!effective.success) return effective;
   return prepareTileSelection(surface.data.catalog, effective.data, surface.data.facts);
+}
+
+/** Rebuild the current Agent profile from Kernel facts, then recompile a session offer decision. */
+export function decideSelectedTaskAgentTileSelection(
+  root: string,
+  decision: TileSelectionDecision,
+  env: NodeJS.ProcessEnv = process.env,
+): SelectedTaskTileSelectionDecisionResult {
+  const surface = loadSelectedTaskTileSelectionSurface(root, env);
+  if (!surface.success) return surface;
+  const effective = applySelectedTaskAgentTileProfile(surface.data);
+  if (!effective.success) return effective;
+  const result = decideTileSelection(
+    surface.data.catalog,
+    effective.data,
+    surface.data.facts,
+    decision,
+  );
+  if (!result.success) return result;
+  const stored = writeTileSelectionSnapshot(
+    root,
+    surface.data.catalog,
+    effective.data,
+    surface.data.facts,
+    decision,
+    result.data,
+  );
+  if (!stored.success)
+    return {
+      success: false,
+      diagnostics: stored.diagnostics,
+      receipt: result.data,
+    };
+  return { success: true, data: result.data, snapshot: stored.data };
 }
 
 export function decideSelectedTaskBatch2TileSelection(

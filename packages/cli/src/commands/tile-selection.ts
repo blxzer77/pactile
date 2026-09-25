@@ -2,7 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import type { PactileIntentV1, PolicyCeilingV1 } from "../core/index.js";
 import {
+  decideSelectedTaskAgentTileSelection,
   decideSelectedTaskBatch2TileSelection,
+  prepareSelectedTaskAgentTileSelection,
   prepareSelectedTaskBatch2TileSelection,
   replayStoredSelectedTaskBatch2TileSelectionDecision,
 } from "../pactile/registry.js";
@@ -36,6 +38,31 @@ function repeatedOptions(args: readonly string[], name: string): string[] {
     index += 1;
   }
   return values;
+}
+
+function validateSessionProfileArguments(
+  args: readonly string[],
+  valueOptions: ReadonlySet<string>,
+): void {
+  let sessionSeen = false;
+  const singletonValues = new Set<string>();
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === "--session") {
+      if (sessionSeen) throw new Error("--session may be supplied once");
+      sessionSeen = true;
+      continue;
+    }
+    if (!valueOptions.has(token ?? ""))
+      throw new Error("Session-profile commands do not accept caller request fields");
+    if ((token === "--offer-fingerprint" || token === "--kind") && singletonValues.has(token))
+      throw new Error(`${token} may be supplied once`);
+    const value = args[index + 1];
+    if (!value || value.startsWith("--")) throw new Error(`${token} requires a value`);
+    if (token === "--offer-fingerprint" || token === "--kind") singletonValues.add(token ?? "");
+    index += 1;
+  }
+  if (!sessionSeen) throw new Error("--session is required for the session profile");
 }
 
 function readRequestFile(root: string, input: string): JsonRecord {
@@ -95,8 +122,15 @@ export function runTileSelectionCli(args: string[], root = process.cwd()): numbe
   try {
     const [operation, ...rest] = args;
     if (operation === "prepare") {
-      const request = selectionRequest(rest, root);
-      const prepared = prepareSelectedTaskBatch2TileSelection(root, request);
+      const sessionProfile = rest.includes("--session");
+      let prepared: ReturnType<typeof prepareSelectedTaskAgentTileSelection>;
+      if (sessionProfile) {
+        validateSessionProfileArguments(rest, new Set());
+        prepared = prepareSelectedTaskAgentTileSelection(root);
+      } else {
+        const request = selectionRequest(rest, root);
+        prepared = prepareSelectedTaskBatch2TileSelection(root, request);
+      }
       if (!prepared.success) {
         writeJson(prepared);
         return 1;
@@ -106,7 +140,10 @@ export function runTileSelectionCli(args: string[], root = process.cwd()): numbe
     }
 
     if (operation === "decide") {
-      const request = selectionRequest(rest, root);
+      const sessionProfile = rest.includes("--session");
+      if (sessionProfile)
+        validateSessionProfileArguments(rest, new Set(["--offer-fingerprint", "--kind", "--tile", "--prior-tile"]));
+      const request = sessionProfile ? null : selectionRequest(rest, root);
       const offerFingerprint = option(rest, "--offer-fingerprint");
       const kind = option(rest, "--kind");
       if (!offerFingerprint || !kind)
@@ -119,7 +156,9 @@ export function runTileSelectionCli(args: string[], root = process.cwd()): numbe
         ...(selectedRefs.length ? { selectedRefs } : {}),
         ...(priorAttemptRefs.length ? { priorAttemptRefs } : {}),
       };
-      const result = decideSelectedTaskBatch2TileSelection(root, request, decision);
+      const result = sessionProfile
+        ? decideSelectedTaskAgentTileSelection(root, decision)
+        : decideSelectedTaskBatch2TileSelection(root, request as Omit<TileSelectionRequest, "taskLifecycle">, decision);
       if (!result.success) {
         writeJson(result);
         return 1;

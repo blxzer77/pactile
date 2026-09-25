@@ -37,11 +37,12 @@ Bundled registry 将 Tile 明确分为**基础 Tile**与**按需 Tile**。两类
 
 已批准且运行中的 Task Run scope 可以携带版本化 Tile grant：`pactile-tile-selection/v1:` 加规范化 JSON，字段为 `schemaVersion`、`policyCeiling`、`capabilities` 和 `providerFacts`。grant 是权限上限；调用方 request 会与它取交集，因此调用方更严格的限制会保留，调用方不能扩大权限。没有有效记录的 grant 时，Task API 使用只读、本地、低成本上限，不带 capability 或 Provider。Kernel approval scope 是调用方声明的证据；选择回执会记录这种 assurance，但不会声称身份已验证。
 
-真实 Agent 宿主入口是 `pactile context --mode session --json`。存在选中 Task 时，它会按当前 Kernel phase 构造请求，只返回通过 Compiler 校验的 `tileSelection.offer`，不会把 `plan.audit` 或已过滤 Tile 的详情发送给 Agent。只有已批准且仍 active 的 V2 Run 才会按该 Run 记录的 Tile grant 放宽 session 请求上限。没有 grant、Run 尚未启动或 Run 已完成时，session 请求保持只读安全默认。CLI `pactile tile-selection prepare` 接收显式 request；Task grant 与调用方的 policy、capability、Provider facts 取交集，因此调用方可以收窄、不能扩大 grant。
+真实 Agent 宿主入口是 `pactile context --mode session --json`。存在选中 Task 时，它会按当前 Kernel phase 构造请求，只返回通过 Compiler 校验的 `tileSelection.offer`，不会把 `plan.audit` 或已过滤 Tile 的详情发送给 Agent。只有已批准且仍 active 的 V2 Run 才会按该 Run 记录的 Tile grant 放宽 session 请求上限。没有 grant、Run 尚未启动或 Run 已完成时，session 请求保持只读安全默认。返回的 `tileSelection.decisionCommand` 可直接执行并带 `--session`；CLI 会从当前选中 Task/Run 事实重建 request、重编译 Offer，再校验 fingerprint 后记录决策。若 phase、revision、选中 Task 或 active Run 已变化，旧 fingerprint 会得到 stale 结果。CLI `pactile tile-selection prepare` 接收显式 request；Task grant 与调用方的 policy、capability、Provider facts 取交集，因此调用方可以收窄、不能扩大 grant。
 
 ```sh
 pactile tile-selection prepare --intent structural --output task.design
 pactile tile-selection decide --offer-fingerprint <offer-fingerprint> --kind adopt --intent structural --output task.design
+pactile tile-selection decide --session --offer-fingerprint <session-offer-fingerprint> --kind adopt
 pactile tile-selection replay --snapshot-fingerprint <snapshot-fingerprint>
 ```
 

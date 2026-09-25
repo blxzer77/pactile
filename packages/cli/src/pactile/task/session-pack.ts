@@ -56,13 +56,10 @@ function taskTileOffer(
         ...(receipt ? { receipt } : {}),
       };
     }
-    const decisionOutputs = prepared.data.offer.requiredOutputs
-      .map((output) => `--output ${output}`)
-      .join(" ");
     return {
       status: "offered",
       offer: prepared.data.offer,
-      decisionCommand: `pactile tile-selection decide --offer-fingerprint ${prepared.data.offer.fingerprint} --kind <adopt|override|no-match> --intent ${prepared.data.offer.intent} ${decisionOutputs} [--tile <candidate-ref>]`,
+      decisionCommand: `pactile tile-selection decide --session --offer-fingerprint ${prepared.data.offer.fingerprint} --kind adopt`,
       replayCommand: "pactile tile-selection replay --snapshot-fingerprint <snapshot-fingerprint>",
       boundary: "A Tile decision is a receipt only. It does not activate a Tile or authorize a Kernel Run or execution.",
     };

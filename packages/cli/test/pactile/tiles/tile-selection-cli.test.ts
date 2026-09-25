@@ -54,6 +54,13 @@ function lastJson(spy: ReturnType<typeof vi.spyOn>): Record<string, unknown> {
   return JSON.parse(String(spy.mock.lastCall?.[0])) as Record<string, unknown>;
 }
 
+function sessionDecisionArgs(command: string): string[] {
+  const tokens = command.trim().split(/\s+/);
+  if (tokens.slice(0, 3).join(" ") !== "pactile tile-selection decide")
+    throw new Error(`unexpected session decision command: ${tokens.slice(0, 3).join(" ")}`);
+  return tokens.slice(2);
+}
+
 describe("current Task tile-selection CLI", () => {
   it("offers checked candidates and persists a decision that can be replayed later", () => {
     const root = selectedTaskRoot();
@@ -207,7 +214,7 @@ describe("current Task tile-selection CLI", () => {
     fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=alice\n");
     vi.stubEnv("PACTILE_CONTEXT_ID", "codex_v2_tile_selection");
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     expect(runTaskCli([
       "create", "V2 Tile grant task", "--slug", "v2-tile-grant", "--description", "Exercise Tile grant binding",
@@ -223,11 +230,23 @@ describe("current Task tile-selection CLI", () => {
 
     expect(runContextCli(["--mode", "session", "--json"], root)).toBe(0);
     const sessionOffer = JSON.parse(String(log.mock.lastCall?.[0])) as {
-      tileSelection: { status: string; offer?: { taskLifecycle: { selectionGrant: { source: string } }; candidates: { ref: string }[] } };
+      tileSelection: {
+        status: string;
+        decisionCommand: string;
+        offer?: { taskLifecycle: { selectionGrant: { source: string } }; candidates: { ref: string }[] };
+      };
     };
     expect(sessionOffer.tileSelection.status).toBe("offered");
     expect(sessionOffer.tileSelection.offer?.taskLifecycle.selectionGrant.source).toBe("safe-default");
     expect(sessionOffer.tileSelection.offer?.candidates.some((candidate) => candidate.ref === "worker-orchestration@1.0.0")).toBe(false);
+    expect(sessionOffer.tileSelection.decisionCommand).toContain("--session");
+    const beforeRunDecisionExit = runTileSelectionCli(sessionDecisionArgs(sessionOffer.tileSelection.decisionCommand), root);
+    expect(beforeRunDecisionExit, String(errorLog.mock.lastCall?.[0] ?? JSON.stringify(lastJson(log)))).toBe(0);
+    expect(lastJson(log)).toMatchObject({
+      success: true,
+      executionAuthorization: "not-granted",
+      receipt: { outcome: "selected", compilerPassed: true },
+    });
     expect(JSON.stringify(sessionOffer)).not.toContain("audit");
 
     const grant = {
@@ -259,6 +278,7 @@ describe("current Task tile-selection CLI", () => {
       kernel: { phase: string; revision: number };
       tileSelection: {
         status: string;
+        decisionCommand: string;
         offer?: {
           taskLifecycle: { phase: string; revision: number; selectionGrant: { source: string } };
           candidates: { ref: string }[];
@@ -274,6 +294,26 @@ describe("current Task tile-selection CLI", () => {
     });
     expect(activeSession.tileSelection.offer?.candidates.some((candidate) => candidate.ref === "worker-orchestration@1.0.0")).toBe(true);
     expect(JSON.stringify(activeSession.tileSelection)).not.toContain("audit");
+    const activeSessionDecisionArgs = sessionDecisionArgs(activeSession.tileSelection.decisionCommand);
+    expect(activeSessionDecisionArgs).toContain("--session");
+    expect(runTileSelectionCli(activeSessionDecisionArgs, root)).toBe(0);
+    expect(lastJson(log)).toMatchObject({
+      success: true,
+      executionAuthorization: "not-granted",
+      receipt: {
+        outcome: "selected",
+        selectedRefs: ["worker-orchestration@1.0.0"],
+        compilerPassed: true,
+      },
+    });
+
+    const rejectedExpansion = runTileSelectionCli([
+      ...activeSessionDecisionArgs,
+      "--request-file", "tile-request.json",
+    ], root);
+    expect(rejectedExpansion).toBe(1);
+    expect(String(errorLog.mock.lastCall?.[0] ?? "")).toContain("Session-profile commands do not accept caller request fields");
+    expect(String(errorLog.mock.lastCall?.[0] ?? "")).not.toContain("worker-orchestration");
 
     const requestFile = path.join(root, "tile-request.json");
     fs.writeFileSync(requestFile, JSON.stringify({
@@ -330,6 +370,15 @@ describe("current Task tile-selection CLI", () => {
       selectionGrant: { source: "safe-default" },
     });
     expect(completedSession.tileSelection.offer?.candidates.some((candidate) => candidate.ref === "worker-orchestration@1.0.0")).toBe(false);
+
+    expect(runTileSelectionCli(activeSessionDecisionArgs, root)).toBe(0);
+    const staleSessionDecision = lastJson(log);
+    expect(staleSessionDecision).toMatchObject({
+      success: true,
+      executionAuthorization: "not-granted",
+      receipt: { outcome: "stale-offer", compilerPassed: false, selectedRefs: [] },
+    });
+    expect(JSON.stringify(staleSessionDecision)).not.toContain("worker-orchestration");
   });
 });
 
