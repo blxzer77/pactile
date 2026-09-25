@@ -349,13 +349,13 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
-function sortedUnique(values) {
+function sortedUnique(values: string[]): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
 }
 
-function duplicateValues(values) {
-  const seen = new Set();
-  const duplicates = new Set();
+function duplicateValues(values: string[]): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
   for (const value of values) {
     if (seen.has(value)) duplicates.add(value);
     seen.add(value);
@@ -449,7 +449,7 @@ function walkFiles(rootDir, relativeDir) {
  * Include every tracked and non-ignored untracked file. Brand-sensitive files
  * must not escape the guard merely because Batch 3 work is still uncommitted.
  */
-function inventoryFiles(repoRoot, trackedFiles) {
+function inventoryFiles(repoRoot: string, trackedFiles: string[]): string[] {
   const controlFiles = [
     ...walkFiles(repoRoot, "docs/pactile"),
     "packages/cli/scripts/check-pactile-brand-surface.ts",
@@ -1032,9 +1032,14 @@ function validateDocumentationMap(
   for (const duplicate of duplicateValues(pageIds)) {
     errors.push(`documentation target has duplicate id: ${duplicate}`);
   }
-  const targetById = new Map(
-    documentationMap.targetPages.map((page) => [page.id, page]),
-  );
+  const targetById = new Map<
+    string,
+    {
+      navigationGroup?: string;
+      status?: string;
+      paths?: Record<string, string>;
+    }
+  >(documentationMap.targetPages.map((page) => [page.id, page] as const));
   errors.push(
     ...exactSetErrors(
       "canonical target pages",
@@ -1225,8 +1230,13 @@ function validateDocumentationMap(
     ),
   );
 
-  const mappingByPath = new Map(
-    documentationMap.sourceMappings.map((entry) => [entry.path, entry]),
+  const mappingByPath = new Map<
+    string,
+    { path: string; classification: string }
+  >(
+    documentationMap.sourceMappings.map(
+      (entry) => [entry.path, entry] as const,
+    ),
   );
   const cursorPlusLiveDocs = sortedUnique(
     scan.occurrences
@@ -1302,7 +1312,10 @@ function loadContracts(repoRoot) {
   };
 }
 
-function auditBrandSurface(repoRoot, options = {}) {
+function auditBrandSurface(
+  repoRoot: string,
+  options: { skipSnapshotCheck?: boolean; releaseMode?: boolean } = {},
+) {
   const contracts = loadContracts(repoRoot);
   const trackedFiles = gitInventoryFiles(repoRoot);
   const files = inventoryFiles(repoRoot, trackedFiles);
@@ -1332,7 +1345,7 @@ function auditBrandSurface(repoRoot, options = {}) {
     ...validateRenameMap(contracts.renameMap),
     ...documentation.errors,
   ];
-  const filesByClassification = {};
+  const filesByClassification: Record<string, string[]> = {};
   for (const occurrence of scan.occurrences) {
     const values = filesByClassification[occurrence.classification] ?? [];
     values.push(occurrence.path);
