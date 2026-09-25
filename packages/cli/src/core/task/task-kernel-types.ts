@@ -2,6 +2,7 @@ import type { KernelAuditEvent, KernelCondition, KernelOutcome, KernelPhase } fr
 import type { readKernel } from "./kernel-store.js";
 
 export const TASK_KERNEL_SCHEMA_VERSION = 2 as const;
+export const TASK_RUN_WORKSPACE_CLEANUP_RISK_DISCLOSURE = "An external writer may create an ignored file after the final check and before Git recursively removes this worktree; non-force git worktree remove may then delete that file.";
 
 export const TASK_DELIVERY_LEVELS = [
   "local-result",
@@ -64,7 +65,7 @@ export interface TaskRunAuthorization {
   evidenceRef: string;
 }
 
-export type TaskRunState = "waiting" | "running" | "completed" | "failed" | "blocked";
+export type TaskRunState = "waiting" | "running" | "completed" | "failed" | "blocked" | "cancelled";
 
 export interface TaskRunDurations {
   executionMs: number | null;
@@ -97,7 +98,71 @@ export interface TaskRunWorkspaceBinding {
   baseSha: string;
   writeSet: string[];
   integrationState: "not-integrated" | "integrated";
-  reclamationState: "not-requested" | "pending" | "reclaimed" | "failed";
+  reclamationState: "not-requested" | "pending" | "reclaimed" | "failed" | "recovery-required";
+  /** Present only when the Pactile worktree manager created or explicitly adopted this checkout. */
+  manager: TaskRunWorkspaceManagerBinding | null;
+  integrationReceipt: TaskRunWorkspaceIntegrationReceipt | null;
+  cleanupLease: TaskRunWorkspaceCleanupLease | null;
+}
+
+export interface TaskRunWorkspaceManagerBinding {
+  version: 1;
+  credentialId: string;
+  projectRoot: string;
+  commonDir: string;
+  gitDir: string;
+  source: "created" | "adopted";
+  recordedAt: string;
+}
+
+export interface TaskRunWorkspaceIntegrationReceipt {
+  runId: string;
+  worktreeHeadSha: string;
+  targetRef: string;
+  targetBranch: string;
+  targetHeadSha: string;
+  verifiedAt: string;
+  resultEvidenceRefs: string[];
+  candidateSnapshotId: string;
+  candidateFingerprint: string;
+  /** Digest of Run changed-path tree entries, the integrated target entries, and candidate identity. */
+  contentFingerprint?: string;
+}
+
+export interface TaskRunWorkspaceCleanupLease {
+  leaseId: string;
+  state: "held" | "reclaimed" | "retained" | "partial-removal" | "recovery-required";
+  processId: number;
+  acquiredAt: string;
+  expectedHeadSha: string;
+  targetBranch: string;
+  targetHeadSha: string;
+  receiptRef: string;
+  reason: string | null;
+  riskDisclosure?: string;
+}
+
+export interface TaskRunHostStopReceipt {
+  source: string;
+  assurance: string;
+  evidenceLevel: string;
+  taskId: string;
+  runId: string;
+  sessionId: string | null;
+  threadId: string | null;
+  startRequestId: string;
+  settleReceiptId: string;
+  terminalStatus: string;
+  requestKernelRevision: number;
+  receiptKernelRevision: number;
+  contractFingerprint: string;
+  contractStale: boolean;
+  candidateSnapshotId: string | null;
+  candidateFingerprint: string | null;
+  candidateSource: "captured" | "derived" | null;
+  receiptRef: string;
+  evidenceRef: string;
+  recordedAt: string;
 }
 
 /** Optional host receipt binding; the Task Kernel itself remains host-neutral. */
@@ -105,6 +170,7 @@ export interface TaskRunHostBinding {
   host: string;
   role: string;
   sessionId: string | null;
+  hostId?: string | null;
   threadId: string | null;
   kernelRevision: number;
   contractFingerprint: string;
@@ -112,6 +178,7 @@ export interface TaskRunHostBinding {
   eventRefs: string[];
   resultRefs: string[];
   assuranceSource: string | null;
+  stopReceipt: TaskRunHostStopReceipt | null;
 }
 
 export interface TaskRunV2 {
@@ -180,6 +247,16 @@ export type TaskKernelEventType =
   | "run.completed"
   | "run.failed"
   | "run.blocked"
+  | "run.cancelled"
+  | "run.host-bound"
+  | "run.host-settlement-recorded"
+  | "run.host-settled"
+  | "run.workspace-bound"
+  | "run.workspace-integrated"
+  | "run.workspace-cleanup-acquired"
+  | "run.workspace-reclaimed"
+  | "run.workspace-retained"
+  | "run.workspace-recovery-required"
   | "review.recorded"
   | "task.closed";
 
@@ -246,11 +323,93 @@ export interface StartTaskRunRequest {
   initialState?: "waiting" | "running";
   writeSetSnapshot?: string[];
   estimatedDurations?: Partial<TaskRunDurations>;
-  workspace?: Omit<TaskRunWorkspaceBinding, "ownerRunId">;
-  host?: Omit<TaskRunHostBinding, "kernelRevision" | "contractFingerprint"> & {
+  workspace?: Omit<TaskRunWorkspaceBinding, "ownerRunId" | "manager" | "integrationReceipt" | "cleanupLease">;
+  host?: Omit<TaskRunHostBinding, "kernelRevision" | "contractFingerprint" | "stopReceipt"> & {
     kernelRevision?: number;
     contractFingerprint?: string;
   };
+  cwd?: string;
+}
+
+export interface BindTaskRunHostReceiptRequest {
+  root: string;
+  taskDir: string;
+  expectedRevision: number;
+  runId: string;
+  host: Omit<TaskRunHostBinding, "kernelRevision" | "contractFingerprint" | "stopReceipt">;
+  actor: string;
+  idempotencyKey: string;
+  cwd?: string;
+}
+
+export interface BindTaskRunWorkspaceRequest {
+  root: string;
+  taskDir: string;
+  expectedRevision: number;
+  runId: string;
+  workspace: TaskRunWorkspaceBinding;
+  actor: string;
+  idempotencyKey: string;
+  cwd?: string;
+}
+
+export interface RecordTaskRunWorkspaceIntegrationRequest {
+  root: string;
+  taskDir: string;
+  expectedRevision: number;
+  runId: string;
+  receipt: TaskRunWorkspaceIntegrationReceipt;
+  actor: string;
+  idempotencyKey: string;
+  cwd?: string;
+}
+
+export interface AcquireTaskRunWorkspaceCleanupLeaseRequest {
+  root: string;
+  taskDir: string;
+  expectedRevision: number;
+  runId: string;
+  lease: Omit<TaskRunWorkspaceCleanupLease, "state" | "reason">;
+  actor: string;
+  idempotencyKey: string;
+  cwd?: string;
+}
+
+export interface FinishTaskRunWorkspaceCleanupRequest {
+  root: string;
+  taskDir: string;
+  expectedRevision: number;
+  runId: string;
+  leaseId: string;
+  result: "reclaimed" | "retained" | "partial-removal" | "recovery-required";
+  reason?: string | null;
+  updatedManagerBinding?: TaskRunWorkspaceManagerBinding;
+  actor: string;
+  idempotencyKey: string;
+  cwd?: string;
+}
+
+export interface AppendTaskRunHostSettlementRefsRequest {
+  root: string;
+  taskDir: string;
+  expectedRevision: number;
+  runId: string;
+  requestRefs?: string[];
+  eventRefs?: string[];
+  resultRefs?: string[];
+  actor: string;
+  idempotencyKey: string;
+  cwd?: string;
+}
+
+export interface RecordTaskRunHostStopReceiptRequest {
+  root: string;
+  taskDir: string;
+  expectedRevision: number;
+  runId: string;
+  receipt: TaskRunHostStopReceipt;
+  actor: string;
+  idempotencyKey: string;
   cwd?: string;
 }
 
@@ -259,7 +418,7 @@ export interface RecordTaskRunResultRequest {
   taskDir: string;
   expectedRevision: number;
   runId: string;
-  outcome: "completed" | "failed" | "blocked";
+  outcome: "completed" | "failed" | "blocked" | "cancelled";
   summary?: string;
   evidenceRefs?: string[];
   candidateEntries?: TaskSnapshotEntry[];
