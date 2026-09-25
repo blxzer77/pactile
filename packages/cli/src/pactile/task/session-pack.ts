@@ -1,9 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readTaskKernel, type KernelPhase } from "../../core/task/index.js";
-import { prepareSelectedTaskBatch2TileSelection } from "../registry.js";
+import { prepareSelectedTaskAgentTileSelection } from "../registry.js";
 import { resolveSelectedTask, resolveTaskDir } from "./session.js";
-import { taskTileSelectionRequest } from "../tiles/selection.js";
 
 const BASELINE = ["intake-basic", "define-basic", "approval-personal", "execute-agent", "verify-basic", "close-basic", "context-progressive", "observability-local"];
 const NEVER_LAYER2 = new Set(["context-progressive", "observability-local", "debug-recovery", "retention-storage", "retrieval-extended", "personal-memory"]);
@@ -42,12 +41,14 @@ function activeModules(extras: Record<string, unknown>, key: string, fallback: s
   return Array.isArray(active) ? active.filter((item): item is string => typeof item === "string") : fallback;
 }
 
-function taskTileOffer(root: string, phase: KernelPhase): Record<string, unknown> {
+function taskTileOffer(
+  root: string,
+  taskId: string,
+  phase: KernelPhase,
+  revision: number,
+): Record<string, unknown> {
   try {
-    const prepared = prepareSelectedTaskBatch2TileSelection(
-      root,
-      taskTileSelectionRequest(phase),
-    );
+    const prepared = prepareSelectedTaskAgentTileSelection(root, { taskId, phase, revision });
     if (!prepared.success) {
       const receipt = "receipt" in prepared ? prepared.receipt : undefined;
       return {
@@ -141,8 +142,10 @@ export function compileSessionPack(root: string, factGap = false): Record<string
   }
   const contracts = kept.filter((item) => item.kind === "contract");
   const artifacts = kept.filter((item) => item.kind === "artifact");
-  const tileSelection = dir && selected && !stale
-    ? taskTileOffer(root, phase)
+  const taskId = v2?.identity.taskId ?? snapshot?.identity.taskId ?? (typeof legacyRecord?.id === "string" ? legacyRecord.id : null);
+  const revision = v2?.revision ?? snapshot?.revision ?? 0;
+  const tileSelection = dir && selected && !stale && taskId
+    ? taskTileOffer(root, taskId, phase, revision)
     : null;
   const stuck = stale || condition === "blocked";
   const v2Next: Record<KernelPhase, string> = {

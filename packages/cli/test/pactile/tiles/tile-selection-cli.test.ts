@@ -12,6 +12,10 @@ import { readTaskKernel } from "../../../src/core/task/index.js";
 import { runContextCli } from "../../../src/commands/context.js";
 import { runTaskCli } from "../../../src/commands/task.js";
 import { runTileSelectionCli } from "../../../src/commands/tile-selection.js";
+import { buildTileCatalog } from "../../../src/pactile/tiles/catalog.js";
+import { tileFingerprint } from "../../../src/pactile/tiles/loader.js";
+import { loadBatch2TileCatalog } from "../../../src/pactile/registry.js";
+import { replayTileSelectionSnapshot } from "../../../src/pactile/tiles/selection-receipts.js";
 import { selectTask } from "../../../src/pactile/task/session.js";
 import { BASELINE_TILE_IDS } from "../../../src/pactile/tiles/content/baseline/index.js";
 import { ONDEMAND_TILE_IDS } from "../../../src/pactile/tiles/content/ondemand/index.js";
@@ -60,13 +64,14 @@ describe("current Task tile-selection CLI", () => {
     expect(prepared).not.toHaveProperty("audit");
     expect(offer.candidates.some((candidate) => candidate.ref === "define-extended@1.0.0")).toBe(true);
 
-    expect(runTileSelectionCli([
+    const decideExitCode = runTileSelectionCli([
       "decide",
       "--offer-fingerprint", offer.fingerprint,
       "--kind", "adopt",
       "--intent", "structural",
       "--output", "task.design",
-    ], root)).toBe(0);
+    ], root);
+    expect(decideExitCode, JSON.stringify(lastJson(spy))).toBe(0);
     const decided = lastJson(spy);
     expect(decided).toMatchObject({ success: true, executionAuthorization: "not-granted" });
     const receipt = decided.receipt as Record<string, unknown>;
@@ -78,12 +83,38 @@ describe("current Task tile-selection CLI", () => {
     const persisted = fs.readFileSync(snapshotPath, "utf8");
     expect(persisted).not.toContain(root);
     expect(persisted).not.toContain("audit");
-    expect(runTileSelectionCli(["replay", "--snapshot-fingerprint", snapshot.fingerprint], root)).toBe(0);
+    expect(persisted).not.toContain("catalogEntries");
+    expect(persisted).not.toContain("skillText");
+    expect(persisted).not.toContain("worker-orchestration");
+    expect(JSON.parse(persisted)).toMatchObject({ schemaVersion: 2 });
+    const replayExitCode = runTileSelectionCli(["replay", "--snapshot-fingerprint", snapshot.fingerprint], root);
+    expect(replayExitCode, JSON.stringify(lastJson(spy))).toBe(0);
     const replayed = lastJson(spy);
     expect(replayed).toMatchObject({ success: true, data: { offerFingerprint: offer.fingerprint, receipt } });
     const replayOffer = (replayed.data as { offer: { fingerprint: string; candidates: { ref: string }[] } }).offer;
     expect(replayOffer.fingerprint).toBe(offer.fingerprint);
     expect(replayOffer.candidates.some((candidate) => candidate.ref === "define-extended@1.0.0")).toBe(true);
+
+    const currentCatalog = loadBatch2TileCatalog();
+    expect(currentCatalog.success).toBe(true);
+    if (!currentCatalog.success) throw new Error(JSON.stringify(currentCatalog.diagnostics));
+    const changedEntries = currentCatalog.data.entries.map((entry, index) => index === 0
+      ? { ...entry, skillText: `${entry.skillText}\nHistorical catalog mismatch test.` }
+      : entry);
+    const changedEntry = changedEntries[0];
+    if (!changedEntry) throw new Error("expected a bundled Tile entry");
+    changedEntries[0] = {
+      ...changedEntry,
+      fingerprint: tileFingerprint(changedEntry.manifest, changedEntry.skillText),
+    };
+    const changedCatalog = buildTileCatalog(changedEntries);
+    expect(changedCatalog.success).toBe(true);
+    if (!changedCatalog.success) throw new Error(JSON.stringify(changedCatalog.diagnostics));
+    const historicalReplay = replayTileSelectionSnapshot(root, snapshot.fingerprint, changedCatalog.data);
+    expect(historicalReplay).toMatchObject({
+      success: false,
+      diagnostics: [{ code: "tile-selection-snapshot-historical-catalog-unavailable" }],
+    });
 
     expect(runTileSelectionCli([
       "decide",
@@ -132,6 +163,41 @@ describe("current Task tile-selection CLI", () => {
       "--output", "task.design",
     ], root)).toBe(0);
     expect(lastJson(spy)).toMatchObject({ success: true, receipt: { decision: "invalid", outcome: "invalid-selection" } });
+  });
+
+  it("does not reveal the identity of a hard-filtered Tile for full or short override refs", () => {
+    const root = selectedTaskRoot();
+    const spy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(runTileSelectionCli(["prepare", "--intent", "structural", "--output", "task.design"], root)).toBe(0);
+    const offer = lastJson(spy).offer as { fingerprint: string };
+
+    for (const hiddenRef of ["worker-orchestration@1.0.0", "worker-orchestration"]) {
+      expect(runTileSelectionCli([
+        "decide",
+        "--offer-fingerprint", offer.fingerprint,
+        "--kind", "override",
+        "--intent", "structural",
+        "--output", "task.design",
+        "--tile", hiddenRef,
+      ], root)).toBe(0);
+      const result = lastJson(spy);
+      expect(result).toMatchObject({
+        success: true,
+        receipt: {
+          outcome: "invalid-selection",
+          selectedRefs: [],
+          invalidReferenceCount: 1,
+          diagnostics: [{ code: "tile-missing-reference", tileRef: null, relatedRef: null }],
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain("worker-orchestration");
+      const snapshot = result.snapshot as { fingerprint: string; fileName: string };
+      const persisted = fs.readFileSync(path.join(root, ".pactile", "runtime", "receipts", snapshot.fileName), "utf8");
+      expect(persisted).not.toContain("worker-orchestration");
+      expect(persisted).not.toContain(hiddenRef);
+      expect(runTileSelectionCli(["replay", "--snapshot-fingerprint", snapshot.fingerprint], root)).toBe(0);
+      expect(JSON.stringify(lastJson(spy))).not.toContain("worker-orchestration");
+    }
   });
 
   it("offers Tile candidates through the V2 session path and binds elevated grants to the approved active Run", () => {
@@ -188,6 +254,27 @@ describe("current Task tile-selection CLI", () => {
     expect(active.kernel.phase).toBe("execute");
     expect(active.kernel.condition).toBe("active");
 
+    expect(runContextCli(["--mode", "session", "--json"], root)).toBe(0);
+    const activeSession = JSON.parse(String(log.mock.lastCall?.[0])) as {
+      kernel: { phase: string; revision: number };
+      tileSelection: {
+        status: string;
+        offer?: {
+          taskLifecycle: { phase: string; revision: number; selectionGrant: { source: string } };
+          candidates: { ref: string }[];
+        };
+      };
+    };
+    expect(activeSession.kernel).toMatchObject({ phase: "execute", revision: active.kernel.revision });
+    expect(activeSession.tileSelection.status).toBe("offered");
+    expect(activeSession.tileSelection.offer?.taskLifecycle).toMatchObject({
+      phase: "execute",
+      revision: active.kernel.revision,
+      selectionGrant: { source: "task-kernel-approval-snapshot" },
+    });
+    expect(activeSession.tileSelection.offer?.candidates.some((candidate) => candidate.ref === "worker-orchestration@1.0.0")).toBe(true);
+    expect(JSON.stringify(activeSession.tileSelection)).not.toContain("audit");
+
     const requestFile = path.join(root, "tile-request.json");
     fs.writeFileSync(requestFile, JSON.stringify({
       intent: "structural", requiredOutputs: ["worker.handoff"],
@@ -230,6 +317,19 @@ describe("current Task tile-selection CLI", () => {
       phase: "verify", selectionGrant: { source: "safe-default", assurance: "no-grant" },
     });
     expect(completedRunOffer.candidates.some((candidate) => candidate.ref === "worker-orchestration@1.0.0")).toBe(false);
+
+    expect(runContextCli(["--mode", "session", "--json"], root)).toBe(0);
+    const completedSession = JSON.parse(String(log.mock.lastCall?.[0])) as {
+      kernel: { phase: string; revision: number };
+      tileSelection: { status: string; offer?: { taskLifecycle: { phase: string; revision: number; selectionGrant: { source: string } }; candidates: { ref: string }[] } };
+    };
+    expect(completedSession.kernel.phase).toBe("verify");
+    expect(completedSession.tileSelection.offer?.taskLifecycle).toMatchObject({
+      phase: "verify",
+      revision: completedSession.kernel.revision,
+      selectionGrant: { source: "safe-default" },
+    });
+    expect(completedSession.tileSelection.offer?.candidates.some((candidate) => candidate.ref === "worker-orchestration@1.0.0")).toBe(false);
   });
 });
 

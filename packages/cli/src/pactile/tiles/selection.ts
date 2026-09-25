@@ -491,6 +491,30 @@ function normalizeRequest(
   };
 }
 
+/** Canonical request validation without requiring a full catalog fact table. */
+export function normalizeTileSelectionRequest(
+  catalog: TileCatalog,
+  request: TileSelectionRequest,
+): TileResult<TileSelectionRequest> {
+  const checked = buildTileCatalog(catalog.entries);
+  if (!checked.success) return checked;
+  const normalized = normalizeRequest(checked.data, request);
+  if (!normalized.success) return normalized;
+  const value = normalized.data;
+  return {
+    success: true,
+    data: {
+      intent: value.intent,
+      requiredOutputs: value.requiredOutputs,
+      policyCeiling: value.policyCeiling,
+      capabilities: value.capabilities,
+      providerFacts: value.providerFacts,
+      channel: value.channel,
+      ...(value.taskLifecycle ? { taskLifecycle: value.taskLifecycle } : {}),
+    },
+  };
+}
+
 function validateSelectionFacts(
   catalog: TileCatalog,
   facts: readonly TileSelectionFact[],
@@ -533,20 +557,12 @@ export function normalizeTileSelectionReplayInput(
   if (!normalized.success) return normalized;
   const validatedFacts = validateSelectionFacts(checked.data, facts);
   if (!validatedFacts.success) return validatedFacts;
-  const value = normalized.data;
-  const normalizedRequest: TileSelectionRequest = {
-    intent: value.intent,
-    requiredOutputs: value.requiredOutputs,
-    policyCeiling: value.policyCeiling,
-    capabilities: value.capabilities,
-    providerFacts: value.providerFacts,
-    channel: value.channel,
-    ...(value.taskLifecycle ? { taskLifecycle: value.taskLifecycle } : {}),
-  };
+  const normalizedRequest = normalizeTileSelectionRequest(checked.data, request);
+  if (!normalizedRequest.success) return normalizedRequest;
   return {
     success: true,
     data: {
-      request: normalizedRequest,
+      request: normalizedRequest.data,
       facts: [...validatedFacts.data.values()].sort((left, right) => compareTileRefs(left.ref, right.ref)),
     },
   };
@@ -845,6 +861,7 @@ export function prepareTileSelection(
     compareTileRefs(left.candidate.ref, right.candidate.ref),
   );
   const suggestion = buildSuggestion(checked.data, normalized.data, eligible);
+  const eligibleIds = new Set(eligible.map((item) => item.candidate.ref.slice(0, item.candidate.ref.lastIndexOf("@"))));
   const offerContent = {
     schemaVersion: TILE_SELECTION_SCHEMA_VERSION,
     compilerAbiVersion: TILE_COMPILER_ABI_VERSION,
@@ -854,7 +871,10 @@ export function prepareTileSelection(
     channel: normalized.data.channel,
     requiredOutputs: normalized.data.requiredOutputs,
     taskLifecycle: normalized.data.taskLifecycle,
-    candidates: eligible.map((item) => item.candidate),
+    candidates: eligible.map((item) => ({
+      ...item.candidate,
+      conflicts: item.candidate.conflicts.filter((id) => eligibleIds.has(id)),
+    })),
     suggestion,
   };
   return {
@@ -876,7 +896,6 @@ interface NormalizedAttempt {
 }
 
 function normalizeAttempt(
-  catalog: TileCatalog,
   candidateRefs: ReadonlySet<string>,
   values: readonly string[] | undefined,
   required: boolean,
@@ -902,7 +921,7 @@ function normalizeAttempt(
       diagnostics.push(diagnostic("tile-invalid-caller-reference", null, null, `$.selectedRefs[${index}]`));
       continue;
     }
-    const resolved = resolveSelectionRef(catalog, reference);
+    const resolved = resolveCandidateSelectionRef(candidateRefs, reference);
     if (!resolved) {
       invalidReferenceCount += 1;
       diagnostics.push(diagnostic("tile-missing-reference", null, null, `$.selectedRefs[${index}]`));
@@ -923,20 +942,20 @@ function normalizeAttempt(
   };
 }
 
-function resolveSelectionRef(catalog: TileCatalog, reference: string): string | null {
-  const matches = catalog.entries.filter((entry) =>
+function resolveCandidateSelectionRef(candidateRefs: ReadonlySet<string>, reference: string): string | null {
+  const matches = [...candidateRefs].filter((candidateRef) =>
     reference.includes("@")
-      ? entry.ref === reference
-      : entry.manifest.identity.id === reference,
+      ? candidateRef === reference
+      : candidateRef.slice(0, candidateRef.lastIndexOf("@")) === reference,
   );
-  return matches.length === 1 ? matches[0].ref : null;
+  return matches.length === 1 ? matches[0] : null;
 }
 
 function redactedMissingReference(
-  catalog: TileCatalog,
+  candidateRefs: ReadonlySet<string>,
   index: number,
 ): string {
-  const ids = new Set(catalog.entries.map((entry) => entry.manifest.identity.id));
+  const ids = new Set([...candidateRefs].map((ref) => ref.slice(0, ref.lastIndexOf("@"))));
   let suffix = index;
   let candidate = `pactile-redacted-ref-${suffix}`;
   while (ids.has(candidate)) candidate = `pactile-redacted-ref-${++suffix}`;
@@ -944,39 +963,34 @@ function redactedMissingReference(
 }
 
 function sanitizeDecisionReferences(
-  catalog: TileCatalog,
+  candidateRefs: ReadonlySet<string>,
   values: readonly string[] | undefined,
 ): readonly string[] | undefined {
   if (values === undefined) return undefined;
   if (!Array.isArray(values)) return undefined;
   if (values.length > MAX_TILE_SELECTION_REFERENCES)
     return Array.from({ length: MAX_TILE_SELECTION_REFERENCES + 1 }, (_, index) =>
-      redactedMissingReference(catalog, index),
+      redactedMissingReference(candidateRefs, index),
     );
   return values.map((value, index) => {
     if (typeof value !== "string" || !isCanonicalTileCallerReference(value, true))
       return "<redacted-invalid-ref>";
-    return resolveSelectionRef(catalog, value) ? value : redactedMissingReference(catalog, index);
+    return resolveCandidateSelectionRef(candidateRefs, value) ? value : redactedMissingReference(candidateRefs, index);
   });
 }
 
-/** Redact unknown caller strings while preserving the exact safe decision receipt. */
-export function sanitizeTileSelectionDecisionForReplay(
-  catalog: TileCatalog,
-  request: TileSelectionRequest,
-  facts: readonly TileSelectionFact[],
+/** Redact caller strings using only references already present in the offer. */
+export function sanitizeTileSelectionDecisionForOffer(
+  offer: TileSelectionOffer,
   decision: TileSelectionDecision,
 ): TileResult<TileSelectionDecision> {
   if (!isRecord(decision) || typeof decision.offerFingerprint !== "string")
     return failure("tile-selection-replay-decision-invalid");
   const isKnownKind = decision.kind === "adopt" || decision.kind === "override" || decision.kind === "no-match";
   const kind: TileSelectionDecision["kind"] = isKnownKind ? decision.kind : "invalid";
-  const plan = prepareTileSelection(catalog, request, facts);
-  if (!plan.success) return plan;
-  const checked = buildTileCatalog(catalog.entries);
-  if (!checked.success) return checked;
+  const candidateRefs = new Set(offer.candidates.map((candidate) => candidate.ref));
   const knownFingerprint = /^sha256:[a-f0-9]{64}$/.test(decision.offerFingerprint);
-  const alternateFingerprint = plan.data.offer.fingerprint === `sha256:${"0".repeat(64)}`
+  const alternateFingerprint = offer.fingerprint === `sha256:${"0".repeat(64)}`
     ? `sha256:${"1".repeat(64)}`
     : `sha256:${"0".repeat(64)}`;
   const safeDecision: TileSelectionDecision = {
@@ -986,20 +1000,36 @@ export function sanitizeTileSelectionDecisionForReplay(
       ? {
           selectedRefs: kind === "adopt"
             ? []
-            : sanitizeDecisionReferences(checked.data, decision.selectedRefs),
+            : sanitizeDecisionReferences(candidateRefs, decision.selectedRefs),
         }
       : {}),
     ...(isKnownKind && decision.priorAttemptRefs !== undefined
-      ? { priorAttemptRefs: sanitizeDecisionReferences(checked.data, decision.priorAttemptRefs) }
+      ? { priorAttemptRefs: sanitizeDecisionReferences(candidateRefs, decision.priorAttemptRefs) }
       : {}),
   };
+  return { success: true, data: safeDecision };
+}
+
+/** Redact invalid refs before comparing current-input replay receipts. */
+export function sanitizeTileSelectionDecisionForReplay(
+  catalog: TileCatalog,
+  request: TileSelectionRequest,
+  facts: readonly TileSelectionFact[],
+  decision: TileSelectionDecision,
+): TileResult<TileSelectionDecision> {
+  if (!isRecord(decision) || typeof decision.offerFingerprint !== "string")
+    return failure("tile-selection-replay-decision-invalid");
+  const plan = prepareTileSelection(catalog, request, facts);
+  if (!plan.success) return plan;
+  const safeDecision = sanitizeTileSelectionDecisionForOffer(plan.data.offer, decision);
+  if (!safeDecision.success) return safeDecision;
   const original = decideTileSelection(catalog, request, facts, decision);
   if (!original.success) return original;
-  const sanitized = decideTileSelection(catalog, request, facts, safeDecision);
+  const sanitized = decideTileSelection(catalog, request, facts, safeDecision.data);
   if (!sanitized.success) return sanitized;
   if (original.data.fingerprint !== sanitized.data.fingerprint)
     return failure("tile-selection-replay-redaction-mismatch");
-  return { success: true, data: safeDecision };
+  return safeDecision;
 }
 
 function outputCoverageForComposition(
@@ -1053,23 +1083,13 @@ function receiptFingerprint(
   return fingerprintPactileContractV1(receipt);
 }
 
-/**
- * Produce a replayable decision result. Adoption and override both re-run the
- * compiler; overrides can change the suggestion but cannot bypass its checks.
- */
-export function decideTileSelection(
-  catalog: TileCatalog,
-  request: TileSelectionRequest,
-  facts: readonly TileSelectionFact[],
+function decideTileSelectionAgainstOffer(
+  checked: TileCatalog,
+  normalized: NormalizedRequest,
+  offer: TileSelectionOffer,
   decision: TileSelectionDecision,
 ): TileResult<TileSelectionDecisionReceipt> {
-  const plan = prepareTileSelection(catalog, request, facts);
-  if (!plan.success) return plan;
-  const checked = buildTileCatalog(catalog.entries);
-  if (!checked.success) return checked;
-  const normalized = normalizeRequest(checked.data, request);
-  if (!normalized.success) return normalized;
-  const candidates = new Set(plan.data.offer.candidates.map((candidate) => candidate.ref));
+  const candidates = new Set(offer.candidates.map((candidate) => candidate.ref));
   const diagnostics: TileDiagnostic[] = [];
   const decisionRecord = isRecord(decision) ? decision : null;
   const decisionKind = decisionRecord?.kind;
@@ -1088,23 +1108,23 @@ export function decideTileSelection(
   let compositionFingerprint: string | null = null;
   let expandedSelection: readonly string[] = [];
   let coveredOutputs: readonly string[] = [];
-  let missingOutputs: readonly string[] = [...normalized.data.requiredOutputs];
+  let missingOutputs: readonly string[] = [...normalized.requiredOutputs];
   let priorAttempt: TileSelectionAttemptReceipt | null = null;
   let outcome: TileSelectionOutcome;
 
   if (!decisionIsValid || typeof decisionRecord?.offerFingerprint !== "string") {
     diagnostics.push(diagnostic("tile-selection-invalid-decision", null));
     outcome = "invalid-selection";
-  } else if (decisionRecord.offerFingerprint !== plan.data.offer.fingerprint) {
+  } else if (decisionRecord.offerFingerprint !== offer.fingerprint) {
     diagnostics.push(diagnostic("tile-selection-stale-offer", null));
     outcome = "stale-offer";
   } else {
     const decisionValue = decisionRecord as unknown as TileSelectionDecision;
     if (decisionValue.priorAttemptRefs !== undefined) {
-      const attempt = normalizeAttempt(checked.data, candidates, decisionValue.priorAttemptRefs, true);
+      const attempt = normalizeAttempt(candidates, decisionValue.priorAttemptRefs, true);
       priorAttempt = makeAttemptReceipt(
-        checked.data,
-        normalized.data,
+        checked,
+        normalized,
         attempt.refs,
         attempt.invalidReferenceCount,
         attempt.diagnostics,
@@ -1114,22 +1134,17 @@ export function decideTileSelection(
 
     if (decisionKind === "no-match") {
       if (decisionValue.selectedRefs !== undefined) {
-        const attemptedSelection = normalizeAttempt(
-          checked.data,
-          candidates,
-          decisionValue.selectedRefs,
-          false,
-        );
+        const attemptedSelection = normalizeAttempt(candidates, decisionValue.selectedRefs, false);
         if (attemptedSelection.refs.length || attemptedSelection.diagnostics.length || attemptedSelection.invalidReferenceCount) {
           diagnostics.push(diagnostic("tile-no-match-has-selection", null));
           outcome = "invalid-selection";
         } else outcome = "no-match";
       } else outcome = "no-match";
     } else if (decisionKind === "adopt") {
-      selectedRefs = plan.data.offer.suggestion.selectedRefs;
-      if (!plan.data.offer.suggestion.complete) {
+      selectedRefs = offer.suggestion.selectedRefs;
+      if (!offer.suggestion.complete) {
         selectedRefs = [];
-        if (plan.data.offer.suggestion.searchStatus === "budget-exhausted") {
+        if (offer.suggestion.searchStatus === "budget-exhausted") {
           diagnostics.push(diagnostic("tile-selection-search-budget-exhausted", null));
           outcome = "search-incomplete";
         } else {
@@ -1141,7 +1156,7 @@ export function decideTileSelection(
         outcome = "invalid-selection";
       } else outcome = "selected";
     } else {
-      const attempt = normalizeAttempt(checked.data, candidates, decisionValue.selectedRefs, true);
+      const attempt = normalizeAttempt(candidates, decisionValue.selectedRefs, true);
       selectedRefs = attempt.refs;
       invalidReferenceCount = attempt.invalidReferenceCount;
       diagnostics.push(...attempt.diagnostics);
@@ -1151,8 +1166,8 @@ export function decideTileSelection(
 
     if (outcome === "selected" || outcome === "overridden") {
       const compiled = compileTileComposition(
-        checked.data,
-        compilerRequest(normalized.data, selectedRefs),
+        checked,
+        compilerRequest(normalized, selectedRefs),
       );
       if (!compiled.success) {
         diagnostics.push(...compiled.diagnostics);
@@ -1162,8 +1177,8 @@ export function decideTileSelection(
         compositionFingerprint = compiled.data.fingerprint;
         expandedSelection = compiled.data.expandedSelection;
         const resultCoverage = outputCoverageForComposition(
-          checked.data,
-          normalized.data.requiredOutputs,
+          checked,
+          normalized.requiredOutputs,
           compiled.data.expandedSelection,
         );
         coveredOutputs = resultCoverage.covered;
@@ -1176,9 +1191,9 @@ export function decideTileSelection(
   const normalizedDiagnostics = sortTileDiagnostics(diagnostics);
   const receiptBody: Omit<TileSelectionDecisionReceipt, "fingerprint"> = {
     schemaVersion: TILE_SELECTION_SCHEMA_VERSION,
-    catalogFingerprint: checked.data.fingerprint,
-    inputFingerprint: plan.data.offer.inputFingerprint,
-    offerFingerprint: plan.data.offer.fingerprint,
+    catalogFingerprint: checked.fingerprint,
+    inputFingerprint: offer.inputFingerprint,
+    offerFingerprint: offer.fingerprint,
     decision: safeDecisionKind,
     outcome,
     selectedRefs,
@@ -1188,7 +1203,7 @@ export function decideTileSelection(
     compositionFingerprint,
     coveredOutputs,
     missingOutputs,
-    taskLifecycle: normalized.data.taskLifecycle,
+    taskLifecycle: normalized.taskLifecycle,
     diagnostics: normalizedDiagnostics,
     priorAttempt,
   };
@@ -1196,6 +1211,180 @@ export function decideTileSelection(
     success: true,
     data: { ...receiptBody, fingerprint: receiptFingerprint(receiptBody) },
   };
+}
+
+function sameSelectionValue(left: unknown, right: unknown): boolean {
+  return fingerprintPactileContractV1(left) === fingerprintPactileContractV1(right);
+}
+
+function validateHistoricalOffer(
+  catalog: TileCatalog,
+  request: NormalizedRequest,
+  offer: TileSelectionOffer,
+  candidateFacts: readonly TileSelectionFact[],
+): TileResult<true> {
+  if (!isRecord(offer) || !Array.isArray(offer.candidates) || offer.candidates.length > catalog.entries.length)
+    return failure("tile-selection-snapshot-offer-invalid");
+  const { fingerprint, ...offerContent } = offer;
+  if (
+    offer.schemaVersion !== TILE_SELECTION_SCHEMA_VERSION ||
+    offer.compilerAbiVersion !== TILE_COMPILER_ABI_VERSION ||
+    offer.catalogFingerprint !== catalog.fingerprint ||
+    !/^sha256:[a-f0-9]{64}$/.test(offer.inputFingerprint) ||
+    typeof fingerprint !== "string" ||
+    fingerprintPactileContractV1(offerContent) !== fingerprint ||
+    offer.intent !== request.intent ||
+    offer.channel !== request.channel ||
+    !sameSelectionValue(offer.requiredOutputs, request.requiredOutputs) ||
+    !sameSelectionValue(offer.taskLifecycle, request.taskLifecycle)
+  )
+    return failure("tile-selection-snapshot-offer-mismatch");
+
+  const catalogByRef = new Map(catalog.entries.map((entry) => [entry.ref, entry]));
+  const candidateRefs = new Set<string>();
+  for (const candidate of offer.candidates) {
+    if (!isRecord(candidate) || typeof candidate.ref !== "string" || candidateRefs.has(candidate.ref))
+      return failure("tile-selection-snapshot-offer-invalid");
+    candidateRefs.add(candidate.ref);
+  }
+  const eligibleIds = new Set([...candidateRefs].map((ref) => ref.slice(0, ref.lastIndexOf("@"))));
+  const factsByRef = new Map<string, TileSelectionFact>();
+  const requiredFactRefs = new Set<string>();
+  for (const candidate of offer.candidates) {
+    requiredFactRefs.add(candidate.ref);
+    if (!Array.isArray(candidate.dependencyClosure))
+      return failure("tile-selection-snapshot-offer-invalid");
+    for (const ref of candidate.dependencyClosure) {
+      if (typeof ref !== "string" || !catalogByRef.has(ref))
+        return failure("tile-selection-snapshot-offer-invalid");
+      requiredFactRefs.add(ref);
+    }
+  }
+  if (!Array.isArray(candidateFacts) || candidateFacts.length !== requiredFactRefs.size)
+    return failure("tile-selection-snapshot-input-mismatch");
+  for (const fact of candidateFacts) {
+    if (
+      !isRecord(fact) ||
+      typeof fact.ref !== "string" ||
+      !requiredFactRefs.has(fact.ref) ||
+      (fact.tier !== "baseline" && fact.tier !== "on-demand") ||
+      !["active", "registered", "deprecated", "disabled", "retired", "degraded"].includes(String(fact.lifecycle)) ||
+      factsByRef.has(fact.ref)
+    )
+      return failure("tile-selection-snapshot-input-mismatch");
+    factsByRef.set(fact.ref, fact as unknown as TileSelectionFact);
+  }
+  if ([...requiredFactRefs].some((ref) => !factsByRef.has(ref)))
+    return failure("tile-selection-snapshot-input-mismatch");
+  const lifecycle = request.taskLifecycle;
+  if (lifecycle && (lifecycle.outcome !== null || (lifecycle.condition !== "ready" && lifecycle.condition !== "active")))
+    return failure("tile-selection-snapshot-offer-invalid");
+
+  const eligible: EligibleCandidate[] = [];
+  for (const candidate of offer.candidates) {
+    const entry = catalogByRef.get(candidate.ref);
+    const fact = factsByRef.get(candidate.ref);
+    if (!entry || !fact || !isSelectableLifecycle(fact) || fact.tier !== candidate.tier || fact.lifecycle !== candidate.lifecycle)
+      return failure("tile-selection-snapshot-offer-invalid");
+    const manifest = entry.manifest;
+    if (
+      (lifecycle && !tileAllowedInTaskPhase(manifest.identity.id, fact.tier, lifecycle.phase)) ||
+      !manifest.trigger.intents.includes(request.intent) ||
+      !channelAllows(manifest.trigger.mode, request.channel)
+    )
+      return failure("tile-selection-snapshot-offer-invalid");
+    const closure = expandTileSelection(catalog.entries, [entry.ref]);
+    if (!closure.success || conflictDiagnostics(closure.data).length)
+      return failure("tile-selection-snapshot-offer-invalid");
+    if (closure.data.some((dependency) => {
+      const dependencyFact = factsByRef.get(dependency.ref);
+      return !dependencyFact || !isSelectableLifecycle(dependencyFact) ||
+        !policyWithinCeilingV1(tilePolicyCeilingV1(dependency.manifest), request.policyCeiling);
+    }))
+      return failure("tile-selection-snapshot-offer-invalid");
+    const compiled = compileTileComposition(catalog, compilerRequest(request, [entry.ref]));
+    if (!compiled.success)
+      return failure("tile-selection-snapshot-offer-invalid");
+    const outputs = compositionOutputs(catalog, compiled.data.expandedSelection);
+    const matches = coverage(request.requiredOutputs, outputs).covered;
+    const expectedCandidate: TileSelectionCandidate = {
+      ref: entry.ref,
+      tier: fact.tier,
+      lifecycle: fact.lifecycle,
+      summary: manifest.summary,
+      trigger: manifest.trigger,
+      inputs: manifest.inputs,
+      outputs: manifest.outputs,
+      dependencies: manifest.dependencies,
+      conflicts: manifest.conflicts.filter((id) => eligibleIds.has(id)),
+      dependencyClosure: compiled.data.expandedSelection,
+      minimumAssurance: compiled.data.minimumAssurance,
+      fingerprint: entry.fingerprint,
+      outputScore: matches.length,
+      explanations: [
+        "intent-match",
+        "channel-allowed",
+        fact.lifecycle === "registered" ? "lifecycle-registered" : "lifecycle-active",
+        ...(lifecycle ? ["task-lifecycle-actionable"] : []),
+        "dependencies-available",
+        "permissions-within-ceiling",
+        "conflict-free",
+        "compiler-valid",
+        ...(matches.length ? ["required-output-match"] : []),
+      ],
+    };
+    if (!sameSelectionValue(candidate, expectedCandidate))
+      return failure("tile-selection-snapshot-offer-invalid");
+    eligible.push({ candidate: expectedCandidate, outputs });
+  }
+  eligible.sort((left, right) =>
+    right.candidate.outputScore - left.candidate.outputScore ||
+    left.candidate.dependencyClosure.length - right.candidate.dependencyClosure.length ||
+    TIER_ORDER[left.candidate.tier] - TIER_ORDER[right.candidate.tier] ||
+    compareTileRefs(left.candidate.ref, right.candidate.ref),
+  );
+  if (!sameSelectionValue(offer.candidates, eligible.map((item) => item.candidate)))
+    return failure("tile-selection-snapshot-offer-invalid");
+  const expectedSuggestion = buildSuggestion(catalog, request, eligible);
+  if (!sameSelectionValue(offer.suggestion, expectedSuggestion))
+    return failure("tile-selection-snapshot-offer-invalid");
+  return { success: true, data: true };
+}
+
+/** Re-run a historical decision from a filtered Offer and the matching catalog version. */
+export function replayTileSelectionDecisionFromOffer(
+  sourceCatalog: TileCatalog,
+  request: TileSelectionRequest,
+  offer: TileSelectionOffer,
+  candidateFacts: readonly TileSelectionFact[],
+  decision: TileSelectionDecision,
+): TileResult<TileSelectionDecisionReceipt> {
+  const checked = buildTileCatalog(sourceCatalog.entries);
+  if (!checked.success) return checked;
+  const normalized = normalizeRequest(checked.data, request);
+  if (!normalized.success) return normalized;
+  const validatedOffer = validateHistoricalOffer(checked.data, normalized.data, offer, candidateFacts);
+  if (!validatedOffer.success) return validatedOffer;
+  return decideTileSelectionAgainstOffer(checked.data, normalized.data, offer, decision);
+}
+
+/**
+ * Produce a replayable decision result. Adoption and override both re-run the
+ * compiler; overrides can change the suggestion but cannot bypass its checks.
+ */
+export function decideTileSelection(
+  catalog: TileCatalog,
+  request: TileSelectionRequest,
+  facts: readonly TileSelectionFact[],
+  decision: TileSelectionDecision,
+): TileResult<TileSelectionDecisionReceipt> {
+  const plan = prepareTileSelection(catalog, request, facts);
+  if (!plan.success) return plan;
+  const checked = buildTileCatalog(catalog.entries);
+  if (!checked.success) return checked;
+  const normalized = normalizeRequest(checked.data, request);
+  if (!normalized.success) return normalized;
+  return decideTileSelectionAgainstOffer(checked.data, normalized.data, plan.data.offer, decision);
 }
 
 /** Recompute the same offer and decision receipt from their original inputs. */

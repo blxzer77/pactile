@@ -12,8 +12,11 @@ import {
 import { buildTileCatalog, type TileCatalog } from "./catalog.js";
 import {
   normalizeTileSelectionReplayInput,
+  normalizeTileSelectionRequest,
   prepareTileSelection,
   replayTileSelectionDecision,
+  replayTileSelectionDecisionFromOffer,
+  sanitizeTileSelectionDecisionForOffer,
   sanitizeTileSelectionDecisionForReplay,
   type TileSelectionDecision,
   type TileSelectionDecisionReceipt,
@@ -23,7 +26,7 @@ import {
 } from "./selection.js";
 import { TILE_COMPILER_ABI_VERSION, type TileDiagnostic } from "./loader.js";
 
-const TILE_SELECTION_SNAPSHOT_SCHEMA_VERSION = 1 as const;
+const TILE_SELECTION_SNAPSHOT_SCHEMA_VERSION = 2 as const;
 const TILE_SELECTION_SNAPSHOT_KIND = "pactile.tile-selection-replay" as const;
 const MAX_TILE_SELECTION_SNAPSHOT_BYTES = 4 * 1024 * 1024;
 
@@ -35,15 +38,15 @@ interface TileSelectionSnapshotBody {
   readonly scopeFingerprint: string;
   readonly taskId: string;
   readonly catalogFingerprint: string;
-  readonly catalogEntries: TileCatalog["entries"];
+  readonly offer: TileSelectionOffer;
   readonly request: TileSelectionRequest;
-  readonly facts: readonly TileSelectionFact[];
+  readonly candidateFacts: readonly TileSelectionFact[];
   readonly decision: TileSelectionDecision;
   readonly offerFingerprint: string;
   readonly receipt: TileSelectionDecisionReceipt;
 }
 
-export interface TileSelectionSnapshotV1 extends TileSelectionSnapshotBody {
+export interface TileSelectionSnapshotV2 extends TileSelectionSnapshotBody {
   readonly fingerprint: string;
 }
 
@@ -116,7 +119,7 @@ function ensureNoExistingConflict(target: string, expected: Buffer): boolean {
   }
 }
 
-function completeSnapshot(body: TileSelectionSnapshotBody): TileSelectionSnapshotV1 {
+function completeSnapshot(body: TileSelectionSnapshotBody): TileSelectionSnapshotV2 {
   return { ...body, fingerprint: fingerprintPactileContractV1(body) };
 }
 
@@ -177,6 +180,14 @@ export function writeTileSelectionSnapshot(
     if (!offer.success || offer.data.offer.fingerprint !== receipt.offerFingerprint)
       return failure("tile-selection-snapshot-offer-mismatch");
 
+    const offeredRefs = new Set(offer.data.offer.candidates.flatMap((candidate) => [
+      candidate.ref,
+      ...candidate.dependencyClosure,
+    ]));
+    const candidateFacts = normalized.data.facts.filter((fact) => offeredRefs.has(fact.ref));
+    if (candidateFacts.length !== offeredRefs.size)
+      return failure("tile-selection-snapshot-offer-mismatch");
+
     const body: TileSelectionSnapshotBody = {
       schemaVersion: TILE_SELECTION_SNAPSHOT_SCHEMA_VERSION,
       kind: TILE_SELECTION_SNAPSHOT_KIND,
@@ -185,9 +196,9 @@ export function writeTileSelectionSnapshot(
       scopeFingerprint: taskLifecycle.scopeFingerprint,
       taskId: taskLifecycle.taskId,
       catalogFingerprint: checkedCatalog.data.fingerprint,
-      catalogEntries: checkedCatalog.data.entries,
+      offer: offer.data.offer,
       request: normalized.data.request,
-      facts: normalized.data.facts,
+      candidateFacts,
       decision: safeDecision.data,
       offerFingerprint: receipt.offerFingerprint,
       receipt,
@@ -273,7 +284,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function readSnapshot(projectRoot: string, fingerprint: string): TileSelectionSnapshotResult<TileSelectionSnapshotV1> {
+function readSnapshot(projectRoot: string, fingerprint: string): TileSelectionSnapshotResult<TileSelectionSnapshotV2> {
   if (!/^sha256:[a-f0-9]{64}$/.test(fingerprint))
     return failure("tile-selection-snapshot-fingerprint-invalid");
   try {
@@ -295,7 +306,7 @@ function readSnapshot(projectRoot: string, fingerprint: string): TileSelectionSn
       parsed.projectFingerprint !== projectFingerprint(projectRoot)
     )
       return failure("tile-selection-snapshot-identity-mismatch");
-    return { success: true, data: parsed as unknown as TileSelectionSnapshotV1 };
+    return { success: true, data: parsed as unknown as TileSelectionSnapshotV2 };
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT")
       return failure("tile-selection-snapshot-not-found");
@@ -303,22 +314,20 @@ function readSnapshot(projectRoot: string, fingerprint: string): TileSelectionSn
   }
 }
 
-/** Replay from the persisted catalog and normalized inputs, independent of current Task state. */
+/** Replay against the matching installed catalog; the snapshot has no hidden manifests or Skill bodies. */
 export function replayTileSelectionSnapshot(
   projectRoot: string,
   fingerprint: string,
+  sourceCatalog: TileCatalog,
 ): TileSelectionSnapshotResult<ReplayedTileSelectionSnapshot> {
   const loaded = readSnapshot(projectRoot, fingerprint);
   if (!loaded.success) return loaded;
   const snapshot = loaded.data;
   try {
-    const catalog = buildTileCatalog(snapshot.catalogEntries);
-    if (
-      !catalog.success ||
-      catalog.data.fingerprint !== snapshot.catalogFingerprint ||
-      catalog.data.fingerprint !== snapshot.receipt.catalogFingerprint
-    )
-      return failure("tile-selection-snapshot-catalog-mismatch");
+    const catalog = buildTileCatalog(sourceCatalog.entries);
+    if (!catalog.success || catalog.data.fingerprint !== snapshot.catalogFingerprint ||
+      catalog.data.fingerprint !== snapshot.receipt.catalogFingerprint)
+      return failure("tile-selection-snapshot-historical-catalog-unavailable");
     const lifecycle = snapshot.request.taskLifecycle;
     if (
       lifecycle?.projectFingerprint !== snapshot.projectFingerprint ||
@@ -326,51 +335,36 @@ export function replayTileSelectionSnapshot(
       lifecycle.taskId !== snapshot.taskId
     )
       return failure("tile-selection-snapshot-task-scope-mismatch");
-    const normalized = normalizeTileSelectionReplayInput(
-      catalog.data,
-      snapshot.request,
-      snapshot.facts,
-    );
+    const normalized = normalizeTileSelectionRequest(catalog.data, snapshot.request);
     if (
       !normalized.success ||
-      !sameJson(normalized.data.request, snapshot.request) ||
-      !sameJson(normalized.data.facts, snapshot.facts)
+      !sameJson(normalized.data, snapshot.request) ||
+      !isRecord(snapshot.offer) ||
+      snapshot.offer.fingerprint !== snapshot.offerFingerprint ||
+      snapshot.offer.catalogFingerprint !== snapshot.catalogFingerprint ||
+      snapshot.offer.inputFingerprint !== snapshot.receipt.inputFingerprint ||
+      snapshot.receipt.offerFingerprint !== snapshot.offerFingerprint
     )
       return failure("tile-selection-snapshot-input-mismatch");
-    const safeDecision = sanitizeTileSelectionDecisionForReplay(
-      catalog.data,
-      normalized.data.request,
-      normalized.data.facts,
-      snapshot.decision,
-    );
+    const safeDecision = sanitizeTileSelectionDecisionForOffer(snapshot.offer, snapshot.decision);
     if (!safeDecision.success || !sameJson(safeDecision.data, snapshot.decision))
       return failure("tile-selection-snapshot-decision-mismatch");
-    const prepared = prepareTileSelection(
+    const replayed = replayTileSelectionDecisionFromOffer(
       catalog.data,
-      normalized.data.request,
-      normalized.data.facts,
-    );
-    const replayed = replayTileSelectionDecision(
-      catalog.data,
-      normalized.data.request,
-      normalized.data.facts,
+      normalized.data,
+      snapshot.offer,
+      snapshot.candidateFacts,
       snapshot.decision,
     );
-    if (
-      !prepared.success ||
-      !replayed.success ||
-      prepared.data.offer.fingerprint !== snapshot.offerFingerprint ||
-      prepared.data.offer.fingerprint !== snapshot.receipt.offerFingerprint ||
-      replayed.data.fingerprint !== snapshot.receipt.fingerprint ||
-      !sameJson(replayed.data, snapshot.receipt)
-    )
+    if (!replayed.success || replayed.data.fingerprint !== snapshot.receipt.fingerprint ||
+      !sameJson(replayed.data, snapshot.receipt))
       return failure("tile-selection-snapshot-replay-mismatch");
     return {
       success: true,
       data: {
         snapshotFingerprint: fingerprint,
-        offerFingerprint: prepared.data.offer.fingerprint,
-        offer: prepared.data.offer,
+        offerFingerprint: snapshot.offer.fingerprint,
+        offer: snapshot.offer,
         receipt: replayed.data,
       },
     };

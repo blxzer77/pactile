@@ -37,7 +37,7 @@ Bundled registry 将 Tile 明确分为**基础 Tile**与**按需 Tile**。两类
 
 已批准且运行中的 Task Run scope 可以携带版本化 Tile grant：`pactile-tile-selection/v1:` 加规范化 JSON，字段为 `schemaVersion`、`policyCeiling`、`capabilities` 和 `providerFacts`。grant 是权限上限；调用方 request 会与它取交集，因此调用方更严格的限制会保留，调用方不能扩大权限。没有有效记录的 grant 时，Task API 使用只读、本地、低成本上限，不带 capability 或 Provider。Kernel approval scope 是调用方声明的证据；选择回执会记录这种 assurance，但不会声称身份已验证。
 
-真实 Agent 宿主入口是 `pactile context --mode session --json`。存在选中 Task 时，它会调用当前 Task prepare API，只返回通过 Compiler 校验的 `tileSelection.offer`，不会把 `plan.audit` 或已过滤 Tile 的详情发送给 Agent。也可以直接用安全默认配置请求候选，然后按 offer fingerprint 决策：
+真实 Agent 宿主入口是 `pactile context --mode session --json`。存在选中 Task 时，它会按当前 Kernel phase 构造请求，只返回通过 Compiler 校验的 `tileSelection.offer`，不会把 `plan.audit` 或已过滤 Tile 的详情发送给 Agent。只有已批准且仍 active 的 V2 Run 才会按该 Run 记录的 Tile grant 放宽 session 请求上限。没有 grant、Run 尚未启动或 Run 已完成时，session 请求保持只读安全默认。CLI `pactile tile-selection prepare` 接收显式 request；Task grant 与调用方的 policy、capability、Provider facts 取交集，因此调用方可以收窄、不能扩大 grant。
 
 ```sh
 pactile tile-selection prepare --intent structural --output task.design
@@ -45,7 +45,7 @@ pactile tile-selection decide --offer-fingerprint <offer-fingerprint> --kind ado
 pactile tile-selection replay --snapshot-fingerprint <snapshot-fingerprint>
 ```
 
-`decide` 会把有界、只写一次的快照保存在 `.pactile/runtime/receipts/`。快照包含规范化 request、哈希后的项目/Task 身份、Kernel facts、不可变 bundled manifest 和 Skill 内容、Compiler ABI、原始决策及回执；不包含本机路径或 `plan.audit`。Provider evidence reference 在保存前会哈希。历史 replay 只读取该快照，重算并返回原候选 offer 与回执，不依赖可变的当前 Task 状态。选择决策不会激活 Tile、启动 Kernel Run 或授权执行；这些 gate 彼此独立。
+`decide` 会把有界、只写一次的 v2 快照保存在 `.pactile/runtime/receipts/`。快照包含规范化 request、哈希后的项目/Task 身份、过滤后的 Offer、仅针对已提供候选及其依赖闭包的事实、目录 fingerprint、Compiler ABI、规范化决策及回执。它不保存全量目录、Skill 正文、被过滤 Tile 详情、本机路径或 `plan.audit`。Provider evidence reference 在保存前会哈希。历史 replay 需要匹配的目录版本仍然可用；fingerprint 不一致时会以 `tile-selection-snapshot-historical-catalog-unavailable` 失败，不会把隐藏目录数据放进快照。Replay 会重新校验 Offer 并重跑 Compiler，以复核原回执，但不读取可变的当前 Task 状态。选择决策不会激活 Tile、启动 Kernel Run 或授权执行；这些 gate 彼此独立。
 
 已有 lifecycle facts 的调用方可以用 `loadBatch2TileSelectionSurface(lifecycleByRef)` 加载已校验的 bundled catalog 与显式事实，再调用纯接口 `prepareBatch2TileSelection(request, lifecycleByRef)`。候选构造随后会：
 

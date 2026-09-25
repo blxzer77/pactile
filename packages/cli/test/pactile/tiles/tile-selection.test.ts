@@ -440,6 +440,30 @@ describe("Tile candidate selection and decision receipts", () => {
     expect(replayStoredSelectedTaskBatch2TileSelectionDecision(root, invalidChoice.snapshot.fingerprint))
       .toMatchObject({ success: true, data: { receipt: invalidChoice.data } });
 
+    for (const hiddenRef of ["worker-orchestration@1.0.0", "worker-orchestration"]) {
+      const hiddenChoice = decideSelectedTaskBatch2TileSelection(root, taskRequest, {
+        kind: "override",
+        offerFingerprint: plan.data.offer.fingerprint,
+        selectedRefs: [hiddenRef],
+      }, env);
+      expect(hiddenChoice.success).toBe(true);
+      if (!hiddenChoice.success) throw new Error(JSON.stringify(hiddenChoice.diagnostics));
+      expect(hiddenChoice.data).toMatchObject({
+        outcome: "invalid-selection",
+        selectedRefs: [],
+        invalidReferenceCount: 1,
+        diagnostics: [{ code: "tile-missing-reference", tileRef: null, relatedRef: null }],
+      });
+      expect(JSON.stringify(hiddenChoice.data)).not.toContain("worker-orchestration");
+      const hiddenSnapshotPath = path.join(root, ".pactile", "runtime", "receipts", hiddenChoice.snapshot.fileName);
+      const hiddenSnapshot = fs.readFileSync(hiddenSnapshotPath, "utf8");
+      expect(hiddenSnapshot).not.toContain("worker-orchestration");
+      expect(hiddenSnapshot).not.toContain("catalogEntries");
+      expect(hiddenSnapshot).not.toContain("skillText");
+      expect(replayStoredSelectedTaskBatch2TileSelectionDecision(root, hiddenChoice.snapshot.fingerprint))
+        .toMatchObject({ success: true, data: { receipt: hiddenChoice.data } });
+    }
+
     const twinRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-tile-selection-twin-"));
     tempRoots.push(twinRoot);
     const twinTaskDir = path.join(twinRoot, ".pactile", "tasks", "p33-selection");

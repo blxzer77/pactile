@@ -52,6 +52,7 @@ import {
   normalizeTileSelectionReplayInput,
   prepareTileSelection,
   replayTileSelectionDecision,
+  taskTileSelectionRequest,
   type TileLifecycleState,
   type TileSelectionDecision,
   type TileSelectionDecisionReceipt,
@@ -702,6 +703,42 @@ export function prepareSelectedTaskBatch2TileSelection(
   );
 }
 
+/** Agent session profile: read-only default, widened only by a recorded active Run grant. */
+export function prepareSelectedTaskAgentTileSelection(
+  root: string,
+  expectedLifecycle: {
+    readonly taskId: string;
+    readonly phase: TileTaskLifecycleFact["phase"];
+    readonly revision: number;
+  },
+  env: NodeJS.ProcessEnv = process.env,
+): SelectedTaskTileSelectionResult<TileSelectionPlan> {
+  const surface = loadSelectedTaskTileSelectionSurface(root, env);
+  if (!surface.success) return surface;
+  // Session context is compiled from a Kernel read immediately before this
+  // call. If the selection, phase, or revision changed in between, avoid
+  // mixing facts from two Tasks or Kernel snapshots.
+  if (
+    surface.data.taskLifecycle.taskId !== expectedLifecycle.taskId ||
+    surface.data.taskLifecycle.phase !== expectedLifecycle.phase ||
+    surface.data.taskLifecycle.revision !== expectedLifecycle.revision
+  )
+    return taskLifecycleFailure("tile-selection-task-read-failed", surface.data.taskLifecycle);
+  const base = taskTileSelectionRequest(surface.data.taskLifecycle.phase);
+  const authority = surface.data.authority;
+  const request = authority.fact.source === "task-kernel-approval-snapshot"
+    ? {
+        ...base,
+        policyCeiling: authority.policyCeiling,
+        capabilities: authority.capabilities,
+        providerFacts: authority.providerFacts,
+      }
+    : base;
+  const effective = applyTaskSelectionAuthority(surface.data, request);
+  if (!effective.success) return effective;
+  return prepareTileSelection(surface.data.catalog, effective.data, surface.data.facts);
+}
+
 export function decideSelectedTaskBatch2TileSelection(
   root: string,
   request: Omit<TileSelectionRequest, "taskLifecycle">,
@@ -759,7 +796,9 @@ export function replayStoredSelectedTaskBatch2TileSelectionDecision(
   root: string,
   snapshotFingerprint: string,
 ): TileSelectionSnapshotResult<ReplayedTileSelectionSnapshot> {
-  return replayTileSelectionSnapshot(root, snapshotFingerprint);
+  const catalog = loadBatch2TileCatalog();
+  if (!catalog.success) return catalog;
+  return replayTileSelectionSnapshot(root, snapshotFingerprint, catalog.data);
 }
 
 export interface Batch2ComposeRequest {
