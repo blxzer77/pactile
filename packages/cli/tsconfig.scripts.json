@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "rootDir": ".",
+    // The scripts keep their runtime contracts; this project checks TypeScript
+    // semantics with relaxed implicit typing until their legacy APIs are narrowed.
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": ["scripts/**/*.ts"],
+  "exclude": ["node_modules", "dist", ".tmp"]
+}

@@ -6,9 +6,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "pactile": "./bin/pactile.js",
-    "cstl": "./bin/cstl.js",
-    "smart-search": "./bin/smart-search.js"
+    "pactile": "./dist/bin/pactile.js",
+    "cstl": "./dist/bin/cstl.js"
   },
   "exports": {
     "./package.json": "./package.json",
@@ -28,6 +27,11 @@
       "import": "./dist/core/task/index.js",
       "default": "./dist/core/task/index.js"
     },
+    "./scheduler": {
+      "types": "./dist/pactile/scheduler/index.d.ts",
+      "import": "./dist/pactile/scheduler/index.js",
+      "default": "./dist/pactile/scheduler/index.js"
+    },
     "./core/compat": {
       "types": "./dist/core/compat/index.d.ts",
       "import": "./dist/core/compat/index.js",
@@ -38,41 +42,43 @@
       "import": "./dist/core/testing/index.js",
       "default": "./dist/core/testing/index.js"
     },
-    "./compat": "./bin/compat-warning.js"
+    "./compat": "./dist/bin/compat-warning.js"
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "pnpm run clean && tsc && pnpm run copy-templates",
-    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "copy-templates": "node scripts/copy-templates.js",
-    "postinstall": "node scripts/postinstall.js",
-    "check:pack-files": "node scripts/check-cli-pack-files.js",
-    "check:release-pack": "node scripts/check-release-pack-contents.js",
-    "docs:smoke": "node scripts/docs-smoke.js",
-    "copy:release-assets": "node scripts/copy-release-assets.js",
-    "sync:pack-files": "node scripts/sync-cli-pack-files.js",
+    "build": "pnpm run clean && tsc && pnpm run build:script-artifacts && pnpm exec tsx scripts/copy-templates.ts",
+    "build:script-artifacts": "tsc -p tsconfig.scripts.build.json",
+    "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('.tmp/p31-script-build',{recursive:true,force:true})\"",
+    "copy-templates": "tsx scripts/copy-templates.ts",
+    "check:pack-files": "tsx scripts/check-cli-pack-files.ts",
+    "check:release-pack": "tsx scripts/check-release-pack-contents.ts",
+    "docs:smoke": "pnpm run build:script-artifacts && tsx scripts/docs-smoke.ts",
+    "copy:release-assets": "tsx scripts/copy-release-assets.ts",
+    "sync:pack-files": "tsx scripts/sync-cli-pack-files.ts",
     "dev": "tsc --watch",
     "start": "node ./dist/cli/index.js",
     "test": "vitest run --maxWorkers=4",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint src/ test/",
-    "lint:fix": "eslint src/ test/ --fix",
-    "format": "prettier --write src/",
-    "format:check": "prettier --check src/",
-    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/ test/ scripts/",
+    "lint:fix": "eslint src/ test/ scripts/ --fix",
+    "format": "prettier --write src/ scripts/",
+    "format:check": "prettier --check src/ scripts/",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json",
     "prepublishOnly": "pnpm run build && pnpm test && pnpm run copy:release-assets",
-    "release": "node scripts/release.js patch",
-    "release:minor": "node scripts/release.js minor",
-    "release:major": "node scripts/release.js major",
-    "release:beta": "node scripts/release.js beta",
-    "release:promote": "node scripts/release.js promote",
-    "release:prepare": "node scripts/publish-packages.js --prepare-only",
-    "release:publish": "node scripts/publish-packages.js --publish-only",
-    "release:publish:dry": "node scripts/publish-packages.js --dry-run",
-    "manifest": "node scripts/create-manifest.js"
+    "release": "tsx scripts/release.ts patch",
+    "release:minor": "tsx scripts/release.ts minor",
+    "release:major": "tsx scripts/release.ts major",
+    "release:beta": "tsx scripts/release.ts beta",
+    "release:promote": "tsx scripts/release.ts promote",
+    "release:check": "tsx scripts/release-preflight.ts check-versions",
+    "release:plan": "tsx scripts/release-preflight.ts publish-plan",
+    "release:prepare": "pnpm run build:script-artifacts && tsx scripts/publish-packages.ts --prepare-only",
+    "release:publish": "tsx scripts/publish-packages.ts --publish-only",
+    "release:publish:dry": "tsx scripts/publish-packages.ts --dry-run",
+    "manifest": "tsx scripts/create-manifest.ts"
   },
   "keywords": [
     "ai",
@@ -96,9 +102,6 @@
     "undici": "^6.21.0",
     "zod": "^4.4.2"
   },
-  "optionalDependencies": {
-    "@blxzer/smart-search": "^0.2.0"
-  },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
     "@types/figlet": "^1.7.0",
@@ -109,15 +112,14 @@
     "prettier": "^3.4.2",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.21.0",
+    "tsx": "^4.20.6",
     "vitest": "^4.0.18"
   },
   "engines": {
-    "node": ">=18.17.0"
+    "node": ">=20.0.0"
   },
   "files": [
     "dist",
-    "bin",
-    "scripts/postinstall.js",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"

@@ -95,7 +95,7 @@ export function resumeTaskRun(request: ResumeTaskRunRequest): TaskKernelMutation
 export function recordTaskRunResult(request: RecordTaskRunResultRequest): TaskKernelMutationResult {
   const root = canonicalProjectRoot(request.root, request.cwd);
   const actor = requireNonEmptyString(request.actor, "actor");
-  if (!(new Set(["completed", "failed", "blocked"]).has(request.outcome))) throw new KernelError("INVALID_REQUEST", "Run outcome must be completed, failed, or blocked");
+  if (!(new Set(["completed", "failed", "blocked", "cancelled"]).has(request.outcome))) throw new KernelError("INVALID_REQUEST", "Run outcome must be completed, failed, blocked, or cancelled");
   const fingerprint = fingerprintTaskValue({
     runId: request.runId, outcome: request.outcome, summary: request.summary ?? "",
     evidenceRefs: request.evidenceRefs ?? [], candidateEntries: request.candidateEntries ?? [], failure: request.failure ?? null, measurementRefs: request.measurementRefs ?? {},
@@ -209,7 +209,9 @@ export function recordTaskRunResult(request: RecordTaskRunResultRequest): TaskKe
     let kernel: TaskKernelSnapshotV2 = { ...current, runs: current.runs.map((item, i) => i === index ? run : item) };
     if (request.outcome === "completed") kernel = appendPhase(kernel, "verify", actor, `${request.idempotencyKey}#verify`, "Run produced a candidate snapshot.");
     else kernel = appendPhase(kernel, "execute", actor, `${request.idempotencyKey}#${request.outcome}`, `Run ${request.outcome}.`, { condition });
-    const type = request.outcome === "completed" ? "run.completed" : request.outcome === "failed" ? "run.failed" : "run.blocked";
+    const type = request.outcome === "completed" ? "run.completed"
+      : request.outcome === "failed" ? "run.failed"
+        : request.outcome === "cancelled" ? "run.cancelled" : "run.blocked";
     return appendDomainEvent(kernel, actor, request.idempotencyKey, type, run.id, fingerprint);
   });
 }

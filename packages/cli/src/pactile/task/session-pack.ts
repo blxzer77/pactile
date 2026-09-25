@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readTaskKernel, type KernelPhase } from "../../core/task/index.js";
+import { prepareSelectedTaskAgentTileSelection } from "../registry.js";
 import { resolveSelectedTask, resolveTaskDir } from "./session.js";
 
 const BASELINE = ["intake-basic", "define-basic", "approval-personal", "execute-agent", "verify-basic", "close-basic", "context-progressive", "observability-local"];
@@ -38,6 +39,33 @@ function activeModules(extras: Record<string, unknown>, key: string, fallback: s
   if (!block || typeof block !== "object") return fallback;
   const active = (block as Record<string, unknown>).active;
   return Array.isArray(active) ? active.filter((item): item is string => typeof item === "string") : fallback;
+}
+
+function taskTileOffer(
+  root: string,
+  taskId: string,
+  phase: KernelPhase,
+  revision: number,
+): Record<string, unknown> {
+  try {
+    const prepared = prepareSelectedTaskAgentTileSelection(root, { taskId, phase, revision });
+    if (!prepared.success) {
+      const receipt = "receipt" in prepared ? prepared.receipt : undefined;
+      return {
+        status: "unavailable",
+        ...(receipt ? { receipt } : {}),
+      };
+    }
+    return {
+      status: "offered",
+      offer: prepared.data.offer,
+      decisionCommand: `pactile tile-selection decide --session --offer-fingerprint ${prepared.data.offer.fingerprint} --kind adopt`,
+      replayCommand: "pactile tile-selection replay --snapshot-fingerprint <snapshot-fingerprint>",
+      boundary: "A Tile decision is a receipt only. It does not activate a Tile or authorize a Kernel Run or execution.",
+    };
+  } catch {
+    return { status: "unavailable" };
+  }
 }
 
 function phaseFromLegacyStatus(status: unknown): KernelPhase {
@@ -111,6 +139,11 @@ export function compileSessionPack(root: string, factGap = false): Record<string
   }
   const contracts = kept.filter((item) => item.kind === "contract");
   const artifacts = kept.filter((item) => item.kind === "artifact");
+  const taskId = v2?.identity.taskId ?? snapshot?.identity.taskId ?? (typeof legacyRecord?.id === "string" ? legacyRecord.id : null);
+  const revision = v2?.revision ?? snapshot?.revision ?? 0;
+  const tileSelection = dir && selected && !stale && taskId
+    ? taskTileOffer(root, taskId, phase, revision)
+    : null;
   const stuck = stale || condition === "blocked";
   const v2Next: Record<KernelPhase, string> = {
     open: "Create a deliverable Task with acceptance criteria and a delivery level.",
@@ -132,6 +165,7 @@ export function compileSessionPack(root: string, factGap = false): Record<string
     activationSource: { kind: "profile-runtime", filter: "phase-intersect-active", baselineActive, ondemandActive, note: "Layer 2 is phase-needed intersect still-active. Unactivated modules are not installed." },
     kernel: { taskId: v2?.identity.taskId ?? snapshot?.identity.taskId ?? legacyRecord?.id ?? null, schemaVersion: v2?.schemaVersion ?? (snapshot ? 1 : 0), revision: v2?.revision ?? snapshot?.revision ?? 0,
       deliveryLevel: v2?.definition.deliveryLevel ?? null, phase, condition, outcome, humanPhase: HUMAN[phase], selected }, rigor, topologyKind,
+    ...(tileSelection ? { tileSelection } : {}),
     layers: [
       { n: 1, name: "resident-min", text: layer1 },
       { n: 2, name: "activated-contracts", moduleIds: contracts.map((item) => item.id), text: contracts.map((item) => `### \`${item.id}\`\n${item.text}`).join("\n\n") },

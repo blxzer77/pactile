@@ -928,7 +928,13 @@ function writeSetFromTaskPaths(paths: readonly string[]): GitWriteSet {
 }
 
 function sameWriteSet(left: GitWriteSet, right: GitWriteSet): boolean {
-  return stableObjectFingerprint(left) === stableObjectFingerprint(right);
+  const keys = (writeSet: GitWriteSet): string[] =>
+    [...new Set([...writeSet.exactPaths, ...writeSet.directoryPrefixes])]
+      .map((entry) =>
+        process.platform === "win32" ? entry.toLowerCase() : entry,
+      )
+      .sort();
+  return stableObjectFingerprint(keys(left)) === stableObjectFingerprint(keys(right));
 }
 
 function sameResolvedPath(left: string, right: string): boolean {

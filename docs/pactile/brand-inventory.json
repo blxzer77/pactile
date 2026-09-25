@@ -79,7 +79,7 @@
       "reason": "The source map intentionally records legacy file names and P23 routes."
     },
     {
-      "path": "packages/cli/scripts/check-pactile-brand-surface.js",
+      "path": "packages/cli/scripts/check-pactile-brand-surface.ts",
       "reason": "The checker implements and reports legacy-token policy."
     },
     {
@@ -96,7 +96,7 @@
     },
     {
       "classification": "compat",
-      "pathRegex": "^packages/cli/scripts/(?:docs-smoke|release-conformance)\\.js$",
+      "pathRegex": "^packages/cli/scripts/(?:docs-smoke|release-conformance)\\.ts$",
       "reason": "These exact runners verify retained command aliases and the single-package install contract. The publish workflow remains live.",
       "exitCondition": "Remove old alias checks when the 0.5.x command compatibility window ends."
     },
@@ -162,7 +162,7 @@
     },
     {
       "classification": "compat",
-      "pathRegex": "^packages/cli/(?:package\\.json|bin/(?:cstl|compat-warning)\\.js|scripts/(?:bump-versions|check-release-pack-contents|publish-packages|release-preflight|release-validation|release)\\.js)$",
+      "pathRegex": "^packages/cli/(?:package\\.json|src/bin/(?:cstl|compat-warning)\\.ts|scripts/(?:bump-versions|check-release-pack-contents|publish-packages|release-preflight|release-validation|release)\\.ts)$",
       "reason": "These package, bin, and release-plan surfaces retain the old command alias while publishing only Pactile.",
       "exitCondition": "Delete the old command alias after the 0.5.x compatibility window."
     },
@@ -228,18 +228,18 @@
     "^scripts/"
   ],
   "baselineSnapshot": {
-    "sha256": "68cf8d83ead542cec5c38ec34d8083f3948c57438ff4dc1189dbc07c0f1ecedf",
-    "occurrences": 4244,
+    "sha256": "41865854c2529f04ee7820bff5786d2b7565b9293b3dfebca837a53071771fe9",
+    "occurrences": 4242,
     "files": 288,
     "byClassification": {
       "attribution": 3,
-      "compat": 891,
+      "compat": 889,
       "history": 3350
     },
     "byToken": {
       "cursor-plus-plus": 165,
       "legacy-cstl-token": 685,
-      "legacy-environment-name": 61,
+      "legacy-environment-name": 59,
       "legacy-managed-marker": 27,
       "legacy-package-name": 223,
       "legacy-product-name": 202,

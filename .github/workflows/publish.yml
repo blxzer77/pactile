@@ -34,10 +34,6 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify exact tag, package, and source branch
-        run: >-
-          node packages/cli/scripts/release-preflight.js check-provenance
-          --tag "${GITHUB_REF_NAME}" --remote origin
       - uses: pnpm/action-setup@v6
         with:
           version: 10.32.1
@@ -46,13 +42,15 @@ jobs:
           node-version: "22"
           registry-url: https://registry.npmjs.org
       - name: Install locked dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Verify exact tag, package, and source branch
+        run: pnpm --filter @blxzer/pactile exec tsx scripts/release-preflight.ts check-provenance --tag "${GITHUB_REF_NAME}" --remote origin
       - name: Ignore executable-bit normalization
         run: git config core.filemode false
       - name: Validate and seal the single tarball without publish credentials
         id: prepare
         run: >-
-          node packages/cli/scripts/publish-packages.js
+          pnpm --filter @blxzer/pactile exec tsx scripts/publish-packages.ts
           --prepare-only --artifact-dir "${RUNNER_TEMP}/release-artifacts"
           --receipt-output "${GITHUB_OUTPUT}"
           --tag "${GITHUB_REF_NAME}" --remote origin
@@ -61,6 +59,17 @@ jobs:
         with:
           name: pactile-release-${{ github.sha }}
           path: ${{ runner.temp }}/release-artifacts/
+          if-no-files-found: error
+          retention-days: 1
+      - name: Stage compiled release tooling
+        run: |
+          mkdir -p "${RUNNER_TEMP}/release-tools"
+          cp packages/cli/.tmp/p31-script-build/*.js "${RUNNER_TEMP}/release-tools/"
+      - name: Upload compiled release tooling
+        uses: actions/upload-artifact@v4
+        with:
+          name: pactile-release-tools-${{ github.sha }}
+          path: ${{ runner.temp }}/release-tools/
           if-no-files-found: error
           retention-days: 1
 
@@ -87,6 +96,11 @@ jobs:
         with:
           name: pactile-release-${{ github.sha }}
           path: ${{ runner.temp }}/release-artifacts/
+      - name: Download compiled release tooling
+        uses: actions/download-artifact@v4
+        with:
+          name: pactile-release-tools-${{ github.sha }}
+          path: packages/cli/scripts/
       - name: Publish the verified tarball
         run: >-
           node packages/cli/scripts/publish-packages.js
@@ -116,12 +130,17 @@ jobs:
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.32.1
+      - name: Install locked tooling without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Verify main ancestry and the exact package version
         env:
           VERSION: ${{ inputs.version }}
         run: |
           git merge-base --is-ancestor HEAD origin/main
-          node packages/cli/scripts/release-preflight.js check-versions \
+          pnpm --filter @blxzer/pactile exec tsx scripts/release-preflight.ts check-versions \
             --require-tag --tag "pactile-v${VERSION}"
       - name: Verify candidate is the requested version
         env:

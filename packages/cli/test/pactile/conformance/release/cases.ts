@@ -30,7 +30,7 @@ export const RELEASE_MATRIX_CASES: readonly ReleaseMatrixCase[] = [
   {
     id: "runtime-linux-minimum",
     lane: "runtime",
-    expectation: "Linux runs Node 18.17.0",
+    expectation: "Linux runs Node 20.0.0",
   },
   {
     id: "runtime-linux-lts",
@@ -45,7 +45,7 @@ export const RELEASE_MATRIX_CASES: readonly ReleaseMatrixCase[] = [
   {
     id: "runtime-windows-minimum",
     lane: "runtime",
-    expectation: "Windows runs Node 18.17.0",
+    expectation: "Windows runs Node 20.0.0",
   },
   {
     id: "runtime-windows-lts",
