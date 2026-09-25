@@ -5,6 +5,7 @@ import type {
   TaskArtifactFactV1,
   TaskArtifactStageV1,
 } from "./types.js";
+import type { TaskArtifactDocumentReferenceV1 } from "./documents.js";
 
 const STAGE_TITLES: Readonly<Record<TaskArtifactStageV1, string>> = {
   prd: "PRD",
@@ -15,8 +16,10 @@ const STAGE_TITLES: Readonly<Record<TaskArtifactStageV1, string>> = {
 };
 
 export interface TaskArtifactProjectionOptionsV1 {
-  /** Restrict the index to these stages. Omitted stages are not emitted. */
+  /** Restrict the projection to these stages when provided. */
   readonly stages?: readonly TaskArtifactStageV1[];
+  /** Read-only references to user-authored Markdown, never copied into facts. */
+  readonly documents?: readonly TaskArtifactDocumentReferenceV1[];
 }
 
 interface TaskArtifactAgentFactBaseV1 {
@@ -44,6 +47,8 @@ export interface TaskArtifactAgentStageV1 {
   readonly stage: TaskArtifactStageV1;
   /** References only; the fact itself appears once in `facts`. */
   readonly factIds: readonly string[];
+  /** Optional authored-document IDs; read bodies only after explicit selection. */
+  readonly documentIds?: readonly string[];
 }
 
 export interface TaskArtifactAgentProjectionV1 {
@@ -52,17 +57,21 @@ export interface TaskArtifactAgentProjectionV1 {
   readonly stages: readonly TaskArtifactAgentStageV1[];
   /** Compact index. Follow `ref` only when a fact needs fuller context. */
   readonly facts: readonly TaskArtifactAgentFactV1[];
+  /** Content fingerprints and locators; document bodies are never included. */
+  readonly documents?: readonly TaskArtifactDocumentReferenceV1[];
 }
 
 function selectedStages(
   envelope: TaskArtifactEnvelopeV1,
   requestedStages?: readonly TaskArtifactStageV1[],
+  documents: readonly TaskArtifactDocumentReferenceV1[] = [],
 ): TaskArtifactStageV1[] {
   const requested = requestedStages ? new Set(requestedStages) : undefined;
   return TASK_ARTIFACT_STAGES_V1.filter(
     (stage) =>
       (requested === undefined || requested.has(stage)) &&
-      (envelope.stageRefs[stage]?.length ?? 0) > 0,
+      ((envelope.stageRefs[stage]?.length ?? 0) > 0 ||
+        documents.some((document) => document.stage === stage)),
   );
 }
 
@@ -102,12 +111,13 @@ function freshnessText(value: TaskArtifactCandidateFreshnessV1): string {
     : `${value.freshness} at ${value.checkedAt} (${value.evidenceRef})`;
 }
 
-/** Human-readable Markdown derived from the same canonical envelope. */
+/** Human-readable projection of Kernel facts and read-only document references. */
 export function projectTaskArtifactsForHumanV1(
   envelope: TaskArtifactEnvelopeV1,
   options: TaskArtifactProjectionOptionsV1 = {},
 ): string {
-  const stages = selectedStages(envelope, options.stages);
+  const documents = options.documents ?? [];
+  const stages = selectedStages(envelope, options.stages, documents);
   if (stages.length === 0) {
     throw new Error(
       "no task artifact facts are mapped to the requested stages",
@@ -117,31 +127,49 @@ export function projectTaskArtifactsForHumanV1(
   const lines = [`# Task ${code(envelope.taskId)}`, ""];
   for (const stage of stages) {
     lines.push(`## ${STAGE_TITLES[stage]}`);
+    for (const document of documents.filter((entry) => entry.stage === stage)) {
+      lines.push(`- Document: ${code(document.id)} — ${document.status}`);
+      lines.push(
+        `  - Source: ${document.source.kind} ${code(document.source.ref)}`,
+      );
+      lines.push(
+        `  - Ref: ${document.ref.paths.map((filePath) => code(`${filePath}#${document.ref.selector}`)).join(", ")}`,
+      );
+      if (document.contentFingerprint) {
+        lines.push(
+          `  - Content fingerprint: ${code(document.contentFingerprint)}`,
+        );
+      }
+    }
     for (const id of envelope.stageRefs[stage] ?? []) {
       lines.push(`- ${code(id)}`);
     }
     lines.push("");
   }
-  lines.push("## Facts", "");
-  for (const fact of facts) {
-    lines.push(`### ${code(fact.id)} — ${markdownText(oneLine(fact.title))}`);
-    lines.push(`- Kind: ${fact.kind}`);
-    lines.push(`- Status: ${fact.status}`);
-    lines.push(`- Summary: ${markdownText(oneLine(fact.summary))}`);
-    lines.push(`- Source: ${fact.source.kind} ${code(fact.source.ref)}`);
-    lines.push(
-      `- Provenance: ${fact.provenance.method} by ${markdownText(oneLine(fact.provenance.actor))} at ${fact.provenance.recordedAt}`,
-    );
-    if (fact.provenance.basedOn?.length) {
-      lines.push(`- Based on: ${fact.provenance.basedOn.map(code).join(", ")}`);
-    }
-    lines.push(`- Ref: ${code(`${fact.ref.path}#${fact.ref.selector}`)}`);
-    if (fact.kind === "candidate") {
+  if (facts.length) {
+    lines.push("## Facts", "");
+    for (const fact of facts) {
+      lines.push(`### ${code(fact.id)} — ${markdownText(oneLine(fact.title))}`);
+      lines.push(`- Kind: ${fact.kind}`);
+      lines.push(`- Status: ${fact.status}`);
+      lines.push(`- Summary: ${markdownText(oneLine(fact.summary))}`);
+      lines.push(`- Source: ${fact.source.kind} ${code(fact.source.ref)}`);
       lines.push(
-        `- Candidate freshness: ${freshnessText(fact.candidateFreshness)}`,
+        `- Provenance: ${fact.provenance.method} by ${markdownText(oneLine(fact.provenance.actor))} at ${fact.provenance.recordedAt}`,
       );
+      if (fact.provenance.basedOn?.length) {
+        lines.push(
+          `- Based on: ${fact.provenance.basedOn.map(code).join(", ")}`,
+        );
+      }
+      lines.push(`- Ref: ${code(`${fact.ref.path}#${fact.ref.selector}`)}`);
+      if (fact.kind === "candidate") {
+        lines.push(
+          `- Candidate freshness: ${freshnessText(fact.candidateFreshness)}`,
+        );
+      }
+      lines.push("");
     }
-    lines.push("");
   }
   return lines.join("\n").trimEnd() + "\n";
 }
@@ -154,40 +182,56 @@ export function projectTaskArtifactsForAgentV1(
   envelope: TaskArtifactEnvelopeV1,
   options: TaskArtifactProjectionOptionsV1 = {},
 ): TaskArtifactAgentProjectionV1 {
-  const stages = selectedStages(envelope, options.stages).map((stage) => ({
-    stage,
-    factIds: [...(envelope.stageRefs[stage] ?? [])],
-  }));
+  const documents = options.documents ?? [];
+  const selected = selectedStages(envelope, options.stages, documents);
+  const stages = selected.map((stage) => {
+    const stageDocuments = documents.filter(
+      (document) => document.stage === stage,
+    );
+    return {
+      stage,
+      factIds: [...(envelope.stageRefs[stage] ?? [])],
+      ...(documents.length
+        ? { documentIds: stageDocuments.map(({ id }) => id) }
+        : {}),
+    };
+  });
   if (stages.length === 0) {
     throw new Error(
       "no task artifact facts are mapped to the requested stages",
     );
   }
-  const facts = factsForStages(
-    envelope,
-    stages.map(({ stage }) => stage),
-  ).map((fact): TaskArtifactAgentFactV1 => {
-    const shared = {
-      id: fact.id,
-      status: fact.status,
-      title: fact.title,
-      summary: fact.summary,
-      source: fact.source,
-      provenance: fact.provenance,
-      ref: fact.ref,
-    };
-    return fact.kind === "candidate"
-      ? {
-          ...shared,
-          kind: "candidate",
-          candidateFreshness: fact.candidateFreshness,
-        }
-      : { ...shared, kind: fact.kind };
-  });
+  const facts = factsForStages(envelope, selected).map(
+    (fact): TaskArtifactAgentFactV1 => {
+      const shared = {
+        id: fact.id,
+        status: fact.status,
+        title: fact.title,
+        summary: fact.summary,
+        source: fact.source,
+        provenance: fact.provenance,
+        ref: fact.ref,
+      };
+      return fact.kind === "candidate"
+        ? {
+            ...shared,
+            kind: "candidate",
+            candidateFreshness: fact.candidateFreshness,
+          }
+        : { ...shared, kind: fact.kind };
+    },
+  );
   return {
     schemaVersion: 1,
     taskId: envelope.taskId,
     stages,
     facts,
+    ...(documents.length
+      ? {
+          documents: documents.filter((document) =>
+            selected.includes(document.stage),
+          ),
+        }
+      : {}),
   };
 }

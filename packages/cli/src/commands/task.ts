@@ -20,7 +20,9 @@ import {
   projectTaskArtifactsForAgentV1,
   projectTaskArtifactsForHumanV1,
   projectTaskKernelArtifactsV1,
+  readSelectedTaskArtifactDocumentsV1,
   readSelectedTaskArtifactSourcesV1,
+  readTaskArtifactDocumentIndexV1,
   renderTaskPrdScaffoldV1,
   type TaskArtifactStageV1,
 } from "../pactile/artifacts/index.js";
@@ -144,17 +146,48 @@ function taskV2(root: string, reference: string): { dir: string; kernel: TaskKer
 
 function taskArtifacts(root: string, args: string[]): number {
   const reference = requireArgument(args[0], "task");
-  const { kernel } = taskV2(root, reference);
+  const { dir, kernel } = taskV2(root, reference);
   const requestedStages = [...new Set(options(args, "--stage"))].map((value) => {
     if (!(TASK_ARTIFACT_STAGES_V1 as readonly string[]).includes(value)) {
       throw new Error(`--stage must be one of: ${TASK_ARTIFACT_STAGES_V1.join(", ")}`);
     }
     return value as TaskArtifactStageV1;
   });
-  const projectionOptions = requestedStages.length ? { stages: requestedStages } : {};
   const envelope = projectTaskKernelArtifactsV1(kernel);
+  const documents = readTaskArtifactDocumentIndexV1(dir, kernel.identity.taskId);
+  const projectionOptions = {
+    ...(requestedStages.length ? { stages: requestedStages } : {}),
+    documents,
+  };
   const selectedFactIds = options(args, "--fact");
+  const selectedDocumentIds = options(args, "--document");
   const agent = args.includes("--agent");
+
+  if (selectedDocumentIds.length) {
+    const visibleDocumentIds = new Set<string>(
+      requestedStages.length
+        ? documents
+            .filter((document) => requestedStages.includes(document.stage))
+            .map(({ id }) => id)
+        : documents.map(({ id }) => id),
+    );
+    const outsideStage = selectedDocumentIds.find(
+      (id) => !visibleDocumentIds.has(id),
+    );
+    if (outsideStage) {
+      throw new Error(
+        `Task artifact document '${outsideStage}' is not present in the requested stage view`,
+      );
+    }
+  }
+  const selectedDocuments = selectedDocumentIds.length
+    ? readSelectedTaskArtifactDocumentsV1(
+        dir,
+        kernel.identity.taskId,
+        documents,
+        selectedDocumentIds,
+      )
+    : undefined;
 
   if (selectedFactIds.length) {
     const visibleFactIds = new Set(
@@ -171,10 +204,25 @@ function taskArtifacts(root: string, args: string[]): number {
       console.log(JSON.stringify({
         index: projectTaskArtifactsForAgentV1(envelope, projectionOptions),
         selectedSources,
+        ...(selectedDocuments ? { selectedDocuments } : {}),
       }, null, 2));
     } else {
-      console.log(JSON.stringify({ taskId: kernel.identity.taskId, selectedSources }, null, 2));
+      console.log(JSON.stringify({
+        taskId: kernel.identity.taskId,
+        selectedSources,
+        ...(selectedDocuments ? { selectedDocuments } : {}),
+      }, null, 2));
     }
+    return 0;
+  }
+
+  if (selectedDocuments) {
+    console.log(JSON.stringify({
+      ...(agent
+        ? { index: projectTaskArtifactsForAgentV1(envelope, projectionOptions) }
+        : { taskId: kernel.identity.taskId }),
+      selectedDocuments,
+    }, null, 2));
     return 0;
   }
 

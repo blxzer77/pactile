@@ -1,6 +1,6 @@
 # 结构化任务事实与渐进读取
 
-PRD、Design、Implement、Review 和 Verify 使用同一份结构化事实封套。阶段视图只保存事实 ID；人类与 Agent 看到的内容都从封套生成。P35 的流程接线和 P36 的旧文档迁移由各自切片完成。
+PRD、Design、Implement、Review 和 Verify 的生命周期事实由同一份结构化事实封套投影。阶段视图只保存事实 ID；人类与 Agent 的事实视图都从 Kernel 派生。用户撰写的阶段 Markdown 保持独立原文，投影只列稳定文档 ID、存在状态、内容指纹、来源和 locator，不把叙述复制成第二份权威。P35 的其他流程接线和 P36 的旧文档迁移由各自切片完成。
 
 ## 封套
 
@@ -48,13 +48,13 @@ PRD、Design、Implement、Review 和 Verify 使用同一份结构化事实封�
 
 ## 投影和读取顺序
 
-人类 Markdown 为每个非空阶段列出事实 ID，然后在单独的 Facts 区域完整展示每条事实一次。Agent 投影是紧凑索引：阶段仍只列 ID，事实索引只出现一次，并带摘要、状态、来源、provenance 和 locator。
+人类 Markdown 为有事实或文档引用的阶段列出事实 ID 和文档状态，然后在单独的 Facts 区域完整展示每条事实一次。Agent 投影是紧凑索引：阶段只列事实 ID 与文档 ID，事实索引只出现一次，并带摘要、状态、来源、provenance 和 locator。文档索引不包含正文，也不在 Kernel 外持久化。
 
-Agent 先读取索引，根据当前决策选定事实 ID，再读取对应的 `ref.path#ref.selector`。投影不自动展开所有被引用正文。轻量任务只记录实际适用的事实和阶段，不需要填满 PRD/Design/Implement/Review/Verify 五份空模板。
+Agent 先读取索引，根据当前决策选定事实 ID 或文档 ID，再按需读取 locator。文档 ID 在内容修改后保持稳定；sha256 内容指纹随文件内容变化，旧索引会被拒绝并要求重新读取。文档正文只在显式指定 `--document <document-id>` 时返回。缺少的 `prd.md`、`design.md`、`implement.md`、`review.md`/`review/` 和 `verify.md` 会显示为 `absent`，不会因此生成空模板。
 
 ## Task Kernel V2 读取与投影
 
-`pactile task artifacts <task>` 每次从 Task Kernel V2 的当前 `kernel.json` 派生封套，再输出人类可读 Markdown。`--agent` 输出紧凑 JSON 索引；`--stage prd|design|implement|review|verify` 限定视图；`--fact <id>` 只读取所选事实 locator 指向的 Kernel 记录，适合 Agent 先读索引、再按需展开。
+`pactile task artifacts <task>` 每次从 Task Kernel V2 的当前 `kernel.json` 派生事实封套，并只读扫描现存阶段 Markdown 的位置与指纹，然后输出人类可读 Markdown。`--agent` 输出紧凑 JSON 索引；`--stage prd|design|implement|review|verify` 限定视图；`--fact <id>` 读取所选事实 locator 指向的 Kernel 记录；`--document <document-id>` 读取选中的现存文档正文。Agent 可先读索引，再按需展开事实或文档。
 
 映射保留 Kernel 的不可变 Run、Review、Close 记录和 Task 定义作为数据源，不写 `artifacts.json` 副本：
 
@@ -64,6 +64,6 @@ Agent 先读取索引，根据当前决策选定事实 ID，再读取对应的 `
 - Kernel V2 目前没有 Design 事实来源，因此不生成空 Design 阶段或模板。其他阶段仅在有事实时出现。
 - 候选快照在关闭观察前保持 `unknown`；关闭记录的观察与选中的快照一致时标为 `fresh`，其他历史快照标为 `stale`。这仅表示 Kernel 中记录的调用方观察，不重算 Git 或文件内容。
 
-创建新的 Kernel V2 Task 时，CLI 只在文件不存在时用 exclusive create 新建最小 `prd.md`：列出稳定事实 ID、Kernel 来源和 locator，并留出人类叙述区。后续流程只更新 Kernel；不会重写此 Markdown，也不会生成空的 Design、Implement、Review 或 Verify 模板。人类与 Agent 如需最新结构化事实，调用 `task artifacts` 即时投影；Markdown 内的自由叙述仍由作者维护。
+创建新的 Kernel V2 Task 时，CLI 只在文件不存在时用 exclusive create 新建最小 `prd.md`：列出稳定事实 ID、Kernel 来源和 locator，并留出人类叙述区。后续流程只更新 Kernel；不会重写此 Markdown，也不会生成空的 Design、Implement、Review 或 Verify 模板。现存文档按只读文件路径和内容指纹索引；读取索引与选读正文都不修改文档。Markdown 内的自由叙述仍由作者维护，Kernel 继续是生命周期状态与证据 ID 的唯一权威。
 
 这个 reader 仅支持 Kernel V2。它不迁移旧 `task.json` 或旧阶段文档；旧文档迁移归 P36。P35 的其他生命周期入口以及 Session Pack 接线仍属于各自切片。本基础切片不代表整个 PACTILE-42 已完成。
