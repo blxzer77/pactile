@@ -111,6 +111,8 @@ export function runCodexCli(argv: string[], root = process.cwd()): number {
       toTask: option(args, "--to-task"),
       toRunId: option(args, "--to-run-id"),
       resumeExecute: args.includes("--resume-execute"),
+      escalationId: option(args, "--escalation-id"),
+      replyToEscalationId: option(args, "--reply-to-escalation-id"),
       promptFile: promptFile ? path.resolve(root, promptFile) : undefined,
       projectId: option(args, "--project-id"),
       targetType: option(args, "--target") as
