@@ -4,15 +4,18 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  acquireTaskRunWorkspaceCleanupLease,
   appendTaskRunHostSettlementRefs,
   bindTaskRunHostReceipt,
   closeTaskKernel,
   createTaskKernel,
   readTaskKernel,
+  recordTaskRunHostStopReceipt,
   recordTaskReview,
   recordTaskRunResult,
   startTaskRun,
 } from "../../../src/core/task/index.js";
+import { TASK_RUN_WORKSPACE_CLEANUP_RISK_DISCLOSURE } from "../../../src/core/task/task-kernel-types.js";
 import { adoptTaskRunWorktree, createTaskRunWorktree, integrateTaskRunWorktree, reclaimRunWorktree } from "../../../src/pactile/worktree/index.js";
 import * as gitRemoval from "../../../src/pactile/worktree/git-removal.js";
 
@@ -355,5 +358,87 @@ describe("managed Run worktree reclamation", () => {
     expect(git(prepared.workspace.canonicalPath, "rev-parse", "HEAD")).toBe(git(root, "rev-parse", `refs/heads/${prepared.workspace.branch}`));
     expect(hasRegisteredWorktree(root, prepared.workspace.canonicalPath)).toBe(true);
     expect(run?.workspace?.cleanupLease?.state).toBe("recovery-required");
+  });
+
+  it("restores the Run checkout when a crashed cleanup retry finds target content rewritten", async () => {
+    const { root, baseSha } = fixture();
+    const prepared = prepareIntegratedRun({ root, baseSha, taskId: "cleanup-crash-target-race", close: true });
+    let kernel = readKernel(root, prepared.taskDir);
+    let run = kernel.runs.find((item) => item.id === prepared.runId);
+    const candidate = run?.candidateSnapshot;
+    const host = run?.host;
+    const integration = run?.workspace?.integrationReceipt;
+    if (!candidate || !host || !integration || !run?.result) throw new Error("Closed Run cleanup evidence is incomplete");
+
+    const receiptRef = prepared.receiptFile;
+    const evidenceRef = `${receiptRef}#process_stop_receipt`;
+    const startRequestId = `pi-start:${prepared.taskId}`;
+    const settleReceiptId = `pi-settle:${prepared.taskId}`;
+    recordTaskRunHostStopReceipt({
+      root, taskDir: prepared.taskDir, expectedRevision: kernel.revision, runId: prepared.runId,
+      receipt: {
+        source: "pactile-pi-rpc", assurance: "manager-owned-child-exit", evidenceLevel: "manager-owned-child-exit",
+        taskId: prepared.taskId, runId: prepared.runId, sessionId: host.sessionId, threadId: null,
+        startRequestId, settleReceiptId, terminalStatus: "exited", requestKernelRevision: host.kernelRevision,
+        receiptKernelRevision: kernel.revision, contractFingerprint: host.contractFingerprint, contractStale: false,
+        candidateSnapshotId: candidate.id, candidateFingerprint: candidate.fingerprint, candidateSource: "derived",
+        receiptRef, evidenceRef, recordedAt: "2026-09-26T00:00:30.000Z",
+      },
+      actor: runActor, idempotencyKey: "cleanup-crash-target-race:host-stop",
+    });
+
+    kernel = readKernel(root, prepared.taskDir);
+    run = kernel.runs.find((item) => item.id === prepared.runId);
+    const stopReceipt = run?.host?.stopReceipt;
+    if (!stopReceipt || !run?.workspace?.integrationReceipt) throw new Error("Host stop or integration receipt was not persisted");
+    const staleProcessId = 2_147_483_647;
+    acquireTaskRunWorkspaceCleanupLease({
+      root, taskDir: prepared.taskDir, expectedRevision: kernel.revision, runId: prepared.runId,
+      lease: {
+        leaseId: "simulated-crashed-cleanup",
+        processId: staleProcessId,
+        acquiredAt: "2026-09-26T00:00:40.000Z",
+        expectedHeadSha: run.workspace.integrationReceipt.worktreeHeadSha,
+        targetBranch: run.workspace.integrationReceipt.targetBranch,
+        targetHeadSha: run.workspace.integrationReceipt.targetHeadSha,
+        receiptRef: stopReceipt.receiptRef,
+        riskDisclosure: TASK_RUN_WORKSPACE_CLEANUP_RISK_DISCLOSURE,
+      },
+      actor: closer, idempotencyKey: "cleanup-crash-target-race:lease",
+    });
+
+    git(root, "worktree", "remove", prepared.workspace.canonicalPath);
+    expect(fs.existsSync(prepared.workspace.canonicalPath)).toBe(false);
+    expect(hasRegisteredWorktree(root, prepared.workspace.canonicalPath)).toBe(false);
+    fs.writeFileSync(path.join(root, "src", "feature.ts"), "export const targetRewriteAfterCrash = true;\n");
+    git(root, "add", "--", "src/feature.ts");
+    git(root, "commit", "-q", "-m", "target rewrite after cleanup crash");
+
+    const actualKill = process.kill.bind(process);
+    vi.spyOn(process, "kill").mockImplementation((processId, signal) => {
+      if (processId === staleProcessId) {
+        const error = new Error("simulated exited cleanup process") as NodeJS.ErrnoException;
+        error.code = "ESRCH";
+        throw error;
+      }
+      return actualKill(processId, signal);
+    });
+
+    const result = await reclaimRunWorktree({
+      repoRoot: root, taskDir: prepared.taskDir, runId: prepared.runId,
+      actor: closer, idempotencyKey: "cleanup-crash-target-race:retry",
+    });
+
+    const recoveredKernel = readKernel(root, prepared.taskDir);
+    const recoveredRun = recoveredKernel.runs.find((item) => item.id === prepared.runId);
+    expect(result.state, JSON.stringify(result)).toBe("recovery-required");
+    expect(result.reason).toContain("Target tree does not preserve Run changes at src/feature.ts");
+    expect(fs.readFileSync(path.join(root, "src", "feature.ts"), "utf8")).toContain("targetRewriteAfterCrash");
+    expect(fs.readFileSync(path.join(prepared.workspace.canonicalPath, "src", "feature.ts"), "utf8")).toContain("feature = true");
+    expect(git(prepared.workspace.canonicalPath, "rev-parse", "HEAD")).toBe(integration.worktreeHeadSha);
+    expect(git(root, "rev-parse", `refs/heads/${prepared.workspace.branch}`)).toBe(integration.worktreeHeadSha);
+    expect(hasRegisteredWorktree(root, prepared.workspace.canonicalPath)).toBe(true);
+    expect(recoveredRun?.workspace?.cleanupLease?.state).toBe("recovery-required");
+    expect(path.resolve(recoveredRun?.workspace?.manager?.gitDir ?? "")).toBe(path.resolve(git(prepared.workspace.canonicalPath, "rev-parse", "--absolute-git-dir")));
   });
 });

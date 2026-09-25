@@ -381,7 +381,21 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
   }
 
   const identity = repoIdentity(input.repoRoot);
-  const canonicalPath = assertAllowedPath(identity, binding.canonicalPath);
+  const heldLease = binding.cleanupLease;
+  const absentCheckoutWithStaleLease = !fs.existsSync(binding.canonicalPath)
+    && heldLease?.state === "held" && !processIsAlive(heldLease.processId);
+  let canonicalPath: string;
+  if (absentCheckoutWithStaleLease) {
+    const allowedRoot = ensureAllowedRoot(identity);
+    canonicalPath = path.resolve(binding.canonicalPath);
+    if (!path.isAbsolute(binding.canonicalPath) || pathKey(canonicalPath) !== pathKey(binding.canonicalPath)
+      || !pathWithin(allowedRoot, canonicalPath)) {
+      return retain("Interrupted cleanup path is not a normalized child of the allowed worktree root", "recovery-required");
+    }
+    assertNoSymlinkBetween(identity.root, canonicalPath);
+  } else {
+    canonicalPath = assertAllowedPath(identity, binding.canonicalPath);
+  }
   if (pathKey(canonicalPath) !== pathKey(binding.canonicalPath)
     || pathKey(binding.manager.projectRoot) !== pathKey(identity.root)
     || pathKey(binding.manager.commonDir) !== pathKey(identity.commonDir)) {
@@ -402,16 +416,47 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
     const pathExists = fs.existsSync(canonicalPath);
     const registered = registrations(identity).some((entry) => pathKey(entry.path) === pathKey(canonicalPath));
     if (!pathExists && !registered) {
-      const branchHead = resolveCommit(identity.root, branchRef(identity.root, binding.branch));
-      const target = resolveLocalBranchTarget(identity.root, integrationReceipt.targetBranch);
-      if (branchHead === expectedHeadSha && isAncestor(identity.root, expectedHeadSha, target.headSha)) {
+      if (!binding) return retain("Interrupted cleanup has no Run workspace binding to restore", "recovery-required");
+      const recoveryBinding = binding;
+      const restoreAndRequireRecovery = (reason: string): WorktreeCleanupResult => {
+        const restoration = restoreRemovedWorktree(identity, recoveryBinding);
+        return cleanupResultFromKernel({
+          ...input,
+          result: "recovery-required",
+          reason: restoration.binding
+            ? `${reason}; the checkout was restored at the preserved Run branch head`
+            : `${reason}; Run refs were preserved for manual reconciliation${restoration.reason ? ` (${restoration.reason})` : ""}`,
+          ...(restoration.binding ? { updatedManagerBinding: restoration.binding } : {}),
+        });
+      };
+      try {
+        if (activeLease.expectedHeadSha.toLowerCase() !== expectedHeadSha
+          || activeLease.targetBranch !== integrationReceipt.targetBranch
+          || activeLease.targetHeadSha.toLowerCase() !== integrationReceipt.targetHeadSha.toLowerCase()) {
+          return restoreAndRequireRecovery("Interrupted cleanup lease no longer matches its integration receipt");
+        }
+        const branchHead = resolveCommit(identity.root, branchRef(identity.root, binding.branch));
+        const target = resolveLocalBranchTarget(identity.root, integrationReceipt.targetBranch);
+        if (branchHead !== expectedHeadSha || !isAncestor(identity.root, expectedHeadSha, target.headSha)) {
+          return restoreAndRequireRecovery("The preserved Run branch head or target ancestry changed after removal");
+        }
+        const contentFingerprint = fingerprintRunContentAtTarget({
+          repoRoot: identity.root,
+          runId: run.id,
+          baseSha: binding.baseSha,
+          worktreeHeadSha: expectedHeadSha,
+          targetHeadSha: target.headSha,
+          candidateSnapshotId: run.candidateSnapshot.id,
+          candidateFingerprint: run.candidateSnapshot.fingerprint,
+          resultEvidenceRefs: run.result.evidenceRefs,
+        });
+        if (contentFingerprint !== integrationReceipt.contentFingerprint) {
+          return restoreAndRequireRecovery("The target tree no longer preserves the Run deliverable content after interrupted removal");
+        }
         return cleanupResultFromKernel({ ...input, result: "reclaimed", expectedHeadSha, receiptRef: activeLease.receiptRef });
+      } catch (error) {
+        return restoreAndRequireRecovery(`Interrupted removal could not be proven safe${error instanceof Error ? `: ${error.message}` : ""}`);
       }
-      const restoration = restoreRemovedWorktree(identity, binding);
-      return cleanupResultFromKernel({ ...input, result: "recovery-required", reason: restoration?.binding
-        ? "An unexpected branch update occurred after removal; checkout was restored at the branch head"
-        : `Git worktree is absent but branch/integration evidence changed; preserve refs and reconcile manually${restoration?.reason ? ` (${restoration.reason})` : ""}`,
-        ...(restoration?.binding ? { updatedManagerBinding: restoration.binding } : {}) });
     }
     if (pathExists && !registered) {
       return cleanupResultFromKernel({ ...input, result: "partial-removal", reason: "Git removed the worktree registration but left directory contents; preserved the residue without recursive deletion" });
