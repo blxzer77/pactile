@@ -58,6 +58,10 @@ pactile tile-selection replay --snapshot-fingerprint <snapshot-fingerprint>
 
 独立的 `plan.audit` 只包含有界的符号过滤代码，用于检查具体候选为什么未出现；不要把它作为模型的候选列表传递。处于 `blocked` 或 `waiting` condition、或已有终态 outcome 的 Task，不会产生 Agent 可见候选。
 
+P33 还提供可选 Jev 建议 seam：`prepareBatch2TileSelectionWithJevV1(request, lifecycleByRef, jev?)` 和当前 Task/Agent 入口 `prepareSelectedTaskAgentTileSelectionWithJevV1(root, jev?, expectedLifecycle?, env?)`。省略 `jev` 时仅返回原确定性 offer。Task 入口会先重读 Kernel、Task grant 和生命周期事实，并用相同的 selected-Task profile 计算 offer；默认本地只读 profile 不授权 Jev 外发。只有有效策略 ceiling 同时允许网络、凭据、已批准的外发隐私级别、精确 Jev origin 与非 free cost 时，才会调用传入的 P34 facade。调用方还须明确授权 `task-summary-and-snippets-approved`；没有有效 key、内容未获批准或命中敏感边界、被取消、超时、服务不可用或响应无效时，会给出解释性回退并保留确定性结果。
+
+Jev 只会看到硬过滤后、对请求输出至少有一个贡献的最多 8 个候选的 `ref`、摘要、输出和依赖闭包，以及任务 intent/目标输出；不会收到 `plan.audit`、被过滤候选、对输出无贡献的候选或本机路径。P34 的敏感内容边界会在 HTTP 前拦截识别出的凭据与显式敏感标记，且拒绝时不发请求；这不等于能用启发式规则识别任意秘密，所以源内容仍须经过项目批准。低置信答案不作为建议。返回的 `suggestedDecision` 是提议而非已生效选择：本 seam 会先用 Tile Compiler 校验它，但不会持久化；调用者如需记录选择，仍须将建议提交给既有 selected-Task 决策 API，由 Kernel 当前状态/fingerprint 检查后再写入。Jev 不授权 Tile 激活、执行、Review、CI 或 Kernel 转换。`createJevDecisionFacadeV1` 由调用方按已批准配置构造；该 API 不自动读取环境变量，也不强制启用 Jev。
+
 纯 bundled API 显式接收 lifecycle facts：`decideBatch2TileSelection(request, decision, lifecycleByRef)`；当前 Task API 会自行读取事实：`decideSelectedTaskBatch2TileSelection(root, request, decision)`。`adopt` 采用完整建议；`override` 可选择其他符合条件的组合，两者都会再次调用 Compiler。不完整覆盖目标输出的 override 会记为 `mis-selection`；非法、已过滤或被 Compiler 拒绝的选择会留下相应结果。`no-match` 可以保留先前尝试，从而同时回执误选和后续改正。确定性决策回执包含所选与展开后的 refs、输出覆盖、诊断、Compiler fingerprint 和回执自身 fingerprint。`replayBatch2TileSelectionDecision(request, decision, lifecycleByRef)` 会从相同的当前输入重算回执；`replayStoredSelectedTaskBatch2TileSelectionDecision(root, fingerprint)` 会验证已持久化的历史决策。
 
 ```ts
