@@ -4,6 +4,50 @@ English | [简体中文](task-system.zh-CN.md)
 
 Pactile tasks turn work that must survive a conversation into durable, reviewable project state under `.pactile/tasks/`. Artifacts explain the requirement and Evidence; Kernel records own the phase transitions and audit chain.
 
+## Task Kernel v2: default for new Tasks
+
+`pactile task create` creates a Task Kernel v2 record in `kernel.json`. The Task is a declared deliverable with acceptance criteria and one delivery level: `local-result`, `pull-request`, `merged-result`, or `documentation`. New Tasks do not get Lite/Full or Parent/Child kinds. A hard dependency is an explicit `--depends-on <task-id>` edge.
+
+The v2 `kernel.json` is the only writable lifecycle authority. It contains the Task definition, revisioned events and audit, all Runs, all Reviews, and the Close record. V2 creation does not write a parallel `task.json` status. `task list`, `show`, `selected`, context, and session-pack readers accept both v2 and legacy records, so selection does not hide a newly created Task.
+
+The command path is host-neutral and works without Codex, Pi, or a resident service:
+
+```bash
+pactile task create "Search result" --slug search-result \
+  --deliverable "A tested local result" --delivery-level local-result \
+  --accept AC-1="The result satisfies the requested behavior"
+pactile task run-start search-result --actor alice \
+  --input-summary "Implement AC-1" --approved-by alice \
+  --authorization-scope "the declared deliverable" --authorization-evidence approval.md
+pactile task run-result search-result <run-id> --outcome completed \
+  --summary "Result produced" --candidate src/result.ts=<sha256>
+pactile task review search-result --actor reviewer --run <run-id> \
+  --candidate-id <snapshot-id> --candidate-fingerprint <sha256> \
+  --reviewer reviewer --decision pass --evidence review.md \
+  --criterion AC-1=src/result.ts
+pactile task close search-result --run <run-id> --review <review-id> \
+  --candidate-id <snapshot-id> --candidate-fingerprint <sha256> \
+  --candidate-observed-by reviewer --candidate-observation-source declared \
+  --candidate-observation-ref observation.md --delivery-level local-result \
+  --delivery-ref src/result.ts --delivery-summary "Reviewed result is present"
+```
+
+A Run is one isolated attempt. Runs preserve their input, explicit authorization, attempt number, write-set snapshot, optional host/session receipts, optional worktree identity, candidate snapshot, result or failure, and optional timing evidence. A waiting or blocked Run is not Closed; a later retry adds another Run and keeps the earlier record. Host, worktree, and scheduler fields are optional data, not resident services.
+
+A Review is tied to one completed Run and the candidate snapshot ID and fingerprint. A passing Review needs evidence references for the Review and every declared acceptance criterion, zero unresolved blockers, and a reviewer different from both the Run executor and approver. Multiple Reviews remain in history; Close must use the latest Review for the latest Run candidate. A bridge receipt such as `Pi settled` does not create a passing Review.
+
+Close is committed through the same Kernel authority. It checks that the Task is in Verify, its latest Run completed, the Review passes and matches that candidate, every hard dependency is Closed successfully, acceptance evidence exists, and delivery evidence uses the Task's declared level. Pull-request and merged-result references must be HTTPS URLs; the Kernel checks the declared evidence shape but does not query a remote host to prove merge state.
+
+Candidate freshness has an explicit limit in this slice: Close requires the caller to submit a current observation ID/fingerprint and records its source and evidence reference. The Kernel compares that observation to the frozen Run snapshot, but does not recompute current Git HEAD, staged/unstaged state, or file bytes. The observation is therefore declarative until a Git/filesystem observer supplies the external facts. A pure `readTaskKernel` reader and `projectTaskKernelLifecycle` projection expose the Kernel revision, phase, recorded approval fields, and gate snapshot; the projection is read-only guidance, while each mutation remains the final gate authority.
+
+0.5.x Kernel v1 and `task.json` records remain readable and keep their legacy commands. V2 does not migrate them on read. `pactile task legacy-create` is the explicit compatibility path; automatic legacy migration is a separate P36 change.
+
+The new `task create` contract requires `--deliverable`, `--delivery-level`, and at least one `--accept` criterion. The old `task create <title> --slug <slug>` form is intentionally not a V2 create path; use `task legacy-create` when an explicit 0.5.x Task is needed. This keeps new writes from silently receiving Lite/Full or Parent/Child presets.
+
+Actor, approver, reviewer, observer, approval, candidate-observation, and evidence-reference fields are caller-declared values. The Kernel validates their shape and the links among Task, Run, candidate, Review, and Close, and requires evidence references to be present; it does not authenticate those identities, open referenced files, verify approval with a host, or query a PR/merge service. Candidate observations remain declarations until a Git/filesystem observer supplies and checks the external facts.
+
+## 0.5.x Kernel v1 records and commands
+
 ## Definition
 
 A task is a directory of human-readable artifacts paired with a canonical machine record. The artifacts remain useful when a session is compacted or handed off, while the Kernel prevents an Agent or host integration from skipping approval, review, or close requirements.

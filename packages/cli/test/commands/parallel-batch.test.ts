@@ -20,11 +20,11 @@ function fixture(worktree = false, baseBranch = false): { root: string; parent: 
   fs.writeFileSync(path.join(tasks, "locale", "en", "default-prd.md"), "# {title}\n{goal}\n");
   fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), "artifact_locale: en\n");
   fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=tester\n");
-  expect(runTaskCli(["create", "Parent", "--slug", "parallel-parent"], root)).toBe(0);
+  expect(runTaskCli(["legacy-create", "Parent", "--slug", "parallel-parent"], root)).toBe(0);
   const parent = fs.readdirSync(tasks).find((name) => name.endsWith("-parallel-parent")) ?? "";
   const children: string[] = [];
   for (const slug of ["alpha", "beta", "gamma"]) {
-    expect(runTaskCli(["create", slug, "--slug", slug, "--parent", parent], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", slug, "--slug", slug, "--parent", parent], root)).toBe(0);
     const child = fs.readdirSync(tasks).find((name) => name.endsWith(`-${slug}`)) ?? "";
     const dir = path.join(tasks, child);
     fs.writeFileSync(path.join(dir, "design.md"), "# Design\nIndependent worker.\n");

@@ -502,6 +502,39 @@ function withKernelLock<T>(taskDir: string, fn: () => T): T {
   }
 }
 
+/** Shared lock boundary for Task Kernel schema versions stored in kernel.json. */
+export function withKernelStateLock<T>(
+  taskDir: string,
+  cwd: string | undefined,
+  fn: (resolvedTaskDir: string) => T,
+): T {
+  const dir = resolveTaskDir(taskDir, cwd);
+  return withKernelLock(dir, () => fn(dir));
+}
+
+/** Read the canonical Kernel document while the caller holds its state lock. */
+export function readKernelStateDocument(taskDir: string): unknown | null {
+  const file = kernelJsonPath(taskDir);
+  let raw: string;
+  try { raw = fs.readFileSync(file, "utf-8"); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  try { return JSON.parse(raw) as unknown; }
+  catch (error) {
+    throw new KernelError(
+      "CORRUPT_STATE",
+      `Failed to parse ${file}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/** Atomically persist a canonical Kernel document while the caller holds its state lock. */
+export function writeKernelStateDocument(taskDir: string, document: unknown): void {
+  atomicWriteFile(kernelJsonPath(taskDir), `${JSON.stringify(document, null, 2)}\n`);
+}
+
 function acquireLockSync(lockFile: string): void {
   fs.mkdirSync(path.dirname(lockFile), { recursive: true });
   const deadline = Date.now() + LOCK_MAX_WAIT_MS;
