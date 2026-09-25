@@ -27,6 +27,11 @@
       "import": "./dist/core/task/index.js",
       "default": "./dist/core/task/index.js"
     },
+    "./scheduler": {
+      "types": "./dist/pactile/scheduler/index.d.ts",
+      "import": "./dist/pactile/scheduler/index.js",
+      "default": "./dist/pactile/scheduler/index.js"
+    },
     "./core/compat": {
       "types": "./dist/core/compat/index.d.ts",
       "import": "./dist/core/compat/index.js",
