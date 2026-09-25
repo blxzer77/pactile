@@ -65,6 +65,11 @@ import {
   type TileSelectionLifecycleFailureReceipt,
   createTileSelectionLifecycleFailureReceipt,
 } from "./tiles/selection.js";
+import {
+  adviseTileSelectionWithJevV1,
+  type TileSelectionJevAdviceV1,
+  type TileSelectionJevOptionsV1,
+} from "./tiles/jev-selection.js";
 import type { TileDiagnostic } from "./tiles/loader.js";
 import {
   replayTileSelectionSnapshot,
@@ -180,6 +185,22 @@ export function prepareBatch2TileSelection(
   const surface = loadBatch2TileSelectionSurface(lifecycleByRef);
   if (!surface.success) return surface;
   return prepareTileSelection(surface.data.catalog, request, surface.data.facts);
+}
+
+/** Optional Jev advisory over the same checked bundled Tile selection surface. */
+export async function prepareBatch2TileSelectionWithJevV1(
+  request: TileSelectionRequest,
+  lifecycleByRef: Readonly<Record<string, TileLifecycleState>>,
+  jev?: TileSelectionJevOptionsV1,
+): Promise<TileResult<TileSelectionJevAdviceV1>> {
+  const surface = loadBatch2TileSelectionSurface(lifecycleByRef);
+  if (!surface.success) return surface;
+  return adviseTileSelectionWithJevV1({
+    catalog: surface.data.catalog,
+    request,
+    facts: surface.data.facts,
+    jev,
+  });
 }
 
 export function decideBatch2TileSelection(
@@ -745,6 +766,37 @@ export function prepareSelectedTaskAgentTileSelection(
   const effective = applySelectedTaskAgentTileProfile(surface.data);
   if (!effective.success) return effective;
   return prepareTileSelection(surface.data.catalog, effective.data, surface.data.facts);
+}
+
+/** Optional Jev advice after rebuilding the current Kernel-bound Agent profile. */
+export async function prepareSelectedTaskAgentTileSelectionWithJevV1(
+  root: string,
+  jev?: TileSelectionJevOptionsV1,
+  expectedLifecycle?: {
+    readonly taskId: string;
+    readonly phase: TileTaskLifecycleFact["phase"];
+    readonly revision: number;
+  },
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<SelectedTaskTileSelectionResult<TileSelectionJevAdviceV1>> {
+  const surface = loadSelectedTaskTileSelectionSurface(root, env);
+  if (!surface.success) return surface;
+  if (
+    expectedLifecycle && (
+      surface.data.taskLifecycle.taskId !== expectedLifecycle.taskId ||
+      surface.data.taskLifecycle.phase !== expectedLifecycle.phase ||
+      surface.data.taskLifecycle.revision !== expectedLifecycle.revision
+    )
+  )
+    return taskLifecycleFailure("tile-selection-task-read-failed", surface.data.taskLifecycle);
+  const effective = applySelectedTaskAgentTileProfile(surface.data);
+  if (!effective.success) return effective;
+  return adviseTileSelectionWithJevV1({
+    catalog: surface.data.catalog,
+    request: effective.data,
+    facts: surface.data.facts,
+    jev,
+  });
 }
 
 /** Rebuild the current Agent profile from Kernel facts, then recompile a session offer decision. */
