@@ -13,3 +13,18 @@ export {
   type TaskScheduleRequestV1,
   type TaskScheduleWaveV1,
 } from "./scheduler.js";
+
+export {
+  planParentTaskScheduleV1,
+  scheduleParentTaskGraph,
+  planTaskKernelGraphV1,
+  scheduleTaskKernelGraph,
+  type PersistedTaskScheduleV1,
+  type PersistedTaskKernelScheduleV1,
+  type SchedulerTaskCostOverridesV1,
+  type TaskMapScheduleOptionsV1,
+  type TaskKernelScheduleOptionsV1,
+  type TaskScheduleDecisionReceiptV1,
+  type TaskKernelScheduleDecisionReceiptV1,
+  type TaskScheduleLifecycleSnapshotV1,
+} from "./task-map-scheduler.js";
