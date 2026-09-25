@@ -144,27 +144,18 @@ async function checkpoint(
   await options.onPhase?.(phase);
 }
 
-/** Read the one prepared-batch pointer and verify every staged byte before exposing it. */
+/** Read the one committed-batch pointer and verify its source and staged bytes. */
 export function readPreparedLegacyTaskBatch(
   projectRoot: string,
 ): LegacyTaskBatchAuthority | null {
   const root = path.resolve(projectRoot);
-  const snapshot = readAuthoritySnapshot(root);
-  if (snapshot) {
-    const current = scanLegacyTaskMigration({ projectRoot: root });
-    if (
-      current.preflight.status !== "clear-to-review" ||
-      current.sourceFingerprint !== snapshot.authority.sourceFingerprint
-    )
-      throw new Error("migration-authority-source-stale");
-  }
-  return snapshot?.authority ?? null;
+  return readAuthoritySnapshot(root)?.authority ?? null;
 }
 
 /**
  * Prepare a complete source-preserving migration batch outside `.pactile/tasks`.
- * Nothing becomes a Task Kernel until a later Kernel adapter consumes this
- * staged-only pointer. The entire batch is exposed by one atomic pointer CAS.
+ * The original files are never rewritten. The entire Task/needs-reconciliation
+ * generation becomes visible to the Kernel through one atomic pointer CAS.
  */
 export async function runLegacyTaskBatch(
   request: LegacyTaskBatchRequest,
@@ -220,6 +211,30 @@ export async function runLegacyTaskBatch(
       false,
       null,
     );
+  }
+
+  if (authorityAtStart) {
+    if (
+      authorityAtStart.authority.sourceFingerprint !==
+      normalized.sourceFingerprint
+    ) {
+      return makeResult(
+        "review",
+        "migration-authority-source-changed-after-commit",
+        normalized,
+        false,
+        null,
+      );
+    }
+    if (authorityAtStart.authority.batchId !== normalized.batchId) {
+      return makeResult(
+        "review",
+        "migration-authority-already-committed",
+        normalized,
+        false,
+        null,
+      );
+    }
   }
 
   if (options.dryRun) {
@@ -401,7 +416,7 @@ export async function runLegacyTaskBatch(
         const authority: LegacyTaskBatchAuthority = {
           schemaVersion: 1,
           kind: "prepared-legacy-task-batch",
-          visibility: "staged-only",
+          visibility: "active-v2",
           batchId: normalized.batchId,
           generationId: normalized.generationId,
           sourceFingerprint: normalized.sourceFingerprint,

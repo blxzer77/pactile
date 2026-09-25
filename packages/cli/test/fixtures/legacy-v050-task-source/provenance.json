@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "legacy-v050-task-source",
+  "provenance": {
+    "kind": "release-writer-generated",
+    "ref": "pactile-v0.5.0",
+    "commit": "ad98139610b71822c23293894aabb3e99d149bdd",
+    "sourcePath": "packages/cli/src/templates/pactile/scripts/common/task_store.py::cmd_create",
+    "kernelCliPath": "packages/cli/bin/pactile.js kernel --json",
+    "derivation": "Ran cmd_create imported directly from the tagged checkout with its locally built 0.5.0 CLI and core package link. Only task_store.run_git was stubbed so the temporary project could not inherit the P36 Git branch; the released writer and Kernel serialization paths generated all four input files.",
+    "isolation": "Generated only under this P36 worktree fixture input; the tagged v0.5.0 worktree, MyHarness dogfood, Git configuration, and remote state were not written.",
+    "limitations": "Generated from tagged source, not a byte-identical npm tarball and not a production user's Task. The generated task retains the release writer's placeholder PRD and lacks V2 delivery fields by design."
+  },
+  "files": [
+    {
+      "path": ".pactile/tasks/09-26-v050-migration-sample/kernel.json",
+      "sha256": "ada3fe2e9fb1ddb92d1cc3fbccaf7e59db051beaf57d1a2646b268b134e53a9a"
+    },
+    {
+      "path": ".pactile/tasks/09-26-v050-migration-sample/prd.md",
+      "sha256": "83597ab0b141097cc4eec2d8d3139db74bad8e35ccad9dab36f68c6a45698434"
+    },
+    {
+      "path": ".pactile/tasks/09-26-v050-migration-sample/task.json",
+      "sha256": "17080a9dfd992c6a1d2df2336ef73cfb3c7f757db869064ce435605d456c2faf"
+    },
+    {
+      "path": ".pactile/tasks/09-26-v050-migration-sample/verify.md",
+      "sha256": "6c3025964e57d1a7f3e7f282acc710c0833a38b02da135f9f3c461557a6589a4"
+    }
+  ]
+}

@@ -42,8 +42,15 @@ import {
   shouldExcludeFromHash,
 } from "../utils/template-hash.js";
 import { compareVersions } from "../utils/compare-versions.js";
-import { applyDeferredLiveWrites, captureDeferredLiveWrite, clearDeferredLivePlan, commitDeferredLivePlan,
-  prepareDeferredLivePlan, resumeDeferredLivePlan, type DeferredLiveWrite } from "../pactile/lifecycle/deferred-live.js";
+import {
+  applyDeferredLiveWrites,
+  captureDeferredLiveWrite,
+  clearDeferredLivePlan,
+  commitDeferredLivePlan,
+  prepareDeferredLivePlan,
+  resumeDeferredLivePlan,
+  type DeferredLiveWrite,
+} from "../pactile/lifecycle/deferred-live.js";
 import { toPosix } from "../utils/posix.js";
 import { setupProxy } from "../utils/proxy.js";
 import {
@@ -92,10 +99,17 @@ import {
   isManagedRootDir,
 } from "../configurators/index.js";
 import { getWorkflowRootTemplateFiles } from "../configurators/workflow.js";
-import { isHostProjectionPath, pruneOrphanManifestKeys } from "../utils/manifest-prune.js";
+import {
+  isHostProjectionPath,
+  pruneOrphanManifestKeys,
+} from "../utils/manifest-prune.js";
 import { runPostUpdateSmoke } from "../utils/post-update-smoke.js";
 import { cleanupRetiredAlternateClientResidue } from "../pactile/compat/retired-alternate-client.js";
 import { listLegacyPythonScripts } from "../pactile/compat/node-entry-migration.js";
+import {
+  applyLegacyTaskUpdate,
+  inspectLegacyTaskUpdate,
+} from "../pactile/migration/legacy-task-update.js";
 import {
   buildFilePlanFromChanges,
   createBaseRolloutReport,
@@ -918,8 +932,10 @@ export function collectMissingTemplateHashes(
   const files = new Map<string, string>();
 
   for (const file of changes.unchangedFiles) {
-    if (shouldExcludeFromHash(file.relativePath) ||
-        isHostProjectionPath(file.relativePath)) {
+    if (
+      shouldExcludeFromHash(file.relativePath) ||
+      isHostProjectionPath(file.relativePath)
+    ) {
       continue;
     }
     if (!hashes[file.relativePath]) {
@@ -2020,7 +2036,8 @@ async function runUpdateLifecycle(
 export async function update(options: UpdateOptions): Promise<void> {
   const cwd = process.cwd();
   if (!options.dryRun) {
-    const active = new InstallStateStore(cwd).read()?.state.generationId ?? null;
+    const active =
+      new InstallStateStore(cwd).read()?.state.generationId ?? null;
     resumeDeferredLivePlan(cwd, active);
   }
   const rolloutOpts = rolloutOptionsFromUpdate(options);
@@ -2231,7 +2248,9 @@ export async function update(options: UpdateOptions): Promise<void> {
     hashes = Object.fromEntries(retainedHashes);
     prunedManifest = true;
     console.log(
-      chalk.gray(`   Released ${releasedHashPaths.length} retired Python hash claim(s)`),
+      chalk.gray(
+        `   Released ${releasedHashPaths.length} retired Python hash claim(s)`,
+      ),
     );
   }
 
@@ -2271,7 +2290,17 @@ export async function update(options: UpdateOptions): Promise<void> {
   // This runs regardless of version — unknown version still gets safe cleanup
   const allMigrations = getAllMigrations();
   const safeFileDeletes = collectSafeFileDeletes(
-    [...allMigrations, ...retiredPythonMigrations.filter((item) => !allMigrations.some((existing) => existing.type === "safe-file-delete" && existing.from === item.from))],
+    [
+      ...allMigrations,
+      ...retiredPythonMigrations.filter(
+        (item) =>
+          !allMigrations.some(
+            (existing) =>
+              existing.type === "safe-file-delete" &&
+              existing.from === item.from,
+          ),
+      ),
+    ],
     cwd,
     skipPaths,
     breakingBypass,
@@ -2467,9 +2496,9 @@ export async function update(options: UpdateOptions): Promise<void> {
     .filter((c) => c.action === "delete")
     .map((c) => c.item.from);
   const conflictsPending = changes.changedFiles.map((f) => f.relativePath);
-  const buildRolloutFilePlan = (applied = false): ReturnType<
-    typeof buildFilePlanFromChanges
-  > => {
+  const buildRolloutFilePlan = (
+    applied = false,
+  ): ReturnType<typeof buildFilePlanFromChanges> => {
     const remaining = applied
       ? legacyPythonPaths.filter(legacyPathPresent)
       : legacyPythonPaths;
@@ -2576,6 +2605,48 @@ export async function update(options: UpdateOptions): Promise<void> {
   p36State.report = p36SummaryForRollout(p36Plan);
   printP36Vernacular(p36Plan);
 
+  const legacyTaskInspection = inspectLegacyTaskUpdate(cwd);
+  if (legacyTaskInspection.status !== "none") {
+    console.log(chalk.cyan("\nLegacy Task import preflight:"));
+    if (legacyTaskInspection.status === "ready") {
+      console.log(
+        `  Ready: ${legacyTaskInspection.import.imported} Task(s), ${legacyTaskInspection.import.needsDefinition} need definition, ${legacyTaskInspection.import.needsCoordination} need dependency coordination, ${legacyTaskInspection.import.archived} archived read-only.`,
+      );
+    } else if (legacyTaskInspection.status === "blocked") {
+      console.log(
+        chalk.yellow(
+          `  Blocked: ${legacyTaskInspection.reason ?? "legacy-task-preflight-blocked"}`,
+        ),
+      );
+      for (const finding of legacyTaskInspection.plan.findings.filter(
+        (item) => item.severity === "blocker",
+      )) {
+        console.log(
+          chalk.gray(
+            `  ${finding.sourcePath}: ${finding.code} — ${finding.detail}`,
+          ),
+        );
+      }
+    } else if (legacyTaskInspection.status === "active-source-drift") {
+      console.log(
+        chalk.yellow(
+          "  Existing V2 import remains active; later legacy source edits stay untouched and will not be re-imported automatically.",
+        ),
+      );
+    } else {
+      console.log(
+        chalk.gray(
+          `  ${legacyTaskInspection.status}: batch ${legacyTaskInspection.activeBatchId ?? "none"}`,
+        ),
+      );
+    }
+  }
+  if (!options.dryRun && legacyTaskInspection.status === "blocked") {
+    throw new Error(
+      `Legacy Task migration preflight blocked the update: ${legacyTaskInspection.reason ?? "unknown"}`,
+    );
+  }
+
   // First-time hash tracking hint
   if (isFirstHashTracking && changes.changedFiles.length > 0) {
     console.log(chalk.cyan("ℹ️  First update with hash tracking enabled."));
@@ -2607,6 +2678,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   const hasMaintainerArtifactWrites =
     Boolean(options.writeArtifacts) && artifactPlan.writable.length > 0;
   const hasWaveCPending = waveCWorkPending(p36Plan);
+  const hasLegacyTaskUpgrade = legacyTaskInspection.status === "ready";
 
   if (
     changes.newFiles.length === 0 &&
@@ -2616,7 +2688,8 @@ export async function update(options: UpdateOptions): Promise<void> {
     !hasSafeDeletes &&
     !hasOfficialP36 &&
     !hasMaintainerArtifactWrites &&
-    !hasWaveCPending
+    !hasWaveCPending &&
+    !hasLegacyTaskUpgrade
   ) {
     const metadataChanged =
       prunedManifest || missingTemplateHashes.size > 0 || !isSameVersion;
@@ -2803,6 +2876,37 @@ export async function update(options: UpdateOptions): Promise<void> {
     waveCInteractivelyConfirmed = true;
   }
 
+  if (legacyTaskInspection.status === "ready") {
+    const taskUpgrade = await applyLegacyTaskUpdate(cwd);
+    if (
+      taskUpgrade.status === "blocked" ||
+      taskUpgrade.status === "interrupted"
+    ) {
+      throw new Error(
+        `Legacy Task migration did not commit; update stopped before template writes (${taskUpgrade.reason ?? taskUpgrade.status}). Re-run 'pactile update' to recover the journal.`,
+      );
+    }
+    if (taskUpgrade.status === "completed") {
+      console.log(
+        chalk.green(
+          `\n✓ Imported ${taskUpgrade.import.imported} legacy Task(s) into V2; ${taskUpgrade.import.needsDefinition} need definition, ${taskUpgrade.import.needsCoordination} need dependency coordination, ${taskUpgrade.import.archived} remain archived read-only.`,
+        ),
+      );
+    } else if (taskUpgrade.status === "active-source-drift") {
+      console.log(
+        chalk.yellow(
+          "\nLegacy source changed after the active V2 import; preserved it without re-import.",
+        ),
+      );
+    } else if (taskUpgrade.status === "already-active") {
+      console.log(
+        chalk.gray(
+          "\nLegacy Task migration is already active; no Task state was rewritten.",
+        ),
+      );
+    }
+  }
+
   // Create complete backup of all managed platform/workflow directories
   const canonicalBuildRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "pactile-update-"),
@@ -2828,14 +2932,14 @@ export async function update(options: UpdateOptions): Promise<void> {
   const skippedConflictPaths: string[] = [];
   const createdNewPaths: string[] = [];
   const deferredLiveWrites = new Map<string, DeferredLiveWrite>();
-  const stageTemplateWrite = (
-    relativePath: string,
-    content: string,
-  ): void => {
+  const stageTemplateWrite = (relativePath: string, content: string): void => {
     const executable =
       relativePath.endsWith(".sh") || relativePath.endsWith(".py");
     if (!isCanonicalGenerationPath(relativePath)) {
-      deferredLiveWrites.set(relativePath, captureDeferredLiveWrite(cwd, relativePath, content, executable));
+      deferredLiveWrites.set(
+        relativePath,
+        captureDeferredLiveWrite(cwd, relativePath, content, executable),
+      );
       return;
     }
     const target = candidatePath(cwd, canonicalBuildRoot, relativePath);
@@ -2987,7 +3091,7 @@ export async function update(options: UpdateOptions): Promise<void> {
               ? fs.readFileSync(fullPath, "utf-8")
               : null;
           })()
-        : deferredLiveWrites.get(file.relativePath)?.content ?? null;
+        : (deferredLiveWrites.get(file.relativePath)?.content ?? null);
       if (staged === file.newContent)
         filesToHash.set(file.relativePath, file.newContent);
     }
@@ -3004,8 +3108,10 @@ export async function update(options: UpdateOptions): Promise<void> {
       activePlatforms,
       VERSION,
     );
-    const sourceGenerationId = new InstallStateStore(cwd).read()?.state.generationId;
-    if (!sourceGenerationId) throw new Error("Missing active generation before deferred live update");
+    const sourceGenerationId = new InstallStateStore(cwd).read()?.state
+      .generationId;
+    if (!sourceGenerationId)
+      throw new Error("Missing active generation before deferred live update");
     prepareDeferredLivePlan(cwd, sourceGenerationId, deferredLiveWrites);
     try {
       lifecycleResult = await runUpdateLifecycle(
@@ -3014,10 +3120,17 @@ export async function update(options: UpdateOptions): Promise<void> {
         canonicalCandidate,
       );
       if (lifecycleResult.installState) {
-        commitDeferredLivePlan(cwd, lifecycleResult.installState.state.generationId);
+        commitDeferredLivePlan(
+          cwd,
+          lifecycleResult.installState.state.generationId,
+        );
       }
     } catch (error) {
-      if (new InstallStateStore(cwd).read()?.state.generationId === sourceGenerationId) clearDeferredLivePlan(cwd);
+      if (
+        new InstallStateStore(cwd).read()?.state.generationId ===
+        sourceGenerationId
+      )
+        clearDeferredLivePlan(cwd);
       throw error;
     }
   } finally {
@@ -3122,7 +3235,8 @@ export async function update(options: UpdateOptions): Promise<void> {
       console.log(
         chalk.yellow("产物写入失败，已回到双读。项目仍可用，可再跑 update。"),
       );
-      if (artifactApply.error) console.log(chalk.gray(`  ${artifactApply.error}`));
+      if (artifactApply.error)
+        console.log(chalk.gray(`  ${artifactApply.error}`));
     }
   }
 

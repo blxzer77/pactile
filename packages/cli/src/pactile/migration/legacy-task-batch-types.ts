@@ -94,8 +94,8 @@ export interface LegacyTaskBatchJournal {
 export interface LegacyTaskBatchAuthority {
   readonly schemaVersion: 1;
   readonly kind: "prepared-legacy-task-batch";
-  /** This pointer exposes a complete staged batch only; Task readers do not consume it yet. */
-  readonly visibility: "staged-only";
+  /** The pointer exposes one fully verified Task import generation atomically. */
+  readonly visibility: "active-v2";
   readonly batchId: string;
   readonly generationId: string;
   readonly sourceFingerprint: string;

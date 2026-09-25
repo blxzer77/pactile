@@ -100,7 +100,7 @@ function parseAuthority(value: unknown): LegacyTaskBatchAuthority {
   if (
     authority.schemaVersion !== 1 ||
     authority.kind !== "prepared-legacy-task-batch" ||
-    authority.visibility !== "staged-only" ||
+    authority.visibility !== "active-v2" ||
     typeof authority.batchId !== "string" ||
     typeof authority.generationId !== "string" ||
     !FINGERPRINT.test(authority.sourceFingerprint ?? "") ||

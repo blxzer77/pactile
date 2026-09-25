@@ -152,13 +152,13 @@ describe("legacy Task batch staging transaction", () => {
     expect(fs.readFileSync(stagedFile)).toEqual(request.targets[0]?.bytes);
     expect(readPreparedLegacyTaskBatch(root)).toMatchObject({
       kind: "prepared-legacy-task-batch",
-      visibility: "staged-only",
+      visibility: "active-v2",
       batchId: result.batchId,
       generationId: result.generationId,
     });
     expect(
       fs.readFileSync(path.join(storePath(root, "authority.json")), "utf8"),
-    ).toContain('"visibility": "staged-only"');
+    ).toContain('"visibility": "active-v2"');
 
     const pointerBeforeRetry = fs.readFileSync(
       storePath(root, "authority.json"),
@@ -291,19 +291,37 @@ describe("legacy Task batch staging transaction", () => {
     expect(readPreparedLegacyTaskBatch(root)).toBeNull();
   });
 
-  it("does not expose a committed staged pointer after later source edits", async () => {
+  it("keeps a committed V2 pointer active and refuses re-import after later source edits", async () => {
     const root = tempProject();
     const request = requestFor(root);
     const result = await runLegacyTaskBatch(request, { approved: true });
     expect(result.status).toBe("completed");
-    fs.appendFileSync(
-      path.join(root, ".pactile", "tasks", "09-26-legacy", "task.json"),
-      "\nuser edit after batch commit\n",
+    const editedTaskPath = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      "09-26-legacy",
+      "task.json",
+    );
+    const editedTask = JSON.parse(
+      fs.readFileSync(editedTaskPath, "utf8"),
+    ) as Record<string, unknown>;
+    editedTask.user_after_migration = "preserve this edit";
+    fs.writeFileSync(
+      editedTaskPath,
+      `${JSON.stringify(editedTask, null, 2)}\n`,
       "utf8",
     );
-    expect(() => readPreparedLegacyTaskBatch(root)).toThrow(
-      "migration-authority-source-stale",
-    );
+    expect(readPreparedLegacyTaskBatch(root)?.batchId).toBe(result.batchId);
+    const retry = await runLegacyTaskBatch(requestFor(root), {
+      approved: true,
+    });
+    expect(retry).toMatchObject({
+      status: "review",
+      reason: "migration-authority-source-changed-after-commit",
+      wrote: false,
+    });
+    expect(readPreparedLegacyTaskBatch(root)?.batchId).toBe(result.batchId);
   });
 
   it("uses pointer CAS so a racing batch cannot publish a partial generation", async () => {

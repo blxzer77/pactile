@@ -376,6 +376,40 @@ function filesOwnedByTask(
   });
 }
 
+function isStandaloneV2TaskDirectory(files: readonly string[]): boolean {
+  if (files.some((file) => path.basename(file) === TASK_JSON)) return false;
+  const kernelPath = files.find((file) => path.basename(file) === KERNEL_JSON);
+  if (!kernelPath) return false;
+  try {
+    const stat = fs.lstatSync(kernelPath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)
+      return false;
+    const value: unknown = JSON.parse(fs.readFileSync(kernelPath, "utf8"));
+    if (!isPlainObject(value) || value.schemaVersion !== 2) return false;
+    const identity = value.identity;
+    return isPlainObject(identity) && typeof identity.taskId === "string";
+  } catch {
+    return false;
+  }
+}
+
+function isWithinV2TaskDirectory(
+  directory: string,
+  tasksRoot: string,
+  v2TaskDirectories: ReadonlySet<string>,
+): boolean {
+  let current = directory;
+  while (
+    current === tasksRoot ||
+    current.startsWith(`${tasksRoot}${path.sep}`)
+  ) {
+    if (v2TaskDirectories.has(current)) return true;
+    if (current === tasksRoot) return false;
+    current = path.dirname(current);
+  }
+  return false;
+}
+
 function fact(
   record: Record<string, unknown> | null,
   key: string,
@@ -755,6 +789,11 @@ export function scanLegacyTaskMigration(
     const right = posixRelative(tasksRoot, b);
     return left < right ? -1 : left > right ? 1 : 0;
   });
+  const v2TaskDirectories = new Set(
+    [...scan.filesByDirectory.entries()]
+      .filter(([, files]) => isStandaloneV2TaskDirectory(files))
+      .map(([directory]) => directory),
+  );
   const orphanDirectories = new Set<string>();
   for (const [directory, files] of scan.filesByDirectory) {
     const hasOrphanCandidate = files.some((file) =>
@@ -762,6 +801,7 @@ export function scanLegacyTaskMigration(
     );
     if (
       hasOrphanCandidate &&
+      !isWithinV2TaskDirectory(directory, tasksRoot, v2TaskDirectories) &&
       !nearestTaskDirectory(directory, tasksRoot, scan.taskDirectories)
     ) {
       orphanDirectories.add(directory);
