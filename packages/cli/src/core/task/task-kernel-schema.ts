@@ -871,6 +871,11 @@ function parseDeliveryVerification(
     `${field}.candidateHead`,
   );
   const path = parseRepositoryRelativePath(input.path, `${field}.path`);
+  const fileSha256 = requireFingerprint(
+    input.fileSha256,
+    `${field}.fileSha256`,
+  );
+  const gitBlobSha256 = nullableFileHash(input.gitBlobSha256, "gitBlobSha256");
   const targetBranch =
     input.targetBranch === null
       ? null
@@ -907,6 +912,8 @@ function parseDeliveryVerification(
       pullRequest.merged ||
       pullRequest.draft ||
       pullRequest.headSha !== candidateHead ||
+      gitBlobSha256 === null ||
+      fileSha256 !== gitBlobSha256 ||
       targetBranch !== null ||
       targetSha !== null ||
       integrationCommitSha !== null ||
@@ -923,6 +930,8 @@ function parseDeliveryVerification(
       !pullRequest.merged ||
       pullRequest.draft ||
       pullRequest.headSha !== candidateHead ||
+      gitBlobSha256 === null ||
+      fileSha256 !== gitBlobSha256 ||
       !pullRequest.mergeCommitSha ||
       !targetBranch ||
       !targetSha ||
@@ -954,8 +963,8 @@ function parseDeliveryVerification(
     candidateHead,
     level: input.level,
     path,
-    fileSha256: requireFingerprint(input.fileSha256, `${field}.fileSha256`),
-    gitBlobSha256: nullableFileHash(input.gitBlobSha256, "gitBlobSha256"),
+    fileSha256,
+    gitBlobSha256,
     targetBranch,
     targetSha,
     integrationCommitSha,

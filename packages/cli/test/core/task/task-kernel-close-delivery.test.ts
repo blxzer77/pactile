@@ -95,7 +95,19 @@ function kernel(
   return { dir, kernel: created.kernel };
 }
 
-function prepareCandidate(root: string, taskDir: string, taskId: string) {
+function prepareCandidate(
+  root: string,
+  taskDir: string,
+  taskId: string,
+  options: {
+    deliveryPath?: string;
+    writeSet?: string[];
+    evidenceRef?: string;
+  } = {},
+) {
+  const deliveryPath = options.deliveryPath ?? "result.txt";
+  const writeSet = options.writeSet ?? [deliveryPath];
+  const evidenceRef = options.evidenceRef ?? deliveryPath;
   const baseSha = git(root, "rev-parse", "HEAD");
   const branch = `feat/${taskId}`;
   const workspaceRoot = path.join(
@@ -116,14 +128,14 @@ function prepareCandidate(root: string, taskDir: string, taskId: string) {
     authorization: {
       approvedBy: "approver",
       approvedAt: "now",
-      scope: "result.txt",
+      scope: deliveryPath,
       evidenceRef: "approval.json",
     },
     workspace: {
       canonicalPath: workspaceRoot,
       branch,
       baseSha,
-      writeSet: ["result.txt"],
+      writeSet,
       integrationState: "not-integrated",
       reclamationState: "not-requested",
     },
@@ -131,9 +143,13 @@ function prepareCandidate(root: string, taskDir: string, taskId: string) {
   const run = started.kernel.runs.at(-1);
   if (!run) throw new Error("started Run is missing");
   const bytes = `result for ${taskId}\n`;
-  fs.writeFileSync(path.join(workspaceRoot, "result.txt"), bytes);
-  git(workspaceRoot, "add", "result.txt");
-  git(workspaceRoot, "commit", "--quiet", "-m", `deliver ${taskId}`);
+  const absoluteDeliveryPath = path.join(workspaceRoot, deliveryPath);
+  fs.mkdirSync(path.dirname(absoluteDeliveryPath), { recursive: true });
+  fs.writeFileSync(absoluteDeliveryPath, bytes);
+  git(workspaceRoot, "add", deliveryPath);
+  if (git(workspaceRoot, "status", "--porcelain")) {
+    git(workspaceRoot, "commit", "--quiet", "-m", `deliver ${taskId}`);
+  }
   const observation = observeTaskRunCandidate({ run });
   const updated = readTaskKernel({ root, taskDir, cwd: root });
   if (updated.kind !== "task-kernel-v2") throw new Error("expected V2 Task");
@@ -144,12 +160,16 @@ function prepareCandidate(root: string, taskDir: string, taskId: string) {
     runId: run.id,
     outcome: "completed",
     summary: "committed result",
-    evidenceRefs: ["result.txt"],
+    evidenceRefs: [evidenceRef],
     candidateEntries: [
-      {
-        ref: "result.txt",
-        fingerprint: createHash("sha256").update(bytes).digest("hex"),
-      },
+      ...(evidenceRef === deliveryPath
+        ? [
+            {
+              ref: deliveryPath,
+              fingerprint: createHash("sha256").update(bytes).digest("hex"),
+            },
+          ]
+        : []),
       createTaskCandidateEntry(observation),
     ],
     actor: "implementer",
@@ -167,7 +187,7 @@ function prepareCandidate(root: string, taskDir: string, taskId: string) {
     reviewer: "independent-reviewer",
     decision: "pass",
     evidenceRefs: ["review.md"],
-    acceptanceEvidence: { "AC-1": ["result.txt"] },
+    acceptanceEvidence: { "AC-1": [evidenceRef] },
     actor: "independent-reviewer",
     idempotencyKey: `review:${taskId}`,
   });
@@ -179,6 +199,7 @@ function prepareCandidate(root: string, taskDir: string, taskId: string) {
     review,
     kernel: reviewed.kernel,
     bytes,
+    deliveryPath,
     observation,
     workspaceRoot,
   };
@@ -282,6 +303,84 @@ describe("Task Close delivery observation", () => {
         },
       }),
     ).toThrow("has inconsistent merged-result delivery facts");
+    expect(() =>
+      parseTaskKernelSnapshotV2({
+        ...closed.kernel,
+        closure: {
+          ...closure,
+          deliveryVerification: {
+            ...closure.deliveryVerification,
+            fileSha256: "0".repeat(64),
+          },
+        },
+      }),
+    ).toThrow("has inconsistent pull-request delivery facts");
+  });
+
+  it("rejects PR delivery bytes hidden from Git status by skip-worktree", () => {
+    const root = makeRepository();
+    const deliveryPath = "src/result.txt";
+    const baselineBytes = "result for hidden-index-delivery\n";
+    fs.mkdirSync(path.dirname(path.join(root, deliveryPath)), {
+      recursive: true,
+    });
+    fs.writeFileSync(path.join(root, deliveryPath), baselineBytes);
+    git(root, "add", deliveryPath);
+    git(root, "commit", "--quiet", "-m", "baseline delivery file");
+
+    const task = kernel(root, "hidden-index-delivery", "pull-request");
+    const prepared = prepareCandidate(root, task.dir, "hidden-index-delivery", {
+      deliveryPath,
+      writeSet: ["src/"],
+      evidenceRef: "review.md",
+    });
+    expect(prepared.bytes).toBe(baselineBytes);
+    expect(prepared.observation.currentFiles).toEqual([]);
+
+    fs.writeFileSync(
+      path.join(prepared.workspaceRoot, deliveryPath),
+      "tampered after Run\n",
+    );
+    git(
+      prepared.workspaceRoot,
+      "update-index",
+      "--skip-worktree",
+      deliveryPath,
+    );
+    expect(git(prepared.workspaceRoot, "status", "--porcelain")).toBe("");
+    provider.fact = providerFact({
+      state: "open",
+      merged: false,
+      headSha: prepared.observation.head,
+      mergeCommitSha: null,
+    });
+
+    const errors = checkTaskClose({
+      root,
+      taskDir: task.dir,
+      expectedRevision: prepared.kernel.revision,
+      runId: prepared.run.id,
+      reviewId: prepared.review.id,
+      candidateObservation: {
+        snapshotId: prepared.candidate.id,
+        fingerprint: prepared.candidate.fingerprint,
+        observedBy: "caller",
+        observedAt: "now",
+        source: "caller-attested",
+        evidenceRef: "candidate.json",
+      },
+      deliveryEvidence: {
+        level: "pull-request",
+        reference: "https://github.com/example/project/pull/17",
+        path: deliveryPath,
+        summary: "clean status must not hide changed delivery bytes",
+      },
+    });
+
+    expect(errors.join("\n")).toContain(
+      "current bytes do not match the frozen candidate HEAD blob",
+    );
+    expect(errors.join("\n")).not.toContain("Run candidate is stale");
   });
 
   it("requires the provider merge commit in the local target ancestry and matching target bytes", () => {

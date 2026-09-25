@@ -128,6 +128,41 @@ describe("read-only Git candidate observation", () => {
     }
   });
 
+  it("includes committed base-to-HEAD paths when enforcing the frozen write set", () => {
+    const repository = createTemporaryGitRepository();
+    try {
+      const baseSha = repository.head;
+      fs.mkdirSync(path.join(repository.root, "docs"), { recursive: true });
+      fs.writeFileSync(
+        path.join(repository.root, "docs", "outside.md"),
+        "committed outside the Run write set\n",
+      );
+      runGit(repository.root, ["add", "docs/outside.md"]);
+      runGit(repository.root, [
+        "commit",
+        "--quiet",
+        "-m",
+        "out-of-scope commit",
+      ]);
+
+      const observation = observeGitCandidate({
+        repositoryRoot: repository.root,
+        expectedBaseSha: baseSha,
+        allowedWriteSet: { exactPaths: ["src/task.ts"], directoryPrefixes: [] },
+      });
+
+      expect(observation.committedPaths).toEqual(["docs/outside.md"]);
+      expect(observation.affectedPaths).toContain("docs/outside.md");
+      expect(observation.outOfScopePaths).toContain("docs/outside.md");
+      expect(observation.scopeStatus).toBe("out-of-scope");
+      expect(() => createTaskCandidateEntry(observation)).toThrow(
+        /out-of-scope/,
+      );
+    } finally {
+      removeTemporaryGitRepository(repository);
+    }
+  });
+
   it("adapts the frozen P35 Run workspace and rejects mismatched write sets", () => {
     const repository = createTemporaryGitRepository();
     try {

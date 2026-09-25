@@ -69,6 +69,8 @@ export interface GitCandidateObservation {
   readonly unstagedPaths: readonly string[];
   readonly untrackedPaths: readonly string[];
   readonly conflictPaths: readonly string[];
+  /** Paths changed between the Run workspace base commit and the frozen HEAD. */
+  readonly committedPaths: readonly string[];
   readonly affectedPaths: readonly string[];
   readonly inScopePaths: readonly string[];
   readonly outOfScopePaths: readonly string[];
@@ -126,6 +128,7 @@ interface GitState {
   readonly unstagedPaths: readonly string[];
   readonly untrackedPaths: readonly string[];
   readonly conflictPaths: readonly string[];
+  readonly committedPaths: readonly string[];
   readonly indexDiffSha256: string;
   readonly worktreeDiffSha256: string;
   readonly statusSha256: string;
@@ -329,7 +332,10 @@ function pathIsAllowed(repositoryPath: string, writeSet: GitWriteSet): boolean {
   );
 }
 
-function collectGitState(repositoryRoot: string): GitState {
+function collectGitState(
+  repositoryRoot: string,
+  expectedBaseSha: string | null,
+): GitState {
   const head = decodeGitText(
     runGit(repositoryRoot, ["rev-parse", "--verify", "HEAD^{commit}"]),
     "HEAD",
@@ -383,6 +389,21 @@ function collectGitState(repositoryRoot: string): GitState {
     ]),
     "conflict paths",
   );
+  const committedPaths =
+    expectedBaseSha === null
+      ? []
+      : decodeNulPaths(
+          runGit(repositoryRoot, [
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            expectedBaseSha,
+            head,
+            "--",
+          ]),
+          "committed paths",
+        );
   const indexDiffSha256 = sha256(
     runGit(repositoryRoot, [
       "diff",
@@ -421,6 +442,7 @@ function collectGitState(repositoryRoot: string): GitState {
     unstagedPaths,
     untrackedPaths,
     conflictPaths,
+    committedPaths,
     indexDiffSha256,
     worktreeDiffSha256,
     statusSha256,
@@ -628,6 +650,7 @@ function stableSnapshotFingerprint(input: {
   unstagedPaths: readonly string[];
   untrackedPaths: readonly string[];
   conflictPaths: readonly string[];
+  committedPaths: readonly string[];
   affectedPaths: readonly string[];
   inScopePaths: readonly string[];
   outOfScopePaths: readonly string[];
@@ -681,7 +704,8 @@ export function observeGitCandidate(
     );
   }
 
-  const initial = collectGitState(repositoryRoot);
+  const normalizedExpectedBaseSha = expectedBaseSha?.toLowerCase() ?? null;
+  const initial = collectGitState(repositoryRoot, normalizedExpectedBaseSha);
   const repositoryIdentitySha256 = sha256(
     process.platform === "win32"
       ? repositoryRoot.toLowerCase()
@@ -693,6 +717,7 @@ export function observeGitCandidate(
       ...initial.unstagedPaths,
       ...initial.untrackedPaths,
       ...initial.conflictPaths,
+      ...initial.committedPaths,
     ]),
   ].sort();
   if (affectedPaths.length > MAX_CHANGED_PATHS) {
@@ -718,7 +743,7 @@ export function observeGitCandidate(
   const currentAfterRead = currentFiles.map((entry) =>
     readCurrentFile(repositoryRoot, entry.path, { totalBytes: 0 }),
   );
-  const after = collectGitState(repositoryRoot);
+  const after = collectGitState(repositoryRoot, normalizedExpectedBaseSha);
   if (
     initial.stateSha256 !== after.stateSha256 ||
     stableObjectFingerprint(currentFiles) !==
@@ -751,6 +776,7 @@ export function observeGitCandidate(
     unstagedPaths: initial.unstagedPaths,
     untrackedPaths: initial.untrackedPaths,
     conflictPaths: initial.conflictPaths,
+    committedPaths: initial.committedPaths,
     affectedPaths,
     inScopePaths,
     outOfScopePaths,
@@ -786,6 +812,7 @@ export function verifyGitCandidateObservation(
       unstagedPaths,
       untrackedPaths,
       conflictPaths,
+      committedPaths,
       affectedPaths,
       inScopePaths,
       outOfScopePaths,
@@ -809,6 +836,7 @@ export function verifyGitCandidateObservation(
         unstagedPaths,
         untrackedPaths,
         conflictPaths,
+        committedPaths,
         affectedPaths,
         inScopePaths,
         outOfScopePaths,

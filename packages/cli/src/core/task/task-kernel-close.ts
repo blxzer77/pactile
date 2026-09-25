@@ -506,6 +506,12 @@ function verifyDelivery(
       `Delivery path ${repositoryPath} is not present at the frozen candidate HEAD`,
     );
   }
+  if (currentFile.sha256 !== candidateGitFile.sha256) {
+    throw new KernelError(
+      "INVALID_DELIVERY_EVIDENCE",
+      `Delivery path ${repositoryPath} current bytes do not match the frozen candidate HEAD blob`,
+    );
+  }
   const pullRequest = observeGitHubPullRequest(
     repositoryRoot,
     delivery.reference,
