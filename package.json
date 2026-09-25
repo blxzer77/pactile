@@ -11,8 +11,8 @@
     "release:major": "pnpm --filter @blxzer/pactile release:major",
     "release:beta": "pnpm --filter @blxzer/pactile release:beta",
     "release:promote": "pnpm --filter @blxzer/pactile release:promote",
-    "release:check": "node packages/cli/scripts/release-preflight.js check-versions",
-    "release:plan": "node packages/cli/scripts/release-preflight.js publish-plan",
+    "release:check": "pnpm --filter @blxzer/pactile release:check",
+    "release:plan": "pnpm --filter @blxzer/pactile release:plan",
     "docs:smoke": "pnpm --filter @blxzer/pactile docs:smoke"
   }
 }

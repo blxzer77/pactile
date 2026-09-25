@@ -15,6 +15,7 @@ Pactile 将能力的 origin 与 assurance 分开。能力可能是宿主原生�
 | Provider | [Provider](providers.zh-CN.md)                   | 显式安装并授权                    | 检查 origin、readiness、freshness 与 assurance。 |
 | 隐私     | [隐私与权限](privacy-and-permissions.zh-CN.md)   | 策略边界                          | 启用前审阅数据流和凭据范围。                     |
 | Subagent | [Subagent](subagents.zh-CN.md)                   | 宿主派发加共享 Task 契约          | 使用 CLI dispatch prompt 与 Task gate。          |
+| 结构化任务工件 | [PRD、Design、Implement、Review 与 Verify](structured-task-artifacts.zh-CN.md) | Kernel 派生的生命周期事实 | 先读索引，再按需展开事实或用户撰写的文档。 |
 
 ## 四种 mode
 

@@ -3,10 +3,13 @@
 export * from "./runtime/index.js";
 export * from "./lifecycle/index.js";
 export * from "./exit/index.js";
+export * from "./scheduler/index.js";
 
 export * from "./tiles/loader.js";
 export * from "./tiles/catalog.js";
 export * from "./tiles/compiler.js";
+export * from "./tiles/selection.js";
+export * from "./tiles/jev-selection.js";
 
 export * from "./projection/managed-block.js";
 export * from "./projection/structured-merge.js";
@@ -39,4 +42,5 @@ export type {
 export { runAdoptionWorkflow } from "./adoption/workflow.js";
 
 export * from "./middleware/index.js";
+export * from "./jev/index.js";
 export * from "./retrieval/index.js";

@@ -8,6 +8,7 @@ import {
   scanLegacyTaskMigration,
   type LegacyTaskMigrationPlan,
 } from "../../core/task/legacy-task-migration.js";
+import { assertLegacyTaskKernelMigrationOverlaysIntact } from "../../core/task/task-kernel-store-v2.js";
 import {
   readPreparedLegacyTaskBatch,
   runLegacyTaskBatch,
@@ -39,6 +40,7 @@ function inspectWithCurrentSource(
   projectRoot: string,
 ): LegacyTaskUpdateInspection {
   const active = readPreparedLegacyTaskBatch(projectRoot);
+  if (active) assertLegacyTaskKernelMigrationOverlaysIntact(projectRoot);
   const plan = scanLegacyTaskMigration({ projectRoot });
   const imported = buildLegacyTaskV2Import(plan);
   if (active) {

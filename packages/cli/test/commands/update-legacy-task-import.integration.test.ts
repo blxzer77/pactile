@@ -25,7 +25,10 @@ import { update } from "../../src/commands/update.js";
 import { buildLegacyTaskV2Import } from "../../src/core/task/legacy-task-v2-import.js";
 import { scanLegacyTaskMigration } from "../../src/core/task/legacy-task-migration.js";
 import { VERSION } from "../../src/constants/version.js";
-import { readTaskKernel } from "../../src/core/task/task-kernel.js";
+import {
+  legacyTaskMigrationOverlayPath,
+} from "../../src/core/task/legacy-task-migration-reader.js";
+import { readTaskKernel, startTaskRun } from "../../src/core/task/task-kernel.js";
 import {
   readPreparedLegacyTaskBatch,
   runLegacyTaskBatch,
@@ -244,5 +247,60 @@ describe("pactile update legacy Task import", () => {
     expect(
       fs.readFileSync(path.join(taskDir, "task.json")).equals(sourceBytes),
     ).toBe(true);
+  });
+
+  it("blocks an update retry when an active V2 overlay was removed", async () => {
+    const taskDir = addLegacyTask();
+    await update({
+      force: true,
+      skipReadiness: true,
+      skipPostUpdateSmoke: true,
+    });
+    const imported = readTaskKernel({ root, taskDir, cwd: root });
+    expect(imported.kind).toBe("task-kernel-v2");
+    if (imported.kind !== "task-kernel-v2")
+      throw new Error("expected active V2 Task");
+    startTaskRun({
+      root,
+      taskDir,
+      expectedRevision: imported.kernel.revision,
+      actor: "update-retry-integrity-test",
+      idempotencyKey: "update-retry-integrity-run",
+      input: {
+        summary: "Persist V2 state before simulated data loss",
+        references: [],
+      },
+      authorization: {
+        approvedBy: "test-approver",
+        approvedAt: "2026-09-25T13:00:00.000Z",
+        scope: "one Task",
+        evidenceRef: "approval.json",
+      },
+    });
+    const overlayDir = legacyTaskMigrationOverlayPath(root, taskDir);
+    if (!overlayDir) throw new Error("missing migration overlay path");
+    fs.rmSync(overlayDir, { recursive: true, force: true });
+    const authorityPath = projectFile(
+      ".pactile",
+      "runtime",
+      "legacy-task-migrations",
+      "authority.json",
+    );
+    const authorityBefore = fs.readFileSync(authorityPath);
+
+    await expect(
+      update({
+        force: true,
+        skipReadiness: true,
+        skipPostUpdateSmoke: true,
+      }),
+    ).rejects.toThrow(/Legacy Task migration preflight blocked.*overlay kernel-missing/);
+    expect(fs.readFileSync(authorityPath).equals(authorityBefore)).toBe(true);
+    expect(readPreparedLegacyTaskBatch(root)).toMatchObject({
+      visibility: "active-v2",
+    });
+    expect(() => readTaskKernel({ root, taskDir, cwd: root })).toThrow(
+      /overlay kernel-missing/,
+    );
   });
 });

@@ -20,7 +20,7 @@ Do not mark **ready to publish** here — that remains the readiness task outcom
 
 Before any of the following, stop and obtain explicit user approval:
 
-- `node scripts/release.js …` (bundles bump, commit, tag, push)
+- `pnpm release …` (bundles bump, commit, tag, push)
 - `npm publish` / CI publish workflow dispatch
 - `git tag` / `git push` (including `--tags`)
 - GitHub **Create release** or promotion workflows
@@ -51,11 +51,11 @@ Typical human/CI sequence (do not automate without approval):
 
 ```bash
 cd packages/cli
-node scripts/release-preflight.js check-versions
-node scripts/release-preflight.js publish-plan
+pnpm release:check
+pnpm release:plan
 # After approval:
 pnpm --filter @blxzer/pactile release:beta   # or patch/minor/major per policy
-node scripts/release-preflight.js verify-npm --package all
+pnpm --filter @blxzer/pactile exec tsx scripts/release-preflight.ts verify-npm --package cli
 ```
 
-`release.js` performs commit, tag, and push — treat it as a single approved bundle or decompose manually per policy.
+`pnpm release` performs commit, tag, and push — treat it as a single approved bundle or decompose manually per policy.

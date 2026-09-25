@@ -56,7 +56,7 @@ hash-checked deletion: `.pactile/pool/README.md`, `.pactile/pool/plan.md`, and
 There is no separate `0.5.1-beta.0` upgrade step.
 
 Before a release, maintainers run the sealed-tarball
-[`release-conformance.js`](../../packages/cli/scripts/release-conformance.js)
+[`release-conformance.ts`](../../packages/cli/scripts/release-conformance.ts)
 check. It measures CLI cold start, a subsequent CLI invocation, Pi cold and
 warm RPC startup, parallel batch wall time, and total smoke time in a PATH
 without Python. The Codex receipt and Pi responses in this smoke are simulated;

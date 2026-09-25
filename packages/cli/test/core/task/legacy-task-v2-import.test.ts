@@ -4,12 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { runTaskCli } from "../../../src/commands/task.js";
 import { buildLegacyTaskV2Import } from "../../../src/core/task/legacy-task-v2-import.js";
 import { scanLegacyTaskMigration } from "../../../src/core/task/legacy-task-migration.js";
 import { legacyTaskMigrationOverlayPath } from "../../../src/core/task/legacy-task-migration-reader.js";
 import {
+  listTaskKernelSnapshots,
   readTaskKernel,
   startTaskRun,
 } from "../../../src/core/task/task-kernel.js";
@@ -132,6 +134,58 @@ afterEach(() => {
 });
 
 describe("legacy Task to V2 import mapping", () => {
+  it("fails closed on deleted or hash-mismatched mutable overlays across read, list, show, and Run", async () => {
+    const root = makeRoot();
+    const taskDir = addLegacyTask(root, {
+      id: "overlay-integrity-task",
+      directory: "01-overlay-integrity",
+      prd: prd(),
+    });
+    await commitImport(root);
+    const initial = v2At(root, taskDir);
+    const request = {
+      root,
+      taskDir,
+      expectedRevision: initial.revision,
+      actor: "migration-integrity-test",
+      idempotencyKey: "overlay-integrity-run",
+      input: { summary: "Create a real V2 Run", references: [] },
+      authorization: {
+        approvedBy: "test-approver",
+        approvedAt: "2026-09-25T13:00:00.000Z",
+        scope: "one Task",
+        evidenceRef: "approval.json",
+      },
+    };
+    startTaskRun(request);
+    const overlayDir = legacyTaskMigrationOverlayPath(root, taskDir);
+    if (!overlayDir) throw new Error("missing migration overlay path");
+    const overlayKernelPath = path.join(overlayDir, "kernel.json");
+    const validBytes = fs.readFileSync(overlayKernelPath);
+    fs.writeFileSync(overlayKernelPath, Buffer.concat([validBytes, Buffer.from(" ")]));
+
+    expect(() => readTaskKernel({ root, taskDir, cwd: root })).toThrow(
+      /overlay hash-mismatch/,
+    );
+    expect(() => listTaskKernelSnapshots(root)).toThrow(/overlay hash-mismatch/);
+    const errorOutput: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((message) => {
+      errorOutput.push(String(message));
+    });
+    expect(runTaskCli(["show", path.basename(taskDir)], root)).toBe(1);
+    expect(runTaskCli(["list"], root)).toBe(1);
+    expect(errorOutput.join("\n")).toMatch(/overlay hash-mismatch/);
+    errorSpy.mockRestore();
+    expect(() => startTaskRun(request)).toThrow(/overlay hash-mismatch/);
+
+    fs.rmSync(overlayDir, { recursive: true, force: true });
+    expect(() => readTaskKernel({ root, taskDir, cwd: root })).toThrow(
+      /overlay kernel-missing/,
+    );
+    expect(() => startTaskRun(request)).toThrow(/overlay kernel-missing/);
+    expect(() => listTaskKernelSnapshots(root)).toThrow(/overlay kernel-missing/);
+  });
+
   it("maps only explicit block edges and never treats a completed legacy record as a completed V2 dependency", async () => {
     const root = makeRoot();
     const prerequisite = addLegacyTask(root, {

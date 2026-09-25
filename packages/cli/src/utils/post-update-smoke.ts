@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import type { UpdateSmokeCheckResult } from "./update-rollout-report.js";
 
-const cliBin = fileURLToPath(new URL("../../bin/pactile.js", import.meta.url));
+const cliBin = fileURLToPath(new URL("../bin/pactile.js", import.meta.url));
 
 function runCheck(args: string[], cwd: string): UpdateSmokeCheckResult {
   const command = `node pactile ${args.join(" ")}`;

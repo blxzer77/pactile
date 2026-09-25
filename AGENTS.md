@@ -50,7 +50,7 @@ Compatibility rules for the 0.5.x line:
 
 ## Development
 
-Use Node.js 18.17 or newer and pnpm.
+Use Node.js 20 or newer and pnpm.
 
 | Command | Purpose |
 | --- | --- |
@@ -60,7 +60,7 @@ Use Node.js 18.17 or newer and pnpm.
 | `pnpm test` | Run CLI and Core tests |
 | `pnpm release:check` | Validate the single-package release graph |
 | `pnpm --filter @blxzer/pactile check:release-pack` | Check tarball file contents |
-| `node packages/cli/scripts/release-conformance.js` | Install and smoke-test the tarball |
+| `pnpm --filter @blxzer/pactile exec tsx scripts/release-conformance.ts` | Install and smoke-test the tarball |
 
 Source is strict ESM with NodeNext resolution and explicit `.js` specifiers.
 Node.js is the only required runtime for generated Pactile projects.
@@ -87,3 +87,12 @@ Node.js is the only required runtime for generated Pactile projects.
   package validation, documentation smoke, and the broad suite in proportion to risk.
 - Report pre-existing baseline failures separately from failures caused by the
   current change. Do not weaken a guard to make a check pass.
+
+## Historical maintenance exception
+
+`packages/cli/scripts/migrate-features-to-tasks.sh` is retained only because the
+archived 0.2.0 migration manifest mentions it. It has no current CLI, package
+script, or workflow caller, and the npm package excludes `scripts/`. The old
+project mutator requires Bash and `jq`; it is not part of the current Node-only
+install, build, release, or runtime path. Remove it only when the archived
+manifest no longer carries that historical reference.

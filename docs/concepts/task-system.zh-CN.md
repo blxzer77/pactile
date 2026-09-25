@@ -10,17 +10,17 @@ Pactile task 把需要跨越对话的工作变成 `.pactile/tasks/` 下持久、
 
 V2 的 `kernel.json` 是唯一可写的生命周期权威，包含 Task 定义、带 revision 的事件与 audit、所有 Run、所有 Review 和 Close 记录。V2 创建不会再写一份并列的 `task.json` 状态。`task list`、`show`、`selected`、context 与 session pack 同时读取 V2 和旧记录，因此新建 Task 可被常用入口发现与继续处理。
 
-这条命令路径与宿主无关，不要求 Codex、Pi 或常驻服务：
+这条命令路径与宿主无关，不要求 Codex、Pi 或常驻服务。示例中的英文标题与摘要可替换成实际任务的中文内容：
 
 ```bash
-pactile task create "搜索结果" --slug search-result \
-  --deliverable "经过测试的本地结果" --delivery-level local-result \
-  --accept AC-1="结果满足所需行为"
+pactile task create "Search result" --slug search-result \
+  --deliverable "A tested local result" --delivery-level local-result \
+  --accept AC-1="The result satisfies the requested behavior"
 pactile task run-start search-result --actor alice \
-  --input-summary "实现 AC-1" --approved-by alice \
-  --authorization-scope "声明的交付物" --authorization-evidence approval.md
+  --input-summary "Implement AC-1" --approved-by alice \
+  --authorization-scope "the declared deliverable" --authorization-evidence approval.md
 pactile task run-result search-result <run-id> --outcome completed \
-  --summary "已生成结果" --candidate src/result.ts=<sha256>
+  --summary "Result produced" --candidate src/result.ts=<sha256>
 pactile task review search-result --actor reviewer --run <run-id> \
   --candidate-id <snapshot-id> --candidate-fingerprint <sha256> \
   --reviewer reviewer --decision pass --evidence review.md \
@@ -29,7 +29,7 @@ pactile task close search-result --run <run-id> --review <review-id> \
   --candidate-id <snapshot-id> --candidate-fingerprint <sha256> \
   --candidate-observed-by reviewer --candidate-observation-source declared \
   --candidate-observation-ref observation.md --delivery-level local-result \
-  --delivery-ref src/result.ts --delivery-summary "审核结果已存在"
+  --delivery-ref src/result.ts --delivery-summary "Reviewed result is present"
 ```
 
 一个 Run 表示一次隔离尝试。Kernel 保留其输入、显式授权、attempt 编号、write-set snapshot、可选宿主/session 回执、可选 worktree 身份、candidate snapshot、结果或失败以及可选耗时证据。等待或阻塞的 Run 不能 Close；后续重试会追加 Run，不会覆盖历史。宿主、worktree 与调度字段都是可选数据，不意味着有常驻服务。
