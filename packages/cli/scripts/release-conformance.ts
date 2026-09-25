@@ -163,7 +163,7 @@ export function buildSealedTarballInstallArgs({
 function assertNoPythonOnPath({ runner, cwd, env }) {
   const probe = [
     "const { spawnSync } = require('node:child_process');",
-    "for (const command of ['python', 'python3', 'py']) {",
+    "for (const command of ['python', 'python.exe', 'python3', 'python3.exe', 'py', 'py.exe']) {",
     "  const result = spawnSync(command, ['--version'], { stdio: 'ignore', windowsHide: true });",
     "  if (result.error?.code !== 'ENOENT') {",
     "    console.error(`Python command is available on the conformance PATH: ${command}`);",
@@ -369,6 +369,16 @@ export async function verifyReleaseConformance({
         "Installed tarball did not complete Node-only product acceptance.",
       );
     }
+    if (
+      acceptance.taskContract !== "task-kernel-v2" ||
+      acceptance.v2TaskReadBack?.schemaVersion !== 2 ||
+      acceptance.v2TaskReadBack?.phase !== "execute" ||
+      acceptance.v2TaskReadBack?.runState !== "running"
+    ) {
+      throw new Error(
+        "Installed tarball did not complete the V2 Task create, run-start, and read-back smoke.",
+      );
+    }
     const result = {
       version,
       manifestSha256: sealed.manifestSha256,
@@ -380,7 +390,7 @@ export async function verifyReleaseConformance({
       acceptance,
     };
     log(
-      `ok release conformance ${version}: one sealed tarball; default npm lifecycle install=${installScriptsEnabled}, no Python on install PATH=${noPythonOnInstallPath}; Node-only lifecycle and bridges (${acceptance.endToEndMs} ms E2E).`,
+      `ok release conformance ${version}: one sealed tarball; default npm lifecycle install=${installScriptsEnabled}, no Python on install PATH=${noPythonOnInstallPath}; V2 Task create/run-start/read-back and Node-only lifecycle/bridges (${acceptance.endToEndMs} ms E2E).`,
     );
     log(
       `baseline ms: CLI cold=${acceptance.coldStartMs}, subsequent=${acceptance.steadyCliMs}, Pi cold=${acceptance.piColdStartupMs}, Pi warm=${acceptance.piWarmStartupMs}, parallel=${acceptance.parallelWallMs}; offline dependency fixture=${offline}.`,

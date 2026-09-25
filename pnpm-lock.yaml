@@ -65,10 +65,6 @@ importers:
       vitest:
         specifier: ^4.0.18
         version: 4.0.18(@types/node@20.19.28)(tsx@4.23.15)(yaml@2.8.2)
-    optionalDependencies:
-      '@blxzer/smart-search':
-        specifier: ^0.2.0
-        version: 0.2.0
 
 packages:
 
@@ -92,11 +88,6 @@ packages:
   '@bcoe/v8-coverage@1.0.2':
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
-
-  '@blxzer/smart-search@0.2.0':
-    resolution: {integrity: sha512-9VsEOs3fZYHP5wb+9SmmvtQwmdm1z/FMKNCB4UUMA6OIZffXgY/6HXzpI6OGvN7beCSPiBve8DrUOUOwHIfemw==}
-    engines: {node: '>=18'}
-    hasBin: true
 
   '@esbuild/aix-ppc64@0.27.3':
     resolution: {integrity: sha512-9fJMTNFTWZMh5qwrBItuziu834eOCUcEqymSH7pY+zoMVEZg3gcPuBNxH1EvfVYe9h0x/Ptw8KBzv7qxb7l8dg==}
@@ -1469,9 +1460,6 @@ snapshots:
       '@babel/helper-validator-identifier': 7.28.5
 
   '@bcoe/v8-coverage@1.0.2': {}
-
-  '@blxzer/smart-search@0.2.0':
-    optional: true
 
   '@esbuild/aix-ppc64@0.27.3':
     optional: true

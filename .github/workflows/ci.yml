@@ -121,5 +121,5 @@ jobs:
       - name: Build the single release package
         run: pnpm build
 
-      - name: Verify single-package tarball and isolated Node install
+      - name: Verify default lifecycle install with no Python on PATH and V2 Task smoke
         run: pnpm --filter @blxzer/pactile exec tsx scripts/release-conformance.ts

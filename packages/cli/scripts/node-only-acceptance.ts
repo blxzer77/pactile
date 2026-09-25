@@ -1,4 +1,4 @@
-/** Installed-tarball smoke with a PATH containing Node but no Python or agent executable. */
+/** Installed-tarball smoke with a Node-only PATH and the current V2 Task CLI. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -16,6 +16,8 @@ for (const folder of (process.env.PATH ?? "").split(path.delimiter)) {
     "python.exe",
     "python3",
     "python3.exe",
+    "py",
+    "py.exe",
     "pi",
     "pi.cmd",
   ]) {
@@ -64,21 +66,58 @@ assert.equal(
 );
 run(["update", "--dry-run", "--skip-readiness", "--json"]);
 run(["update", "--skip-all", "--skip-readiness", "--json"]);
+
+const v2Task = "node-only-task";
+run([
+  "task",
+  "create",
+  "Node-only Task smoke",
+  "--slug",
+  v2Task,
+  "--deliverable",
+  "A Task created and started by the installed Node-only package.",
+  "--delivery-level",
+  "local-result",
+  "--accept",
+  "AC-1=The installed CLI records a V2 Task and authorized Run.",
+]);
+run([
+  "task",
+  "run-start",
+  v2Task,
+  "--approved-by",
+  "node-only-conformance",
+  "--authorization-scope",
+  "temporary release conformance workspace",
+  "--authorization-evidence",
+  "sealed tarball Node-only acceptance",
+  "--input-summary",
+  "Verify the V2 Task lifecycle entry point from the installed package.",
+]);
+const taskSnapshot = JSON.parse(run(["task", "show", v2Task, "--json"]));
+assert.equal(taskSnapshot.schemaVersion, 2);
+assert.equal(taskSnapshot.identity.taskId, v2Task);
+assert.equal(taskSnapshot.phase, "execute");
+assert.equal(taskSnapshot.runs.length, 1);
+assert.equal(taskSnapshot.runs[0].state, "running");
+assert.equal(
+  taskSnapshot.runs[0].authorization.approvedBy,
+  "node-only-conformance",
+);
+
 const warmStarted = performance.now();
 run(["task", "list"]);
 const steadyCliMs = Math.round(performance.now() - warmStarted);
 
-run(["task", "create", "Lifecycle smoke", "--slug", "lifecycle-smoke"]);
-run(["task", "start-execution", "lifecycle-smoke", "--approved"]);
-fs.appendFileSync(
-  path.join(taskDir("lifecycle-smoke"), "verify.md"),
-  "\nValidation commands: installed Node-only smoke passed\nFinal acceptance evidence: task lifecycle observed\n",
-);
-run(["task", "archive", "lifecycle-smoke", "--no-commit"]);
-const archiveRoot = path.join(root, ".pactile", "tasks", "archive");
-assert.ok(fs.existsSync(archiveRoot));
+const createLegacyTask = (title, slug, parent = undefined) => {
+  const args = ["task", "legacy-create", title, "--legacy", "--slug", slug];
+  if (parent) args.push("--parent", parent);
+  run(args);
+};
+const startLegacyTask = (slug) =>
+  run(["task", "start-execution", slug, "--approved"]);
 
-run(["task", "create", "Codex bridge smoke", "--slug", "codex-smoke"]);
+createLegacyTask("Codex bridge smoke", "codex-smoke");
 const prompt = path.join(root, "prompt.md");
 fs.writeFileSync(prompt, "Plan acceptance evidence.\n");
 const request = JSON.parse(
@@ -149,10 +188,10 @@ const prepareWorker = (slug) => {
     "# Design\nIndependent smoke work.\n",
   );
   fs.writeFileSync(path.join(dir, "implement.md"), strategy);
-  run(["task", "start-execution", slug, "--approved"]);
+  startLegacyTask(slug);
   return dir;
 };
-run(["task", "create", "Pi smoke", "--slug", "pi-smoke"]);
+createLegacyTask("Pi smoke", "pi-smoke");
 prepareWorker("pi-smoke");
 const bridge = new PiTaskBridge(root, {
   command: process.execPath,
@@ -182,19 +221,11 @@ assert.equal(first.outcome, "settled");
 assert.equal(second.outcome, "settled");
 assert.equal(second.process_mode, "warm");
 
-run(["task", "create", "Parallel parent", "--slug", "parallel-parent"]);
+createLegacyTask("Parallel parent", "parallel-parent");
 const parent = taskDir("parallel-parent");
 const children = [];
 for (const slug of ["parallel-a", "parallel-b"]) {
-  run([
-    "task",
-    "create",
-    slug,
-    "--slug",
-    slug,
-    "--parent",
-    path.basename(parent),
-  ]);
+  createLegacyTask(slug, slug, path.basename(parent));
   prepareWorker(slug);
   children.push({ task: slug, prompt_file: prompt, review_cost: "low" });
 }
@@ -223,6 +254,14 @@ console.log(
   JSON.stringify({
     nodeOnly: true,
     installedTarball: true,
+    taskContract: "task-kernel-v2",
+    v2TaskReadBack: {
+      taskId: taskSnapshot.identity.taskId,
+      schemaVersion: taskSnapshot.schemaVersion,
+      phase: taskSnapshot.phase,
+      runState: taskSnapshot.runs[0].state,
+    },
+    legacyCompatibilitySmokes: ["codex-bridge", "pi-bridge", "parallel-batch"],
     cursorCreated: false,
     codexReceipt: "simulated",
     piProvider: "simulated",

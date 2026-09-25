@@ -228,18 +228,18 @@
     "^scripts/"
   ],
   "baselineSnapshot": {
-    "sha256": "5fd89ecbd8697cc24c0c01ce42a712e355827c82de09f67133faee4f601e1803",
-    "occurrences": 4244,
+    "sha256": "41865854c2529f04ee7820bff5786d2b7565b9293b3dfebca837a53071771fe9",
+    "occurrences": 4242,
     "files": 288,
     "byClassification": {
       "attribution": 3,
-      "compat": 891,
+      "compat": 889,
       "history": 3350
     },
     "byToken": {
       "cursor-plus-plus": 165,
       "legacy-cstl-token": 685,
-      "legacy-environment-name": 61,
+      "legacy-environment-name": 59,
       "legacy-managed-marker": 27,
       "legacy-package-name": 223,
       "legacy-product-name": 202,
