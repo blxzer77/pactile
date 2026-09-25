@@ -44,6 +44,12 @@ export interface TaskArtifactDocumentContentV1 {
   }[];
 }
 
+export interface TaskArtifactDocumentSelectionV1 {
+  readonly id: string;
+  /** The fingerprint copied from an earlier index, or `absent` for no file. */
+  readonly expectedFingerprint: string;
+}
+
 interface DocumentSpec {
   readonly stage: TaskArtifactStageV1;
   readonly expectedPaths: readonly string[];
@@ -231,8 +237,7 @@ export function readTaskArtifactDocumentIndexV1(
 export function readSelectedTaskArtifactDocumentsV1(
   taskDir: string,
   taskId: string,
-  indexedDocuments: readonly TaskArtifactDocumentReferenceV1[],
-  selectedIds: readonly string[],
+  selections: readonly TaskArtifactDocumentSelectionV1[],
 ): TaskArtifactDocumentContentV1[] {
   const currentById = new Map<string, TaskArtifactDocumentReferenceV1>(
     readTaskArtifactDocumentIndexV1(taskDir, taskId).map((document) => [
@@ -240,15 +245,38 @@ export function readSelectedTaskArtifactDocumentsV1(
       document,
     ]),
   );
-  const indexedById = new Map<string, TaskArtifactDocumentReferenceV1>(
-    indexedDocuments.map((document) => [document.id, document]),
-  );
+  const uniqueSelections = new Map<string, TaskArtifactDocumentSelectionV1>();
+  for (const selection of selections) {
+    if (
+      !selection.id ||
+      (selection.expectedFingerprint !== "absent" &&
+        !/^sha256:[a-f0-9]{64}$/u.test(selection.expectedFingerprint))
+    ) {
+      throw new Error("invalid expected task document fingerprint");
+    }
+    const previous = uniqueSelections.get(selection.id);
+    if (
+      previous &&
+      previous.expectedFingerprint !== selection.expectedFingerprint
+    ) {
+      throw new Error(
+        `conflicting expected document fingerprints: ${selection.id}`,
+      );
+    }
+    uniqueSelections.set(selection.id, selection);
+  }
 
-  return [...new Set(selectedIds)].map((id) => {
-    const indexed = indexedById.get(id);
-    if (!indexed) throw new Error(`unknown task artifact document: ${id}`);
+  return [...uniqueSelections.values()].map((selection) => {
+    const { id } = selection;
     const current = currentById.get(id);
-    if (!current || JSON.stringify(indexed) !== JSON.stringify(current)) {
+    if (!current) {
+      throw new Error(`unknown task artifact document: ${id}`);
+    }
+    const expectedFingerprint =
+      selection.expectedFingerprint === "absent"
+        ? null
+        : selection.expectedFingerprint;
+    if (current.contentFingerprint !== expectedFingerprint) {
       throw new Error(
         `task document locator is stale; re-read the artifact index: ${id}`,
       );

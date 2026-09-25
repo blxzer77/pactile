@@ -200,27 +200,22 @@ export function projectTaskKernelArtifactsV1(
     const latestReview = kernel.closure
       ? kernel.reviews.find((review) => review.id === kernel.closure?.reviewId)
       : kernel.reviews.at(-1);
+    const criterionEvidence =
+      latestReview?.acceptanceEvidence[criterion.id] ?? [];
+    // Evidence paths attach to a criterion, but the Kernel records only one
+    // Review decision. Do not turn that overall verdict into a per-criterion
+    // decision; individual criteria become verified only at Kernel Close.
     const reviewEvidenceIds = latestReview
-      ? (latestReview.acceptanceEvidence[criterion.id] ?? []).map((reference) =>
+      ? criterionEvidence.map((reference, evidenceIndex) =>
           factId(
             "evidence",
-            `${latestReview.id}\u0000${criterion.id}\u0000${reference}`,
+            `${latestReview.id}\u0000${criterion.id}\u0000${evidenceIndex}\u0000${reference}`,
           ),
         )
       : [];
-    const recordedReview = latestReview?.acceptanceEvidence[criterion.id]
-      ?.length
-      ? latestReview
-      : undefined;
     const status: TaskArtifactFactV1["status"] = kernel.closure
       ? "verified"
-      : recordedReview?.decision === "pass"
-        ? "accepted"
-        : recordedReview?.decision === "fail"
-          ? "rejected"
-          : recordedReview?.decision === "needs-changes"
-            ? "blocked"
-            : "active";
+      : "active";
     const provenance = kernel.closure
       ? {
           recordedAt: timestamp(kernel.closure.closedAt, "closure.closedAt"),
@@ -232,27 +227,11 @@ export function projectTaskKernelArtifactsV1(
             ...(closureEvidenceId ? [closureEvidenceId] : []),
           ],
         }
-      : recordedReview
-        ? {
-            recordedAt: timestamp(
-              recordedReview.reviewedAt,
-              "review.reviewedAt",
-            ),
-            actor: oneLine(recordedReview.reviewer, 120),
-            method:
-              recordedReview.decision === "pass"
-                ? ("verified" as const)
-                : ("derived" as const),
-            basedOn: [
-              factId("review", recordedReview.id),
-              ...reviewEvidenceIds,
-            ],
-          }
-        : {
-            recordedAt: createdAt,
-            actor: oneLine(createdBy, 120),
-            method: "imported" as const,
-          };
+      : {
+          recordedAt: createdAt,
+          actor: oneLine(createdBy, 120),
+          method: "imported" as const,
+        };
     add(
       {
         id,
@@ -276,7 +255,9 @@ export function projectTaskKernelArtifactsV1(
         },
       },
       "prd",
-      ...(recordedReview || kernel.closure ? ["verify" as const] : []),
+      ...(criterionEvidence.length || kernel.closure
+        ? ["verify" as const]
+        : []),
     );
   }
 
@@ -351,18 +332,20 @@ export function projectTaskKernelArtifactsV1(
       "implement",
     );
 
-    for (const [evidenceIndex] of (run.result?.evidenceRefs ?? []).entries()) {
-      const evidenceRef = run.result?.evidenceRefs[evidenceIndex];
-      if (!evidenceRef) continue;
+    for (const [evidenceIndex, evidenceRef] of (
+      run.result?.evidenceRefs ?? []
+    ).entries()) {
+      // Runs are append-only, so this array index gives duplicate references
+      // a stable occurrence identity and an exact Kernel locator.
       const evidenceId = factId(
         "evidence",
-        `run\u0000${run.id}\u0000${evidenceRef}`,
+        `run\u0000${run.id}\u0000${evidenceIndex}\u0000${evidenceRef}`,
       );
       add(
         {
           id: evidenceId,
           kind: "evidence",
-          status: run.state === "completed" ? "accepted" : "active",
+          status: "active",
           title: "Run evidence",
           summary: `Evidence reference recorded by Run ${run.attempt}.`,
           source: {
@@ -372,6 +355,7 @@ export function projectTaskKernelArtifactsV1(
               "runs",
               run.id,
               "result-evidence",
+              `occurrence-${evidenceIndex}`,
               digest(evidenceRef),
             ),
           },
@@ -500,13 +484,13 @@ export function projectTaskKernelArtifactsV1(
     for (const [evidenceIndex, evidenceRef] of review.evidenceRefs.entries()) {
       const evidenceId = factId(
         "evidence",
-        `review-general\u0000${review.id}\u0000${evidenceRef}`,
+        `review-general\u0000${review.id}\u0000${evidenceIndex}\u0000${evidenceRef}`,
       );
       add(
         {
           id: evidenceId,
           kind: "evidence",
-          status: reviewStatus,
+          status: "active",
           title: "Review evidence",
           summary: `Review evidence reference recorded for ${review.decision}.`,
           source: {
@@ -516,6 +500,7 @@ export function projectTaskKernelArtifactsV1(
               "reviews",
               review.id,
               "evidence",
+              `occurrence-${evidenceIndex}`,
               digest(evidenceRef),
             ),
           },
@@ -537,15 +522,16 @@ export function projectTaskKernelArtifactsV1(
       review.acceptanceEvidence,
     )) {
       for (const [evidenceIndex, reference] of references.entries()) {
+        // An array occurrence, not just its text, identifies the Kernel ref.
         const evidenceId = factId(
           "evidence",
-          `${review.id}\u0000${criterionId}\u0000${reference}`,
+          `${review.id}\u0000${criterionId}\u0000${evidenceIndex}\u0000${reference}`,
         );
         add(
           {
             id: evidenceId,
             kind: "evidence",
-            status: reviewStatus,
+            status: "active",
             title: `Acceptance evidence ${oneLine(criterionId, 64)}`,
             summary: `Evidence reference recorded for acceptance criterion ${oneLine(criterionId, 64)}.`,
             source: {
@@ -556,6 +542,7 @@ export function projectTaskKernelArtifactsV1(
                 review.id,
                 "acceptance-evidence",
                 `criterion-${digest(criterionId)}`,
+                `occurrence-${evidenceIndex}`,
                 digest(reference),
               ),
             },

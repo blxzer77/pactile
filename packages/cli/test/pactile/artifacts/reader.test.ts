@@ -16,7 +16,6 @@ import {
   projectTaskArtifactsForHumanV1,
   projectTaskArtifactsForAgentV1,
   projectTaskKernelArtifactsV1,
-  readSelectedTaskArtifactDocumentsV1,
   readSelectedTaskArtifactSourcesV1,
   readTaskArtifactDocumentIndexV1,
 } from "../../../src/pactile/artifacts/index.js";
@@ -115,9 +114,11 @@ describe("Task Kernel structured artifact reader", () => {
     });
     expect(initialIndex.documents).toHaveLength(5);
     const initialDocuments = must(initialIndex.documents, "document index");
-    expect(
+    const prdDocument = must(
       initialDocuments.find(({ id }) => id === "document:prd"),
-    ).toMatchObject({
+      "PRD document reference",
+    );
+    expect(prdDocument).toMatchObject({
       status: "present",
       source: {
         kind: "task-document",
@@ -140,10 +141,41 @@ describe("Task Kernel structured artifact reader", () => {
     expect(JSON.stringify(initialIndex)).not.toContain(
       "Keep this user-authored text.",
     );
+    expect(
+      runTaskCli(
+        ["artifacts", "small-fix", "--document", "document:design@absent"],
+        root,
+      ),
+    ).toBe(0);
+    const selectedAbsentDocument = JSON.parse(
+      String(log.mock.lastCall?.[0]),
+    ) as {
+      selectedDocuments: {
+        document: {
+          id: string;
+          status: string;
+          contentFingerprint: string | null;
+        };
+        files: unknown[];
+      }[];
+    };
+    expect(selectedAbsentDocument.selectedDocuments[0]).toMatchObject({
+      document: {
+        id: "document:design",
+        status: "absent",
+        contentFingerprint: null,
+      },
+      files: [],
+    });
 
     expect(
       runTaskCli(
-        ["artifacts", "small-fix", "--document", "document:prd"],
+        [
+          "artifacts",
+          "small-fix",
+          "--document",
+          `${prdDocument.id}@${prdDocument.contentFingerprint}`,
+        ],
         root,
       ),
     ).toBe(0);
@@ -265,7 +297,7 @@ describe("Task Kernel structured artifact reader", () => {
       envelope.facts.find(({ id }) => id === requirement.id),
       "stable requirement fact",
     );
-    expect(requirementAfterReview.status).toBe("accepted");
+    expect(requirementAfterReview.status).toBe("active");
     expect(envelope.stageRefs.verify).toContain(requirement.id);
     const reviewFact = must(
       envelope.facts.find(({ kind }) => kind === "finding"),
@@ -346,7 +378,9 @@ describe("Task Kernel structured artifact reader", () => {
   it("indexes authored Design, Implement, Review, and Verify sources without copying their narrative", () => {
     const root = makeRoot();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
 
     expect(
       runTaskCli(
@@ -363,6 +397,8 @@ describe("Task Kernel structured artifact reader", () => {
           "local-result",
           "--accept",
           "AC-1=Document sources remain user-owned and locatable",
+          "--accept",
+          "AC-2=Review and verification evidence can be followed",
         ],
         root,
       ),
@@ -386,7 +422,7 @@ describe("Task Kernel structured artifact reader", () => {
       ],
       [
         "review/decision.md",
-        "# Review decision\n\nDecision: pass after checking the reader paths and stale locator guard.\n",
+        "# Review decision\n\nDecision: fail because the second criterion has no supplied acceptance evidence.\n",
       ],
       [
         "verify.md",
@@ -431,7 +467,7 @@ describe("Task Kernel structured artifact reader", () => {
           fingerprint: "c".repeat(64),
         },
       ],
-      evidenceRefs: ["verify.md#validation"],
+      evidenceRefs: ["verify.md#validation", "verify.md#validation"],
       actor: "implementer",
       idempotencyKey: "run-result:heavy-feature",
     });
@@ -448,10 +484,16 @@ describe("Task Kernel structured artifact reader", () => {
       candidateSnapshotId: candidateSnapshot.id,
       candidateFingerprint: candidateSnapshot.fingerprint,
       reviewer: "independent-reviewer",
-      decision: "pass",
-      evidenceRefs: ["review/decision.md#decision"],
+      decision: "fail",
+      evidenceRefs: [
+        "review/decision.md#decision",
+        "review/decision.md#decision",
+      ],
       acceptanceEvidence: {
-        "AC-1": ["packages/cli/src/pactile/artifacts"],
+        "AC-1": [
+          "packages/cli/src/pactile/artifacts",
+          "packages/cli/src/pactile/artifacts",
+        ],
       },
       actor: "independent-reviewer",
       idempotencyKey: "review:heavy-feature",
@@ -464,6 +506,14 @@ describe("Task Kernel structured artifact reader", () => {
       "PRD requirement locator",
     );
     expect(envelope.stageRefs.verify).toContain(requirementId);
+    const requirementFacts = envelope.facts.filter(
+      (fact) => fact.kind === "requirement",
+    );
+    expect(requirementFacts.map(({ status }) => status)).toEqual([
+      "active",
+      "active",
+    ]);
+    expect(envelope.stageRefs.verify).not.toContain(requirementFacts[1]?.id);
     const runFact = must(
       envelope.facts.find((fact) => fact.id.startsWith("implement:")),
       "Implement Run fact",
@@ -477,28 +527,40 @@ describe("Task Kernel structured artifact reader", () => {
         references: ["prd.md", "design.md", "implement.md"],
       },
     });
+    const verifyEvidenceFacts = envelope.facts.filter(
+      (fact) =>
+        fact.kind === "evidence" &&
+        fact.ref.selector.startsWith("/runs/0/result/evidenceRefs/"),
+    );
+    expect(verifyEvidenceFacts).toHaveLength(2);
+    expect(new Set(verifyEvidenceFacts.map(({ id }) => id)).size).toBe(2);
+    expect(verifyEvidenceFacts.map(({ ref }) => ref.selector)).toEqual([
+      "/runs/0/result/evidenceRefs/0",
+      "/runs/0/result/evidenceRefs/1",
+    ]);
+    expect(verifyEvidenceFacts.every(({ status }) => status === "active")).toBe(
+      true,
+    );
     const verifyEvidenceFact = must(
-      envelope.facts.find(
-        (fact) =>
-          fact.kind === "evidence" &&
-          fact.ref.selector === "/runs/0/result/evidenceRefs/0",
+      verifyEvidenceFacts.find(
+        (fact) => fact.ref.selector === "/runs/0/result/evidenceRefs/0",
       ),
       "Verify execution evidence fact",
     );
     expect(envelope.stageRefs.verify).toContain(verifyEvidenceFact.id);
-    expect(verifyEvidenceFact.status).toBe("accepted");
-    const selectedVerifyEvidence = readSelectedTaskArtifactSourcesV1(
-      kernel,
-      envelope,
-      [verifyEvidenceFact.id],
-    )[0];
-    expect(selectedVerifyEvidence?.value).toBe("verify.md#validation");
+    expect(
+      readSelectedTaskArtifactSourcesV1(
+        kernel,
+        envelope,
+        verifyEvidenceFacts.map(({ id }) => id),
+      ).map(({ value }) => value),
+    ).toEqual(["verify.md#validation", "verify.md#validation"]);
     const reviewFact = must(
       envelope.facts.find((fact) => fact.kind === "finding"),
       "Review decision fact",
     );
     expect(reviewFact).toMatchObject({
-      status: "accepted",
+      status: "rejected",
       ref: { path: "kernel.json", selector: "/reviews/0" },
     });
     expect(envelope.stageRefs.review).toContain(reviewFact.id);
@@ -508,23 +570,64 @@ describe("Task Kernel structured artifact reader", () => {
       [reviewFact.id],
     )[0];
     expect(selectedReviewDecision?.value).toMatchObject({
-      decision: "pass",
-      evidenceRefs: ["review/decision.md#decision"],
+      decision: "fail",
+      evidenceRefs: [
+        "review/decision.md#decision",
+        "review/decision.md#decision",
+      ],
     });
+    const reviewEvidenceFacts = envelope.facts.filter(
+      (fact) =>
+        fact.kind === "evidence" &&
+        fact.ref.selector.startsWith("/reviews/0/evidenceRefs/"),
+    );
+    expect(reviewEvidenceFacts).toHaveLength(2);
+    expect(new Set(reviewEvidenceFacts.map(({ id }) => id)).size).toBe(2);
+    expect(reviewEvidenceFacts.map(({ ref }) => ref.selector)).toEqual([
+      "/reviews/0/evidenceRefs/0",
+      "/reviews/0/evidenceRefs/1",
+    ]);
+    expect(reviewEvidenceFacts.every(({ status }) => status === "active")).toBe(
+      true,
+    );
     const reviewEvidenceFact = must(
-      envelope.facts.find(
-        (fact) =>
-          fact.kind === "evidence" &&
-          fact.ref.selector === "/reviews/0/evidenceRefs/0",
+      reviewEvidenceFacts.find(
+        (fact) => fact.ref.selector === "/reviews/0/evidenceRefs/0",
       ),
       "Review evidence fact",
     );
     expect(envelope.stageRefs.review).toContain(reviewEvidenceFact.id);
     expect(
-      readSelectedTaskArtifactSourcesV1(kernel, envelope, [
-        reviewEvidenceFact.id,
-      ])[0]?.value,
-    ).toBe("review/decision.md#decision");
+      readSelectedTaskArtifactSourcesV1(
+        kernel,
+        envelope,
+        reviewEvidenceFacts.map(({ id }) => id),
+      ).map(({ value }) => value),
+    ).toEqual(["review/decision.md#decision", "review/decision.md#decision"]);
+    const acceptanceEvidenceFacts = envelope.facts.filter(
+      (fact) =>
+        fact.kind === "evidence" &&
+        fact.ref.selector.startsWith("/reviews/0/acceptanceEvidence/AC-1/"),
+    );
+    expect(acceptanceEvidenceFacts).toHaveLength(2);
+    expect(new Set(acceptanceEvidenceFacts.map(({ id }) => id)).size).toBe(2);
+    expect(acceptanceEvidenceFacts.map(({ ref }) => ref.selector)).toEqual([
+      "/reviews/0/acceptanceEvidence/AC-1/0",
+      "/reviews/0/acceptanceEvidence/AC-1/1",
+    ]);
+    expect(
+      acceptanceEvidenceFacts.every(({ status }) => status === "active"),
+    ).toBe(true);
+    expect(
+      readSelectedTaskArtifactSourcesV1(
+        kernel,
+        envelope,
+        acceptanceEvidenceFacts.map(({ id }) => id),
+      ).map(({ value }) => value),
+    ).toEqual([
+      "packages/cli/src/pactile/artifacts",
+      "packages/cli/src/pactile/artifacts",
+    ]);
 
     const documents = readTaskArtifactDocumentIndexV1(
       taskDir,
@@ -579,7 +682,11 @@ describe("Task Kernel structured artifact reader", () => {
     ).toBe(0);
     const designOnly = JSON.parse(String(log.mock.lastCall?.[0])) as {
       stages: { stage: string; factIds: string[]; documentIds?: string[] }[];
-      documents: { id: string }[];
+      documents: {
+        id: string;
+        status: string;
+        contentFingerprint: string | null;
+      }[];
     };
     expect(designOnly.stages).toEqual([
       { stage: "design", factIds: [], documentIds: ["document:design"] },
@@ -592,6 +699,15 @@ describe("Task Kernel structured artifact reader", () => {
       path.join(taskDir, "design.md"),
       "utf8",
     );
+    const designReference = must(
+      designOnly.documents.find(({ id }) => id === "document:design"),
+      "Design document fingerprint from CLI index",
+    );
+    const designFingerprint = must(
+      designReference.contentFingerprint,
+      "Design document content fingerprint",
+    );
+    const designSelection = `${designReference.id}@${designFingerprint}`;
     expect(
       runTaskCli(
         [
@@ -599,7 +715,7 @@ describe("Task Kernel structured artifact reader", () => {
           "heavy-feature",
           "--agent",
           "--document",
-          "document:design",
+          designSelection,
         ],
         root,
       ),
@@ -627,26 +743,60 @@ describe("Task Kernel structured artifact reader", () => {
       `${designBeforeRead}\n## Follow-up\n\nThe authored rationale remains editable.\n`,
       "utf8",
     );
-    expect(() =>
-      readSelectedTaskArtifactDocumentsV1(
-        taskDir,
-        kernel.identity.taskId,
-        documents,
-        ["document:design"],
-      ),
-    ).toThrow(/stale/u);
-    const refreshed = readTaskArtifactDocumentIndexV1(
-      taskDir,
-      kernel.identity.taskId,
-    );
-    expect(refreshed.find(({ id }) => id === "document:design")).toMatchObject({
-      id: "document:design",
-      status: "present",
-    });
     expect(
-      refreshed.find(({ id }) => id === "document:design")?.contentFingerprint,
-    ).not.toBe(
-      documents.find(({ id }) => id === "document:design")?.contentFingerprint,
+      runTaskCli(
+        [
+          "artifacts",
+          "heavy-feature",
+          "--agent",
+          "--document",
+          designSelection,
+        ],
+        root,
+      ),
+    ).toBe(1);
+    expect(String(error.mock.lastCall?.[0])).toContain("stale");
+
+    expect(
+      runTaskCli(
+        ["artifacts", "heavy-feature", "--agent", "--stage", "design"],
+        root,
+      ),
+    ).toBe(0);
+    const refreshedIndex = JSON.parse(String(log.mock.lastCall?.[0])) as {
+      documents: {
+        id: string;
+        status: string;
+        contentFingerprint: string | null;
+      }[];
+    };
+    const refreshedDesign = must(
+      refreshedIndex.documents.find(({ id }) => id === "document:design"),
+      "refreshed Design document reference",
     );
+    const refreshedFingerprint = must(
+      refreshedDesign.contentFingerprint,
+      "refreshed Design document fingerprint",
+    );
+    expect(refreshedDesign.id).toBe(designReference.id);
+    expect(refreshedFingerprint).not.toBe(designFingerprint);
+    expect(
+      runTaskCli(
+        [
+          "artifacts",
+          "heavy-feature",
+          "--agent",
+          "--document",
+          `${refreshedDesign.id}@${refreshedFingerprint}`,
+        ],
+        root,
+      ),
+    ).toBe(0);
+    const refreshedSelection = JSON.parse(String(log.mock.lastCall?.[0])) as {
+      selectedDocuments: { files: { path: string; content: string }[] }[];
+    };
+    expect(
+      refreshedSelection.selectedDocuments[0]?.files[0]?.content,
+    ).toContain("The authored rationale remains editable.");
   });
 });

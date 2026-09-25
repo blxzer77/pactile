@@ -144,6 +144,29 @@ function taskV2(root: string, reference: string): { dir: string; kernel: TaskKer
   return { dir, kernel: result.kernel };
 }
 
+function parseTaskArtifactDocumentSelection(value: string): {
+  id: string;
+  expectedFingerprint: string;
+} {
+  const separator = value.lastIndexOf("@");
+  if (separator <= 0 || separator === value.length - 1) {
+    throw new Error(
+      "--document must be <document-id>@<sha256-fingerprint|absent> copied from a current artifact index",
+    );
+  }
+  const id = value.slice(0, separator);
+  const expectedFingerprint = value.slice(separator + 1);
+  if (
+    expectedFingerprint !== "absent" &&
+    !/^sha256:[a-f0-9]{64}$/u.test(expectedFingerprint)
+  ) {
+    throw new Error(
+      "--document fingerprint must be a lowercase sha256 digest or absent",
+    );
+  }
+  return { id, expectedFingerprint };
+}
+
 function taskArtifacts(root: string, args: string[]): number {
   const reference = requireArgument(args[0], "task");
   const { dir, kernel } = taskV2(root, reference);
@@ -160,10 +183,12 @@ function taskArtifacts(root: string, args: string[]): number {
     documents,
   };
   const selectedFactIds = options(args, "--fact");
-  const selectedDocumentIds = options(args, "--document");
+  const selectedDocuments = options(args, "--document").map(
+    parseTaskArtifactDocumentSelection,
+  );
   const agent = args.includes("--agent");
 
-  if (selectedDocumentIds.length) {
+  if (selectedDocuments.length) {
     const visibleDocumentIds = new Set<string>(
       requestedStages.length
         ? documents
@@ -171,21 +196,20 @@ function taskArtifacts(root: string, args: string[]): number {
             .map(({ id }) => id)
         : documents.map(({ id }) => id),
     );
-    const outsideStage = selectedDocumentIds.find(
-      (id) => !visibleDocumentIds.has(id),
+    const outsideStage = selectedDocuments.find(
+      ({ id }) => !visibleDocumentIds.has(id),
     );
     if (outsideStage) {
       throw new Error(
-        `Task artifact document '${outsideStage}' is not present in the requested stage view`,
+        `Task artifact document '${outsideStage.id}' is not present in the requested stage view`,
       );
     }
   }
-  const selectedDocuments = selectedDocumentIds.length
+  const selectedDocumentContents = selectedDocuments.length
     ? readSelectedTaskArtifactDocumentsV1(
         dir,
         kernel.identity.taskId,
-        documents,
-        selectedDocumentIds,
+        selectedDocuments,
       )
     : undefined;
 
@@ -204,24 +228,28 @@ function taskArtifacts(root: string, args: string[]): number {
       console.log(JSON.stringify({
         index: projectTaskArtifactsForAgentV1(envelope, projectionOptions),
         selectedSources,
-        ...(selectedDocuments ? { selectedDocuments } : {}),
+        ...(selectedDocumentContents
+          ? { selectedDocuments: selectedDocumentContents }
+          : {}),
       }, null, 2));
     } else {
       console.log(JSON.stringify({
         taskId: kernel.identity.taskId,
         selectedSources,
-        ...(selectedDocuments ? { selectedDocuments } : {}),
+        ...(selectedDocumentContents
+          ? { selectedDocuments: selectedDocumentContents }
+          : {}),
       }, null, 2));
     }
     return 0;
   }
 
-  if (selectedDocuments) {
+  if (selectedDocumentContents) {
     console.log(JSON.stringify({
       ...(agent
         ? { index: projectTaskArtifactsForAgentV1(envelope, projectionOptions) }
         : { taskId: kernel.identity.taskId }),
-      selectedDocuments,
+      selectedDocuments: selectedDocumentContents,
     }, null, 2));
     return 0;
   }
