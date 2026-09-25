@@ -67,7 +67,8 @@ The tag workflow repeats these gates before it seals the tarball. Release
 preparation runs in a job with read-only permissions and no publish credential.
 The separate publish job receives GitHub OIDC permission for npm Trusted
 Publisher and publishes only the sealed artifact. Configure npm Trusted
-Publisher for `blxzer77/pactile` and `.github/workflows/publish.yml`. The
+Publisher for `blxzer77/pactile`, workflow filename `publish.yml`, and allow
+direct `npm publish`. The
 manifest SHA-256 receipt travels outside the artifact directory. Failed
 provenance, package graph, tarball, receipt, or npm readback checks stop
 publication or promotion.
