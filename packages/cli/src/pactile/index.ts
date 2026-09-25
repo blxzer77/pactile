@@ -40,4 +40,5 @@ export type {
 export { runAdoptionWorkflow } from "./adoption/workflow.js";
 
 export * from "./middleware/index.js";
+export * from "./jev/index.js";
 export * from "./retrieval/index.js";
