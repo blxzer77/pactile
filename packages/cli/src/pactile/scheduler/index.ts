@@ -17,17 +17,26 @@ export {
 export {
   planParentTaskScheduleV1,
   scheduleParentTaskGraph,
+  scheduleParentTaskGraphWithJevV1,
   planTaskKernelGraphV1,
   scheduleTaskKernelGraph,
   type PersistedTaskScheduleV1,
   type PersistedTaskKernelScheduleV1,
   type SchedulerTaskCostOverridesV1,
   type TaskMapScheduleOptionsV1,
+  type JevParentScheduleOptionsV1,
   type TaskKernelScheduleOptionsV1,
   type TaskScheduleDecisionReceiptV1,
   type TaskKernelScheduleDecisionReceiptV1,
   type TaskScheduleLifecycleSnapshotV1,
 } from "./task-map-scheduler.js";
+
+export type {
+  JevScheduleAdviceAuditV1,
+  JevScheduleAdviceOptionsV1,
+  JevScheduleFinalEligibleCandidatesV1,
+  JevScheduleRequestSnapshotV1,
+} from "../jev/scheduler-advice.js";
 
 export {
   bindTaskKernelRunDispatchOwnerV1,

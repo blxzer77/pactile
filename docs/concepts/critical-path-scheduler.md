@@ -53,6 +53,49 @@ Task Kernel records and do not need or create a Parent / Child map.
   between equal critical-path costs. It cannot make a blocked Task ready,
   satisfy a dependency, or permit a write-set conflict.
 
+## Jev scheduling advice and P37 boundary
+
+`scheduleParentTaskGraphWithJevV1` is the public asynchronous Parent scheduler
+entry point for an optional Jev tie-break. It first computes the deterministic
+preview and selects only the first-wave candidates that share the highest
+critical-path value. Before asking Jev, it verifies each candidate's current
+Execute approval with `approvedTask`, its configured execution location with
+`piWorkdir`, and the active Parent/V2 write leases under the P37 project
+mutex. Hard dependencies, candidate state, and write-set compatibility remain
+the deterministic planner's responsibility.
+
+The request contains at most 16 anonymous labels and numeric critical-path /
+estimated-cost values. The bounded synthetic summary omits Task IDs, project
+paths, Child write sets, user-authored task text, and source snippets because
+none is needed to break this tie. Egress still requires the explicit Jev
+facade options and project authorization accepted by the Jev transport. The
+16-candidate bound limits one advice request; it is not a dispatch or
+concurrency limit.
+
+After Jev responds, the API rebuilds the planning snapshot and repeats the
+approval, worktree, and active-lease checks. It uses the advice only when the
+hard-gate snapshot and eligible tie group still match. It then writes one
+content-addressed final schedule receipt with `jevAdviceAudit`. The audit keeps
+`preparedRequestSnapshot` for the candidate IDs and digest given to the Jev
+facade, `sentRequestSnapshot` only when transport reports an HTTP attempt, and
+`finalEligibleCandidates` for the approval, worktree, and lease recheck used by
+the final receipt. A fallback or superseded answer therefore retains the
+request-time candidates and digest even when the final eligible set changed.
+The audit also records suggested/adopted/overridden order, the change flag,
+reason code, and available latency/transport metrics. It does not store the
+request text, provider key, raw errors, or request ID. If approval, worktree,
+dependencies, conflicts, leases, or the candidate group changes during the
+request, the answer is marked superseded and the final receipt uses the
+deterministic plan.
+
+Missing/disabled configuration, denied egress, detected sensitive content,
+cancellation, deadline, provider failure, invalid response, or low confidence
+leaves the deterministic plan in force with an explained audit status. This
+advice API does not create a writer lease. P37 admission must still validate
+the final receipt and re-read the Kernel, hard dependencies, approvals, and
+active leases immediately before dispatch. A persisted receipt or lease is
+never rewritten after that point.
+
 ## Node API and decision receipts
 
 ```ts
@@ -65,6 +108,29 @@ const result = scheduleParentTaskGraph(projectRoot, parentTaskRef, {
 });
 console.log(result.receipt.plan.waves, result.receiptFile);
 ```
+
+The optional Jev-aware entry point is asynchronous and writes only the final
+receipt after its second gate check:
+
+```ts
+import {
+  createJevDecisionFacadeV1,
+  scheduleParentTaskGraphWithJevV1,
+} from "@blxzer/pactile";
+
+const result = await scheduleParentTaskGraphWithJevV1(
+  projectRoot,
+  parentTaskRef,
+  { estimatedCosts },
+  { facade: createJevDecisionFacadeV1(approvedJevConfig), egress: approvedEgress },
+);
+console.log(result.receipt.plan.waves, result.receipt.jevAdviceAudit);
+```
+
+The existing synchronous `scheduleParentTaskGraph` remains deterministic.
+Jev can suggest only an ordering among equal critical-path candidates; it does
+not choose or grant an execution role, authorize a Task, alter Kernel gates,
+change conflict policy, or impose a concurrency ceiling.
 
 For a standalone V2 Task/Run graph, pass its candidate Task IDs directly:
 
@@ -101,6 +167,16 @@ authorization without a schedule receipt and integration plan is rejected.
 Direct bridge reservations do not get a count cap; they still require an
 eligible Task and reject active write collisions unless the same verified
 receipt authorizes the pair.
+
+### P34 coverage status
+
+| P34 surface | Status in this slice |
+| --- | --- |
+| Public async API, same-critical-path tie-break, immutable final receipt and audit | Implemented and covered by focused tests. |
+| Approval, configured worktree, active lease, and post-response eligibility recheck | Implemented with existing validators and covered by positive/negative tests. |
+| No-key, denied-egress, timeout, service error, low-confidence, and privacy-safe input fallback | Covered with facade/transport stubs; drift tests preserve request-time snapshots separately from final eligibility; no live Jev service call was made. |
+| `parallel run` / Pi / Codex Host dispatch wiring before P37 admission | Not connected. The current CLI batch path still calls synchronous `scheduleParentTaskGraph`; Host wiring remains a separate P34 node and was intentionally kept outside this slice. |
+| Jev execution-role recommendation | Not implemented here. This slice only breaks equal critical-path ordering ties. |
 
 ### Standalone V2 dispatch admission and writer leases
 
