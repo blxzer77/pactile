@@ -262,6 +262,38 @@ describe("optional Jev retrieval planning", () => {
     );
   });
 
+  it.each([
+    "This snippet is marked SENSITIVE.",
+    "This snippet contains SECRET material.",
+    "此内容标记为机密。",
+    "此内容被标记为敏感。",
+  ])("does not send explicitly marked sensitive query %j", async (query) => {
+    const fetchImpl = fakeFetch(async () =>
+      providerResponse({
+        semantic: answer("include"),
+        structural: answer("exclude"),
+      }),
+    );
+    const facade = createJevDecisionFacadeV1({
+      enabled: true,
+      transport: {
+        apiKey: "test-key-not-persisted",
+        fetchImpl,
+      },
+    });
+
+    const result = await planRetrievalWithJevV1({
+      request: { query, requestedPolicy: jevPolicy },
+      jev: { facade, callOptions: { egress } },
+    });
+
+    expect(result.plan.intents).toEqual(["exact"]);
+    expect(result.source).toBe("deterministic");
+    expect(result.decision?.fallback?.reasonCode).toBe("sensitive-content");
+    expect(JSON.stringify(result.decision?.receipt)).not.toContain(query);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("lets the retrieval policy deny Jev even when the call option allows egress", async () => {
     const fetchImpl = fakeFetch(async () => providerResponse({}));
     const facade = createJevDecisionFacadeV1({

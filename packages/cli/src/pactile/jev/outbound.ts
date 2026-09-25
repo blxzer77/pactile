@@ -31,11 +31,12 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
 ];
 const EXPLICIT_SENSITIVE_MARKERS: readonly RegExp[] = [
   /\bCONFIDENTIAL\b/iu,
+  /\b(?:SENSITIVE|SECRET)\b/iu,
   /\bSENSITIVE[ _-]?(?:CONTENT|INFORMATION|DATA)\b/iu,
   /\b(?:PERSONAL DATA|PII|PROPRIETARY|RESTRICTED|INTERNAL ONLY|INTERNAL USE ONLY|FOR INTERNAL USE ONLY|DO NOT SHARE EXTERNALLY|DO NOT SEND EXTERNALLY|DO NOT SEND OUTSIDE|NOT FOR EXTERNAL USE)\b/iu,
   /\bPRIVATE\s+(?:KEY|CONTENT|DATA|INFORMATION)\b/iu,
   /\bSECRET\s+(?:KEY|TOKEN|CREDENTIALS?|INFORMATION|CONTENT|DATA)\b/iu,
-  /(?:内部机密|机密(?:内容|信息|资料)|敏感(?:内容|信息|资料)|不得对外(?:发送|提供|披露)|禁止对外(?:发送|提供|披露)|禁止(?:外发|外传)|请勿(?:对外发送|外发|外传)|仅限内部|内部使用|不可外发|不得分享给外部)/u,
+  /(?:机密|敏感|不得对外(?:发送|提供|披露)|禁止对外(?:发送|提供|披露)|禁止(?:外发|外传)|请勿(?:对外发送|外发|外传)|仅限内部|内部使用|不可外发|不得分享给外部)/u,
 ];
 
 function exactFields(

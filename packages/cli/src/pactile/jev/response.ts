@@ -4,6 +4,7 @@ import type { JevAnswerV1, JevQuestionV1 } from "./contracts.js";
 
 const COST_MICRO_USD_PER_INPUT_TOKEN = 0.042;
 const PROBABILITY_SUM_TOLERANCE = 0.01;
+const SCORE_EXPECTATION_TOLERANCE = 0.01;
 
 function exactFields(
   record: Readonly<Record<string, unknown>>,
@@ -147,6 +148,12 @@ function parseAnswers(
       const p = probabilities(a.probabilities, scoreKeys);
       const legend = scoreLegend(a.legend, q.criteria);
       if (p === null || legend === null) return null;
+      const expectedScore = scoreKeys.reduce(
+        (total, key, index) => total + index * (p[key] ?? 0),
+        0,
+      );
+      if (Math.abs(a.score - expectedScore) > SCORE_EXPECTATION_TOLERANCE)
+        return null;
       out[name] = Object.freeze({
         type: "score",
         score: a.score,

@@ -152,6 +152,10 @@ describe("optional Jev transport input and egress boundary", () => {
       "Chinese explicit egress marker",
       "内部机密，不得对外发送：未发布的评审结论",
     ],
+    ["standalone sensitive marker", "This snippet is marked SENSITIVE."],
+    ["standalone secret marker", "This snippet contains SECRET material."],
+    ["standalone Chinese confidential marker", "此内容标记为机密。"],
+    ["standalone Chinese sensitive marker", "此内容被标记为敏感。"],
     ["sensitive marker", "CONFIDENTIAL implementation detail"],
     ["sensitive content marker", "This snippet is marked SENSITIVE CONTENT."],
     ["private key marker", "-----BEGIN PRIVATE KEY-----"],
@@ -367,6 +371,44 @@ describe("optional Jev transport input and egress boundary", () => {
       legend: { 0: "weak", 1: "moderate", 2: "strong" },
     });
     expect(result).not.toHaveProperty("assurance");
+  });
+
+  it("rejects a Score answer inconsistent with its probability-weighted value", async () => {
+    const scoreRequest = {
+      taskSummary: "Rank the supplied bounded route fit.",
+      questions: {
+        fit: {
+          type: "score" as const,
+          instructions: "How strong is the fit?",
+          criteria: ["weak", "moderate", "strong"],
+        },
+      },
+    };
+    const fetchImpl = fakeFetch(async () =>
+      response({
+        model: "jev-1.13.0",
+        answers: {
+          fit: {
+            type: "score",
+            score: 2,
+            confidence: 0.9,
+            probabilities: { 0: 0.9, 1: 0.05, 2: 0.05 },
+            legend: { 0: "weak", 1: "moderate", 2: "strong" },
+          },
+        },
+        usage: { input_tokens: 90, output_tokens: 0 },
+      }),
+    );
+    const result = await createJevTransportV1({
+      apiKey: "test-key",
+      fetchImpl,
+    })(scoreRequest, {
+      egress: { ...egress, contentDecision: "task-summary-approved" },
+    });
+
+    expect(result.status).toBe("fallback");
+    expect(result.answers).toBeNull();
+    expect(result.fallback?.reasonCode).toBe("invalid-response");
   });
 
   it.each([
