@@ -1,4 +1,5 @@
 import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { sameGitRoot } from "../../utils/git-root.js";
@@ -36,6 +37,8 @@ function preservedResultMatches(result: RunResultEvidence | null, runId: string)
 export type WorktreeIssueCode =
   | "path-anomaly"
   | "owner-mismatch"
+  | "manager-provenance-mismatch"
+  | "gitdir-mismatch"
   | "not-registered"
   | "common-dir-mismatch"
   | "branch-mismatch"
@@ -52,6 +55,7 @@ export interface WorktreeInspection {
   canonicalPath: string;
   actualPath: string | null;
   commonDir: string | null;
+  gitDir: string | null;
   branch: string | null;
   baseSha: string;
   headSha: string | null;
@@ -89,6 +93,21 @@ export class WorktreeManagerError extends Error {
 interface GitIdentity {
   root: string;
   commonDir: string;
+}
+
+interface ManagerProvenance {
+  version: 1;
+  credentialId: string;
+  ownerRunId: string;
+  canonicalPath: string;
+  commonDir: string;
+  gitDir: string;
+  branch: string;
+  baseSha: string;
+  writeSet: string[];
+  source: "created" | "adopted";
+  recordedAt: string;
+  adoption?: { approvedBy: string; approvedAt: string; evidenceRef: string };
 }
 
 interface GitWorktreeRegistration {
@@ -279,6 +298,129 @@ function assertAllowedPath(identity: GitIdentity, candidateValue: string): strin
   return real;
 }
 
+function provenanceRoot(identity: GitIdentity, create: boolean): string | null {
+  const root = path.join(identity.commonDir, "pactile-run-workspaces-v1");
+  assertNoSymlinkBetween(identity.commonDir, root);
+  if (create) fs.mkdirSync(root, { recursive: true });
+  if (!fs.existsSync(root)) return null;
+  assertNoSymlinkBetween(identity.commonDir, root);
+  const real = fs.realpathSync(root);
+  if (pathKey(real) !== pathKey(root)) throw new WorktreeManagerError("manager-provenance-invalid", "Manager provenance directory resolves through an alias", root);
+  if (!fs.statSync(real).isDirectory()) throw new WorktreeManagerError("manager-provenance-invalid", "Manager provenance location is not a directory", root);
+  return real;
+}
+
+function validManagerProvenance(value: unknown): value is ManagerProvenance {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Partial<ManagerProvenance>;
+  return record.version === 1 && typeof record.credentialId === "string" && !!record.credentialId
+    && typeof record.ownerRunId === "string" && RUN_ID.test(record.ownerRunId)
+    && typeof record.canonicalPath === "string" && path.isAbsolute(record.canonicalPath)
+    && typeof record.commonDir === "string" && path.isAbsolute(record.commonDir)
+    && typeof record.gitDir === "string" && path.isAbsolute(record.gitDir)
+    && typeof record.branch === "string" && !!record.branch
+    && typeof record.baseSha === "string" && SHA.test(record.baseSha)
+    && Array.isArray(record.writeSet) && record.writeSet.every((item) => typeof item === "string")
+    && (record.source === "created" || record.source === "adopted")
+    && typeof record.recordedAt === "string" && !!record.recordedAt;
+}
+
+function readAllManagerProvenance(identity: GitIdentity): ManagerProvenance[] {
+  const root = provenanceRoot(identity, false);
+  if (!root) return [];
+  return fs.readdirSync(root).filter((name) => name.endsWith(".json")).map((name) => {
+    const file = path.join(root, name);
+    const stat = fs.lstatSync(file);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      throw new WorktreeManagerError("manager-provenance-invalid", "Manager provenance record is not a regular file", file);
+    }
+    const real = fs.realpathSync(file);
+    if (!pathWithin(root, real) || pathKey(real) !== pathKey(file)) {
+      throw new WorktreeManagerError("manager-provenance-invalid", "Manager provenance record resolves outside its registry", file);
+    }
+    let parsed: unknown;
+    try { parsed = JSON.parse(fs.readFileSync(real, "utf8")) as unknown; }
+    catch { throw new WorktreeManagerError("manager-provenance-invalid", "Manager provenance record is unreadable", file); }
+    if (!validManagerProvenance(parsed) || name !== `${parsed.ownerRunId}.json`) {
+      throw new WorktreeManagerError("manager-provenance-invalid", "Manager provenance record is malformed", file);
+    }
+    return parsed;
+  });
+}
+
+function persistManagerProvenance(identity: GitIdentity, provenance: ManagerProvenance): void {
+  const root = provenanceRoot(identity, true);
+  if (!root) throw new WorktreeManagerError("manager-provenance-invalid", "Manager provenance directory is unavailable");
+  const existing = readAllManagerProvenance(identity);
+  if (existing.some((item) => pathKey(item.canonicalPath) === pathKey(provenance.canonicalPath))) {
+    throw new WorktreeManagerError("owner-conflict", "Worktree already has a manager ownership record", provenance.canonicalPath);
+  }
+  const file = path.join(root, `${provenance.ownerRunId}.json`);
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(file, "wx", 0o600);
+    fs.writeFileSync(descriptor, `${JSON.stringify(provenance, null, 2)}\n`, "utf8");
+    fs.fsyncSync(descriptor);
+  } catch {
+    throw new WorktreeManagerError("manager-provenance-write-failed", "Could not persist manager ownership evidence", provenance.canonicalPath);
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
+function verifyLinkedGitDirectory(candidate: string, commonDir: string): string {
+  let gitDir: string;
+  try { gitDir = fs.realpathSync(git(candidate, ["rev-parse", "--absolute-git-dir"])); }
+  catch { throw new WorktreeManagerError("gitdir-mismatch", "Worktree Git directory cannot be resolved", candidate); }
+  if (!pathWithin(commonDir, gitDir) || pathKey(gitDir) === pathKey(commonDir)) {
+    throw new WorktreeManagerError("gitdir-mismatch", "Worktree Git directory is outside its common directory", candidate);
+  }
+  const gitFile = path.join(candidate, ".git");
+  const gitFileStat = fs.lstatSync(gitFile, { throwIfNoEntry: false });
+  if (!gitFileStat?.isFile() || gitFileStat.isSymbolicLink()) {
+    throw new WorktreeManagerError("gitdir-mismatch", "Linked worktree .git pointer is not a regular file", candidate);
+  }
+  const pointer = fs.readFileSync(gitFile, "utf8").match(/^gitdir: ([^\r\n]+)\r?\n?$/);
+  if (!pointer) throw new WorktreeManagerError("gitdir-mismatch", "Linked worktree .git pointer is malformed", candidate);
+  const pointerTarget = fs.realpathSync(path.resolve(candidate, pointer[1] ?? ""));
+  if (pathKey(pointerTarget) !== pathKey(gitDir)) {
+    throw new WorktreeManagerError("gitdir-mismatch", "Linked worktree .git pointer does not match its resolved Git directory", candidate);
+  }
+  const reverseFile = path.join(gitDir, "gitdir");
+  const reverseStat = fs.lstatSync(reverseFile, { throwIfNoEntry: false });
+  if (!reverseStat?.isFile() || reverseStat.isSymbolicLink()) {
+    throw new WorktreeManagerError("gitdir-mismatch", "Worktree registration reverse link is unavailable", candidate);
+  }
+  const reverseTarget = fs.realpathSync(path.resolve(gitDir, fs.readFileSync(reverseFile, "utf8").trim()));
+  if (pathKey(reverseTarget) !== pathKey(fs.realpathSync(gitFile))) {
+    throw new WorktreeManagerError("gitdir-mismatch", "Worktree registration does not point back to this checkout", candidate);
+  }
+  return gitDir;
+}
+
+function provenanceFor(input: {
+  identity: GitIdentity;
+  binding: RunWorkspaceBinding;
+  gitDir: string;
+  source: "created" | "adopted";
+  adoption?: { approvedBy: string; approvedAt: string; evidenceRef: string };
+}): ManagerProvenance {
+  return {
+    version: 1,
+    credentialId: randomUUID(),
+    ownerRunId: input.binding.ownerRunId,
+    canonicalPath: input.binding.canonicalPath,
+    commonDir: input.identity.commonDir,
+    gitDir: input.gitDir,
+    branch: input.binding.branch,
+    baseSha: input.binding.baseSha,
+    writeSet: [...input.binding.writeSet],
+    source: input.source,
+    recordedAt: new Date().toISOString(),
+    ...(input.adoption ? { adoption: input.adoption } : {}),
+  };
+}
+
 function resolveCommit(cwd: string, reference: string): string {
   if (!reference || reference.startsWith("-") || /[\r\n\0]/.test(reference)) {
     throw new WorktreeManagerError("invalid-ref", "Git reference is invalid");
@@ -398,6 +540,12 @@ export function createRunWorktree(input: {
       integrationState: "not-integrated",
       reclamationState: "not-requested",
     };
+    const candidateInspection = inspectRunWorktreeInternal({ repoRoot: identity.root, runId: input.runId, runState: "running", binding, knownOwners: [] }, false);
+    if (candidateInspection.issues.some((issue) => issue !== "unintegrated") || candidateInspection.headSha !== baseSha
+      || !candidateInspection.gitDir || !sameGitRoot(candidateInspection.commonDir ?? "", identity.commonDir)) {
+      throw new WorktreeManagerError("post-create-verification-failed", `Created worktree failed verification (${candidateInspection.state})`, canonicalPath);
+    }
+    persistManagerProvenance(identity, provenanceFor({ identity, binding, gitDir: candidateInspection.gitDir, source: "created" }));
     const inspection = inspectRunWorktree({ repoRoot: identity.root, runId: input.runId, runState: "running", binding, knownOwners: [] });
     if (inspection.issues.some((issue) => issue !== "unintegrated") || inspection.headSha !== baseSha || !sameGitRoot(inspection.commonDir ?? "", identity.commonDir)) {
       throw new WorktreeManagerError("post-create-verification-failed", `Created worktree failed verification (${inspection.state})`, canonicalPath);
@@ -440,24 +588,34 @@ export function adoptRunWorktree(input: {
     integrationState: "not-integrated",
     reclamationState: "not-requested",
   };
-  const inspection = inspectRunWorktree({ repoRoot: identity.root, runId: input.runId, runState: input.runState, binding, knownOwners: input.knownOwners });
+  const inspection = inspectRunWorktreeInternal({ repoRoot: identity.root, runId: input.runId, runState: input.runState, binding, knownOwners: input.knownOwners }, false);
   if (inspection.issues.some((issue) => issue !== "unintegrated") || inspection.headSha !== baseSha || inspection.dirty) {
     throw new WorktreeManagerError("adoption-not-safe", `Only a clean, unmodified worktree at its recorded base can be adopted (${inspection.state})`, canonicalPath);
+  }
+  if (!inspection.gitDir) throw new WorktreeManagerError("adoption-not-safe", "Adopted worktree has no verified linked Git directory", canonicalPath);
+  try {
+    persistManagerProvenance(identity, provenanceFor({ identity, binding, gitDir: inspection.gitDir, source: "adopted", adoption: input.authorization }));
+  } catch (error) {
+    throw new WorktreeManagerError("adoption-not-safe", error instanceof Error ? error.message : "Could not persist adoption evidence", canonicalPath);
+  }
+  const verified = inspectRunWorktree({ repoRoot: identity.root, runId: input.runId, runState: input.runState, binding, knownOwners: input.knownOwners });
+  if (verified.issues.some((issue) => issue !== "unintegrated") || verified.headSha !== baseSha) {
+    throw new WorktreeManagerError("adoption-not-safe", `Adopted worktree failed provenance verification (${verified.state})`, canonicalPath);
   }
   return binding;
 }
 
-export function inspectRunWorktree(input: {
+function inspectRunWorktreeInternal(input: {
   repoRoot: string;
   runId: string;
   runState: WorkspaceRunState;
   binding: RunWorkspaceBinding;
   knownOwners: readonly WorkspaceOwnerRef[];
-}): WorktreeInspection {
+}, requireManagerProvenance: boolean): WorktreeInspection {
   const blank: WorktreeInspection = {
     state: "path-anomaly", ownerRunId: input.binding.ownerRunId,
     canonicalPath: input.binding.canonicalPath, actualPath: null, commonDir: null,
-    branch: null, baseSha: input.binding.baseSha, headSha: null, dirty: false,
+    gitDir: null, branch: null, baseSha: input.binding.baseSha, headSha: null, dirty: false,
     dirtyEntryCount: 0, changedPaths: [], scopeViolations: [], issues: [],
   };
   const add = (issue: WorktreeIssueCode): void => { if (!blank.issues.includes(issue)) blank.issues.push(issue); };
@@ -472,9 +630,15 @@ export function inspectRunWorktree(input: {
     if (!registration) add("not-registered");
     else {
       if (registration.head) blank.headSha = registration.head;
-      if (registration.branch) blank.branch = registration.branch.startsWith("refs/heads/") ? registration.branch.slice("refs/heads/".length) : registration.branch;
+      let actualBranch: string | null = null;
+      try { actualBranch = git(candidate, ["symbolic-ref", "--quiet", "HEAD"]); }
+      catch { add("branch-mismatch"); }
+      blank.branch = actualBranch?.startsWith("refs/heads/") ? actualBranch.slice("refs/heads/".length) : null;
       if (!sameGitRoot(git(candidate, ["rev-parse", "--path-format=absolute", "--git-common-dir"]), identity.commonDir)) add("common-dir-mismatch");
-      if (registration.branch !== branchRef(identity.root, input.binding.branch) || registration.detached) add("branch-mismatch");
+      const expectedBranch = branchRef(identity.root, input.binding.branch);
+      if (registration.branch !== expectedBranch || actualBranch !== expectedBranch || registration.branch !== actualBranch || registration.detached) add("branch-mismatch");
+      try { blank.gitDir = verifyLinkedGitDirectory(candidate, identity.commonDir); }
+      catch { add("gitdir-mismatch"); }
       const headSha = resolveCommit(candidate, "HEAD");
       blank.headSha = headSha;
       if (registration.head?.toLowerCase() !== headSha) add("registered-head-mismatch");
@@ -488,19 +652,45 @@ export function inspectRunWorktree(input: {
       blank.dirtyEntryCount = dirtyEntries.length;
       blank.dirty = dirtyEntries.length > 0;
       if (blank.dirty) add("dirty");
+      if (requireManagerProvenance) {
+        try {
+          const provenance = readAllManagerProvenance(identity).find((item) => item.ownerRunId === input.runId);
+          if (provenance?.ownerRunId !== input.binding.ownerRunId
+            || pathKey(provenance.canonicalPath) !== pathKey(candidate)
+            || pathKey(provenance.commonDir) !== pathKey(identity.commonDir)
+            || provenance.branch !== input.binding.branch
+            || provenance.baseSha.toLowerCase() !== validateSha(input.binding.baseSha)
+            || provenance.writeSet.map(comparable).join("\0") !== normalizeWriteSet(input.binding.writeSet).map(comparable).join("\0")
+            || !blank.gitDir || pathKey(provenance.gitDir) !== pathKey(blank.gitDir)) add("manager-provenance-mismatch");
+        } catch { add("manager-provenance-mismatch"); }
+      }
     }
     if (input.runState === "interrupted") add("interrupted");
     if (input.binding.integrationState !== "integrated") add("unintegrated");
   } catch (error) {
-    const issue = error instanceof WorktreeManagerError && error.code === "owner-conflict" ? "owner-mismatch" : "path-anomaly";
+    const issue: WorktreeIssueCode = error instanceof WorktreeManagerError && error.code === "owner-conflict"
+      ? "owner-mismatch"
+      : error instanceof WorktreeManagerError && (error.code.startsWith("manager-provenance") || error.code === "gitdir-mismatch")
+        ? error.code === "gitdir-mismatch" ? "gitdir-mismatch" : "manager-provenance-mismatch"
+        : "path-anomaly";
     add(issue);
   }
   const priority: WorktreeIssueCode[] = [
-    "path-anomaly", "owner-mismatch", "not-registered", "common-dir-mismatch", "branch-mismatch",
+    "path-anomaly", "owner-mismatch", "manager-provenance-mismatch", "gitdir-mismatch", "not-registered", "common-dir-mismatch", "branch-mismatch",
     "registered-head-mismatch", "baseline-mismatch", "write-set-violation", "interrupted", "unintegrated", "dirty",
   ];
   blank.state = priority.find((issue) => blank.issues.includes(issue)) ?? "clean";
   return blank;
+}
+
+export function inspectRunWorktree(input: {
+  repoRoot: string;
+  runId: string;
+  runState: WorkspaceRunState;
+  binding: RunWorkspaceBinding;
+  knownOwners: readonly WorkspaceOwnerRef[];
+}): WorktreeInspection {
+  return inspectRunWorktreeInternal(input, true);
 }
 
 export interface WorktreeIntegrationReceipt {
@@ -555,10 +745,28 @@ export function verifyWorktreeIntegration(input: {
 }
 
 export type WorktreeCleanupResult =
-  | { state: "reclaimed"; binding: RunWorkspaceBinding; path: string }
+  | {
+      state: "manual-action-required";
+      binding: RunWorkspaceBinding;
+      path: string;
+      plan: {
+        ownerRunId: string;
+        canonicalPath: string;
+        commonDir: string;
+        gitDir: string;
+        branch: string;
+        expectedHeadSha: string;
+        targetBranch: string;
+        targetHeadSha: string;
+        resultEvidenceRefs: string[];
+        generatedAt: string;
+        command: { executable: "git"; args: ["worktree", "remove", string]; cwd: string };
+        reviewBeforeExecution: string[];
+      };
+    }
   | { state: "retained"; binding: RunWorkspaceBinding; path: string; reason: string };
 
-export function reclaimRunWorktree(input: {
+export function planRunWorktreeCleanup(input: {
   repoRoot: string;
   runId: string;
   runState: WorkspaceRunState;
@@ -588,24 +796,36 @@ export function reclaimRunWorktree(input: {
     if (pathKey(canonicalPath) !== pathKey(pathForReport)) return retain("Canonical worktree path changed during cleanup preflight");
     if (!sameGitRoot(git(canonicalPath, ["rev-parse", "--path-format=absolute", "--git-common-dir"]), identity.commonDir)) return retain("Worktree common directory changed");
     const finalInspection = inspectRunWorktree(input);
-    if (finalInspection.state !== "clean" || finalInspection.headSha !== integration.receipt.worktreeHeadSha) {
+    if (finalInspection.state !== "clean" || finalInspection.headSha !== integration.receipt.worktreeHeadSha || !finalInspection.gitDir) {
       return retain(`Worktree changed or needs preservation (${finalInspection.state})`);
     }
+    return {
+      state: "manual-action-required",
+      binding: input.binding,
+      path: canonicalPath,
+      plan: {
+        ownerRunId: input.runId,
+        canonicalPath,
+        commonDir: identity.commonDir,
+        gitDir: finalInspection.gitDir,
+        branch: input.binding.branch,
+        expectedHeadSha: integration.receipt.worktreeHeadSha,
+        targetBranch: integration.receipt.targetBranch,
+        targetHeadSha: integration.receipt.targetHeadSha,
+        resultEvidenceRefs: [...integration.receipt.resultEvidenceRefs],
+        generatedAt: new Date().toISOString(),
+        command: { executable: "git", args: ["worktree", "remove", canonicalPath], cwd: identity.root },
+        reviewBeforeExecution: [
+          "Re-run inspectRunWorktree for this Run and compare the HEAD SHA, symbolic branch, Git directory, common directory, and registration.",
+          "Confirm the Run result and evidence remain preserved and integrated into the recorded target branch.",
+          "Stop and retain the worktree if any user edit, untracked or ignored file, new commit, ownership change, or path anomaly appears.",
+        ],
+      },
+    };
   } catch (error) {
     return retain(error instanceof Error ? error.message : "Worktree cleanup preflight failed");
   }
-  try {
-    // Git owns checkout removal and refuses dirty worktrees; never force it and never fall back to recursive deletion.
-    git(identity.root, ["worktree", "remove", canonicalPath]);
-    const remainsRegistered = registrations(identity).some((item) => pathKey(item.path) === pathKey(canonicalPath));
-    if (fs.existsSync(canonicalPath) || remainsRegistered) return retain("Git did not fully remove the registered worktree");
-    return {
-      state: "reclaimed",
-      binding: { ...input.binding, reclamationState: "reclaimed" },
-      path: canonicalPath,
-    };
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : "Worktree cleanup failed";
-    return retain(reason, true);
-  }
 }
+
+/** @deprecated Automatic reclamation is intentionally disabled; use the explicit cleanup plan. */
+export const reclaimRunWorktree = planRunWorktreeCleanup;

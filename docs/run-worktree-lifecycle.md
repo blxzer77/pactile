@@ -4,17 +4,17 @@
 
 ## Create and adopt
 
-`createRunWorktree` resolves the requested base to a full commit SHA, validates the branch with Git, and creates a new branch under `.pactile/worktrees/<runId>`. It verifies the Git worktree registration and common directory before returning a binding. It never reuses an existing branch or path. If post-create verification fails, it reports the path for recovery and leaves it in place.
+`createRunWorktree` resolves the requested base to a full commit SHA, validates the branch with Git, and creates a new branch under `.pactile/worktrees/<runId>`. Before returning a binding it writes a manager ownership record under the Git common directory at `pactile-run-workspaces-v1/<runId>.json`. That record binds the Run ID, canonical path, common directory, per-worktree Git directory, branch, base SHA, and write set. A caller-provided binding or empty `knownOwners` list is not proof of ownership. If post-create verification or record persistence fails, the worktree is left in place for recovery.
 
-`adoptRunWorktree` accepts only an existing, registered checkout under `.pactile/worktrees`, in the same Git common directory, at the recorded branch and base SHA, with a clean tree. Adoption needs a recorded approver and evidence reference. A path already bound to another Run is refused. Reopening the same Run should use `inspectRunWorktree` with its stored binding instead of claiming the path again.
+`adoptRunWorktree` accepts only an existing, registered checkout under `.pactile/worktrees`, in the same Git common directory, at the recorded branch and base SHA, with a clean tree. Adoption needs a recorded approver and evidence reference, which are stored in the manager ownership record. A path already recorded for another Run is refused. Reopening the same Run should use `inspectRunWorktree` with its stored binding instead of claiming the path again.
 
 ## Verify, integrate, and reclaim
 
-`inspectRunWorktree` reports owner, path, registration, common-directory, branch, baseline, write-set, interruption, integration, and dirty-state findings. Dirty status includes ignored and untracked files so cleanup preserves them.
+`inspectRunWorktree` reports owner, manager provenance, path, Git directory, reverse registration, symbolic branch, common-directory, baseline, write-set, interruption, integration, and dirty-state findings. It checks both the linked worktree `.git` pointer and the admin directory's reverse `gitdir` link against Git's worktree registration. Dirty status includes ignored and untracked files so cleanup preserves them.
 
 `verifyWorktreeIntegration` does not run a merge. It verifies that a completed Run has preserved result evidence, its clean worktree changes stay within the Run write set, and the requested target commit contains the worktree HEAD. The returned binding records `integrated` and `pending` reclamation; the caller must persist that transition before cleanup.
 
-`reclaimRunWorktree` only considers a completed Run with matching ownership, persisted result evidence, integrated state, pending reclamation, and a clean registered checkout under the allowed absolute path. It repeats verification immediately before removal and calls `git worktree remove` without force. A failed precondition or Git refusal retains the path for handling; the manager never calls recursive filesystem deletion.
+`planRunWorktreeCleanup` only produces a manual cleanup plan for a completed Run with verified manager ownership, persisted result evidence, integrated state, pending reclamation, and a clean registered checkout under the allowed absolute path. The plan records the expected HEAD, branch, common and per-worktree Git directories, target branch/head, and a non-force `git worktree remove` argument vector. Automatic deletion is disabled because a clean commit can arrive between preflight and removal; the branch ref remaining would not preserve the worktree contents. A human must re-inspect all recorded values immediately before executing the plan and retain the checkout on any mismatch. `reclaimRunWorktree` remains a deprecated compatibility alias that also only returns this plan. No manager path recursively deletes a worktree.
 
 ## Parallel write sets
 

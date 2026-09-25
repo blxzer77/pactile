@@ -8,7 +8,7 @@ import {
   createRunWorktree,
   decideParallelWriteSets,
   inspectRunWorktree,
-  reclaimRunWorktree,
+  planRunWorktreeCleanup,
   verifyWorktreeIntegration,
   type RunResultEvidence,
   type RunWorkspaceBinding,
@@ -19,6 +19,13 @@ const fixturePrefix = "pactile-run-worktree-";
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).replace(/\r?\n$/, "");
+}
+
+function hasRegisteredWorktree(root: string, target: string): boolean {
+  const expected = path.resolve(target).replaceAll("\\", "/").toLowerCase();
+  return git(root, "worktree", "list", "--porcelain").split(/\r?\n/)
+    .filter((line) => line.startsWith("worktree "))
+    .some((line) => path.resolve(line.slice("worktree ".length)).replaceAll("\\", "/").toLowerCase() === expected);
 }
 
 function fixture(): { root: string; baseSha: string } {
@@ -213,11 +220,14 @@ describe("Run worktree manager", () => {
       .toBe("branch-mismatch");
 
     const nextMainFile = path.join(root, "later.txt");
-    fs.writeFileSync(nextMainFile, "new main commit\n");
+    git(root, "checkout", "--orphan", "unrelated-baseline");
+    fs.writeFileSync(nextMainFile, "new unrelated history\n");
     git(root, "add", "later.txt");
     git(root, "commit", "-q", "-m", "unrelated baseline");
-    const changedBaseline = { ...baselineBinding, baseSha: git(root, "rev-parse", "HEAD") };
-    expect(inspectRunWorktree({ repoRoot: root, runId: baselineBinding.ownerRunId, runState: "running", binding: changedBaseline, knownOwners: [] }).state)
+    const unrelatedSha = git(root, "rev-parse", "HEAD");
+    git(root, "checkout", "main");
+    git(baselineBinding.canonicalPath, "reset", "--hard", unrelatedSha);
+    expect(inspectRunWorktree({ repoRoot: root, runId: baselineBinding.ownerRunId, runState: "running", binding: baselineBinding, knownOwners: [] }).state)
       .toBe("baseline-mismatch");
   });
 
@@ -241,19 +251,28 @@ describe("Run worktree manager", () => {
     expect(() => integration({ root, binding: outsideBinding })).toThrow("Run worktree cannot be integrated");
   });
 
-  it("reclaims only an integrated, completed, preserved, clean worktree owned by this Run", () => {
+  it("creates a manual cleanup plan for a verified integrated Run and leaves its worktree intact", () => {
     const { root, baseSha } = fixture();
     const binding = create({ root, baseSha });
     commitRunChange(binding);
     mergeRun(root, binding);
     const integrated = integration({ root, binding }).binding;
-    const cleanup = reclaimRunWorktree({
+    const cleanup = planRunWorktreeCleanup({
       repoRoot: root, runId: binding.ownerRunId, runState: "completed", binding: integrated,
       knownOwners: [], targetRef: "HEAD", result: result(binding.ownerRunId),
     });
-    expect(cleanup).toMatchObject({ state: "reclaimed", binding: { reclamationState: "reclaimed" } });
-    expect(fs.existsSync(binding.canonicalPath)).toBe(false);
-    expect(git(root, "worktree", "list", "--porcelain")).not.toContain(binding.canonicalPath);
+    expect(cleanup).toMatchObject({
+      state: "manual-action-required",
+      path: binding.canonicalPath,
+      plan: {
+        ownerRunId: binding.ownerRunId,
+        expectedHeadSha: git(binding.canonicalPath, "rev-parse", "HEAD"),
+        targetBranch: "main",
+        command: { executable: "git", args: ["worktree", "remove", binding.canonicalPath], cwd: root },
+      },
+    });
+    expect(fs.existsSync(binding.canonicalPath)).toBe(true);
+    expect(hasRegisteredWorktree(root, binding.canonicalPath)).toBe(true);
   });
 
   it("retains dirty, ignored, interrupted, unintegrated, and foreign-owned worktrees", () => {
@@ -264,7 +283,7 @@ describe("Run worktree manager", () => {
     const integrated = integration({ root, binding }).binding;
     fs.mkdirSync(path.join(binding.canonicalPath, "node_modules"), { recursive: true });
     fs.writeFileSync(path.join(binding.canonicalPath, "node_modules", "user-cache.txt"), "preserve\n");
-    const dirty = reclaimRunWorktree({
+    const dirty = planRunWorktreeCleanup({
       repoRoot: root, runId: binding.ownerRunId, runState: "completed", binding: integrated,
       knownOwners: [], targetRef: "HEAD", result: result(binding.ownerRunId),
     });
@@ -272,14 +291,14 @@ describe("Run worktree manager", () => {
     expect(fs.readFileSync(path.join(binding.canonicalPath, "node_modules", "user-cache.txt"), "utf8")).toBe("preserve\n");
     expect(dirty.binding.reclamationState).toBe("pending");
 
-    const interrupted = reclaimRunWorktree({
+    const interrupted = planRunWorktreeCleanup({
       repoRoot: root, runId: binding.ownerRunId, runState: "interrupted", binding: integrated,
       knownOwners: [], targetRef: "HEAD", result: result(binding.ownerRunId),
     });
     expect(interrupted.state).toBe("retained");
     expect(fs.existsSync(binding.canonicalPath)).toBe(true);
 
-    const foreign = reclaimRunWorktree({
+    const foreign = planRunWorktreeCleanup({
       repoRoot: root, runId: binding.ownerRunId, runState: "completed", binding: integrated,
       knownOwners: [{ ownerRunId: "other-run", canonicalPath: binding.canonicalPath }],
       targetRef: "HEAD", result: result(binding.ownerRunId),
@@ -288,12 +307,71 @@ describe("Run worktree manager", () => {
     expect(fs.existsSync(binding.canonicalPath)).toBe(true);
 
     const unintegratedBinding = { ...binding, reclamationState: "pending" as const };
-    const unintegrated = reclaimRunWorktree({
+    const unintegrated = planRunWorktreeCleanup({
       repoRoot: root, runId: binding.ownerRunId, runState: "completed", binding: unintegratedBinding,
       knownOwners: [], targetRef: "HEAD", result: result(binding.ownerRunId),
     });
     expect(unintegrated.state).toBe("retained");
     expect(fs.existsSync(binding.canonicalPath)).toBe(true);
+  });
+
+  it("does not reclaim a user-created, merged worktree from a forged binding and empty owner list", () => {
+    const { root, baseSha } = fixture();
+    const canonicalPath = path.join(root, ".pactile", "worktrees", "user-owned");
+    fs.mkdirSync(path.dirname(canonicalPath), { recursive: true });
+    git(root, "worktree", "add", "--no-track", "-b", "feat/user-owned", canonicalPath, baseSha);
+    const forged: RunWorkspaceBinding = {
+      ownerRunId: "user-owned", canonicalPath, branch: "feat/user-owned", baseSha,
+      writeSet: ["src"], integrationState: "integrated", reclamationState: "pending",
+    };
+    commitRunChange(forged);
+    mergeRun(root, forged);
+
+    const cleanup = planRunWorktreeCleanup({
+      repoRoot: root, runId: forged.ownerRunId, runState: "completed", binding: forged,
+      knownOwners: [], targetRef: "HEAD", result: result(forged.ownerRunId),
+    });
+    expect(cleanup.state).toBe("retained");
+    expect(fs.existsSync(canonicalPath)).toBe(true);
+    expect(hasRegisteredWorktree(root, canonicalPath)).toBe(true);
+  });
+
+  it("detects a same-common-dir .git pointer swap through gitdir, symbolic-ref, and registration checks", () => {
+    const { root, baseSha } = fixture();
+    const first = create({ root, baseSha, runId: "run-pointer-a" });
+    const second = create({ root, baseSha, runId: "run-pointer-b" });
+    const firstGitFile = path.join(first.canonicalPath, ".git");
+    const original = fs.readFileSync(firstGitFile, "utf8");
+    const secondGitDir = git(second.canonicalPath, "rev-parse", "--absolute-git-dir");
+    fs.chmodSync(firstGitFile, 0o666);
+    fs.unlinkSync(firstGitFile);
+    try {
+      fs.writeFileSync(firstGitFile, `gitdir: ${secondGitDir}\n`);
+      const inspection = inspectRunWorktree({ repoRoot: root, runId: first.ownerRunId, runState: "running", binding: first, knownOwners: [] });
+      expect(inspection.issues).toEqual(expect.arrayContaining(["gitdir-mismatch", "branch-mismatch", "manager-provenance-mismatch"]));
+      expect(inspection.state).toBe("manager-provenance-mismatch");
+    } finally {
+      if (fs.existsSync(firstGitFile)) fs.unlinkSync(firstGitFile);
+      fs.writeFileSync(firstGitFile, original);
+    }
+  });
+
+  it("leaves a verified checkout in place so a later clean commit cannot be lost to a cleanup race", () => {
+    const { root, baseSha } = fixture();
+    const binding = create({ root, baseSha });
+    commitRunChange(binding);
+    mergeRun(root, binding);
+    const integrated = integration({ root, binding }).binding;
+    const plan = planRunWorktreeCleanup({
+      repoRoot: root, runId: binding.ownerRunId, runState: "completed", binding: integrated,
+      knownOwners: [], targetRef: "HEAD", result: result(binding.ownerRunId),
+    });
+    expect(plan.state).toBe("manual-action-required");
+    if (plan.state !== "manual-action-required") throw new Error("Expected a manual cleanup plan");
+    commitRunChange(binding, "src/late-commit.ts");
+    expect(plan.plan.expectedHeadSha).not.toBe(git(binding.canonicalPath, "rev-parse", "HEAD"));
+    expect(fs.existsSync(binding.canonicalPath)).toBe(true);
+    expect(hasRegisteredWorktree(root, binding.canonicalPath)).toBe(true);
   });
 
   it("allows overlapping writes only with an exact authorization and integration plan", () => {
