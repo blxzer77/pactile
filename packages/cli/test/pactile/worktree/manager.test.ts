@@ -267,10 +267,23 @@ describe("Run worktree manager", () => {
     const verified = integration({ root, binding });
     expect(verified.binding).toMatchObject({ integrationState: "integrated", reclamationState: "pending" });
     expect(verified.receipt).toMatchObject({ runId: binding.ownerRunId, targetRef: "HEAD", worktreeHeadSha: git(binding.canonicalPath, "rev-parse", "HEAD") });
+    expect(verified.receipt.contentFingerprint).toMatch(/^[a-f0-9]{64}$/);
 
     const outsideBinding = create({ root, baseSha, runId: "run-outside-scope", writeSet: ["src"] });
     commitRunChange(outsideBinding, "README.md");
     expect(() => integration({ root, binding: outsideBinding })).toThrow("Run worktree cannot be integrated");
+  });
+
+  it("rejects an ancestry-only ours merge that discards the Run changed-path content", () => {
+    const { root, baseSha } = fixture();
+    const binding = create({ root, baseSha, runId: "run-ours-merge" });
+    commitRunChange(binding);
+    const runHead = git(binding.canonicalPath, "rev-parse", "HEAD");
+    git(root, "merge", "--no-ff", "-s", "ours", "--no-edit", binding.branch);
+
+    expect(git(root, "merge-base", "--is-ancestor", runHead, "HEAD")).toBe("");
+    expect(fs.existsSync(path.join(root, "src", "feature.ts"))).toBe(false);
+    expect(() => integration({ root, binding })).toThrow("Target tree does not preserve Run changes at src/feature.ts");
   });
 
   it("creates a manual cleanup plan for a verified integrated Run and leaves its worktree intact", () => {

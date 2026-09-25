@@ -20,6 +20,8 @@
 
 If a user edit, ignored or untracked file, unintegrated commit, host-receipt mismatch, stale lease, or path anomaly is found, the worktree is retained with a reason. If Git removes its registration but leaves ignored contents, the state is recorded as `partial-removal`; the residue is preserved and is not treated as a valid checkout. If a clean commit arrives in the final race window, the manager restores the checkout at the preserved branch head and records `recovery-required`. If restoration cannot be verified, Git refs and any remaining path are left for manual reconciliation. `planRunWorktreeCleanup` remains a manual fallback for cases that fail an automatic cleanup gate.
 
+The final inspection narrows but cannot eliminate the interval before Git recursively deletes the checkout. An external writer can create an ignored file after the inspection callback and before deletion; non-force `git worktree remove` can delete that file because Git's clean check does not include ignored files. The cleanup lease records this exact residual risk in `riskDisclosure`. Automatic cleanup is therefore not an absolute guarantee that no external write can be lost.
+
 ## Parallel write sets
 
 `decideParallelWriteSets` treats empty or undeclared write sets as `*`. Overlapping paths are denied by default. An exception requires a receipt naming the exact Run pair and overlap paths, approver, evidence, and integration plan. Persist this authorization with the scheduling decision; the helper itself does not dispatch work.

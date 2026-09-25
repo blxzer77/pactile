@@ -205,6 +205,7 @@ describe("managed Run worktree reclamation", () => {
   it("uses non-force Git removal only after candidate, host stop, integration, and Close are bound", async () => {
     const { root, baseSha } = fixture();
     const prepared = prepareIntegratedRun({ root, baseSha, taskId: "cleanup-success", close: true });
+    expect(readKernel(root, prepared.taskDir).runs.at(-1)?.workspace?.integrationReceipt?.contentFingerprint).toMatch(/^[a-f0-9]{64}$/);
     const removal = vi.spyOn(gitRemoval, "removeManagedGitWorktree");
 
     const result = await reclaimRunWorktree({
@@ -213,6 +214,7 @@ describe("managed Run worktree reclamation", () => {
     });
 
     expect(result.state, JSON.stringify(result)).toBe("reclaimed");
+    expect(result.binding.cleanupLease?.riskDisclosure).toContain("ignored file");
     expect(removal).toHaveBeenCalledTimes(1);
     expect(removal.mock.calls[0]?.slice(0, 2)).toEqual([root, prepared.workspace.canonicalPath]);
     expect(fs.existsSync(prepared.workspace.canonicalPath)).toBe(false);

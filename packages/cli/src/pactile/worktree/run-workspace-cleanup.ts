@@ -37,6 +37,7 @@ import {
   type TaskRunV2,
 } from "../../core/task/task-kernel.js";
 import type { TaskRunWorkspaceManagerBinding } from "../../core/task/task-kernel-types.js";
+import { TASK_RUN_WORKSPACE_CLEANUP_RISK_DISCLOSURE } from "../../core/task/task-kernel-types.js";
 import { readStoredTaskRun } from "./run-workspace-lifecycle.js";
 import { removeManagedGitWorktree } from "./git-removal.js";
 type UnknownRecord = Record<string, unknown>;
@@ -387,6 +388,7 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
     return retain("Run workspace project root, common directory, or canonical path changed", "recovery-required");
   }
   const integrationReceipt = binding.integrationReceipt;
+  if (!integrationReceipt.contentFingerprint) return retain("Persisted integration receipt lacks target-tree content proof", "recovery-required");
   const expectedHeadSha = integrationReceipt.worktreeHeadSha.toLowerCase();
   if (integrationReceipt.runId !== run.id || integrationReceipt.candidateSnapshotId !== run.candidateSnapshot.id
     || integrationReceipt.candidateFingerprint !== run.candidateSnapshot.fingerprint
@@ -441,6 +443,7 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
         leaseId, processId: process.pid, acquiredAt: new Date().toISOString(),
         expectedHeadSha, targetBranch: integrationReceipt.targetBranch,
         targetHeadSha: integrationReceipt.targetHeadSha, receiptRef: stopReceipt.receiptRef,
+        riskDisclosure: TASK_RUN_WORKSPACE_CLEANUP_RISK_DISCLOSURE,
       },
       actor: input.actor, idempotencyKey: `${input.idempotencyKey}:cleanup-lease:${leaseId}`,
     });
@@ -490,8 +493,9 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
         candidateSnapshotId: currentCandidate.id, candidateFingerprint: currentCandidate.fingerprint },
     });
     if (verified.receipt.worktreeHeadSha.toLowerCase() !== expectedHeadSha
-      || verified.receipt.targetBranch !== integrationReceipt.targetBranch) {
-      throw new WorktreeManagerError("cleanup-head-changed", "Worktree HEAD or integrated target branch changed before Git removal", canonicalPath);
+      || verified.receipt.targetBranch !== integrationReceipt.targetBranch
+      || verified.receipt.contentFingerprint !== integrationReceipt.contentFingerprint) {
+      throw new WorktreeManagerError("cleanup-head-changed", "Worktree HEAD, integrated target branch, or preserved content changed before Git removal", canonicalPath);
     }
     const finalInspection = inspectRunWorktree({ repoRoot: freshIdentity.root, runId: currentRun.id, runState: currentRun.state, binding: currentWorkspace, knownOwners: [] });
     if (finalInspection.state !== "clean" || finalInspection.headSha?.toLowerCase() !== expectedHeadSha

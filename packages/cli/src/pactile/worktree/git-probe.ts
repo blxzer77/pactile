@@ -1,11 +1,20 @@
 import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { TextDecoder } from "node:util";
 import { sameGitRoot } from "../../utils/git-root.js";
 import { WorktreeManagerError, type GitIdentity, type GitWorktreeRegistration, type WorkspaceOwnerRef } from "./manager-types.js";
 
 const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
+const UTF8 = new TextDecoder("utf-8", { fatal: true });
+
+export interface GitTreePathEntry {
+  path: string;
+  mode: string;
+  type: "blob" | "commit";
+  objectId: string;
+}
 
 export function git(cwd: string, args: string[]): string {
   const execOptions: ExecFileSyncOptionsWithStringEncoding = {
@@ -38,6 +47,33 @@ function assertAbsolute(value: string, label: string): string {
     throw new WorktreeManagerError("path-anomaly", `${label} must not contain dot segments`);
   }
   return path.resolve(value);
+}
+
+function gitBuffer(cwd: string, args: string[]): Buffer {
+  try {
+    return execFileSync("git", args, {
+      cwd, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 16 * 1024 * 1024,
+    });
+  } catch {
+    throw new WorktreeManagerError("git-command-failed", `git ${args[0] ?? "command"} failed`);
+  }
+}
+
+function nulSeparatedRecords(value: Buffer): Buffer[] {
+  const records: Buffer[] = [];
+  let start = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] !== 0) continue;
+    if (index > start) records.push(value.subarray(start, index));
+    start = index + 1;
+  }
+  if (start < value.length) records.push(value.subarray(start));
+  return records;
+}
+
+function decodeGitPath(value: Buffer): string {
+  try { return UTF8.decode(value); }
+  catch { throw new WorktreeManagerError("git-path-unrepresentable", "Git path is not valid UTF-8; refusing to verify its tree content"); }
 }
 
 export function assertRunId(runId: string): void {
@@ -198,8 +234,35 @@ export function worktreeStatus(cwd: string): string[] {
 }
 
 export function changedPaths(cwd: string, baseSha: string, headSha: string): string[] {
-  const output = git(cwd, ["diff", "--name-only", "--no-renames", "-z", baseSha, headSha]);
-  return [...new Set(output.split("\0").filter(Boolean).map((item) => item.replaceAll("\\", "/")))].sort();
+  const output = gitBuffer(cwd, ["diff", "--name-only", "--no-renames", "-z", baseSha, headSha]);
+  return [...new Set(nulSeparatedRecords(output).map(decodeGitPath))].sort();
+}
+
+export function treePathEntries(cwd: string, treeish: string, paths: readonly string[]): GitTreePathEntry[] {
+  if (!paths.length) return [];
+  const requested = new Set(paths);
+  const entries: GitTreePathEntry[] = [];
+  for (let offset = 0; offset < paths.length; offset += 48) {
+    const chunk = paths.slice(offset, offset + 48);
+    const output = gitBuffer(cwd, [
+      "ls-tree", "-r", "-z", "--full-tree", treeish, "--", ...chunk.map((item) => `:(literal)${item}`),
+    ]);
+    for (const record of nulSeparatedRecords(output)) {
+      const separator = record.indexOf(9);
+      if (separator <= 0 || separator === record.length - 1) {
+        throw new WorktreeManagerError("git-tree-query-invalid", "Git returned a malformed tree entry");
+      }
+      const [mode, type, objectId] = record.subarray(0, separator).toString("ascii").split(" ");
+      const relativePath = decodeGitPath(record.subarray(separator + 1));
+      if (!mode || !/^\d{6}$/.test(mode) || (type !== "blob" && type !== "commit")
+        || !objectId || !SHA.test(objectId) || !requested.has(relativePath)) {
+        throw new WorktreeManagerError("git-tree-query-invalid", "Git returned an unexpected tree entry for the requested path set");
+      }
+      entries.push({ path: relativePath, mode, type, objectId: objectId.toLowerCase() });
+    }
+  }
+  return entries.sort((left, right) => left.path.localeCompare(right.path)
+    || left.mode.localeCompare(right.mode) || left.type.localeCompare(right.type) || left.objectId.localeCompare(right.objectId));
 }
 
 export function isAncestor(cwd: string, ancestor: string, descendant: string): boolean {

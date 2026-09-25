@@ -2,6 +2,7 @@ import type { KernelAuditEvent, KernelCondition, KernelOutcome, KernelPhase } fr
 import type { readKernel } from "./kernel-store.js";
 
 export const TASK_KERNEL_SCHEMA_VERSION = 2 as const;
+export const TASK_RUN_WORKSPACE_CLEANUP_RISK_DISCLOSURE = "An external writer may create an ignored file after the final check and before Git recursively removes this worktree; non-force git worktree remove may then delete that file.";
 
 export const TASK_DELIVERY_LEVELS = [
   "local-result",
@@ -124,6 +125,8 @@ export interface TaskRunWorkspaceIntegrationReceipt {
   resultEvidenceRefs: string[];
   candidateSnapshotId: string;
   candidateFingerprint: string;
+  /** Digest of Run changed-path tree entries, the integrated target entries, and candidate identity. */
+  contentFingerprint?: string;
 }
 
 export interface TaskRunWorkspaceCleanupLease {
@@ -136,6 +139,7 @@ export interface TaskRunWorkspaceCleanupLease {
   targetHeadSha: string;
   receiptRef: string;
   reason: string | null;
+  riskDisclosure?: string;
 }
 
 export interface TaskRunHostStopReceipt {

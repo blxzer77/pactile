@@ -19,6 +19,7 @@ import type {
   TaskRunV2,
   TaskRunWorkspaceBinding,
 } from "./task-kernel-types.js";
+import { TASK_RUN_WORKSPACE_CLEANUP_RISK_DISCLOSURE } from "./task-kernel-types.js";
 
 function runAt(current: TaskKernelSnapshotV2, runId: string): { run: TaskRunV2; index: number } {
   const index = current.runs.findIndex((item) => item.id === runId);
@@ -80,6 +81,7 @@ export function recordTaskRunWorkspaceIntegration(request: RecordTaskRunWorkspac
     }
     if (receipt.runId !== run.id || receipt.candidateSnapshotId !== run.candidateSnapshot.id
       || receipt.candidateFingerprint !== run.candidateSnapshot.fingerprint
+      || !receipt.contentFingerprint
       || !sameStrings(receipt.resultEvidenceRefs, run.result.evidenceRefs) || receipt.resultEvidenceRefs.length === 0) {
       throw new KernelError("INVALID_REQUEST", "Integration receipt does not match the completed Run result and candidate");
     }
@@ -93,11 +95,14 @@ export function acquireTaskRunWorkspaceCleanupLease(request: AcquireTaskRunWorks
   const actor = requireNonEmptyString(request.actor, "actor");
   const runId = requireNonEmptyString(request.runId, "runId");
   const lease = parseWorkspaceCleanupLease({ ...request.lease, state: "held", reason: null }, "workspaceCleanupLease");
+  if (lease.riskDisclosure !== TASK_RUN_WORKSPACE_CLEANUP_RISK_DISCLOSURE) {
+    throw new KernelError("INVALID_REQUEST", "Workspace cleanup lease must persist the accepted Git removal race disclosure");
+  }
   const fingerprint = fingerprintTaskValue({ runId, lease });
   return mutateTaskKernel(request.root, request.taskDir, request.expectedRevision, actor, request.idempotencyKey, fingerprint, request.cwd, (current) => {
     const { run, index } = runAt(current, runId);
     const workspace = run.workspace;
-    if (!workspace?.manager || !workspace.integrationReceipt || workspace.integrationState !== "integrated") {
+    if (!workspace?.manager || !workspace.integrationReceipt?.contentFingerprint || workspace.integrationState !== "integrated") {
       throw new KernelError("INVALID_TRANSITION", "Workspace cleanup requires manager ownership and a persisted integration receipt");
     }
     if (run.state !== "completed" || !run.result?.summary.trim() || !run.result.evidenceRefs.length || !run.candidateSnapshot) {

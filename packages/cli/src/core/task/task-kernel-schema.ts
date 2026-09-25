@@ -16,6 +16,7 @@ import { isPlainObject } from "./schema.js";
 import {
   TASK_DELIVERY_LEVELS,
   TASK_KERNEL_SCHEMA_VERSION,
+  TASK_RUN_WORKSPACE_CLEANUP_RISK_DISCLOSURE,
   type TaskAcceptanceCriterion,
   type TaskCandidateObservation,
   type TaskCandidateSnapshot,
@@ -431,11 +432,15 @@ export function parseWorkspaceIntegrationReceipt(value: unknown, field: string):
     resultEvidenceRefs: parseStringArray(input.resultEvidenceRefs, `${field}.resultEvidenceRefs`),
     candidateSnapshotId: requireNonEmptyString(input.candidateSnapshotId, `${field}.candidateSnapshotId`),
     candidateFingerprint: requireFingerprint(input.candidateFingerprint, `${field}.candidateFingerprint`),
+    ...(input.contentFingerprint === undefined ? {} : { contentFingerprint: requireFingerprint(input.contentFingerprint, `${field}.contentFingerprint`) }),
   };
 }
 
 export function parseWorkspaceCleanupLease(value: unknown, field: string): TaskRunWorkspaceCleanupLease {
   const input = parseObject(value, field);
+  if (input.riskDisclosure !== undefined && input.riskDisclosure !== TASK_RUN_WORKSPACE_CLEANUP_RISK_DISCLOSURE) {
+    throw new KernelError("CORRUPT_STATE", `${field}.riskDisclosure is not recognized`);
+  }
   const states: readonly TaskRunWorkspaceCleanupLease["state"][] = ["held", "reclaimed", "retained", "partial-removal", "recovery-required"];
   if (typeof input.state !== "string" || !states.includes(input.state as TaskRunWorkspaceCleanupLease["state"])) {
     throw new KernelError("CORRUPT_STATE", `${field}.state is invalid`);
@@ -451,6 +456,7 @@ export function parseWorkspaceCleanupLease(value: unknown, field: string): TaskR
     targetHeadSha: requireNonEmptyString(input.targetHeadSha, `${field}.targetHeadSha`),
     receiptRef: requireNonEmptyString(input.receiptRef, `${field}.receiptRef`),
     reason: input.reason === null ? null : requireNonEmptyString(input.reason, `${field}.reason`),
+    ...(input.riskDisclosure === undefined ? {} : { riskDisclosure: requireNonEmptyString(input.riskDisclosure, `${field}.riskDisclosure`) }),
   };
 }
 

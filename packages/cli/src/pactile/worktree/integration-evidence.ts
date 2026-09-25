@@ -1,4 +1,5 @@
 import path from "node:path";
+import { fingerprintTaskValue } from "../../core/task/task-kernel.js";
 import { sameGitRoot } from "../../utils/git-root.js";
 import {
   inspectRunWorktree,
@@ -10,8 +11,10 @@ import {
   isAncestor,
   ownerConflict,
   pathKey,
+  changedPaths,
   repoIdentity,
   resolveLocalBranchTarget,
+  treePathEntries,
 } from "./git-probe.js";
 import {
   WorktreeManagerError,
@@ -37,6 +40,7 @@ export interface WorktreeIntegrationReceipt {
   resultEvidenceRefs: string[];
   candidateSnapshotId: string | null;
   candidateFingerprint: string | null;
+  contentFingerprint: string;
 }
 
 export function verifyWorktreeIntegration(input: {
@@ -66,6 +70,33 @@ export function verifyWorktreeIntegration(input: {
   if (!isAncestor(identity.root, inspection.headSha, targetHeadSha)) {
     throw new WorktreeManagerError("integration-not-proven", "Target ref does not contain the Run worktree HEAD", input.binding.canonicalPath);
   }
+  const paths = changedPaths(identity.root, input.binding.baseSha, inspection.headSha);
+  const runEntries = treePathEntries(identity.root, inspection.headSha, paths);
+  const targetEntries = treePathEntries(identity.root, targetHeadSha, paths);
+  const runEntriesByPath = new Map<string, typeof runEntries>();
+  const targetEntriesByPath = new Map<string, typeof targetEntries>();
+  for (const entry of runEntries) runEntriesByPath.set(entry.path, [...(runEntriesByPath.get(entry.path) ?? []), entry]);
+  for (const entry of targetEntries) targetEntriesByPath.set(entry.path, [...(targetEntriesByPath.get(entry.path) ?? []), entry]);
+  const contentPaths = paths.map((relativePath) => {
+    const runPathEntries = runEntriesByPath.get(relativePath) ?? [];
+    const targetPathEntries = targetEntriesByPath.get(relativePath) ?? [];
+    if (JSON.stringify(runPathEntries) !== JSON.stringify(targetPathEntries)) {
+      throw new WorktreeManagerError("integration-content-not-preserved", `Target tree does not preserve Run changes at ${relativePath}`, input.binding.canonicalPath);
+    }
+    return { path: relativePath, entries: runPathEntries };
+  });
+  const candidateSnapshotId = input.result.candidateSnapshotId ?? null;
+  const candidateFingerprint = input.result.candidateFingerprint ?? null;
+  const contentFingerprint = fingerprintTaskValue({
+    schemaVersion: 1,
+    runId: input.runId,
+    baseSha: input.binding.baseSha.toLowerCase(),
+    worktreeHeadSha: inspection.headSha,
+    candidateSnapshotId,
+    candidateFingerprint,
+    resultEvidenceRefs: input.result.evidenceRefs,
+    changedPaths: contentPaths,
+  });
   const receipt: WorktreeIntegrationReceipt = {
     runId: input.runId,
     worktreeHeadSha: inspection.headSha,
@@ -74,8 +105,9 @@ export function verifyWorktreeIntegration(input: {
     targetHeadSha,
     verifiedAt: new Date().toISOString(),
     resultEvidenceRefs: [...input.result.evidenceRefs],
-    candidateSnapshotId: input.result.candidateSnapshotId ?? null,
-    candidateFingerprint: input.result.candidateFingerprint ?? null,
+    candidateSnapshotId,
+    candidateFingerprint,
+    contentFingerprint,
   };
   const kernelReceipt = receipt.candidateSnapshotId && receipt.candidateFingerprint
     ? {
@@ -88,6 +120,7 @@ export function verifyWorktreeIntegration(input: {
       resultEvidenceRefs: receipt.resultEvidenceRefs,
       candidateSnapshotId: receipt.candidateSnapshotId,
       candidateFingerprint: receipt.candidateFingerprint,
+      contentFingerprint: receipt.contentFingerprint,
     }
     : null;
   return {
