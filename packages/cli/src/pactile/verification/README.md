@@ -23,8 +23,44 @@ goal and provide the best remaining value for their cost. Cross-module,
 migration, release, permission-boundary, data-egress, and repository-wide
 signals create explicit coverage goals that can select matching checks.
 
-This module only proposes a plan. It does not run commands, record results,
-bind evidence to a candidate fingerprint, establish candidate freshness, or
-authorize task Close. Recompute from the current impact and check inventory at
-each caller decision; P35/P38 observer and freshness seams must bind the later
-execution receipt to the frozen candidate before a Close gate can consume it.
+The planner only proposes a plan; it does not run commands or authorize task
+Close. Recompute from the current impact and check inventory at each caller
+decision. The observer and receipt APIs below bind later execution results to
+the frozen P35 candidate, but Close still needs to re-observe real state and
+enforce the delivery-level integration rules.
+
+## Candidate observation and execution receipt
+
+`observeGitCandidate` takes an explicit repository-relative write set and
+performs a bounded, read-only Git/filesystem observation. It records HEAD and
+branch, separate staged/unstaged/untracked/conflict paths, Git diff/status
+digests, and SHA-256 digests of current bytes for changed paths inside the
+allowed write set. Out-of-scope paths are listed but their current bytes are
+never read; a conflict, branch mismatch, or out-of-scope change makes the
+observation ineligible for a candidate. Symlinks are fingerprinted by their
+link-target text without reading through the link. The observer fails closed
+when Git output exceeds 16 MiB, changed paths exceed 1,000, one current file
+exceeds 8 MiB, total current bytes exceed 32 MiB, or the observed state changes
+during collection.
+
+For a P35 Run, call `observeTaskRunCandidate({ run })` against its frozen
+`writeSetSnapshot` and workspace binding, then add
+`createTaskCandidateEntry(observation)` to P35 `candidateEntries` before
+`run-result` freezes the candidate ID and fingerprint. After that Run is
+completed, build `createVerificationReceipt` from the Run, observation, plan,
+and one result per selected or skipped check. Selected checks need a stable
+evidence reference when executed; required CI declarations are retained in the
+plan and `listRequiredCiReceiptResults` is only a derived view. The receipt
+fingerprint binds the plan/results to the Run ID, candidate ID/fingerprint,
+and Git observation fingerprint. Re-observe before consuming it and use
+`assessVerificationReceiptFreshness`; a changed Run, candidate, checkout, Git
+state, or allowed current bytes makes the receipt stale.
+
+This package slice does not run commands, persist receipts, validate evidence
+references, inspect integration ancestry, or wire the Close gate. Receipt
+hashes detect accidental or later content changes; they are not signatures or
+proof against a caller that can fabricate both the P35 snapshot and receipt.
+Keep serialized receipts in trusted local task state because they include
+repository-relative changed paths. A later Close integration must re-read Git
+and file state itself and check integration/delivery facts at the level being
+claimed; caller-provided references alone are not acceptance evidence.
