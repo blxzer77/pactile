@@ -14,8 +14,8 @@ export const RELEASE_ARTIFACT_MANIFEST = "release-artifacts-v1.json";
 export function candidateValidationCommands({ repoRoot, cliDir }) {
   return [
     {
-      command: process.execPath,
-      args: [path.join(cliDir, "scripts/check-manifest-continuity.js")],
+      command: "pnpm",
+      args: ["exec", "tsx", "scripts/check-manifest-continuity.ts"],
       cwd: cliDir,
       label: "manifest/npm continuity (registry read only)",
     },
@@ -56,8 +56,8 @@ export function candidateValidationCommands({ repoRoot, cliDir }) {
       label: "release pack preview",
     },
     {
-      command: process.execPath,
-      args: [path.join(cliDir, "scripts/release-conformance.js")],
+      command: "pnpm",
+      args: ["exec", "tsx", "scripts/release-conformance.ts"],
       cwd: repoRoot,
       label: "single tarball Node-only install",
     },

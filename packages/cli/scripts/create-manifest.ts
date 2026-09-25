@@ -3,11 +3,11 @@
  * Create migration manifest for a new version.
  *
  * Usage:
- *   node scripts/create-manifest.js                          # interactive
- *   node scripts/create-manifest.js --breaking
- *   node scripts/create-manifest.js --version 0.3.0-rc.0
- *   node scripts/create-manifest.js -y --description "..." --changelog "..."  # non-interactive
- *   echo '{"version":"0.3.9",...}' | node scripts/create-manifest.js         # JSON via stdin
+ *   pnpm --filter @blxzer/pactile exec tsx scripts/create-manifest.ts          # interactive
+ *   pnpm --filter @blxzer/pactile exec tsx scripts/create-manifest.ts --breaking
+ *   pnpm --filter @blxzer/pactile exec tsx scripts/create-manifest.ts --version 0.3.0-rc.0
+ *   pnpm --filter @blxzer/pactile exec tsx scripts/create-manifest.ts -y --description "..." --changelog "..." # non-interactive
+ *   echo '{"version":"0.3.9",...}' | pnpm --filter @blxzer/pactile exec tsx scripts/create-manifest.ts # JSON via stdin
  *
  * Stdin JSON mode (auto-detected when stdin is piped, or force with --stdin):
  *   Reads a JSON object from stdin with fields: version, description, changelog

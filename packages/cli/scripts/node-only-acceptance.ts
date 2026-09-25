@@ -13,7 +13,7 @@ for (const folder of (process.env.PATH ?? "").split(path.delimiter)) {
   }
 }
 fs.mkdirSync(root, { recursive: true });
-const cli = path.join(installed, "bin", "pactile.js");
+const cli = path.join(installed, "dist", "bin", "pactile.js");
 const run = (args) => String(execFileSync(process.execPath, [cli, ...args], {
   cwd: root, env: process.env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
 })).trim();

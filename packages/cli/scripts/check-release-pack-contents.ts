@@ -4,10 +4,10 @@ import { pathToFileURL } from "node:url";
 import { createCommandRunner } from "./release-guard.js";
 
 export const REQUIRED_RELEASE_FILES = [
-  "bin/pactile.js",
-  "bin/cstl.js",
-  "bin/compat-warning.js",
-  "bin/smart-search.js",
+  "dist/bin/pactile.js",
+  "dist/bin/cstl.js",
+  "dist/bin/compat-warning.js",
+  "dist/bin/smart-search.js",
   "dist/cli/index.js",
   "dist/commands/pi.js",
   "dist/commands/codex.js",
@@ -28,7 +28,6 @@ export const REQUIRED_RELEASE_FILES = [
   "dist/templates/pactile/workflow.md",
   "dist/templates/pactile/modules/index.json",
   "dist/templates/pactile/modules/intake-basic/contract.md",
-  "scripts/postinstall.js",
   "README.md",
   "LICENSE",
 ];

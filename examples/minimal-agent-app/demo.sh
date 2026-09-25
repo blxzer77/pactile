@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 WORKSPACE="$SCRIPT_DIR/_demo-workspace"
 
 resolve_pactile() {
-  local built="$REPO_ROOT/packages/cli/bin/pactile.js"
+  local built="$REPO_ROOT/packages/cli/dist/bin/pactile.js"
   if [[ -f "$built" ]]; then
     if [[ ! -f "$REPO_ROOT/packages/cli/dist/cli/index.js" ]]; then
       echo "Building CLI from monorepo..."

@@ -366,8 +366,8 @@ export function validatePackedCliPackage(packedPackage, expectedVersion) {
   if (packedPackage.name !== "@blxzer/pactile" || packedPackage.version !== expectedVersion) {
     errors.push(`packed CLI identity must be @blxzer/pactile@${expectedVersion}`);
   }
-  if (packedPackage.engines?.node !== ">=18.17.0") {
-    errors.push("packed Pactile must declare Node >=18.17.0");
+  if (packedPackage.engines?.node !== ">=20.0.0") {
+    errors.push("packed Pactile must declare Node >=20.0.0");
   }
   for (const subpath of ["./core", "./core/task", "./core/compat"]) {
     if (!packedPackage.exports?.[subpath]) {
@@ -380,15 +380,15 @@ export function validatePackedCliPackage(packedPackage, expectedVersion) {
     }
   }
   const bins = packedPackage.bin ?? {};
-  if (normalizeBin(bins.pactile) !== "bin/pactile.js") {
-    errors.push(`packed CLI bin "pactile" does not resolve to bin/pactile.js`);
+  if (normalizeBin(bins.pactile) !== "dist/bin/pactile.js") {
+    errors.push(`packed CLI bin "pactile" does not resolve to dist/bin/pactile.js`);
   }
-  if (normalizeBin(bins.cstl) !== "bin/cstl.js") {
-    errors.push(`packed CLI bin "cstl" does not resolve to bin/cstl.js`);
+  if (normalizeBin(bins.cstl) !== "dist/bin/cstl.js") {
+    errors.push(`packed CLI bin "cstl" does not resolve to dist/bin/cstl.js`);
   }
-  if (normalizeBin(bins["smart-search"]) !== "bin/smart-search.js") {
+  if (normalizeBin(bins["smart-search"]) !== "dist/bin/smart-search.js") {
     errors.push(
-      `packed CLI bin "smart-search" does not resolve to bin/smart-search.js`,
+      `packed CLI bin "smart-search" does not resolve to dist/bin/smart-search.js`,
     );
   }
   if (errors.length > 0) throw new Error(errors.join("\n"));

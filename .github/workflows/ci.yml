@@ -26,8 +26,13 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.32.1
+      - name: Install locked tooling without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Verify PR target and beta evidence for a release PR
-        run: node packages/cli/scripts/release-pr-check.js
+        run: pnpm --filter @blxzer/pactile exec tsx scripts/release-pr-check.ts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -56,7 +61,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Verify strict Pactile brand surface
-        run: node packages/cli/scripts/check-pactile-brand-surface.js --release
+        run: pnpm --filter @blxzer/pactile exec tsx scripts/check-pactile-brand-surface.ts --release
 
       - name: Build
         run: pnpm build
@@ -88,7 +93,7 @@ jobs:
         run: pnpm --filter @blxzer/pactile check:release-pack
 
       - name: Verify packed dependency and bins
-        run: node packages/cli/scripts/release-preflight.js verify-packed-cli
+        run: pnpm --filter @blxzer/pactile exec tsx scripts/release-preflight.ts verify-packed-cli
 
   release-conformance:
     name: release conformance (${{ matrix.os }}, Node ${{ matrix.node }})
@@ -96,7 +101,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        node: ["18.17.0", "lts/*", "current"]
+        node: ["20.0.0", "lts/*", "current"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -117,4 +122,4 @@ jobs:
         run: pnpm build
 
       - name: Verify single-package tarball and isolated Node install
-        run: node packages/cli/scripts/release-conformance.js
+        run: pnpm --filter @blxzer/pactile exec tsx scripts/release-conformance.ts

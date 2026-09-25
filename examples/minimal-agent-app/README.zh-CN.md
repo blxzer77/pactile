@@ -6,7 +6,7 @@
 
 ## 前置条件
 
-- Node.js 18.17 或更高版本
+- Node.js 20 或更高版本
 - Python 3.9 或更高版本，用于生成的脚本与 hooks
 - 全局安装 `@blxzer/pactile`，或已经构建当前仓库
 
@@ -30,7 +30,7 @@ Set-Location examples/minimal-agent-app
 ./demo.ps1
 ```
 
-脚本优先使用当前仓库构建后的 `packages/cli/bin/pactile.js`；找不到时再使用全局 `pactile` executable。
+脚本优先使用当前仓库构建后的 `packages/cli/dist/bin/pactile.js`；找不到时再使用全局 `pactile` executable。
 
 ## 预期契约
 

@@ -102,8 +102,8 @@ describe("single-package release policy", () => {
       .toMatchObject({ tag: "beta", cli: { publish: true } });
     const packed = {
       name: packageInfo.cliName, version: packageInfo.cliVersion,
-      engines: { node: ">=18.17.0" },
-      bin: { pactile: "./bin/pactile.js", cstl: "./bin/cstl.js", "smart-search": "./bin/smart-search.js" },
+      engines: { node: ">=20.0.0" },
+      bin: { pactile: "./dist/bin/pactile.js", cstl: "./dist/bin/cstl.js", "smart-search": "./dist/bin/smart-search.js" },
       exports: { "./core": {}, "./core/task": {}, "./core/compat": {} },
       dependencies: { chalk: "^5.3.0" },
     };

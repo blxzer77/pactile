@@ -11,7 +11,7 @@ npm install -g @blxzer/pactile
 pactile --version
 ```
 
-Node.js 18.17 or newer is required. Pactile's task, context, and session commands use Node.js; Python is not required. Smart Search and other middleware providers are optional, independently probed capabilities; Pactile does not silently install host-native assets or copy credentials.
+Node.js 20 or newer is required. Pactile's task, context, and session commands use Node.js; Python is not required. Smart Search and other middleware providers are optional, independently probed capabilities; Pactile does not silently install host-native assets or copy credentials.
 
 ## First project
 

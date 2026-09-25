@@ -452,7 +452,7 @@ function walkFiles(rootDir, relativeDir) {
 function inventoryFiles(repoRoot, trackedFiles) {
   const controlFiles = [
     ...walkFiles(repoRoot, "docs/pactile"),
-    "packages/cli/scripts/check-pactile-brand-surface.js",
+    "packages/cli/scripts/check-pactile-brand-surface.ts",
     "packages/cli/test/docs/pactile-brand-surface.test.ts",
   ].filter((relativePath) =>
     fs.existsSync(path.join(repoRoot, ...relativePath.split("/"))),

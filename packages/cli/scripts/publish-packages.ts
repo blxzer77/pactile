@@ -69,7 +69,7 @@ export function assertCredentialFreePreparation(env = process.env) {
 }
 
 function validationEnvironment(cliDir, env) {
-  const bin = path.join(cliDir, "bin", "pactile.js");
+  const bin = path.join(cliDir, "dist", "bin", "pactile.js");
   const quoted = /\s/.test(bin) ? `"${bin}"` : bin;
   return {
     PACTILE_KERNEL_CLI:

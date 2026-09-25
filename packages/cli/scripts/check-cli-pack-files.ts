@@ -10,7 +10,7 @@ if (errors.length > 0) {
     console.error(`  - ${error}`);
   }
   console.error(
-    "Run: node scripts/sync-cli-pack-files.js  (from packages/cli) to refresh the allowlist.",
+    "Run: pnpm run sync:pack-files  (from packages/cli) to refresh the allowlist.",
   );
   process.exit(1);
 }

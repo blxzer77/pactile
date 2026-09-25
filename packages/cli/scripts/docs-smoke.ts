@@ -326,7 +326,7 @@ function assertHelpParity(contract, env) {
   );
   if (packageJson.name !== "@blxzer/pactile")
     throw new Error("CLI package name is not canonical");
-  if (packageJson.bin?.pactile !== "./bin/pactile.js")
+  if (packageJson.bin?.pactile !== "./dist/bin/pactile.js")
     throw new Error("canonical pactile bin is not exposed");
 
   // The compatibility entry is a separate launcher, so invoke it directly.

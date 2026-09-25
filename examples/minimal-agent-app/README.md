@@ -6,7 +6,7 @@ This example exercises the same five-minute path shown on the repository front p
 
 ## Prerequisites
 
-- Node.js 18.17 or newer
+- Node.js 20 or newer
 - Python 3.9 or newer for generated scripts and hooks
 - Either a global `@blxzer/pactile` installation or a built checkout of this repository
 
@@ -30,7 +30,7 @@ Set-Location examples/minimal-agent-app
 ./demo.ps1
 ```
 
-The scripts prefer the repository's built `packages/cli/bin/pactile.js`. If it is unavailable, they use the global `pactile` executable.
+The scripts prefer the repository's built `packages/cli/dist/bin/pactile.js`. If it is unavailable, they use the global `pactile` executable.
 
 ## Expected contract
 

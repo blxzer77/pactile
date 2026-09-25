@@ -10,7 +10,7 @@ const cliRoot = path.resolve(testDir, "../..");
 const repoRoot = path.resolve(cliRoot, "../..");
 const checkerPath = path.join(
   cliRoot,
-  "scripts/check-pactile-brand-surface.js",
+  "scripts/check-pactile-brand-surface.ts",
 );
 const contractDir = path.join(repoRoot, "docs/pactile");
 

@@ -13,6 +13,7 @@ const __dirname = dirname(__filename);
 const smartSearchBin = join(
   __dirname,
   "..",
+  "..",
   "node_modules",
   "@blxzer",
   "smart-search",

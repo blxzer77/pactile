@@ -17,7 +17,7 @@ It gives an AI coding project one source of truth for instructions, tasks, owner
 
 ## Five-minute path
 
-Prerequisites: Node.js 18.17 or newer. Pactile task, context, and session commands run on Node.js; Python is not required.
+Prerequisites: Node.js 20 or newer. Pactile task, context, and session commands run on Node.js; Python is not required.
 
 ```bash
 npm install -g @blxzer/pactile

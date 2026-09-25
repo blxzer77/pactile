@@ -5,8 +5,8 @@
  * Historically also synced a vendored Smart Search tree. Vendor packing was
  * removed when `@blxzer/smart-search` became a normal dependency; this module
  * keeps only the pack-files check/sync surface used by:
- *   - scripts/sync-cli-pack-files.js
- *   - scripts/check-cli-pack-files.js
+ *   - scripts/sync-cli-pack-files.ts
+ *   - scripts/check-cli-pack-files.ts
  */
 
 import fs from "node:fs";
@@ -16,8 +16,6 @@ import { fileURLToPath } from "node:url";
 /** Static npm `files` entries for @blxzer/pactile (no vendor tree). */
 const cliPackFilesStatic = [
   "dist",
-  "bin",
-  "scripts/postinstall.js",
   "README.md",
   "CHANGELOG.md",
   "LICENSE",

@@ -12,11 +12,11 @@ import {
 } from "./release-validation.js";
 import { assertCredentialFreePreparation, readPackageInfo } from "./publish-packages.js";
 
-const NODE_ENGINE = ">=18.17.0";
+const NODE_ENGINE = ">=20.0.0";
 const EXPECTED_BINS = {
-  pactile: "bin/pactile.js",
-  cstl: "bin/cstl.js",
-  "smart-search": "bin/smart-search.js",
+  pactile: "dist/bin/pactile.js",
+  cstl: "dist/bin/cstl.js",
+  "smart-search": "dist/bin/smart-search.js",
 };
 
 export function assertSinglePackageContract(packedPackage) {
@@ -147,7 +147,7 @@ export async function verifyReleaseConformance({
       throw new Error("Installed Pactile Core task API is unavailable.");
     }
     const nodeOnly = runtimeEnvironment(root, userConfig);
-    const cli = path.join(installed, "bin", "pactile.js");
+    const cli = path.join(installed, "dist", "bin", "pactile.js");
     const version = String(runner(process.execPath, [cli, "--version"], {
       cwd: prefix, capture: true, env: nodeOnly,
     })).trim();
@@ -158,7 +158,10 @@ export async function verifyReleaseConformance({
       cwd: prefix, capture: true, env: nodeOnly,
     });
     const acceptance = JSON.parse(String(runner(process.execPath, [
-      path.join(path.dirname(fileURLToPath(import.meta.url)), "node-only-acceptance.js"),
+      path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../.tmp/p31-script-build/node-only-acceptance.js",
+      ),
       installed, path.join(root, "node-only-project"),
     ], { cwd: prefix, capture: true, env: nodeOnly })).trim().split(/\r?\n/).at(-1));
     if (acceptance.nodeOnly !== true || acceptance.installedTarball !== true) {

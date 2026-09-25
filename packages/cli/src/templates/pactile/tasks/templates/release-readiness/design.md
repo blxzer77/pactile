@@ -35,14 +35,14 @@ Include grep-friendly sections (archive checks may reference these families):
 From the Pactile monorepo `packages/cli` (adjust paths for other products):
 
 ```bash
-node scripts/check-manifest-continuity.js
-node scripts/release-preflight.js check-versions
-node scripts/release-preflight.js publish-plan
-node scripts/release-preflight.js verify-packed-cli
+pnpm --filter @blxzer/pactile exec tsx scripts/check-manifest-continuity.ts
+pnpm release:check
+pnpm release:plan
+pnpm --filter @blxzer/pactile exec tsx scripts/release-preflight.ts verify-packed-cli
 pnpm --filter @blxzer/pactile exec npm pack --dry-run
 ```
 
-Do **not** run `scripts/release.js`, `npm publish`, or `git push` in readiness.
+Do **not** run `pnpm release`, `npm publish`, or `git push` in readiness.
 
 ## Safety
 
