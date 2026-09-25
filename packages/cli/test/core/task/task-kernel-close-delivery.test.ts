@@ -226,6 +226,64 @@ function providerFact(input: {
 }
 
 describe("Task Close delivery observation", () => {
+  it("captures a standalone Run base and rejects committed scope drift before candidate freeze", () => {
+    const root = makeRepository();
+    const task = kernel(root, "standalone-out-of-scope", "pull-request");
+    const baseSha = git(root, "rev-parse", "HEAD");
+    const started = startTaskRun({
+      root,
+      taskDir: task.dir,
+      expectedRevision: task.kernel.revision,
+      actor: "implementer",
+      idempotencyKey: "standalone-out-of-scope-start",
+      input: { summary: "make standalone candidate", references: [] },
+      authorization: {
+        approvedBy: "approver",
+        approvedAt: "now",
+        scope: "result.txt",
+        evidenceRef: "approval.json",
+      },
+      writeSetSnapshot: ["result.txt"],
+    });
+    const run = started.kernel.runs.at(-1);
+    if (!run) throw new Error("started Run is missing");
+    expect(run.workspace).toBeNull();
+    expect(run.candidateBaseSha).toBe(baseSha);
+    expect(run.candidateBaseBranch).toBe("main");
+
+    const resultBytes = "standalone result\n";
+    fs.writeFileSync(path.join(root, "result.txt"), resultBytes);
+    fs.mkdirSync(path.join(root, "docs"), { recursive: true });
+    fs.writeFileSync(path.join(root, "docs", "outside.md"), "out of scope\n");
+    git(root, "add", "result.txt", "docs/outside.md");
+    git(root, "commit", "--quiet", "-m", "standalone candidate with extra path");
+    expect(git(root, "status", "--porcelain")).toBe("");
+
+    expect(() =>
+      recordTaskRunResult({
+        root,
+        taskDir: task.dir,
+        expectedRevision: started.kernel.revision,
+        runId: run.id,
+        outcome: "completed",
+        summary: "standalone candidate",
+        evidenceRefs: ["result.txt"],
+        candidateEntries: [
+          {
+            ref: "result.txt",
+            fingerprint: createHash("sha256").update(resultBytes).digest("hex"),
+          },
+        ],
+        actor: "implementer",
+        idempotencyKey: "standalone-out-of-scope-result",
+      }),
+    ).toThrow(/Candidate observation is out-of-scope/);
+    expect(readTaskKernel({ root, taskDir: task.dir, cwd: root })).toMatchObject({
+      kind: "task-kernel-v2",
+      kernel: { runs: [{ state: "running" }] },
+    });
+  });
+
   it("closes a pull-request delivery only for an open, non-draft PR at the candidate HEAD", () => {
     const root = makeRepository();
     const task = kernel(root, "pr-delivery", "pull-request");

@@ -37,6 +37,11 @@ export type GitCandidateScopeStatus =
   | "conflicted"
   | "workspace-mismatch";
 
+export interface GitRepositoryBaseline {
+  readonly headSha: string;
+  readonly branch: string | null;
+}
+
 export interface GitCandidateFileFingerprint {
   readonly path: string;
   readonly kind: "regular-file" | "symlink" | "directory" | "missing";
@@ -93,7 +98,8 @@ export interface ObserveGitCandidateInput {
 export type TaskRunObservationSource = Pick<
   TaskRunV2,
   "id" | "writeSetSnapshot" | "workspace"
->;
+> &
+  Partial<Pick<TaskRunV2, "candidateBaseSha" | "candidateBaseBranch">>;
 
 export interface ObserveTaskRunCandidateInput {
   readonly run: TaskRunObservationSource;
@@ -493,6 +499,44 @@ function realRepositoryRoot(repositoryRoot: string): string {
     );
   }
   return resolvedGitRoot;
+}
+
+/** Capture a stable current HEAD/branch baseline for a standalone Run. */
+export function observeGitRepositoryBaseline(
+  repositoryRoot: string,
+): GitRepositoryBaseline {
+  const root = realRepositoryRoot(repositoryRoot);
+  const read = (): GitRepositoryBaseline => {
+    const headSha = decodeGitText(
+      runGit(root, ["rev-parse", "--verify", "HEAD^{commit}"]),
+      "HEAD",
+    ).toLowerCase();
+    if (!/^[a-f0-9]{40}([a-f0-9]{24})?$/.test(headSha)) {
+      throw new GitCandidateObservationError(
+        "git-command-failed",
+        "Git HEAD is not a supported commit SHA.",
+      );
+    }
+    const branchBytes = runGit(
+      root,
+      ["symbolic-ref", "--short", "-q", "HEAD"],
+      [0, 1],
+    );
+    return {
+      headSha,
+      branch:
+        branchBytes.length === 0 ? null : decodeGitText(branchBytes, "branch"),
+    };
+  };
+  const first = read();
+  const second = read();
+  if (first.headSha !== second.headSha || first.branch !== second.branch) {
+    throw new GitCandidateObservationError(
+      "current-file-unreadable",
+      "Git HEAD or branch changed while capturing the Run baseline; retry with a stable repository.",
+    );
+  }
+  return first;
 }
 
 function readCurrentFile(
@@ -948,11 +992,19 @@ export function observeTaskRunCandidate(
       "A repository root is required for a Run without a workspace binding.",
     );
   }
+  const expectedBaseSha = run.candidateBaseSha ?? run.workspace?.baseSha ?? null;
+  if (expectedBaseSha === null) {
+    throw new GitCandidateObservationError(
+      "candidate-not-eligible",
+      "P35 Run has no Core-observed Git base SHA; committed candidate scope cannot be verified.",
+    );
+  }
   return observeGitCandidate({
     repositoryRoot,
     allowedWriteSet: runWriteSet,
-    expectedBaseSha: run.workspace?.baseSha ?? null,
-    expectedBranch: run.workspace?.branch ?? null,
+    expectedBaseSha,
+    expectedBranch:
+      run.workspace?.branch ?? run.candidateBaseBranch ?? null,
   });
 }
 

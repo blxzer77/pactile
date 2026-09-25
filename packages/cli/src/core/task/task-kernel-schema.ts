@@ -494,8 +494,44 @@ function parseRun(value: unknown, field: string): TaskRunV2 {
       "CORRUPT_STATE",
       `${field} failed/blocked state requires failure details and completion time`,
     );
+  const runId = requireNonEmptyString(input.id, `${field}.id`);
+  const workspace =
+    input.workspace === null
+      ? null
+      : parseWorkspaceBinding(input.workspace, runId, `${field}.workspace`);
+  const candidateBaseSha =
+    input.candidateBaseSha === undefined || input.candidateBaseSha === null
+      ? (workspace?.baseSha ?? null)
+      : parseCommitSha(input.candidateBaseSha, `${field}.candidateBaseSha`);
+  const candidateBaseBranch =
+    input.candidateBaseBranch === undefined ||
+    input.candidateBaseBranch === null
+      ? (workspace?.branch ?? null)
+      : requireNonEmptyString(
+          input.candidateBaseBranch,
+          `${field}.candidateBaseBranch`,
+        );
+  if (
+    candidateBaseBranch !== null &&
+    candidateBaseBranch !== candidateBaseBranch.trim()
+  ) {
+    throw new KernelError(
+      "CORRUPT_STATE",
+      `${field}.candidateBaseBranch must be a trimmed branch name`,
+    );
+  }
+  if (
+    workspace &&
+    (candidateBaseSha?.toLowerCase() !== workspace.baseSha.toLowerCase() ||
+      candidateBaseBranch !== workspace.branch)
+  ) {
+    throw new KernelError(
+      "CORRUPT_STATE",
+      `${field} candidate Git baseline must match its workspace base and branch`,
+    );
+  }
   return {
-    id: requireNonEmptyString(input.id, `${field}.id`),
+    id: runId,
     taskId: requireTaskId(input.taskId, `${field}.taskId`),
     attempt: requirePositiveInt(input.attempt, `${field}.attempt`),
     sequence: requirePositiveInt(input.sequence, `${field}.sequence`),
@@ -520,14 +556,9 @@ function parseRun(value: unknown, field: string): TaskRunV2 {
       input.measurementRefs,
       `${field}.measurementRefs`,
     ),
-    workspace:
-      input.workspace === null
-        ? null
-        : parseWorkspaceBinding(
-            input.workspace,
-            requireNonEmptyString(input.id, `${field}.id`),
-            `${field}.workspace`,
-          ),
+    candidateBaseSha,
+    candidateBaseBranch,
+    workspace,
     host:
       input.host === null
         ? null

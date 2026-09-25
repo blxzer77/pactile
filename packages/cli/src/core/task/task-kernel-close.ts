@@ -319,6 +319,11 @@ function evaluateTaskClose(
       errors.push(error instanceof Error ? error.message : String(error));
     }
     try {
+      if (run.candidateBaseSha === null && run.workspace === null) {
+        throw new Error(
+          "Selected Run has no Core-observed Git base SHA; Close cannot re-observe committed candidate scope",
+        );
+      }
       const current = observeTaskRunCandidate({
         run,
         ...(run.workspace === null ? { repositoryRoot: root } : {}),

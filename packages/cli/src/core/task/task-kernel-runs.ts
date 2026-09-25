@@ -19,6 +19,7 @@ import { assertHardDependenciesSatisfied, canonicalProjectRoot } from "./task-ke
 import {
   createTaskCandidateEntry,
   isTaskRunPathInWriteSet,
+  observeGitRepositoryBaseline,
   observeTaskRunCandidate,
   VERIFICATION_CANDIDATE_ENTRY_REF,
 } from "./task-candidate-observer.js";
@@ -48,6 +49,9 @@ export function startTaskRun(request: StartTaskRunRequest): TaskKernelMutationRe
     const estimatedDurations = parseDurations(request.estimatedDurations ?? {}, "estimatedDurations");
     const id = randomUUID();
     const workspace = request.workspace ? parseWorkspaceBinding({ ...request.workspace, ownerRunId: id }, id, "workspace") : null;
+    const candidateBaseline = workspace
+      ? { headSha: workspace.baseSha, branch: workspace.branch }
+      : observeGitRepositoryBaseline(root);
     const host = request.host ? parseHostBinding({
       ...request.host,
       kernelRevision: request.expectedRevision,
@@ -56,7 +60,8 @@ export function startTaskRun(request: StartTaskRunRequest): TaskKernelMutationRe
     const run: TaskRunV2 = {
       id, taskId: current.identity.taskId, attempt: current.runs.length + 1, sequence: current.runs.length + 1,
       state: initialState, startedAt: new Date().toISOString(), startedBy: actor,
-      input, authorization, workspace, host, candidateSnapshot: null, result: null, failure: null, completedAt: null,
+      input, authorization, workspace, host, candidateBaseSha: candidateBaseline.headSha,
+      candidateBaseBranch: candidateBaseline.branch, candidateSnapshot: null, result: null, failure: null, completedAt: null,
       writeSetSnapshot, estimatedDurations,
       measurementRefs: { execution: null, waiting: null, review: null },
     };

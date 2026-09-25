@@ -160,6 +160,9 @@ export interface TaskRunV2 {
   writeSetSnapshot: string[];
   estimatedDurations: TaskRunDurations;
   measurementRefs: TaskRunMeasurementRefs;
+  /** Core-observed Git baseline captured when this Run starts; null only on legacy/non-Git Runs. */
+  candidateBaseSha: string | null;
+  candidateBaseBranch: string | null;
   workspace: TaskRunWorkspaceBinding | null;
   host: TaskRunHostBinding | null;
   candidateSnapshot: TaskCandidateSnapshot | null;
