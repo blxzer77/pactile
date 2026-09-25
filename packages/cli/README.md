@@ -45,6 +45,7 @@ Use `--codex` to select the active host. Existing user files and native assets a
 | `pactile context --mode session`                     | Compile the phase-scoped session pack.                                            |
 | `pactile context --mode retrieval-pack --input <file>` | Score and budget collected evidence; optionally write it with `--output <file>`. |
 | `pactile session <command>`                          | Record and inspect local session continuity.                                     |
+| `pactile capability <request.json>`                  | Run a bounded, versioned workspace request with the built-in Node adapter.       |
 | `pactile kernel --json`                              | Run the machine JSON lifecycle boundary used by generated project scripts.        |
 
 Run `pactile <command> --help` for current flags. `detach` takes the adapter as a positional argument. `purge` is intentionally two-step: a destructive run requires `--yes` plus the exact fingerprint returned by the preview.
@@ -72,6 +73,8 @@ pactile purge --dry-run
 Canonical generation commit happens before host reconciliation. A failed adapter keeps a retryable receipt. Update and exit decisions consult the ownership ledger, so modified, foreign, unknown, shared, and borrowed resources fail safe.
 
 See the repository guides for [Lifecycle](../../docs/lifecycle/index.md), [Recovery](../../docs/troubleshooting/recovery.md), and [Projection and Ownership](../../docs/concepts/projection-and-ownership.md).
+
+See [bounded workspace requests](../../docs/capabilities/bounded-workspace-requests.md) for the request/result contract, budgets, cancellation, outcomes, and receipts.
 
 ## Package
 

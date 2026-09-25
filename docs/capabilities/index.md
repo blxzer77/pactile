@@ -15,6 +15,7 @@ assurance; a name in a config file is not proof.
 | MCP              | [MCP](mcp.md)                                         | `provider` or `unsupported`              | Read the selected manifest and run an approved probe.  |
 | Native resources | [Install, adopt, bind](native-adoption.md)            | host-owned or borrowed                   | Compare current bytes with the recorded preimage.      |
 | Retrieval        | [Retrieval](retrieval.md)                             | exact search plus optional Provider      | Run exact search first; verify candidates in source.   |
+| Workspace tools  | [Bounded workspace requests](bounded-workspace-requests.md) | built-in Node adapter                    | Set request budgets and check outcome/error codes.     |
 | Providers        | [Providers](providers.md)                             | explicitly installed and authorized      | Check origin, readiness, freshness, and assurance.     |
 | Privacy          | [Privacy and permissions](privacy-and-permissions.md) | policy boundary                          | Review data flow and credential scope before enabling. |
 | Subagents        | [Subagents](subagents.md)                             | host dispatch plus shared Task contract  | Use the CLI dispatch prompt and task gates.            |

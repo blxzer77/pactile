@@ -45,6 +45,7 @@ pactile capability-smoke --json
 | `pactile context --mode session`                    | 编译按阶段裁剪的会话上下文包。                                 |
 | `pactile context --mode retrieval-pack --input <file>` | 对已收集证据评分并按预算选取；可用 `--output <file>` 写出。   |
 | `pactile session <command>`                         | 记录和查看本地会话连续性。                                     |
+| `pactile capability <request.json>`                 | 使用内置 Node Adapter 执行版本化、有界的工作区请求。           |
 | `pactile kernel --json`                              | 运行生成项目脚本使用的机器 JSON 生命周期边界。                 |
 
 用 `pactile <command> --help` 查看当前参数。`detach` 使用位置参数指定 Adapter。`purge` 固定为两步：破坏性执行必须同时提供 `--yes` 和 preview 返回的精确指纹。
@@ -72,6 +73,8 @@ pactile purge --dry-run
 Canonical generation 在宿主协调前提交。失败的 Adapter 保留可重试 receipt。更新与退出决策会查询 ownership ledger，因此 modified、foreign、unknown、shared 与 borrowed 资源都会安全保留。
 
 详细说明见[生命周期](../../docs/lifecycle/index.zh-CN.md)、[恢复](../../docs/troubleshooting/recovery.zh-CN.md)和 [Projection 与 Ownership](../../docs/concepts/projection-and-ownership.zh-CN.md)。
+
+请求/结果契约、预算、取消、outcome 与回执见[有界工作区请求](../../docs/capabilities/bounded-workspace-requests.zh-CN.md)。
 
 ## 包
 

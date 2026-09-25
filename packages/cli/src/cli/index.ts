@@ -27,6 +27,7 @@ import { runParallelCli } from "../commands/parallel.js";
 import { runCodexCli } from "../commands/codex.js";
 import { runContextCli } from "../commands/context.js";
 import { runSessionCli } from "../commands/session.js";
+import { runCapabilityCli } from "../commands/capability.js";
 import {
   PACTILE_ENVIRONMENT_KEYS,
   readPactileEnvironment,
@@ -491,6 +492,23 @@ program
   .argument("[arguments...]")
   .action(() => {
     process.exitCode = runSessionCli(process.argv.slice(3));
+  });
+
+program
+  .command("capability")
+  .description(
+    "Run a bounded workspace capability request with the Node adapter",
+  )
+  .addHelpText(
+    "after",
+    "\nUsage: pactile capability <request.json> [--allow-command <command-id>]\n",
+  )
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[request-file]")
+  .argument("[options...]")
+  .action(async () => {
+    process.exitCode = await runCapabilityCli(process.argv.slice(3));
   });
 
 program

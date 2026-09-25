@@ -71,3 +71,4 @@ export * from "./lifecycle.js";
 export * from "./trace.js";
 export * from "./middleware/index.js";
 export * from "./trace-runtime/index.js";
+export * from "./bounded-capabilities.js";
