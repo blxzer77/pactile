@@ -53,7 +53,7 @@ const CONTRACT_IDS = {
   documentationMap: "pactile.documentation-map/v1",
 };
 const CANONICAL_POLICY_DIGESTS = {
-  inventory: "607dce00564b8856d06f96c6f4020b6bfd86205b327fd68b4861291099d4e41e",
+  inventory: "1b80e5487f3409671babfd5bd44f8a53066cbafcb4ccee2f34317e2ced64a6aa",
   renameMap: "e7e3a0eeb7ba5c97b5ed614b13c8ac628e9e3781d57ec763be06f405bb1b91aa",
   documentationMap:
     "03942755efb2d1bedc1689af353ae972d31bbeeb4804e00c1e0c2ca99b083c29",

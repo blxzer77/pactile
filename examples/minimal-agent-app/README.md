@@ -2,12 +2,11 @@
 
 English | [简体中文](README.zh-CN.md)
 
-This example exercises the same five-minute path shown on the repository front page, but always creates a disposable `_demo-workspace/` next to the scripts. It never initializes the Pactile source checkout itself.
+This example checks the compiled CLI and initializes a disposable Codex project under `_demo-workspace/` next to the scripts. It never initializes the Pactile source checkout itself.
 
 ## Prerequisites
 
 - Node.js 20 or newer
-- Python 3.9 or newer for generated scripts and hooks
 - Either a global `@blxzer/pactile` installation or a built checkout of this repository
 
 ## Run it
@@ -30,16 +29,16 @@ Set-Location examples/minimal-agent-app
 ./demo.ps1
 ```
 
-The scripts prefer the repository's built `packages/cli/dist/bin/pactile.js`. If it is unavailable, they use the global `pactile` executable.
+Both scripts require Node.js 20 or newer and initialize the Codex integration. They prefer the repository's compiled `packages/cli/dist/bin/pactile.js`; if it is unavailable, they call the global `pactile` executable. Each run replaces the disposable `_demo-workspace/` directory. Set `PACTILE_DEMO_WORKSPACE` to use a different disposable path.
 
 ## Expected contract
 
 The demo will:
 
 1. Create a clean `_demo-workspace/`.
-2. Run `pactile init --cursor --codex -y`.
-3. Run `pactile capability-smoke --json`.
-4. Print the canonical and host projection roots.
+2. Check the CLI version and confirm `pactile init --help` advertises `--codex`.
+3. Run `pactile init --codex --yes --skip-readiness --user pactile-demo`.
+4. Print the canonical and Codex projection roots.
 
 The resulting shape includes:
 
@@ -47,7 +46,6 @@ The resulting shape includes:
 _demo-workspace/
   .pactile/
   .agents/
-  .cursor/
   AGENTS.md
 ```
 
@@ -61,7 +59,7 @@ Capability output may honestly be `degraded` when an optional provider is not in
 - `.pactile/runtime/install-state.json` identifies the active generation and adapter status.
 - `.pactile/runtime/ownership-ledger.json` records projected resources and claimants.
 - `.pactile/runtime/receipts/` keeps durable lifecycle Evidence.
-- `.cursor/` is the generated host projection; `.codex/` is optional and only appears when native Codex project support is ready.
+- `.agents/skills/` contains the shared skills projected for Codex; `.codex/` is optional and only appears when native Codex project support is ready.
 - `.agents/skills/` and the managed `AGENTS.md` block may be shared by both adapters.
 
 The demo scripts are part of the Batch 4 dogfood contract. Their commands must stay identical to this page and the root quick start.
