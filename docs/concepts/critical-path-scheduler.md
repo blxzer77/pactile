@@ -83,9 +83,10 @@ Parent task-map fingerprint, and V2 Kernel revisions before accepting it.
 Standalone V2 receipts are stored at
 `.pactile/.runtime/scheduler/receipts/<sha256>.json`; their scope, candidate
 IDs, V2 revision snapshot, cost inputs, and plan are fingerprinted together.
-Replaying the same snapshot returns the original receipt. This is a planning
-and evidence API; Task Kernel authorization and dependency gates remain the
-only authority for starting or closing Runs.
+Replaying the same snapshot returns the original receipt. Planning never
+mutates Task or Run state. The separate V2 admission gate below rechecks Kernel
+authorization and hard dependencies before reserving a writer; Task Kernel
+lifecycle remains the authority for Run result and closure.
 
 The active `parallel run` path plans only manifest candidates while retaining
 their Parent's dependency context. It runs each planned wave, stores its
@@ -95,6 +96,90 @@ authorization without a schedule receipt and integration plan is rejected.
 Direct bridge reservations do not get a count cap; they still require an
 eligible Task and reject active write collisions unless the same verified
 receipt authorizes the pair.
+
+### Standalone V2 dispatch admission and writer leases
+
+Planning is not dispatch permission. A host adapter should create a schedule
+receipt for the intended V2 candidates, then acquire one project-level lease
+for the specific Task/Run immediately before starting a writer:
+
+```ts
+import {
+  scheduleTaskKernelGraph,
+  acquireTaskKernelRunDispatchV1,
+  assertTaskKernelRunDispatchLeaseV1,
+  bindTaskKernelRunDispatchOwnerV1,
+  validateTaskKernelRunDispatchStopProofV1,
+  releaseTaskKernelRunDispatchV1,
+} from "@blxzer/pactile/scheduler";
+
+const schedule = scheduleTaskKernelGraph(projectRoot, [taskId]);
+const admission = acquireTaskKernelRunDispatchV1(projectRoot, {
+  scheduleReceiptFingerprint: schedule.receipt.receiptFingerprint,
+  taskId,
+  runId,
+  owner: { host: "pi", role: "implement", sessionId: null,
+    threadId: null, hostId: null },
+});
+if (!admission.permitted) throw new Error(admission.receipt.reasonCodes.join(", "));
+```
+
+`[taskId]` includes its recursive V2 dependency closure in the plan. Admission
+re-reads the Task Kernel and every hard dependency immediately before dispatch;
+the scheduler's modeled later wave never counts as a prerequisite Run being
+closed. The current Run must be waiting/running, authorized, present in the
+fingerprinted plan, and retain the same write set. The project lease joins the
+Run write set and optional workspace write set and reserves it across both V2
+and legacy Parent lease folders. Every colliding active writer is checked;
+each one must have an exact pair authorization in the same schedule receipt,
+including approver, evidence reference, and integration plan.
+
+An adapter should acquire with its stable owner identity before native create
+(native session/thread/process identifiers may initially be null), then call
+`bindTaskKernelRunDispatchOwnerV1` only after the Task Run has persisted its
+`run.host-bound` event and references. `assertTaskKernelRunDispatchLeaseV1`
+checks the still-active lease before follow-up sends. A native wait may use
+`allowSettled: true` after the Task Run has settled; the writer lease remains
+active until the adapter has verified the stop proof. Owner binding is
+monotonic and content-addressed.
+
+`validateTaskKernelRunDispatchStopProofV1(projectRoot, { leaseId, taskId,
+runId, stopReceiptRef })` is a read-only gate. It verifies the content-addressed
+proof and all referenced source records, the current latest Task/Run, the
+schedule and admission receipts, the owner binding, and that the reserved
+write set still covers the Run. `releaseTaskKernelRunDispatchV1` repeats that
+validation under the project mutex before archiving the lease. It accepts only
+these stop sources:
+
+- `source: "codex-bridge"`: a self-fingerprinted Codex request and normalized
+  receipt. A terminal proof requires `wait_threads`, `desktop-native`,
+  `outcome: "ok"`, `status: "completed"`, and a non-stale contract. A
+  `not-created` proof requires a failed native `create_thread` receipt with an
+  explicit `thread_creation_state: "not_created"` and no created IDs.
+- `source: "pi-host"`: `request_ref` points to the parsed
+  `PiHostStartReceipt`; its `request_fingerprint` is
+  `fingerprintTaskValue(startReceipt)`. `native_receipt_ref` points to the Pi
+  Run JSON and `native_receipt_fingerprint` is
+  `fingerprintTaskValue(run.process_stop_receipt)`. The validator checks the
+  Task/Run/session/process/start request identity, Kernel Host request/event/
+  result refs, `manager-owned-child-exit`, terminal `exited` or `cancelled`,
+  and `processExit.terminationVerified === true` with an observed exit time.
+
+Both proof variants use `proof_fingerprint = fingerprintTaskValue(proof minus
+proof_fingerprint)`. Required proof fields include `source`, the exact owner
+identity (`host`, `role`, `session_id`, `thread_id`, `host_id`,
+`start_request_id`, `process_id`), schedule/admission fingerprints, request and
+native receipt references plus fingerprints, disposition, and
+`writer_exited: true`. `request_ref`, `native_receipt_ref`, and the proof ref
+are project-root-relative paths; the proof filename must be
+`<proof_fingerprint>.json`. Pi stop proofs use
+`.pactile/tasks/<slug>/pi-bridge/dispatch-proofs/`; Codex proofs use
+`.pactile/tasks/<slug>/codex-bridge/dispatch-proofs/`.
+
+Unknown process exit or missing/invalid stop evidence keeps the lease active
+for reconciliation. Task completion and Task closure remain separate lifecycle
+gates; a verified failed/cancelled host stop proves only that the writer is no
+longer active.
 
 Older `parallel_limit` and manifest `limit` values remain readable but no
 longer constrain dispatch. Existing batch result files with

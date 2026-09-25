@@ -28,3 +28,24 @@ export {
   type TaskKernelScheduleDecisionReceiptV1,
   type TaskScheduleLifecycleSnapshotV1,
 } from "./task-map-scheduler.js";
+
+export {
+  bindTaskKernelRunDispatchOwnerV1,
+  acquireTaskKernelRunDispatchV1,
+  assertTaskKernelRunDispatchLeaseV1,
+  releaseTaskKernelRunDispatchV1,
+  validateTaskKernelRunDispatchStopProofV1,
+  type TaskKernelRunDispatchRequestV1,
+  type TaskKernelRunDispatchOwnerV1,
+  type TaskKernelRunDispatchOwnerBindingReceiptV1,
+  type TaskKernelRunDispatchOwnerBindingResultV1,
+  type TaskKernelRunDispatchStopProofV1,
+  type TaskKernelRunDispatchStopProofValidationV1,
+  type TaskKernelRunDispatchStopProofValidationRequestV1,
+  type TaskKernelRunDispatchDecisionReceiptV1,
+  type TaskKernelRunDispatchPermitV1,
+  type TaskKernelRunDispatchRejectionV1,
+  type TaskKernelRunDispatchResultV1,
+  type TaskKernelRunDispatchLeaseAssertionV1,
+  type TaskKernelRunDispatchReleaseResultV1,
+} from "./task-kernel-admission.js";

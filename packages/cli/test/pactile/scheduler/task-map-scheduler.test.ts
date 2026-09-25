@@ -345,6 +345,15 @@ describe("Parent Task Kernel schedule projection", () => {
       originalTaskRecord,
     );
     expect(fs.existsSync(path.resolve(root, first.receiptFile))).toBe(true);
+    const receiptFile = path.resolve(root, first.receiptFile);
+    const tampered = JSON.parse(fs.readFileSync(receiptFile, "utf8")) as {
+      plan: { estimatedCompletionSavingsMs: number };
+    };
+    tampered.plan.estimatedCompletionSavingsMs += 1;
+    fs.writeFileSync(receiptFile, `${JSON.stringify(tampered, null, 2)}\n`);
+    expect(() => scheduleParentTaskGraph(root, "scheduler-parent")).toThrow(
+      /fingerprint does not match its contents/,
+    );
   });
 
   it("lets explicit cost estimates change the critical-path order", () => {
@@ -506,6 +515,18 @@ describe("Parent Task Kernel schedule projection", () => {
     expect(
       fs.existsSync(path.join(root, ".pactile", "tasks", "scheduler-parent")),
     ).toBe(false);
+    const receiptFile = path.resolve(root, first.receiptFile);
+    const tampered = JSON.parse(fs.readFileSync(receiptFile, "utf8")) as {
+      plan: { estimatedCompletionSavingsMs: number };
+    };
+    tampered.plan.estimatedCompletionSavingsMs += 1;
+    fs.writeFileSync(receiptFile, `${JSON.stringify(tampered, null, 2)}\n`);
+    expect(() =>
+      scheduleTaskKernelGraph(root, [
+        "v2-hard-prerequisite",
+        "v2-hard-dependent",
+      ]),
+    ).toThrow(/fingerprint does not match its contents/);
   });
 
   it("prioritizes a longer critical path, serializes conflicting V2 writes, and has no four-task cap", () => {

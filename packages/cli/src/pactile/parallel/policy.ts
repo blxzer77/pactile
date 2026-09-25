@@ -12,6 +12,12 @@ import {
   type ConflictParallelAuthorizationV1,
   type TaskScheduleDecisionReceiptV1,
 } from "../scheduler/index.js";
+import {
+  listProjectWriteLeases,
+  normalizeProjectWriteSet,
+  projectWriteSetsConflict,
+  withProjectSchedulerMutex,
+} from "../scheduler/project-lease-store.js";
 
 export interface ParallelChild {
   parentDir: string;
@@ -30,47 +36,15 @@ function taskRecord(dir: string): Record<string, unknown> {
 }
 
 export function normalizeTouches(value: unknown): string[] {
-  if (!Array.isArray(value) || !value.length) return ["*"];
-  return value.map((item) => {
-    if (typeof item !== "string") throw new Error("touches must contain paths");
-    const name = item
-      .trim()
-      .replaceAll("\\", "/")
-      .replace(/^\.\//, "")
-      .replace(/\/$/, "");
-    if (
-      !name ||
-      name === "." ||
-      name.startsWith("/") ||
-      /^[A-Za-z]:/.test(name) ||
-      name.split("/").some((part) => !part || part === ".." || part === ".") ||
-      ["*", "?", "[", "]"].some((symbol) => name.includes(symbol))
-    ) {
-      throw new Error(
-        `touches must contain concrete project-relative paths: ${item}`,
-      );
-    }
-    return name;
-  });
+  if (!Array.isArray(value)) return ["*"];
+  return normalizeProjectWriteSet(value as string[]);
 }
 
 export function touchesConflict(
   left: readonly string[],
   right: readonly string[],
 ): boolean {
-  return left.some((rawA) =>
-    right.some((rawB) => {
-      const a = process.platform === "win32" ? rawA.toLowerCase() : rawA;
-      const b = process.platform === "win32" ? rawB.toLowerCase() : rawB;
-      return (
-        a === "*" ||
-        b === "*" ||
-        a === b ||
-        a.startsWith(`${b}/`) ||
-        b.startsWith(`${a}/`)
-      );
-    }),
-  );
+  return projectWriteSetsConflict(left, right);
 }
 
 export function parallelChild(root: string, dir: string): ParallelChild | null {
@@ -110,17 +84,18 @@ export function parallelChild(root: string, dir: string): ParallelChild | null {
       `Scheduler gate rejects Child ${entry.id}: ${decision?.action ?? "missing-decision"} (${decision?.reasonCodes.join(", ") ?? "no decision"})`,
     );
   }
-  return { parentDir, map, entry, touches: normalizeTouches(entry.touches) };
-}
-
-function alive(pid: unknown): boolean {
-  if (!Number.isInteger(pid) || Number(pid) <= 0) return false;
-  try {
-    process.kill(Number(pid), 0);
-    return true;
-  } catch {
-    return false;
-  }
+  const kernelRead = readTaskKernel({ root, taskDir: dir });
+  const latestRun =
+    kernelRead.kind === "task-kernel-v2" ? kernelRead.kernel.runs.at(-1) : null;
+  const runWriteSet = latestRun
+    ? [...latestRun.writeSetSnapshot, ...(latestRun.workspace?.writeSet ?? [])]
+    : [];
+  return {
+    parentDir,
+    map,
+    entry,
+    touches: normalizeTouches([...entry.touches, ...runWriteSet]),
+  };
 }
 
 interface Lease {
@@ -129,6 +104,8 @@ interface Lease {
   child_pid?: number;
   durable?: boolean;
   child: string;
+  parent?: string;
+  owner_kind?: "parent-child" | "task-kernel-v2-run";
   task_id?: string;
   schedule_receipt_fingerprint?: string;
   authorized_conflicts?: ConflictParallelAuthorizationV1[];
@@ -222,54 +199,6 @@ function receiptAuthorizesPair(
     );
 }
 
-function withMutex<T>(parentDir: string, action: () => T): T {
-  const folder = path.join(parentDir, "parallel");
-  const mutex = path.join(folder, ".mutex");
-  fs.mkdirSync(folder, { recursive: true });
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    try {
-      fs.mkdirSync(mutex);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const ownerFile = path.join(mutex, "owner.json");
-      let owner: { pid?: number } = {};
-      try {
-        if (fs.existsSync(ownerFile))
-          owner = JSON.parse(fs.readFileSync(ownerFile, "utf8")) as {
-            pid?: number;
-          };
-      } catch {
-        /* Incomplete owner write; wait or recover by age. */
-      }
-      if (
-        !alive(owner.pid) &&
-        Date.now() - fs.statSync(mutex).mtimeMs > 5_000
-      ) {
-        fs.rmSync(ownerFile, { force: true });
-        try {
-          fs.rmdirSync(mutex);
-        } catch {
-          /* Another process took the lock. */
-        }
-      }
-      if (attempt === 199)
-        throw new Error("Parallel reservation lock timed out");
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-    }
-  }
-  const ownerFile = path.join(mutex, "owner.json");
-  try {
-    fs.writeFileSync(ownerFile, JSON.stringify({ pid: process.pid }), {
-      mode: 0o600,
-    });
-    return action();
-  } finally {
-    fs.rmSync(ownerFile, { force: true });
-    fs.rmdirSync(mutex);
-  }
-}
-
 export function reserveParallelChild(
   root: string,
   dir: string,
@@ -299,41 +228,40 @@ export function reserveParallelChild(
     pid: process.pid,
     durable: options.durable,
     child: entry.id,
+    parent: path.basename(parentDir),
+    owner_kind: "parent-child",
     ...(selectedTask ? { task_id: selectedTask.taskId } : {}),
     ...(scheduleReceipt
       ? { schedule_receipt_fingerprint: scheduleReceipt.receiptFingerprint }
       : {}),
     touches,
   };
-  withMutex(parentDir, () => {
+  withProjectSchedulerMutex(root, () => {
     fs.mkdirSync(folder, { recursive: true });
-    const active: Lease[] = [];
-    for (const file of fs
-      .readdirSync(folder)
-      .filter((name) => name.endsWith(".json"))) {
-      const location = path.join(folder, file);
-      let prior: Lease;
-      try {
-        prior = JSON.parse(fs.readFileSync(location, "utf8")) as Lease;
-      } catch {
-        throw new Error(`Invalid parallel lease: ${file}`);
-      }
-      if (!prior.durable && !alive(prior.pid) && !alive(prior.child_pid)) {
-        fs.rmSync(location, { force: true });
-        continue;
-      }
-      active.push(prior);
-    }
-    if (active.some((prior) => prior.child === entry.id))
-      throw new Error(`Child already dispatched: ${entry.id}`);
-    const collision = active.find((prior) =>
+    const active = listProjectWriteLeases(root);
+    const duplicateTask = active.some(({ file, lease: prior }) => {
+      const sameTask = selectedTask
+        ? prior.task_id === selectedTask.taskId
+        : false;
+      const priorParent =
+        prior.parent ??
+        path.basename(path.resolve(path.dirname(file), "..", ".."));
+      const sameLegacyChild =
+        prior.child === entry.id && priorParent === path.basename(parentDir);
+      return sameTask || sameLegacyChild;
+    });
+    if (duplicateTask) throw new Error(`Child already dispatched: ${entry.id}`);
+    const collisions = active.filter(({ lease: prior }) =>
       touchesConflict(prior.touches, touches),
     );
-    if (collision) {
+    const authorizedConflicts: ConflictParallelAuthorizationV1[] = [];
+    for (const { lease: collision } of collisions) {
       const authorized =
         scheduleReceipt &&
         collision.task_id &&
         selectedTask &&
+        collision.owner_kind !== "task-kernel-v2-run" &&
+        collision.parent === path.basename(parentDir) &&
         collision.schedule_receipt_fingerprint ===
           scheduleReceipt.receiptFingerprint
           ? receiptAuthorizesPair(
@@ -344,10 +272,12 @@ export function reserveParallelChild(
           : undefined;
       if (!authorized)
         throw new Error(
-          `write-set conflict with active Child ${collision.child}`,
+          `write-set conflict with active writer ${collision.task_id ?? collision.child ?? collision.id}`,
         );
-      lease.authorized_conflicts = [authorized];
+      authorizedConflicts.push(authorized);
     }
+    if (authorizedConflicts.length)
+      lease.authorized_conflicts = authorizedConflicts;
     fs.writeFileSync(
       path.join(folder, `${lease.id}.json`),
       JSON.stringify(lease),
@@ -355,7 +285,7 @@ export function reserveParallelChild(
     );
   });
   return () =>
-    withMutex(parentDir, () =>
+    withProjectSchedulerMutex(root, () =>
       fs.rmSync(path.join(folder, `${lease.id}.json`), { force: true }),
     );
 }
@@ -370,7 +300,7 @@ export function releaseParallelChild(
   if (path.basename(child.parent) !== child.parent)
     throw new Error("Invalid Parent task reference");
   const parentDir = path.join(root, ".pactile", "tasks", child.parent);
-  withMutex(parentDir, () =>
+  withProjectSchedulerMutex(root, () =>
     fs.rmSync(path.join(parentDir, "parallel", "active", `${id}.json`), {
       force: true,
     }),
@@ -392,7 +322,7 @@ export function updateParallelChildPid(
   )
     return;
   const parentDir = path.join(root, ".pactile", "tasks", child.parent);
-  withMutex(parentDir, () => {
+  withProjectSchedulerMutex(root, () => {
     const file = path.join(parentDir, "parallel", "active", `${id}.json`);
     const lease = JSON.parse(fs.readFileSync(file, "utf8")) as Lease;
     if (lease.id !== id || lease.child !== path.basename(dir))

@@ -775,11 +775,20 @@ function readExistingReceipt(
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error(`Invalid Task schedule receipt: ${file}`);
   const receipt = value as TaskScheduleDecisionReceiptV1;
+  const {
+    schemaVersion,
+    receiptFingerprint: storedFingerprint,
+    createdAt: _createdAt,
+    ...base
+  } = receipt;
   if (
-    receipt.schemaVersion !== RECEIPT_SCHEMA_VERSION ||
-    receipt.receiptFingerprint !== fingerprint
+    schemaVersion !== RECEIPT_SCHEMA_VERSION ||
+    storedFingerprint !== fingerprint ||
+    fingerprintTaskValue(base) !== fingerprint
   ) {
-    throw new Error(`Task schedule receipt fingerprint collision: ${file}`);
+    throw new Error(
+      `Task schedule receipt fingerprint does not match its contents: ${file}`,
+    );
   }
   return receipt;
 }
@@ -1035,13 +1044,21 @@ function readExistingTaskKernelReceipt(
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error(`Invalid Task Kernel schedule receipt: ${file}`);
   const receipt = value as TaskKernelScheduleDecisionReceiptV1;
+  const {
+    schemaVersion,
+    scope,
+    receiptFingerprint: storedFingerprint,
+    createdAt: _createdAt,
+    ...base
+  } = receipt;
   if (
-    receipt.schemaVersion !== RECEIPT_SCHEMA_VERSION ||
-    receipt.scope !== "task-kernel-v2" ||
-    receipt.receiptFingerprint !== fingerprint
+    schemaVersion !== RECEIPT_SCHEMA_VERSION ||
+    scope !== "task-kernel-v2" ||
+    storedFingerprint !== fingerprint ||
+    fingerprintTaskValue(base) !== fingerprint
   ) {
     throw new Error(
-      `Task Kernel schedule receipt fingerprint collision: ${file}`,
+      `Task Kernel schedule receipt fingerprint does not match its contents: ${file}`,
     );
   }
   return receipt;

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runTaskCli } from "../../src/commands/task.js";
+import { createTaskKernel, startTaskRun } from "../../src/core/task/index.js";
 import {
   parallelStatus,
   runParallelBatch,
@@ -17,6 +18,12 @@ import {
 } from "../../src/pactile/codex/bridge.js";
 
 const roots: string[] = [];
+
+function requiredAt<T>(items: readonly T[], index: number): T {
+  const value = items[index];
+  if (value === undefined) throw new Error(`Missing item at index ${index}`);
+  return value;
+}
 afterEach(() => {
   vi.restoreAllMocks();
   for (const root of roots.splice(0))
@@ -337,6 +344,131 @@ describe("scheduler-driven Parent dispatch", () => {
         args: [script],
       }),
     ).rejects.toThrow("execution_topology must be parallel");
+  });
+
+  it("coordinates legacy writer reservations across Parent boundaries", () => {
+    const { root, children } = fixture();
+    const tasks = path.join(root, ".pactile", "tasks");
+    expect(
+      runTaskCli(["legacy-create", "Parent", "--slug", "other-parent"], root),
+    ).toBe(0);
+    const otherParent =
+      fs.readdirSync(tasks).find((name) => name.endsWith("-other-parent")) ??
+      "";
+    expect(otherParent).not.toBe("");
+    expect(
+      runTaskCli(
+        [
+          "legacy-create",
+          "other",
+          "--slug",
+          "other-child",
+          "--parent",
+          otherParent,
+        ],
+        root,
+      ),
+    ).toBe(0);
+    const otherChild =
+      fs.readdirSync(tasks).find((name) => name.endsWith("-other-child")) ?? "";
+    const otherChildDir = path.join(tasks, otherChild);
+    fs.writeFileSync(
+      path.join(otherChildDir, "design.md"),
+      "# Design\nCross-parent overlap.\n",
+    );
+    fs.writeFileSync(
+      path.join(otherChildDir, "implement.md"),
+      "execution_mode: worker\nisolation: main-worktree\nverification_profile: standard\nretrieval_profile: exact-only\noptional_capabilities: []\nquality_gates:\n  mode: profile\n",
+    );
+    expect(
+      runTaskCli(["start-execution", otherChild, "--approved"], root),
+    ).toBe(0);
+    const otherParentDir = path.join(tasks, otherParent);
+    const otherMap = readTaskMap(otherParentDir);
+    if (!otherMap.data) throw new Error("Missing other Parent task map");
+    requiredAt(otherMap.data.children, 0).touches = ["src/alpha"];
+    writeTaskMap(otherParentDir, otherMap.data, otherMap.body);
+
+    const release = reserveParallelChild(
+      root,
+      path.join(tasks, requiredAt(children, 0)),
+    );
+    try {
+      expect(() => reserveParallelChild(root, otherChildDir)).toThrow(
+        "write-set conflict",
+      );
+    } finally {
+      release();
+    }
+  });
+
+  it("merges a V2 Run-only write set into active Parent Child lease conflicts", () => {
+    const { root, parent, children } = fixture();
+    const parentDir = path.join(root, ".pactile", "tasks", parent);
+    const mapRead = readTaskMap(parentDir);
+    if (!mapRead.data) throw new Error("Missing Parent task map");
+    requiredAt(mapRead.data.children, 2).touches = ["src/run-only.ts"];
+    writeTaskMap(parentDir, mapRead.data, mapRead.body);
+
+    const alphaDir = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      requiredAt(children, 0),
+    );
+    const kernelFixtureDir = path.join(alphaDir, "v2-run-fixture");
+    const created = createTaskKernel({
+      root,
+      taskDir: kernelFixtureDir,
+      actor: "author",
+      idempotencyKey: "create:run-only-child",
+      definition: {
+        taskId: requiredAt(children, 0),
+        title: "Run-only write-set fixture",
+        description: "The Run owns a path omitted from Child touches.",
+        deliverable: "a combined lease write set",
+        deliveryLevel: "local-result",
+        acceptanceCriteria: [
+          { id: "AC-1", description: "Run writes are leased" },
+        ],
+        dependencies: [],
+      },
+    });
+    const run = startTaskRun({
+      root,
+      taskDir: kernelFixtureDir,
+      expectedRevision: created.kernel.revision,
+      actor: "implementer",
+      idempotencyKey: "run:run-only-child",
+      input: { summary: "Run-only write-set fixture", references: [] },
+      authorization: {
+        approvedBy: "approver",
+        approvedAt: "2026-09-26T00:00:00.000Z",
+        scope: "fixture",
+        evidenceRef: "approval.json",
+      },
+      initialState: "waiting",
+      writeSetSnapshot: ["src/run-only.ts"],
+    });
+    expect(run.kernel.runs.at(-1)?.writeSetSnapshot).toEqual([
+      "src/run-only.ts",
+    ]);
+    fs.copyFileSync(
+      path.join(kernelFixtureDir, "kernel.json"),
+      path.join(alphaDir, "kernel.json"),
+    );
+
+    const release = reserveParallelChild(root, alphaDir);
+    try {
+      expect(() =>
+        reserveParallelChild(
+          root,
+          path.join(root, ".pactile", "tasks", requiredAt(children, 2)),
+        ),
+      ).toThrow("write-set conflict");
+    } finally {
+      release();
+    }
   });
 
   it("uses high review cost as a scheduling weight without forbidding parallel work", async () => {
