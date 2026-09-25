@@ -4,9 +4,7 @@ import { fingerprintTaskValue, readTaskKernel } from "../../core/task/index.js";
 
 type TerminalWaitStatus = "completed" | "needs_attention" | "timeout";
 
-interface JsonObject {
-  [key: string]: unknown;
-}
+type JsonObject = Record<string, unknown>;
 
 interface HostStopRequest extends JsonObject {
   request_id: string;
@@ -101,8 +99,7 @@ function readObject(file: string): JsonObject | null {
 
 function asRequest(value: JsonObject | null): HostStopRequest | null {
   if (
-    !value ||
-    value.schema_version !== 1 ||
+    value?.schema_version !== 1 ||
     typeof value.request_id !== "string" ||
     !requestIdPattern.test(value.request_id) ||
     (value.request_fingerprint !== undefined &&
@@ -134,8 +131,7 @@ function asRequest(value: JsonObject | null): HostStopRequest | null {
 
 function asReceipt(value: JsonObject | null): HostStopReceiptFile | null {
   if (
-    !value ||
-    value.schema_version !== 1 ||
+    value?.schema_version !== 1 ||
     typeof value.request_id !== "string" ||
     !requestIdPattern.test(value.request_id) ||
     (value.request_fingerprint !== undefined &&
@@ -284,8 +280,7 @@ export function readCodexHostStopReceipts(
     );
     const waitReceipt = asReceipt(readObject(waitReceiptPath));
     if (
-      !waitReceipt ||
-      waitReceipt.request_id !== waitRequest.request_id ||
+      waitReceipt?.request_id !== waitRequest.request_id ||
       waitReceipt.request_fingerprint !== waitRequest.request_fingerprint ||
       waitReceipt.task_id !== kernel.identity.taskId ||
       waitReceipt.run_id !== runId ||
@@ -319,8 +314,7 @@ export function readCodexHostStopReceipts(
     );
     const createReceipt = asReceipt(readObject(createReceiptPath));
     if (
-      !createReceipt ||
-      createReceipt.request_id !== createRequest.request_id ||
+      createReceipt?.request_id !== createRequest.request_id ||
       createReceipt.request_fingerprint !== createRequest.request_fingerprint ||
       createReceipt.task_id !== kernel.identity.taskId ||
       createReceipt.run_id !== runId ||
@@ -388,8 +382,7 @@ export function readCodexHostStopReceipts(
     if (hasCapturedCandidate) {
       candidateSource = "captured";
       candidateBindingStale ||= Boolean(
-        !run.candidateSnapshot ||
-        waitRequest.candidate_snapshot_id !== run.candidateSnapshot.id ||
+        waitRequest.candidate_snapshot_id !== run.candidateSnapshot?.id ||
         waitRequest.candidate_fingerprint !== run.candidateSnapshot.fingerprint,
       );
     } else if (run.candidateSnapshot) {
@@ -416,8 +409,7 @@ export function readCodexHostStopReceipts(
       : null;
     const stopReceiptWasStored = Boolean(
       storedStopReceipt &&
-      stopEvent &&
-      stopEvent.requestFingerprint === stopReceiptFingerprint &&
+      stopEvent?.requestFingerprint === stopReceiptFingerprint &&
       storedStopReceipt.source === "codex-desktop-bridge" &&
       storedStopReceipt.assurance === "host-reported" &&
       storedStopReceipt.evidenceLevel === "desktop-native" &&

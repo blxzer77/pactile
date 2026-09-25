@@ -52,7 +52,7 @@ pactile codex block <receiver-task> --message-id <request-id> --blocked-by-task 
 pactile codex unblock <receiver-task> <block-id> --resolution-message-id <request-id> --unblocked-by-task <sender-task> --reason "已收到并核对输入"
 ```
 
-跨 Task 消息正文上限为 4096 UTF-8 字节。默认是纯协调消息：允许目标 Task 正在 waiting/blocked 时接收，但不会改 Run、解除阻塞或授予写权限，提示会要求收件方保留阻塞状态。只有先由 Task Kernel Resume 目标 V2 Run，再明确带 `--resume-execute --to-run-id <run-id>` 的请求才能申请写入派发许可；发送回执本身不授予该许可。只有非 stale 的成功发送回执可用于阻塞或解除；“sent”只表示 Host 接受发送请求，不表示收件方已读。每次解除都会留下独立日志事件。用户也可在给出原因后手动解除。
+跨 Task 消息正文上限为 4096 UTF-8 字节。默认是纯协调消息：允许目标 Task 正在 waiting/blocked 时接收，但不会改 Run、解除阻塞或授予写权限，提示会要求收件方保留阻塞状态。当前切片因尚未接入 P37 admission、lease、Resume 和 block 校验，对 Task Kernel v2 Execute create 与 `--resume-execute` 一律 fail closed。完成这些 gate 接线后，写入派发仍须先由 Kernel 明确 Resume 并通过 P37 admission；发送回执本身不授予派发许可。只有非 stale 的成功发送回执可用于创建与消息关联的 block；消息关联的 unblock 要求成功的 `desktop-native` resolution 证据，模拟发送不能解除阻塞。“sent”只表示 Host 接受发送请求，不表示收件方已读。每次解除都会留下独立日志事件。用户也可在给出原因后手动解除。
 
 创建 worktree 任务时，App 可能先只返回 `clientThreadId`。此时记录 `outcome: queued` 与 `client_thread_id`；临时 ID 不能用于发消息或等待。App 报告就绪的 `threadId`、`hostId` 后，再记录最终 `outcome: ok`，同时带上原 `client_thread_id` 和就绪 ID。`pactile codex status` 在此期间显示排队请求。
 
@@ -60,7 +60,7 @@ pactile codex unblock <receiver-task> <block-id> --resolution-message-id <reques
 
 独立实现任务在 Execute 批准后可选 `--role execute`；创建必须采用 `--target project --environment worktree`。请求会附带 Pactile Task 的绝对路径，因为 App 工作树不一定包含被忽略的任务状态；若已批准合同有 `base_branch`，从该分支启动。Parent Child 在准备桌面创建请求时占用一个共享并发槽；创建失败或 `wait_threads` 的完成回执释放该槽。桌面任务归用户所有。回执并不证明代码已验收，Parent 仍需单独审核并逐个 `integrate-child`。
 
-Pactile 归档任务后，`pactile codex status <task>` 仍可只读查看归档回执；新请求和回执只允许写入活动任务。
+Pactile 归档任务后，`pactile codex status <task>` 仍可只读查看归档回执；新请求和回执只允许写入活动任务；迟到的 Host 响应会被拒绝，不会追加到归档 Task。
 
 ## 分离
 

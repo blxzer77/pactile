@@ -60,7 +60,7 @@ pactile codex block <receiver-task> --message-id <request-id> --blocked-by-task 
 pactile codex unblock <receiver-task> <block-id> --resolution-message-id <request-id> --unblocked-by-task <sender-task> --reason "Input received and checked"
 ```
 
-Cross-task message bodies are limited to 4096 UTF-8 bytes. By default, a cross-task message is coordination only: a waiting or blocked Task may receive it, but it does not change a Run, clear a block, or grant write permission. Its prompt tells the recipient to preserve the blocked state. Only after an explicit Task Kernel Resume of the destination V2 Run can a write dispatch be requested with `--resume-execute --to-run-id <run-id>`; the send receipt itself does not grant dispatch permission. Only a non-stale successful send receipt can support a message-linked block or unblock. `sent` means the Host accepted the send request; it does not confirm that the recipient read it. Each unblock has its own journal event. A user can also unblock manually with a reason.
+Cross-task message bodies are limited to 4096 UTF-8 bytes. By default, a cross-task message is coordination only: a waiting or blocked Task may receive it, but it does not change a Run, clear a block, or grant write permission. Its prompt tells the recipient to preserve the blocked state. This slice fails closed for Task Kernel v2 Execute creates and `--resume-execute` sends because P37 admission, lease, Resume, and block validation are not yet connected. After those gates are integrated, a write dispatch will still require an explicit Kernel Resume and a P37 admission; the send receipt itself will not grant dispatch permission. Only a non-stale successful send receipt can support a message-linked block. A message-linked unblock requires successful `desktop-native` resolution evidence; a simulated send is insufficient. `sent` means the Host accepted the send request; it does not confirm that the recipient read it. Each unblock has its own journal event. A user can also unblock manually with a reason.
 
 Worktree creation may first return only `clientThreadId`. Record `outcome: queued` with `client_thread_id`; this ID cannot be messaged or waited on. Once the App reports a ready `threadId` and `hostId`, record a final `outcome: ok` receipt containing the same `client_thread_id` and the ready IDs. `pactile codex status` shows queued requests until then.
 
@@ -68,7 +68,7 @@ Receipts have `host-reported` assurance: Node records the native tool result sup
 
 For an independent implementation task, use `--role execute` after its Execute approval. Creation requires `--target project --environment worktree`. The request carries the canonical absolute Pactile task path, because an App worktree may not contain ignored task state. If the approved task has `base_branch`, the request starts from that branch. A Parent Child reserves one shared parallel slot before the desktop create request; failed creation or a completed `wait_threads` receipt releases it. The native task remains user-owned. A receipt does not prove its changes were accepted; Parent review and `integrate-child` remain separate.
 
-After Pactile archives the task, `pactile codex status <task>` remains read-only available and shows the archived receipts. New requests and receipts require an active task.
+After Pactile archives the task, `pactile codex status <task>` remains read-only available and shows the archived receipts. New requests and receipts require an active task; a late Host response is rejected and does not append to the archived Task.
 
 ## Detach
 

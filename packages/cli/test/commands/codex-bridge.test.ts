@@ -118,6 +118,97 @@ function dispatchProofFixture(
   return { request, receipt };
 }
 
+function seedV2ExecuteThread(
+  root: string,
+  task: string,
+  runId: string,
+): { threadId: string; hostId: string } {
+  const taskDir = path.join(root, ".pactile", "tasks", task);
+  const kernel = JSON.parse(
+    fs.readFileSync(path.join(taskDir, "kernel.json"), "utf8"),
+  ) as {
+    identity: { taskId: string };
+    revision: number;
+    definition: unknown;
+    runs: {
+      id: string;
+      candidateSnapshot: { id: string; fingerprint: string } | null;
+    }[];
+  };
+  const run = kernel.runs.find((candidate) => candidate.id === runId);
+  if (!run) throw new Error("V2 Execute Run fixture missing");
+  const requestId = "c7ddcae9-d110-4fb3-b79f-ea7e84ed055e";
+  const threadId = "v2-execute-thread";
+  const hostId = "v2-execute-host";
+  const requestPayload: Omit<CodexBridgeRequest, "request_fingerprint"> = {
+    schema_version: 1,
+    request_id: requestId,
+    task: `.pactile/tasks/${task}`,
+    task_id: kernel.identity.taskId,
+    task_kernel_kind: "task-kernel-v2",
+    kernel_revision: kernel.revision,
+    contract_fingerprint: fingerprintTaskValue(kernel.definition),
+    run_id: runId,
+    candidate_snapshot_id: run.candidateSnapshot?.id ?? null,
+    candidate_fingerprint: run.candidateSnapshot?.fingerprint ?? null,
+    to_task: null,
+    to_task_id: null,
+    to_kernel_revision: null,
+    to_task_kernel_kind: null,
+    to_contract_fingerprint: null,
+    to_run_id: null,
+    to_candidate_snapshot_id: null,
+    to_candidate_fingerprint: null,
+    coordination_message_id: null,
+    created_at: "2026-09-26T00:00:00.000Z",
+    tool: "create_thread",
+    role: "execute",
+    thread_id: null,
+    host_id: null,
+    arguments: {},
+    prompt_sha256: null,
+  };
+  const request: CodexBridgeRequest = {
+    ...requestPayload,
+    request_fingerprint: fingerprintTaskValue(requestPayload),
+  };
+  const receipt: CodexBridgeReceipt = {
+    schema_version: 1,
+    request_id: requestId,
+    task_id: kernel.identity.taskId,
+    run_id: runId,
+    candidate_snapshot_id: run.candidateSnapshot?.id ?? null,
+    candidate_fingerprint: run.candidateSnapshot?.fingerprint ?? null,
+    request_fingerprint: request.request_fingerprint,
+    evidence_level: "desktop-native",
+    thread_creation_state: "created",
+    tool: "create_thread",
+    outcome: "ok",
+    thread_id: threadId,
+    client_thread_id: null,
+    host_id: hostId,
+    status: null,
+    cursor: null,
+    reason: null,
+    kernel_revision_at_receipt: kernel.revision,
+    contract_stale: false,
+    recorded_at: "2026-09-26T00:00:01.000Z",
+    assurance: "host-reported",
+  };
+  const bridgeDir = path.join(taskDir, "codex-bridge");
+  fs.mkdirSync(path.join(bridgeDir, "requests"), { recursive: true });
+  fs.mkdirSync(path.join(bridgeDir, "receipts"), { recursive: true });
+  fs.writeFileSync(
+    path.join(bridgeDir, "requests", `${requestId}.json`),
+    `${JSON.stringify(request, null, 2)}\n`,
+  );
+  fs.writeFileSync(
+    path.join(bridgeDir, "receipts", `${requestId}.json`),
+    `${JSON.stringify(receipt, null, 2)}\n`,
+  );
+  return { threadId, hostId };
+}
+
 describe("Codex desktop request and receipt bridge", () => {
   it("builds content-addressed stop proofs only from explicit native stop facts", () => {
     const terminal = dispatchProofFixture("native-terminal");
@@ -462,6 +553,119 @@ describe("Codex desktop request and receipt bridge", () => {
     expect(() => prepareCodexRequest(input)).toThrow(
       "Execution contract changed after approval",
     );
+  });
+
+  it("fails closed on V2 Execute create and cross-task Resume without P37 admission", () => {
+    const { root, task: senderTask, prompt } = fixture();
+    expect(
+      runTaskCli(
+        [
+          "create",
+          "V2 Execute receiver",
+          "--slug",
+          "v2-execute-receiver",
+          "--description",
+          "A receiver with an explicit Run contract",
+          "--deliverable",
+          "A reviewable implementation",
+          "--delivery-level",
+          "documentation",
+          "--accept",
+          "AC-1=The Execute dispatch remains admitted",
+        ],
+        root,
+      ),
+    ).toBe(0);
+    const receiverTask = fs
+      .readdirSync(path.join(root, ".pactile", "tasks"))
+      .find((name) => name.endsWith("-v2-execute-receiver"));
+    if (!receiverTask) throw new Error("V2 Execute receiver Task missing");
+    expect(
+      runTaskCli(
+        [
+          "run-start",
+          receiverTask,
+          "--actor",
+          "implementer",
+          "--input-summary",
+          "Implement the approved deliverable",
+          "--approved-by",
+          "approver",
+          "--authorization-scope",
+          "the reviewed documentation file",
+          "--authorization-evidence",
+          "approval.json",
+          "--write-set",
+          "docs/result.md",
+          "--wait",
+        ],
+        root,
+      ),
+    ).toBe(0);
+    const receiverKernel = JSON.parse(
+      fs.readFileSync(
+        path.join(root, ".pactile", "tasks", receiverTask, "kernel.json"),
+        "utf8",
+      ),
+    ) as { runs: { id: string }[] };
+    const runId = receiverKernel.runs.at(-1)?.id;
+    if (!runId) throw new Error("V2 Execute Run missing");
+
+    expect(() =>
+      prepareCodexRequest({
+        root,
+        task: receiverTask,
+        tool: "create_thread",
+        role: "execute",
+        runId,
+        promptFile: prompt,
+        projectId: "project-1",
+        environment: "worktree",
+      }),
+    ).toThrow("P37 admission, lease and Resume/block validation");
+
+    const { threadId } = seedV2ExecuteThread(root, receiverTask, runId);
+    const blocked = blockCodexTask(root, receiverTask, {
+      reason: "Waiting for the upstream resolution",
+      blockedByTaskId: codexBridgeStatus(root, senderTask).task_id,
+    });
+    expect(() =>
+      prepareCodexRequest({
+        root,
+        task: senderTask,
+        tool: "send_message_to_thread",
+        threadId,
+        toTask: receiverTask,
+        toRunId: runId,
+        resumeExecute: true,
+        promptFile: prompt,
+      }),
+    ).toThrow("P37 admission, lease and Resume/block validation");
+    expect(codexBridgeStatus(root, senderTask).pending).toEqual([]);
+
+    unblockCodexTask(root, receiverTask, {
+      blockId: blocked.block_id,
+      reason: "The owner manually cleared the coordination block",
+    });
+    expect(
+      runTaskCli(
+        ["run-resume", receiverTask, runId, "--actor", "scheduler"],
+        root,
+      ),
+    ).toBe(0);
+    expect(() =>
+      prepareCodexRequest({
+        root,
+        task: receiverTask,
+        tool: "create_thread",
+        role: "execute",
+        runId,
+        promptFile: prompt,
+        projectId: "project-1",
+        environment: "worktree",
+      }),
+    ).toThrow("P37 admission, lease and Resume/block validation");
+    expect(codexBridgeStatus(root, receiverTask).pending).toEqual([]);
   });
 
   it("binds a native desktop task and records message/wait receipts without changing Kernel", () => {
@@ -1059,6 +1263,34 @@ describe("Codex desktop request and receipt bridge", () => {
       }),
     ).toThrow("unblock requires a non-stale successful resolution receipt");
 
+    const simulatedResolution = prepareCodexRequest({
+      root,
+      task: senderTask,
+      tool: "send_message_to_thread",
+      threadId,
+      toTask: receiverTask,
+      promptFile: prompt,
+    });
+    recordCodexReceipt(
+      root,
+      senderTask,
+      simulatedResolution.request_id,
+      result(root, {
+        request_id: simulatedResolution.request_id,
+        tool: simulatedResolution.tool,
+        outcome: "ok",
+        thread_id: threadId,
+        host_id: "local",
+      }),
+    );
+    expect(() =>
+      unblockCodexTask(root, receiverTask, {
+        blockId: blocked.block_id,
+        resolutionMessageId: simulatedResolution.request_id,
+        reason: "A simulated receipt cannot clear the coordination block.",
+      }),
+    ).toThrow("successful desktop-native resolution receipt");
+
     const resolution = prepareCodexRequest({
       root,
       task: senderTask,
@@ -1078,6 +1310,7 @@ describe("Codex desktop request and receipt bridge", () => {
         thread_id: threadId,
         host_id: "local",
       }),
+      "desktop-native",
     );
     const unblocked = unblockCodexTask(root, receiverTask, {
       blockId: blocked.block_id,
@@ -1117,16 +1350,39 @@ describe("Codex desktop request and receipt bridge", () => {
         host_id: "local",
       }),
     );
+    const lateCreate = prepareCodexRequest({
+      root,
+      task,
+      tool: "create_thread",
+      role: "plan",
+      promptFile: prompt,
+      targetType: "projectless",
+    });
     expect(runTaskCli(["start-execution", task, "--approved"], root)).toBe(0);
     fs.appendFileSync(
       path.join(root, ".pactile", "tasks", task, "verify.md"),
       "\nValidation commands: bridge test passed\nFinal acceptance evidence: receipt retained\n",
     );
     expect(runTaskCli(["archive", task, "--no-commit"], root)).toBe(0);
+    expect(() =>
+      recordCodexReceipt(
+        root,
+        task,
+        lateCreate.request_id,
+        result(root, {
+          request_id: lateCreate.request_id,
+          tool: lateCreate.tool,
+          outcome: "ok",
+          thread_id: "too-late-thread",
+          host_id: "local",
+        }),
+      ),
+    ).toThrow("Cannot record a new Codex receipt for an archived Task");
     expect(codexBridgeStatus(root, task)).toMatchObject({
       archived: true,
       phase: "close",
       threads: [{ threadId: "thread-archived" }],
+      pending: [{ request_id: lateCreate.request_id }],
     });
     expect(() =>
       prepareCodexRequest({

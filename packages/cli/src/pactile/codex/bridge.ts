@@ -582,6 +582,16 @@ export function prepareCodexRequest(input: {
     (input.tool === "create_thread" ||
       (input.tool === "send_message_to_thread" &&
         (!crossTask || input.resumeExecute === true)));
+  const executionContext = crossTask ? targetContext : context;
+  if (
+    executionDispatch &&
+    role === "execute" &&
+    executionContext.kernelKind === "task-kernel-v2"
+  ) {
+    throw new Error(
+      "Task Kernel v2 Execute dispatch is disabled until P37 admission, lease and Resume/block validation are connected",
+    );
+  }
   const selectedRun = selectRun(
     context,
     role,
@@ -836,15 +846,16 @@ export function recordCodexReceipt(
 ): CodexBridgeReceipt {
   if (!uuidPattern.test(requestId)) throw new Error("Invalid request id");
   const context = taskContextIncludingArchive(root, task);
+  if (context.archived) {
+    throw new Error("Cannot record a new Codex receipt for an archived Task");
+  }
   const request = readJson(
     requestFile(context.dir, requestId),
   ) as unknown as CodexBridgeRequest;
   if (
     request.request_id !== requestId ||
     (request.task_id && request.task_id !== context.taskId) ||
-    (!context.archived && request.task !== context.task) ||
-    (context.archived &&
-      path.basename(request.task) !== path.basename(context.task))
+    request.task !== context.task
   ) {
     throw new Error("Request belongs to another task");
   }
@@ -1327,6 +1338,17 @@ export function unblockCodexTask(
     if (!new Set(["sent", "delivered", "acknowledged"]).has(message.status)) {
       throw new Error(
         "unblock requires a non-stale successful resolution receipt",
+      );
+    }
+    if (
+      !message.receipts.some(
+        (receipt) =>
+          new Set(["sent", "delivered", "acknowledged"]).has(receipt.status) &&
+          receipt.evidence_level === "desktop-native",
+      )
+    ) {
+      throw new Error(
+        "unblock requires a successful desktop-native resolution receipt",
       );
     }
     unblockedByTaskId ??= message.message.from_task_id;
