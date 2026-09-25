@@ -15,6 +15,15 @@ import { sameGitRoot } from "../utils/git-root.js";
 import { localDate } from "../utils/local-date.js";
 import { getAllTaskTemplates } from "../templates/pactile/index.js";
 import { learningScaffold, prepareArchiveEvidence } from "../pactile/task/scaffold.js";
+import {
+  TASK_ARTIFACT_STAGES_V1,
+  projectTaskArtifactsForAgentV1,
+  projectTaskArtifactsForHumanV1,
+  projectTaskKernelArtifactsV1,
+  readSelectedTaskArtifactSourcesV1,
+  renderTaskPrdScaffoldV1,
+  type TaskArtifactStageV1,
+} from "../pactile/artifacts/index.js";
 
 function option(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -133,6 +142,50 @@ function taskV2(root: string, reference: string): { dir: string; kernel: TaskKer
   return { dir, kernel: result.kernel };
 }
 
+function taskArtifacts(root: string, args: string[]): number {
+  const reference = requireArgument(args[0], "task");
+  const { kernel } = taskV2(root, reference);
+  const requestedStages = [...new Set(options(args, "--stage"))].map((value) => {
+    if (!(TASK_ARTIFACT_STAGES_V1 as readonly string[]).includes(value)) {
+      throw new Error(`--stage must be one of: ${TASK_ARTIFACT_STAGES_V1.join(", ")}`);
+    }
+    return value as TaskArtifactStageV1;
+  });
+  const projectionOptions = requestedStages.length ? { stages: requestedStages } : {};
+  const envelope = projectTaskKernelArtifactsV1(kernel);
+  const selectedFactIds = options(args, "--fact");
+  const agent = args.includes("--agent");
+
+  if (selectedFactIds.length) {
+    const visibleFactIds = new Set(
+      requestedStages.length
+        ? requestedStages.flatMap((stage) => envelope.stageRefs[stage] ?? [])
+        : envelope.facts.map((fact) => fact.id),
+    );
+    const outsideStage = selectedFactIds.find((id) => !visibleFactIds.has(id));
+    if (outsideStage) {
+      throw new Error(`Task artifact fact '${outsideStage}' is not present in the requested stage view`);
+    }
+    const selectedSources = readSelectedTaskArtifactSourcesV1(kernel, envelope, selectedFactIds);
+    if (agent) {
+      console.log(JSON.stringify({
+        index: projectTaskArtifactsForAgentV1(envelope, projectionOptions),
+        selectedSources,
+      }, null, 2));
+    } else {
+      console.log(JSON.stringify({ taskId: kernel.identity.taskId, selectedSources }, null, 2));
+    }
+    return 0;
+  }
+
+  if (agent) {
+    console.log(JSON.stringify(projectTaskArtifactsForAgentV1(envelope, projectionOptions), null, 2));
+  } else {
+    console.log(projectTaskArtifactsForHumanV1(envelope, projectionOptions));
+  }
+  return 0;
+}
+
 function actor(root: string, args: string[]): string {
   return option(args, "--actor") ?? readDeveloper(root) ?? "user";
 }
@@ -169,7 +222,17 @@ function createTask(args: string[], root: string): void {
       dependencies,
     },
   });
-  console.log(`${path.relative(root, dir).replaceAll("\\", "/")}\nTask Kernel schema: ${result.kernel.schemaVersion}\nTask ID: ${result.kernel.identity.taskId}`);
+  if (!result.idempotent) {
+    const prdPath = path.join(dir, "prd.md");
+    if (!fs.existsSync(prdPath)) {
+      try {
+        fs.writeFileSync(prdPath, renderTaskPrdScaffoldV1(result.kernel), { encoding: "utf8", flag: "wx" });
+      } catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+      }
+    }
+  }
+  console.log(`${path.relative(root, dir).replaceAll("\\", "/")}\nTask Kernel schema: ${result.kernel.schemaVersion}\nTask ID: ${result.kernel.identity.taskId}\nPRD: ${path.relative(root, path.join(dir, "prd.md")).replaceAll("\\", "/")}\nLive fact view: pactile task artifacts ${result.kernel.identity.taskId}`);
 }
 
 function runStartTask(root: string, args: string[]): number {
@@ -1024,6 +1087,7 @@ export function runTaskCli(argv: string[], root = process.cwd()): number {
       case "create": createTask(args, root); return 0;
       case "legacy-create": createLegacyTask(args, root); return 0;
       case "show": return showTask(root, args);
+      case "artifacts": return taskArtifacts(root, args);
       case "add-dependency": {
         const reference = requireArgument(args[0], "task");
         const dependencyId = requireArgument(args[1], "dependency task ID");
@@ -1213,7 +1277,7 @@ export function runTaskCli(argv: string[], root = process.cwd()): number {
         return 0;
       }
       default:
-        console.error("Usage: pactile task <create|legacy-create|show|add-dependency|run-start|run-resume|run-result|review|close|start-execution|archive|prepare-archive-evidence|prepare-learning-scaffold|review-child|dashboard|list|select|selected|exit|add-context|validate|list-context|set-branch|set-base-branch|set-scope|set-deps|set-depends-mode> ...");
+        console.error("Usage: pactile task <create|legacy-create|show|artifacts|add-dependency|run-start|run-resume|run-result|review|close|start-execution|archive|prepare-archive-evidence|prepare-learning-scaffold|review-child|dashboard|list|select|selected|exit|add-context|validate|list-context|set-branch|set-base-branch|set-scope|set-deps|set-depends-mode> ...");
         return 1;
     }
   } catch (err) {

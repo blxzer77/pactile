@@ -52,4 +52,18 @@ PRD、Design、Implement、Review 和 Verify 使用同一份结构化事实封�
 
 Agent 先读取索引，根据当前决策选定事实 ID，再读取对应的 `ref.path#ref.selector`。投影不自动展开所有被引用正文。轻量任务只记录实际适用的事实和阶段，不需要填满 PRD/Design/Implement/Review/Verify 五份空模板。
 
-当前切片提供封套校验与两种纯投影，不读写任务目录，不改变任务生命周期，也不迁移旧 Markdown。后续接线应让阶段文档成为这些事实的投影或引用，不能再把同一事实维护成第二份权威文本。
+## Task Kernel V2 读取与投影
+
+`pactile task artifacts <task>` 每次从 Task Kernel V2 的当前 `kernel.json` 派生封套，再输出人类可读 Markdown。`--agent` 输出紧凑 JSON 索引；`--stage prd|design|implement|review|verify` 限定视图；`--fact <id>` 只读取所选事实 locator 指向的 Kernel 记录，适合 Agent 先读索引、再按需展开。
+
+映射保留 Kernel 的不可变 Run、Review、Close 记录和 Task 定义作为数据源，不写 `artifacts.json` 副本：
+
+- PRD 包含任务定义、验收标准和硬依赖。
+- Implement 包含 Run 与候选快照；运行结果证据同时可从 Verify 阶段定位。
+- Review 包含独立评审记录。Verify 会复用 PRD 的同一验收事实 ID，并按最新评审/关闭状态更新其状态与 provenance；证据仍可按 ID 定位回原始 Kernel 记录。
+- Kernel V2 目前没有 Design 事实来源，因此不生成空 Design 阶段或模板。其他阶段仅在有事实时出现。
+- 候选快照在关闭观察前保持 `unknown`；关闭记录的观察与选中的快照一致时标为 `fresh`，其他历史快照标为 `stale`。这仅表示 Kernel 中记录的调用方观察，不重算 Git 或文件内容。
+
+创建新的 Kernel V2 Task 时，CLI 只在文件不存在时用 exclusive create 新建最小 `prd.md`：列出稳定事实 ID、Kernel 来源和 locator，并留出人类叙述区。后续流程只更新 Kernel；不会重写此 Markdown，也不会生成空的 Design、Implement、Review 或 Verify 模板。人类与 Agent 如需最新结构化事实，调用 `task artifacts` 即时投影；Markdown 内的自由叙述仍由作者维护。
+
+这个 reader 仅支持 Kernel V2。它不迁移旧 `task.json` 或旧阶段文档；旧文档迁移归 P36。P35 的其他生命周期入口以及 Session Pack 接线仍属于各自切片。本基础切片不代表整个 PACTILE-42 已完成。
