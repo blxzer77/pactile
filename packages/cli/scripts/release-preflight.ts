@@ -11,6 +11,14 @@ import {
   parseReleaseTag,
   resolveReleaseTag,
 } from "./release-guard.js";
+import type {
+  CommandRunner,
+  PackageVersions,
+  ReleasePackageDefinition,
+  PublishPlan,
+  CliPackageManifest,
+} from "./types.js";
+import { isRecord } from "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "../../..");
@@ -22,19 +30,30 @@ const LEGACY_DEPENDENCIES = [
   "@blxzer/cursor-trellis",
 ];
 
-function readJSON(file) {
-  return JSON.parse(fs.readFileSync(file, "utf-8"));
+function readJSON(file: string): CliPackageManifest {
+  const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf-8"));
+  if (
+    !isRecord(parsed) ||
+    typeof parsed.name !== "string" ||
+    typeof parsed.version !== "string"
+  ) {
+    throw new Error(`Invalid package manifest: ${file}`);
+  }
+  return parsed as CliPackageManifest;
 }
 
-export function readVersions() {
+export function readVersions(): PackageVersions {
   const cli = readJSON(CLI_PKG);
   const packageRoot = path.join(REPO_ROOT, "packages");
-  const otherPublicPackages = fs.readdirSync(packageRoot, { withFileTypes: true })
+  const otherPublicPackages = fs
+    .readdirSync(packageRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name !== "cli")
     .map((entry) => path.join(packageRoot, entry.name, "package.json"))
     .filter((file) => fs.existsSync(file) && readJSON(file).private !== true);
   if (otherPublicPackages.length > 0) {
-    throw new Error(`Single-package release rejects other public packages: ${otherPublicPackages.join(", ")}`);
+    throw new Error(
+      `Single-package release rejects other public packages: ${otherPublicPackages.join(", ")}`,
+    );
   }
   validatePackedCliPackage(cli, cli.version);
   return {
@@ -45,7 +64,7 @@ export function readVersions() {
 
 export const RELEASE_PACKAGE_DAG = [{ key: "cli", dependsOn: [] }];
 
-export function assertReleasePackageOrder(order) {
+export function assertReleasePackageOrder(order: string[]): string[] {
   const expectedKeys = RELEASE_PACKAGE_DAG.map((node) => node.key);
   if (!Array.isArray(order) || order.length !== expectedKeys.length) {
     throw new Error(
@@ -80,16 +99,20 @@ export function assertReleasePackageOrder(order) {
   return order;
 }
 
-export function releasePackageDefinitions(versions) {
+export function releasePackageDefinitions(
+  versions: PackageVersions,
+): ReleasePackageDefinition[] {
   assertMatchingVersions(versions);
   assertReleasePackageOrder(["cli"]);
   return [{ key: "cli", name: versions.cliName, version: versions.cliVersion }];
 }
 
-export function computeNpmTag(version) {
+export function computeNpmTag(version: string): string {
   if (/-beta\./.test(version)) return "beta";
   if (/-rc\.|-alpha\./.test(version)) {
-    throw new Error("v0.6.0 release workflow supports beta and stable versions only.");
+    throw new Error(
+      "v0.6.0 release workflow supports beta and stable versions only.",
+    );
   }
   return "candidate";
 }
@@ -100,7 +123,10 @@ export function computeNpmTag(version) {
  * Beta tags publish to beta and stable tags publish to candidate. Only the
  * separately authorized manual promotion job can move candidate to latest.
  */
-export function resolveNpmTag(version, explicitTag) {
+export function resolveNpmTag(
+  version: string,
+  explicitTag?: string | null,
+): string {
   const defaultTag = computeNpmTag(version);
   if (explicitTag === undefined || explicitTag === null || explicitTag === "") {
     return defaultTag;
@@ -121,17 +147,17 @@ export function resolveNpmTag(version, explicitTag) {
   return defaultTag;
 }
 
-function errorText(error) {
+function errorText(error: unknown): string {
   if (!(error instanceof Error)) return String(error);
   const stderr = "stderr" in error ? String(error.stderr ?? "") : "";
   return `${error.message}\n${stderr}`;
 }
 
 export function npmVersionExists(
-  packageName,
-  version,
-  { runner = createCommandRunner() } = {},
-) {
+  packageName: string,
+  version: string,
+  { runner = createCommandRunner() }: { runner?: CommandRunner } = {},
+): boolean {
   try {
     const out = String(
       runner(
@@ -156,7 +182,7 @@ export function npmVersionExists(
   }
 }
 
-function npmViewJSON(args, runner) {
+function npmViewJSON(args: string[], runner: CommandRunner): unknown {
   const out = String(
     runner(
       "npm",
@@ -167,11 +193,11 @@ function npmViewJSON(args, runner) {
   return out === "" ? null : JSON.parse(out);
 }
 
-async function sleep(ms) {
+async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function retry(label, fn) {
+async function retry<T>(label: string, fn: () => T): Promise<T> {
   const attempts = 6;
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -189,7 +215,13 @@ async function retry(label, fn) {
   throw lastError;
 }
 
-function inferredTag({ explicitTag, env }) {
+function inferredTag({
+  explicitTag,
+  env,
+}: {
+  explicitTag?: string;
+  env: NodeJS.ProcessEnv;
+}): string {
   const candidate = resolveReleaseTag({ explicitTag, env });
   if (explicitTag) return candidate;
   if (env.GITHUB_REF?.startsWith("refs/tags/")) return candidate;
@@ -204,7 +236,13 @@ export function checkVersions({
   explicitTag,
   env = process.env,
   versions = readVersions(),
-} = {}) {
+}: {
+  requireTag?: boolean;
+  quiet?: boolean;
+  explicitTag?: string;
+  env?: NodeJS.ProcessEnv;
+  versions?: PackageVersions;
+} = {}): PackageVersions & { tag: string; tagVersion: string | null } {
   assertMatchingVersions(versions);
   const tag = inferredTag({ explicitTag, env });
   let tagVersion = null;
@@ -235,6 +273,13 @@ export function checkPublishProvenance({
   env = process.env,
   versions = readVersions(),
   repoRoot = REPO_ROOT,
+}: {
+  runner?: CommandRunner;
+  remote?: string;
+  explicitTag?: string;
+  env?: NodeJS.ProcessEnv;
+  versions?: PackageVersions;
+  repoRoot?: string;
 } = {}) {
   const checked = checkVersions({
     requireTag: true,
@@ -261,25 +306,35 @@ export function createPublishPlan({
   versions,
   npmTag,
   exists = npmVersionExists,
-}) {
+}: {
+  versions: PackageVersions;
+  npmTag?: string | null;
+  exists?: (name: string, version: string) => boolean;
+}): PublishPlan {
   assertMatchingVersions(versions);
   const tag = resolveNpmTag(versions.cliVersion, npmTag);
-  const plan = {
+  const [definition] = releasePackageDefinitions(versions);
+  const alreadyOnNpm = exists(definition.name, definition.version);
+  return {
     version: versions.cliVersion,
     tag,
-  };
-  for (const definition of releasePackageDefinitions(versions)) {
-    const alreadyOnNpm = exists(definition.name, definition.version);
-    plan[definition.key] = {
+    cli: {
       name: definition.name,
       publish: !alreadyOnNpm,
       alreadyOnNpm,
-    };
-  }
-  return plan;
+    },
+  };
 }
 
-function publishPlan({ output, npmTag, runner = createCommandRunner() }) {
+function publishPlan({
+  output,
+  npmTag,
+  runner = createCommandRunner(),
+}: {
+  output: "json" | "github" | "text";
+  npmTag?: string;
+  runner?: CommandRunner;
+}): PublishPlan {
   const versions = checkVersions({ quiet: output === "json" });
   const plan = createPublishPlan({
     versions,
@@ -311,7 +366,11 @@ function publishPlan({ output, npmTag, runner = createCommandRunner() }) {
   return plan;
 }
 
-function packWorkspacePackage(packageDir, destinationDir, runner) {
+function packWorkspacePackage(
+  packageDir: string,
+  destinationDir: string,
+  runner: CommandRunner,
+): string {
   const out = String(
     runner("pnpm", ["pack", "--pack-destination", destinationDir], {
       cwd: packageDir,
@@ -339,11 +398,11 @@ function packWorkspacePackage(packageDir, destinationDir, runner) {
   return packed;
 }
 
-function normalizeBin(value) {
+function normalizeBin(value: unknown): unknown {
   return typeof value === "string" ? value.replace(/^\.\//, "") : value;
 }
 
-function hasWorkspaceProtocol(value) {
+function hasWorkspaceProtocol(value: unknown): boolean {
   if (typeof value === "string") return value.startsWith("workspace:");
   if (Array.isArray(value)) return value.some(hasWorkspaceProtocol);
   if (value && typeof value === "object") {
@@ -352,7 +411,9 @@ function hasWorkspaceProtocol(value) {
   return false;
 }
 
-export function assertPackedManifestUsesSemver(packedPackage) {
+export function assertPackedManifestUsesSemver(
+  packedPackage: CliPackageManifest,
+): void {
   if (hasWorkspaceProtocol(packedPackage)) {
     throw new Error(
       `packed ${packedPackage.name ?? "package"} contains a workspace: protocol`,
@@ -360,11 +421,19 @@ export function assertPackedManifestUsesSemver(packedPackage) {
   }
 }
 
-export function validatePackedCliPackage(packedPackage, expectedVersion) {
+export function validatePackedCliPackage(
+  packedPackage: CliPackageManifest,
+  expectedVersion: string,
+): void {
   const errors = [];
   assertPackedManifestUsesSemver(packedPackage);
-  if (packedPackage.name !== "@blxzer/pactile" || packedPackage.version !== expectedVersion) {
-    errors.push(`packed CLI identity must be @blxzer/pactile@${expectedVersion}`);
+  if (
+    packedPackage.name !== "@blxzer/pactile" ||
+    packedPackage.version !== expectedVersion
+  ) {
+    errors.push(
+      `packed CLI identity must be @blxzer/pactile@${expectedVersion}`,
+    );
   }
   if (packedPackage.engines?.node !== ">=20.0.0") {
     errors.push("packed Pactile must declare Node >=20.0.0");
@@ -375,13 +444,20 @@ export function validatePackedCliPackage(packedPackage, expectedVersion) {
     }
   }
   for (const dependency of LEGACY_DEPENDENCIES) {
-    if (packedPackage.dependencies?.[dependency] || packedPackage.optionalDependencies?.[dependency]) {
-      errors.push(`packed CLI must not depend on retired package ${dependency}`);
+    if (
+      packedPackage.dependencies?.[dependency] ||
+      packedPackage.optionalDependencies?.[dependency]
+    ) {
+      errors.push(
+        `packed CLI must not depend on retired package ${dependency}`,
+      );
     }
   }
   const bins = packedPackage.bin ?? {};
   if (normalizeBin(bins.pactile) !== "dist/bin/pactile.js") {
-    errors.push(`packed CLI bin "pactile" does not resolve to dist/bin/pactile.js`);
+    errors.push(
+      `packed CLI bin "pactile" does not resolve to dist/bin/pactile.js`,
+    );
   }
   if (normalizeBin(bins.cstl) !== "dist/bin/cstl.js") {
     errors.push(`packed CLI bin "cstl" does not resolve to dist/bin/cstl.js`);
@@ -397,7 +473,7 @@ export function validatePackedCliPackage(packedPackage, expectedVersion) {
 export function verifyPackedCli({
   runner = createCommandRunner(),
   versions = readVersions(),
-} = {}) {
+}: { runner?: CommandRunner; versions?: PackageVersions } = {}): void {
   assertMatchingVersions(versions);
   const temporary = fs.mkdtempSync(
     path.join(os.tmpdir(), "pactile-pack-verify-"),
@@ -429,13 +505,18 @@ async function verifyNpm({
   packageFilter,
   npmTag,
   runner = createCommandRunner(),
-}) {
+}: {
+  packageFilter: "all" | "cli";
+  npmTag?: string;
+  runner?: CommandRunner;
+}): Promise<void> {
   const versions = checkVersions();
   const tag = resolveNpmTag(versions.cliVersion, npmTag);
   const packages = releasePackageDefinitions(versions).filter(
     (pkg) => packageFilter === "all" || pkg.key === packageFilter,
   );
-  if (packages.length !== 1) throw new Error(`Unknown release package ${packageFilter}.`);
+  if (packages.length !== 1)
+    throw new Error(`Unknown release package ${packageFilter}.`);
 
   for (const pkg of packages) {
     await retry(`${pkg.name}@${versions.cliVersion}`, () => {
@@ -464,12 +545,18 @@ async function verifyNpm({
   }
 }
 
-function optionValue(args, flag, fallback) {
+function optionValue(args: string[], flag: string, fallback: string): string;
+function optionValue(args: string[], flag: string): string | undefined;
+function optionValue(
+  args: string[],
+  flag: string,
+  fallback?: string,
+): string | undefined {
   const index = args.indexOf(flag);
   return index >= 0 ? args[index + 1] : fallback;
 }
 
-async function main() {
+async function main(): Promise<void> {
   const runner = createCommandRunner();
   const [command, ...args] = process.argv.slice(2);
   if (!command || command === "--help" || command === "-h") {
@@ -522,12 +609,8 @@ async function main() {
   }
   if (command === "verify-npm") {
     const packageFilter = optionValue(args, "--package", "all");
-    if (
-      !["all", "cli"].includes(packageFilter)
-    ) {
-      throw new Error(
-        "--package must be one of: all, cli.",
-      );
+    if (packageFilter !== "all" && packageFilter !== "cli") {
+      throw new Error("--package must be one of: all, cli.");
     }
     await verifyNpm({
       packageFilter,

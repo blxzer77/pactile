@@ -18,7 +18,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLI_ROOT = path.resolve(SCRIPT_DIR, "..");
 const REPO_ROOT = path.resolve(CLI_ROOT, "../..");
-const CLI_ENTRY = path.join(CLI_ROOT, "bin", "pactile.js");
+const CLI_ENTRY = path.join(CLI_ROOT, "dist", "bin", "pactile.js");
 const MAP_PATH = path.join(
   REPO_ROOT,
   "docs",
@@ -143,7 +143,8 @@ function runCli(caseId, cwd, args, env) {
     maxBuffer: 2 * 1024 * 1024,
     windowsHide: true,
   });
-  const timedOut = result.error?.code === "ETIMEDOUT";
+  const timedOut =
+    (result.error as NodeJS.ErrnoException | null)?.code === "ETIMEDOUT";
   return {
     caseId,
     command: `pactile ${args.join(" ")}`,
@@ -292,7 +293,7 @@ function assertHelpParity(contract, env) {
   const rootHelp = runCli("help.root", REPO_ROOT, ["--help"], env);
   assertExit(rootHelp);
   results.push(rootHelp);
-  const commandNames = new Set();
+  const commandNames = new Set<string>();
   for (const entry of contract) {
     const tokens = entry.command.split(/\s+/u).slice(1);
     const command = tokens[0];
@@ -332,7 +333,7 @@ function assertHelpParity(contract, env) {
   // The compatibility entry is a separate launcher, so invoke it directly.
   const legacyStarted = spawnSync(
     process.execPath,
-    [path.join(CLI_ROOT, "bin", "cstl.js"), "--version"],
+    [path.join(CLI_ROOT, "dist", "bin", "cstl.js"), "--version"],
     {
       cwd: REPO_ROOT,
       env,
@@ -355,7 +356,9 @@ function assertHelpParity(contract, env) {
     command: "cstl --version",
     cwd: relativePath(REPO_ROOT),
     exitCode: legacyStarted.status,
-    timedOut: legacyStarted.error?.code === "ETIMEDOUT",
+    timedOut:
+      (legacyStarted.error as NodeJS.ErrnoException | null)?.code ===
+      "ETIMEDOUT",
     durationMs: null,
     stdout: trimOutput(legacyText),
     stderr: "",
@@ -401,14 +404,11 @@ async function main() {
     writeEmptyCapabilityManifest(codex);
     for (const entry of contract) {
       const command = entry.command;
-      if (
-        command === "pactile --version" ||
-        command === "pactile init --codex"
-      )
+      if (command === "pactile --version" || command === "pactile init --codex")
         continue;
       const tokens = command.split(/\s+/u).slice(1);
       let args;
-      let cwd = codex;
+      const cwd = codex;
       if (command === "pactile update")
         args = ["update", "--dry-run", "--json", "--skip-readiness"];
       else if (command === "pactile capability-smoke --json")

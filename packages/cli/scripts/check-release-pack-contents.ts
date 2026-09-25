@@ -40,11 +40,11 @@ const FORBIDDEN_FRAGMENTS = [
 ];
 const FORBIDDEN_SUFFIXES = [".py", ".pyc", ".pyo"];
 
-export function validateReleasePackPaths(inputPaths) {
-  const paths = new Set(
+export function validateReleasePackPaths(inputPaths: string[]) {
+  const paths = new Set<string>(
     inputPaths.map((file) => String(file).replace(/\\/g, "/")),
   );
-  const errors = [];
+  const errors: string[] = [];
 
   for (const file of REQUIRED_RELEASE_FILES) {
     if (!paths.has(file)) errors.push(`missing required packed file: ${file}`);
