@@ -23,7 +23,7 @@ function task(full = false): { root: string; dir: string; name: string } {
   fs.writeFileSync(path.join(tasks, "locale", "en", "default-prd.md"), "# {title}\n\n## Acceptance Criteria\n\n- [ ] observable behavior works\n");
   fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), "artifact_locale: en\n");
   fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=alice\n");
-  expect(runTaskCli(["create", "Authority", "--slug", "authority", ...(full ? ["--rigor", "full"] : [])], root)).toBe(0);
+  expect(runTaskCli(["legacy-create", "Authority", "--slug", "authority", ...(full ? ["--rigor", "full"] : [])], root)).toBe(0);
   const name = fs.readdirSync(tasks).find((entry) => entry.endsWith("-authority")) ?? "";
   const dir = path.join(tasks, name);
   if (full) {
@@ -84,7 +84,7 @@ describe("start authority at the final Kernel transition", () => {
 
   it("does not satisfy a hard dependency from an edited task.json status", () => {
     const { root, name } = task();
-    expect(runTaskCli(["create", "Upstream", "--slug", "upstream"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Upstream", "--slug", "upstream"], root)).toBe(0);
     expect(runTaskCli(["set-deps", name, "upstream"], root)).toBe(0);
     const upstreamDir = path.join(root, ".pactile", "tasks", fs.readdirSync(path.join(root, ".pactile", "tasks"))
       .find((entry) => entry.endsWith("-upstream")) ?? "missing");
@@ -97,7 +97,7 @@ describe("start authority at the final Kernel transition", () => {
 
   it("resolves completed dependencies for a direct Kernel start without cwd", () => {
     const { root, dir, name } = task();
-    expect(runTaskCli(["create", "Upstream", "--slug", "upstream"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Upstream", "--slug", "upstream"], root)).toBe(0);
     const upstreamName = fs.readdirSync(path.join(root, ".pactile", "tasks"))
       .find((entry) => entry.endsWith("-upstream")) ?? "missing";
     expect(runTaskCli(["start-execution", upstreamName, "--approved"], root)).toBe(0);
