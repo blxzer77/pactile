@@ -859,6 +859,15 @@
       "reason": "Canonical Chinese subagent capability boundary guide."
     },
     {
+      "path": "docs/capabilities/structured-task-artifacts.zh-CN.md",
+      "classification": "live",
+      "language": "zh-CN",
+      "action": "rewrite",
+      "targetPage": "capabilities.index",
+      "ownerLane": "batch-4-docs-hosts-capabilities",
+      "reason": "Canonical Chinese guide for Kernel-derived task artifacts, linked from both capability indexes."
+    },
+    {
       "path": "docs/concepts/architecture.md",
       "classification": "live",
       "language": "en",

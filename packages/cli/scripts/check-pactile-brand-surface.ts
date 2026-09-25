@@ -56,7 +56,7 @@ const CANONICAL_POLICY_DIGESTS = {
   inventory: "1b80e5487f3409671babfd5bd44f8a53066cbafcb4ccee2f34317e2ced64a6aa",
   renameMap: "e7e3a0eeb7ba5c97b5ed614b13c8ac628e9e3781d57ec763be06f405bb1b91aa",
   documentationMap:
-    "03942755efb2d1bedc1689af353ae972d31bbeeb4804e00c1e0c2ca99b083c29",
+    "53bf574062784a0381ce07735d306488f0c0dc0e91630c62a77c8abc011c20ae",
 };
 const REQUIRED_TOKEN_IDS = [
   "legacy-product-name",
@@ -129,6 +129,7 @@ const REQUIRED_DOCUMENTATION_SOURCES = [
   "docs/capabilities/skills.zh-CN.md",
   "docs/capabilities/subagents.md",
   "docs/capabilities/subagents.zh-CN.md",
+  "docs/capabilities/structured-task-artifacts.zh-CN.md",
   "docs/concepts/architecture.md",
   "docs/concepts/architecture.zh-CN.md",
   "docs/concepts/index.md",

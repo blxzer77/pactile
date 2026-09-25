@@ -44,6 +44,7 @@ docs/
     providers.md
     privacy-and-permissions.md
     subagents.md
+    structured-task-artifacts.zh-CN.md
   lifecycle/
     index.md
     install.md
@@ -77,7 +78,7 @@ Except where the JSON map explicitly declares an original-language historical sn
 | Owner lane | Write set | Responsibility |
 | --- | --- | --- |
 | `batch-4-docs-entry-concepts` | Root/package/example entry pages and `docs/concepts/**` | Value, five-minute start, Tiles, Kernel, Evidence, Trace, Projection, Ownership, spec/task concepts. |
-| `batch-4-docs-hosts-capabilities` | `docs/hosts/**` and `docs/capabilities/**` | Cursor/Codex/coexistence, Skills, MCP, install→adopt→bind, retrieval, Providers, privacy, subagents. |
+| `batch-4-docs-hosts-capabilities` | `docs/hosts/**` and `docs/capabilities/**` | Cursor/Codex/coexistence, Skills, MCP, install→adopt→bind, retrieval, Providers, privacy, subagents, structured task artifacts. |
 | `batch-4-docs-lifecycle-support` | `docs/lifecycle/**` and `docs/troubleshooting/**` | Install, workflow, upgrades, user reconsideration, detach/uninstall, rollback/purge, doctor and recovery. |
 | `batch-4-docs-governance-history` | `docs/governance/**`, `docs/history/**`, community and GitHub prose templates | Contribution, security, compatibility, release, immutable history, redirects and link integrity. |
 
