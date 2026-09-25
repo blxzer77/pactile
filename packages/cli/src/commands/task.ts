@@ -1,7 +1,7 @@
 import { execFileSync, execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { applyKernelArchive, applyKernelPatch, applyKernelRecordGate, applyKernelStart, assertFullQualityForPhase, buildAcEvidenceLedger, emptyTaskRecord, parseAcceptanceItems, qualityFingerprint, readDependencyGraph, readKernel, readTopology, resolveRequiredControls, unmetRequires, type PactileTaskRecord } from "../core/task/index.js";
+import { addTaskDependency, applyKernelArchive, applyKernelPatch, applyKernelRecordGate, applyKernelStart, assertFullQualityForPhase, buildAcEvidenceLedger, checkTaskClose, closeTaskKernel, createTaskKernel, emptyTaskRecord, fingerprintTaskValue, isTaskDeliveryLevel, listTaskKernelSnapshots, parseAcceptanceItems, qualityFingerprint, readDependencyGraph, readKernel, readTaskKernel, readTopology, recordTaskReview, recordTaskRunResult, resolveRequiredControls, resumeTaskRun, startTaskRun, taskRecordSchema, unmetRequires, type PactileTaskRecord, type TaskCandidateObservation, type TaskDeliveryEvidence, type TaskKernelSnapshotV2, type TaskSnapshotEntry } from "../core/task/index.js";
 import { addContextEntry, CONTEXT_FILES, readContextEntries, validateContextFile } from "../pactile/task/context.js";
 import { approvedExecuteTask } from "../pactile/task/authorization.js";
 import { createTaskWithArtifacts } from "../pactile/task/creation.js";
@@ -21,8 +21,26 @@ function option(args: string[], name: string): string | undefined {
   return index >= 0 ? args[index + 1] : undefined;
 }
 
+function options(args: string[], name: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index++) {
+    if (args[index] !== name) continue;
+    const value = args[index + 1];
+    if (!value || value.startsWith("--")) throw new Error(`${name} requires a value`);
+    values.push(value);
+    index++;
+  }
+  return values;
+}
+
 function requireArgument(value: string | undefined, label: string): string {
   if (!value || value.startsWith("--")) throw new Error(`${label} is required`);
+  return value;
+}
+
+function requireLast<T>(values: readonly T[], label: string): T {
+  const value = values.at(-1);
+  if (value === undefined) throw new Error(`${label} was not recorded`);
   return value;
 }
 
@@ -35,7 +53,11 @@ function taskDir(root: string, reference: string): string {
 function taskRecord(dir: string): PactileTaskRecord | null {
   try {
     const value: unknown = JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8"));
-    return value && typeof value === "object" ? value as PactileTaskRecord : null;
+    const parsed = taskRecordSchema.safeParse(value);
+    // Keep the validated source object intact. Legacy task.json files may carry
+    // fields outside the current schema; stripping them here changes V1
+    // dependency/quality behavior when subsequent commands patch the record.
+    return parsed.success ? value as PactileTaskRecord : null;
   } catch { return null; }
 }
 
@@ -92,7 +114,258 @@ function verifySeed(taskLocale: "zh" | "en"): string {
     : "# Verification Evidence\n\n## Planning check\n\n_Optional for Full tasks — record planning review outcomes._\n\n## Execution evidence\n\n### Validation commands\n\n<!-- Example: Validation commands: <command> — <outcome> -->\n\n### Acceptance\n\n<!-- Example: Final acceptance evidence: <criteria met> -->\n\n### Durable learning\n\n<!-- Example: Durable learning decision: no durable learning -->\n";
 }
 
+function parseAcceptanceCriteria(args: string[]): { id: string; description: string }[] {
+  const raw = options(args, "--accept");
+  if (!raw.length) throw new Error("at least one --accept <criterion> is required");
+  const parsed = raw.map((value, index) => {
+    const separator = value.indexOf("=");
+    if (separator > 0) return { id: value.slice(0, separator).trim(), description: value.slice(separator + 1).trim() };
+    return { id: `AC-${index + 1}`, description: value.trim() };
+  });
+  if (parsed.some((item) => !item.id || !item.description)) throw new Error("--accept must be <criterion> or <id>=<criterion>");
+  return parsed;
+}
+
+function taskV2(root: string, reference: string): { dir: string; kernel: TaskKernelSnapshotV2 } {
+  const dir = taskDir(root, reference);
+  const result = readTaskKernel({ root, taskDir: dir, cwd: root });
+  if (result.kind !== "task-kernel-v2") throw new Error(`Task ${reference} uses legacy Kernel v1. It remains readable; automatic migration is reserved for P36.`);
+  return { dir, kernel: result.kernel };
+}
+
+function actor(root: string, args: string[]): string {
+  return option(args, "--actor") ?? readDeveloper(root) ?? "user";
+}
+
 function createTask(args: string[], root: string): void {
+  if (args.includes("--legacy")) {
+    createLegacyTask(args.filter((value) => value !== "--legacy"), root);
+    return;
+  }
+  if (args.includes("--rigor") || args.includes("--parent")) {
+    throw new Error("--rigor and --parent are legacy task presets. Use `pactile task legacy-create --legacy` for existing 0.5.x workflows, or create a Task with --deliverable, --delivery-level, and --accept.");
+  }
+  const title = requireArgument(args[0], "title");
+  const slug = option(args, "--slug") ?? title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) throw new Error("slug must contain lowercase letters, digits and hyphens");
+  const deliverable = requireArgument(option(args, "--deliverable"), "--deliverable");
+  const deliveryLevel = option(args, "--delivery-level");
+  if (!isTaskDeliveryLevel(deliveryLevel)) throw new Error("--delivery-level must be local-result, pull-request, merged-result, or documentation");
+  const dependencies = [...new Set(options(args, "--depends-on"))];
+  const directoryName = `${localDate(new Date()).slice(5)}-${slug}`;
+  const dir = path.resolve(root, ".pactile", "tasks", directoryName);
+  const result = createTaskKernel({
+    root,
+    taskDir: dir,
+    actor: actor(root, args),
+    idempotencyKey: option(args, "--idempotency-key") ?? `task-create:${slug}`,
+    definition: {
+      taskId: slug,
+      title,
+      description: option(args, "--description") ?? "",
+      deliverable,
+      deliveryLevel,
+      acceptanceCriteria: parseAcceptanceCriteria(args),
+      dependencies,
+    },
+  });
+  console.log(`${path.relative(root, dir).replaceAll("\\", "/")}\nTask Kernel schema: ${result.kernel.schemaVersion}\nTask ID: ${result.kernel.identity.taskId}`);
+}
+
+function runStartTask(root: string, args: string[]): number {
+  const reference = requireArgument(args[0], "task");
+  const { dir, kernel } = taskV2(root, reference);
+  const authorization = {
+    approvedBy: requireArgument(option(args, "--approved-by"), "--approved-by"),
+    approvedAt: option(args, "--approved-at") ?? new Date().toISOString(),
+    scope: requireArgument(option(args, "--authorization-scope"), "--authorization-scope"),
+    evidenceRef: requireArgument(option(args, "--authorization-evidence"), "--authorization-evidence"),
+  };
+  const workspaceInputs = ["--workspace-path", "--branch", "--base-sha"].some((flag) => args.includes(flag));
+  const taskActor = actor(root, args);
+  let workspace: Parameters<typeof startTaskRun>[0]["workspace"];
+  if (workspaceInputs) {
+    workspace = {
+      canonicalPath: requireArgument(option(args, "--workspace-path"), "--workspace-path"),
+      branch: requireArgument(option(args, "--branch"), "--branch"),
+      baseSha: requireArgument(option(args, "--base-sha"), "--base-sha"),
+      writeSet: options(args, "--write-set"),
+      integrationState: "not-integrated",
+      reclamationState: "not-requested",
+    };
+  }
+  const hostInputs = ["--host", "--role", "--session-id", "--thread-id", "--request-ref", "--event-ref", "--result-ref", "--assurance-source"].some((flag) => args.includes(flag));
+  let host: Parameters<typeof startTaskRun>[0]["host"];
+  if (hostInputs) {
+    host = {
+      host: requireArgument(option(args, "--host"), "--host"),
+      role: requireArgument(option(args, "--role"), "--role"),
+      sessionId: option(args, "--session-id") ?? null,
+      threadId: option(args, "--thread-id") ?? null,
+      requestRefs: options(args, "--request-ref"),
+      eventRefs: options(args, "--event-ref"),
+      resultRefs: options(args, "--result-ref"),
+      assuranceSource: option(args, "--assurance-source") ?? null,
+    };
+  }
+  const durationOption = (name: string): number | null => {
+    const value = option(args, name);
+    if (value === undefined) return null;
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`${name} must be a non-negative integer`);
+    return parsed;
+  };
+  const input = { summary: requireArgument(option(args, "--input-summary"), "--input-summary"), references: options(args, "--input-ref") };
+  const initialState = args.includes("--wait") ? "waiting" as const : "running" as const;
+  const writeSetSnapshot = args.includes("--write-set-snapshot") ? options(args, "--write-set-snapshot") : options(args, "--write-set");
+  const estimatedDurations = {
+      executionMs: durationOption("--estimate-execution-ms"),
+      waitingMs: durationOption("--estimate-waiting-ms"),
+      reviewMs: durationOption("--estimate-review-ms"),
+  };
+  const requestFingerprint = fingerprintTaskValue({
+    actor: taskActor, input, authorization: { approvedBy: authorization.approvedBy, scope: authorization.scope, evidenceRef: authorization.evidenceRef },
+    initialState, writeSetSnapshot, estimatedDurations, workspace: workspace ?? null, host: host ?? null,
+  });
+  const activeRun = kernel.runs.find((run) => run.state === "running" || run.state === "waiting");
+  const attempt = activeRun?.attempt ?? kernel.runs.length + 1;
+  const idempotencyKey = option(args, "--idempotency-key") ?? `run-start:${kernel.identity.taskId}:${attempt}:${requestFingerprint}`;
+  const priorStart = kernel.events.find((event) => event.idempotencyKey === idempotencyKey && (event.type === "run.started" || event.type === "run.queued"));
+  const priorRun = priorStart ? kernel.runs.find((run) => run.id === priorStart.entityId) : undefined;
+  if (!option(args, "--approved-at") && priorRun) authorization.approvedAt = priorRun.authorization.approvedAt;
+  const result = startTaskRun({
+    root, taskDir: dir, expectedRevision: kernel.revision, actor: taskActor,
+    idempotencyKey,
+    input,
+    initialState,
+    writeSetSnapshot,
+    estimatedDurations,
+    authorization,
+    ...(workspace ? { workspace } : {}), ...(host ? { host } : {}),
+  });
+  const run = requireLast(result.kernel.runs, "Run");
+  console.log(`Run ${run.state === "waiting" ? "queued" : "started"}: ${run.id}\nTask: ${run.taskId}\nAttempt: ${run.attempt}\nKernel revision: ${result.kernel.revision}`);
+  return 0;
+}
+
+function resumeTask(root: string, args: string[]): number {
+  const reference = requireArgument(args[0], "task");
+  const runId = requireArgument(args[1], "run ID");
+  const { dir, kernel } = taskV2(root, reference);
+  const result = resumeTaskRun({
+    root, taskDir: dir, expectedRevision: kernel.revision, runId, actor: actor(root, args),
+    idempotencyKey: option(args, "--idempotency-key") ?? `run-resume:${runId}`,
+  });
+  console.log(`Run resumed: ${runId}\nKernel revision: ${result.kernel.revision}`);
+  return 0;
+}
+
+function parseCandidateEntries(args: string[]): TaskSnapshotEntry[] {
+  return options(args, "--candidate").map((value) => {
+    const separator = value.lastIndexOf("=");
+    if (separator <= 0) throw new Error("--candidate must be <reference>=<sha256-fingerprint>");
+    return { ref: value.slice(0, separator), fingerprint: value.slice(separator + 1) };
+  });
+}
+
+function runResultTask(root: string, args: string[]): number {
+  const reference = requireArgument(args[0], "task");
+  const runId = requireArgument(args[1], "run ID");
+  const { dir, kernel } = taskV2(root, reference);
+  const outcome = requireArgument(option(args, "--outcome"), "--outcome");
+  if (outcome !== "completed" && outcome !== "failed" && outcome !== "blocked") throw new Error("--outcome must be completed, failed, or blocked");
+  const failure = outcome === "completed" ? undefined : {
+    category: requireArgument(option(args, "--failure-category"), "--failure-category"),
+    message: requireArgument(option(args, "--failure-message"), "--failure-message"),
+    ...(option(args, "--failure-evidence") ? { evidenceRef: option(args, "--failure-evidence") } : {}),
+  };
+  const result = recordTaskRunResult({
+    root, taskDir: dir, expectedRevision: kernel.revision, runId, outcome,
+    ...(option(args, "--summary") ? { summary: option(args, "--summary") } : {}),
+    evidenceRefs: options(args, "--evidence"), candidateEntries: parseCandidateEntries(args), failure,
+    measurementRefs: {
+      ...(option(args, "--execution-measurement-ref") ? { execution: option(args, "--execution-measurement-ref") } : {}),
+      ...(option(args, "--waiting-measurement-ref") ? { waiting: option(args, "--waiting-measurement-ref") } : {}),
+    },
+    actor: actor(root, args), idempotencyKey: option(args, "--idempotency-key") ?? `run-result:${runId}`,
+  });
+  console.log(`Run ${runId}: ${outcome}\nTask phase: ${result.kernel.phase}\nKernel revision: ${result.kernel.revision}`);
+  return 0;
+}
+
+function parseAcceptanceEvidenceArgs(args: string[]): Record<string, string[]> {
+  const result: Record<string, string[]> = {};
+  for (const item of options(args, "--criterion")) {
+    const separator = item.indexOf("=");
+    if (separator <= 0 || separator === item.length - 1) throw new Error("--criterion must be <criterion-id>=<evidence-reference>");
+    const id = item.slice(0, separator);
+    if (Object.prototype.hasOwnProperty.call(result, id)) result[id]?.push(item.slice(separator + 1));
+    else Object.defineProperty(result, id, { value: [item.slice(separator + 1)], enumerable: true, writable: true, configurable: true });
+  }
+  return result;
+}
+
+function reviewTask(root: string, args: string[]): number {
+  const reference = requireArgument(args[0], "task");
+  const { dir, kernel } = taskV2(root, reference);
+  const runId = requireArgument(option(args, "--run"), "--run");
+  const decision = requireArgument(option(args, "--decision"), "--decision");
+  if (decision !== "pass" && decision !== "fail" && decision !== "needs-changes") throw new Error("--decision must be pass, fail, or needs-changes");
+  const candidateSnapshotId = requireArgument(option(args, "--candidate-id"), "--candidate-id");
+  const candidateFingerprint = requireArgument(option(args, "--candidate-fingerprint"), "--candidate-fingerprint");
+  const reviewer = requireArgument(option(args, "--reviewer"), "--reviewer");
+  const evidenceRefs = options(args, "--evidence");
+  const acceptanceEvidence = parseAcceptanceEvidenceArgs(args);
+  const unresolvedBlockers = options(args, "--blocker");
+  const measurementRef = option(args, "--review-measurement-ref");
+  const taskActor = actor(root, args);
+  const idempotencyKey = option(args, "--idempotency-key") ?? `review:${runId}:${fingerprintTaskValue({
+    actor: taskActor, runId, candidateSnapshotId, candidateFingerprint, reviewer, decision,
+    evidenceRefs, acceptanceEvidence, unresolvedBlockers, measurementRef: measurementRef ?? null,
+  })}`;
+  const result = recordTaskReview({
+    root, taskDir: dir, expectedRevision: kernel.revision, runId, candidateSnapshotId, candidateFingerprint, reviewer, decision,
+    evidenceRefs, acceptanceEvidence, unresolvedBlockers, measurementRef, actor: taskActor, idempotencyKey,
+  });
+  const review = requireLast(result.kernel.reviews, "Review");
+  console.log(`Review recorded: ${review.id}\nDecision: ${review.decision}\nCandidate: ${review.candidateFingerprint}`);
+  return 0;
+}
+
+function closeTask(root: string, args: string[]): number {
+  const reference = requireArgument(args[0], "task");
+  const { dir, kernel } = taskV2(root, reference);
+  const runId = requireArgument(option(args, "--run"), "--run");
+  const reviewId = requireArgument(option(args, "--review"), "--review");
+  const deliveryEvidence: TaskDeliveryEvidence = {
+    level: option(args, "--delivery-level") as TaskDeliveryEvidence["level"],
+    reference: requireArgument(option(args, "--delivery-ref"), "--delivery-ref"),
+    summary: requireArgument(option(args, "--delivery-summary"), "--delivery-summary"),
+  };
+  if (!isTaskDeliveryLevel(deliveryEvidence.level)) throw new Error("--delivery-level must be local-result, pull-request, merged-result, or documentation");
+  const candidateObservation: TaskCandidateObservation = {
+    snapshotId: requireArgument(option(args, "--candidate-id"), "--candidate-id"),
+    fingerprint: requireArgument(option(args, "--candidate-fingerprint"), "--candidate-fingerprint"),
+    observedBy: requireArgument(option(args, "--candidate-observed-by"), "--candidate-observed-by"),
+    observedAt: option(args, "--candidate-observed-at") ?? new Date().toISOString(),
+    source: requireArgument(option(args, "--candidate-observation-source"), "--candidate-observation-source"),
+    evidenceRef: requireArgument(option(args, "--candidate-observation-ref"), "--candidate-observation-ref"),
+  };
+  if (args.includes("--check")) {
+    const errors = checkTaskClose({ root, taskDir: dir, expectedRevision: kernel.revision, runId, reviewId, candidateObservation, deliveryEvidence });
+    console.log(`Task Close check: ${errors.length ? "FAIL" : "PASS"}${errors.length ? `\n${errors.map((error) => `  - ${error}`).join("\n")}` : ""}`);
+    console.log("Candidate freshness: caller-supplied observation is matched to the frozen Run snapshot; Kernel does not recompute current Git or filesystem bytes.");
+    return errors.length ? 1 : 0;
+  }
+  const result = closeTaskKernel({
+    root, taskDir: dir, expectedRevision: kernel.revision, runId, reviewId, candidateObservation, deliveryEvidence,
+    actor: actor(root, args), idempotencyKey: option(args, "--idempotency-key") ?? `task-close:${kernel.identity.taskId}`,
+  });
+  console.log(`Task closed: ${result.kernel.identity.taskId}\nDelivery level: ${deliveryEvidence.level}\nCandidate freshness: caller-supplied observation recorded\nKernel revision: ${result.kernel.revision}`);
+  return 0;
+}
+
+function createLegacyTask(args: string[], root: string): void {
   const title = requireArgument(args[0], "title");
   const slug = (option(args, "--slug") ?? title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""));
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) throw new Error("slug must contain lowercase letters, digits and hyphens");
@@ -388,6 +661,52 @@ function reviewChild(root: string, args: string[]): number {
   return 0;
 }
 
+function showTask(root: string, args: string[]): number {
+  const reference = requireArgument(args[0], "task");
+  const dir = taskDir(root, reference);
+  if (!fs.existsSync(path.join(dir, "kernel.json"))) {
+    const record = taskRecord(dir);
+    if (!record) throw new Error(`No readable legacy task record exists at ${dir}`);
+    console.log(args.includes("--json") ? JSON.stringify({ schemaVersion: 0, task: record }, null, 2)
+      : `${record.title || record.name} (${record.id})\nLegacy task.json record without Kernel\nStatus: ${record.status}\nAutomatic migration: reserved for P36.`);
+    return 0;
+  }
+  const read = readTaskKernel({ root, taskDir: dir, cwd: root });
+  if (args.includes("--json")) {
+    console.log(JSON.stringify(read.kind === "task-kernel-v2" ? read.kernel : { ...read.kernel, task: taskRecord(dir) }, null, 2));
+    return 0;
+  }
+  if (read.kind === "task-kernel-v2") {
+    const { definition, runs, reviews, phase, condition, revision } = read.kernel;
+    console.log([
+      `${definition.title} (${definition.taskId})`,
+      `Kernel: v2 @ revision ${revision}`,
+      `Phase: ${phase} | condition: ${condition}`,
+      `Deliverable: ${definition.deliverable}`,
+      `Delivery level: ${definition.deliveryLevel}`,
+      `Dependencies: ${definition.dependencies.length ? definition.dependencies.join(", ") : "none"}`,
+      "Acceptance criteria:",
+      ...definition.acceptanceCriteria.map((criterion) => `  - ${criterion.id}: ${criterion.description}`),
+      `Runs: ${runs.length} | Reviews: ${reviews.length}`,
+    ].join("\n"));
+    return 0;
+  }
+  const record = taskRecord(dir);
+  console.log(`${record?.title ?? record?.id ?? path.basename(dir)} (legacy Kernel v1)\nPhase: ${read.kernel.kernel.phase}\nStatus: ${record?.status ?? "unknown"}\nAutomatic migration: reserved for P36.`);
+  return 0;
+}
+
+function activeV2Tasks(root: string): { dir: string; kernel: TaskKernelSnapshotV2 }[] {
+  const archivePrefix = `${path.resolve(root, ".pactile", "tasks", "archive")}${path.sep}`.toLowerCase();
+  return listTaskKernelSnapshots(root)
+    .filter(({ taskDir: dir }) => !path.resolve(dir).toLowerCase().startsWith(archivePrefix))
+    .map(({ taskDir: dir, kernel }) => ({ dir: path.basename(dir), kernel }));
+}
+
+function v2DisplayStatus(kernel: TaskKernelSnapshotV2): string {
+  return kernel.phase === "close" ? "closed" : kernel.phase;
+}
+
 function listTasks(args: string[], root: string): void {
   const developer = readDeveloper(root);
   const mine = args.includes("--mine") || args.includes("-m");
@@ -395,15 +714,22 @@ function listTasks(args: string[], root: string): void {
   const assignee = option(args, "--assignee") ?? (mine ? developer : undefined);
   const status = option(args, "--status") ?? option(args, "-s");
   const selected = resolveSelectedTask(root).taskPath;
+  const phaseForStatus: Record<string, string> = { planning: "define", in_progress: "execute", review: "verify", completed: "close", closed: "close" };
+  const requiredPhase = status ? phaseForStatus[status] ?? status : undefined;
   const tasks = activeTasks(root).filter(({ record }) => (!assignee || record.assignee === assignee) && (!status || record.status === status));
+  const v2Tasks = activeV2Tasks(root).filter(({ kernel }) => (!assignee || kernel.definition.createdBy === assignee) && (!requiredPhase || kernel.phase === requiredPhase));
   console.log(assignee ? `Tasks (assignee: ${assignee}):` : "All active tasks:");
   console.log();
   for (const { dir, record } of tasks) {
     const marker = `.pactile/tasks/${dir}` === selected ? " <- selected" : "";
     console.log(`  - ${dir}/ (${record.status})${record.package ? ` @${record.package}` : ""} [${record.assignee || "-"}]${marker}`);
   }
-  if (!tasks.length) console.log("  (no active tasks)");
-  console.log(`\nTotal: ${tasks.length} task(s)`);
+  for (const { dir, kernel } of v2Tasks) {
+    const marker = `.pactile/tasks/${dir}` === selected ? " <- selected" : "";
+    console.log(`  - ${dir}/ (${v2DisplayStatus(kernel)}; Kernel v2) [${kernel.definition.createdBy}]${marker}`);
+  }
+  if (!tasks.length && !v2Tasks.length) console.log("  (no active tasks)");
+  console.log(`\nTotal: ${tasks.length + v2Tasks.length} task(s)`);
 }
 
 function listArchive(root: string, month?: string): void {
@@ -426,6 +752,7 @@ function dashboard(root: string): void {
   console.log("Task Dashboard\nPactile framework: active");
   console.log(`Selected task: ${selected.taskPath ?? "none"}${selected.taskPath ? ` (${selected.source})` : ""}\n`);
   const tasks = activeTasks(root);
+  const v2Tasks = activeV2Tasks(root);
   if (!tasks.length) console.log("Tasks: none");
   for (const [status, heading] of [["planning", "Define"], ["in_progress", "Execute"], ["review", "Verify"]] as const) {
     const matching = tasks.filter(({ record }) => record.status === status);
@@ -434,7 +761,12 @@ function dashboard(root: string): void {
     for (const { dir, record } of matching) console.log(`  - .pactile/tasks/${dir} (${heading}) [${record.assignee || "-"}]`);
     console.log();
   }
-  console.log("Suggested actions:\n  - Select a task: pactile task select <task>\n  - Create a task: pactile task create \"<title>\" --slug <slug>\n  - Inspect raw list: pactile task list");
+  if (v2Tasks.length) {
+    console.log("Task Kernel v2:");
+    for (const { dir, kernel } of v2Tasks) console.log(`  - .pactile/tasks/${dir} (${v2DisplayStatus(kernel)}) [${kernel.definition.deliveryLevel}]`);
+    console.log();
+  }
+  console.log("Suggested actions:\n  - Select a task: pactile task select <task>\n  - Create a deliverable Task: pactile task create \"<title>\" --slug <slug> --deliverable <text> --delivery-level <level> --accept <criterion>\n  - Inspect tasks: pactile task list | pactile task show <task>");
 }
 
 function startExecution(root: string, args: string[]): number {
@@ -690,6 +1022,24 @@ export function runTaskCli(argv: string[], root = process.cwd()): number {
   try {
     switch (command) {
       case "create": createTask(args, root); return 0;
+      case "legacy-create": createLegacyTask(args, root); return 0;
+      case "show": return showTask(root, args);
+      case "add-dependency": {
+        const reference = requireArgument(args[0], "task");
+        const dependencyId = requireArgument(args[1], "dependency task ID");
+        const { dir, kernel } = taskV2(root, reference);
+        const result = addTaskDependency({
+          root, taskDir: dir, expectedRevision: kernel.revision, dependencyId, actor: actor(root, args),
+          idempotencyKey: option(args, "--idempotency-key") ?? `dependency:${kernel.identity.taskId}:${dependencyId}`,
+        });
+        console.log(`Hard dependency added: ${result.kernel.identity.taskId} -> ${dependencyId}\nKernel revision: ${result.kernel.revision}`);
+        return 0;
+      }
+      case "run-start": return runStartTask(root, args);
+      case "run-resume": return resumeTask(root, args);
+      case "run-result": return runResultTask(root, args);
+      case "review": return reviewTask(root, args);
+      case "close": return closeTask(root, args);
       case "start-execution": return startExecution(root, args);
       case "record-gate": return recordGate(root, args);
       case "record-ac-evidence": return recordAcEvidence(root, args);
@@ -732,9 +1082,35 @@ export function runTaskCli(argv: string[], root = process.cwd()): number {
       }
       case "selected": {
         const chosen = resolveSelectedTask(root);
+        if (args.includes("--json")) {
+          if (!chosen.taskPath || chosen.stale) {
+            console.log(JSON.stringify({ selectedTask: chosen.taskPath, source: chosen.source, stale: chosen.stale }, null, 2));
+            return chosen.taskPath ? 0 : 1;
+          }
+          const dir = resolveTaskDir(root, chosen.taskPath);
+          if (!fs.existsSync(path.join(dir, "kernel.json"))) {
+            const record = taskRecord(dir);
+            console.log(JSON.stringify({ taskPath: chosen.taskPath, source: chosen.source, taskId: record?.id ?? null, title: record?.title ?? record?.name ?? null, status: record?.status ?? null, kernelVersion: 0 }, null, 2));
+            return 0;
+          }
+          const read = readTaskKernel({ root, taskDir: dir, cwd: root });
+          const summary = read.kind === "task-kernel-v2"
+            ? { taskId: read.kernel.identity.taskId, title: read.kernel.definition.title, phase: read.kernel.phase, condition: read.kernel.condition, revision: read.kernel.revision, kernelVersion: 2 }
+            : { taskId: read.kernel.kernel.identity.taskId, phase: read.kernel.kernel.phase, condition: read.kernel.kernel.condition, revision: read.kernel.kernel.revision, kernelVersion: 1 };
+          console.log(JSON.stringify({ taskPath: chosen.taskPath, source: chosen.source, ...summary }, null, 2));
+          return 0;
+        }
         if (args.includes("--source")) {
           console.log(`Selected task: ${chosen.taskPath ?? "(none)"}\nSource: ${chosen.source}`);
           if (chosen.stale) console.log("State: stale");
+          else if (chosen.taskPath) {
+            const dir = resolveTaskDir(root, chosen.taskPath);
+            if (fs.existsSync(path.join(dir, "kernel.json"))) {
+              const read = readTaskKernel({ root, taskDir: dir, cwd: root });
+              const kernel = read.kind === "task-kernel-v2" ? read.kernel : read.kernel.kernel;
+              console.log(`Kernel: ${read.kind === "task-kernel-v2" ? "v2" : "v1"}\nPhase: ${kernel.phase}\nKernel revision: ${kernel.revision}`);
+            } else console.log("Kernel: unavailable (legacy task.json only)");
+          }
         } else if (chosen.taskPath) console.log(chosen.taskPath);
         else console.error("No task selected for this live session.");
         return chosen.taskPath ? 0 : 1;
@@ -837,7 +1213,7 @@ export function runTaskCli(argv: string[], root = process.cwd()): number {
         return 0;
       }
       default:
-        console.error("Usage: pactile task <create|start-execution|archive|prepare-archive-evidence|prepare-learning-scaffold|review-child|dashboard|list|select|selected|exit|add-context|validate|list-context|set-branch|set-base-branch|set-scope|set-deps|set-depends-mode> ...");
+        console.error("Usage: pactile task <create|legacy-create|show|add-dependency|run-start|run-resume|run-result|review|close|start-execution|archive|prepare-archive-evidence|prepare-learning-scaffold|review-child|dashboard|list|select|selected|exit|add-context|validate|list-context|set-branch|set-base-branch|set-scope|set-deps|set-depends-mode> ...");
         return 1;
     }
   } catch (err) {
