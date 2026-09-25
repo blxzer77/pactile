@@ -151,9 +151,30 @@ describe("sealed artifact and credential boundary", () => {
       env: { GITHUB_SHA: "head-sha" }, log: () => undefined,
     });
     expect(result.plan.cli.publish).toBe(true);
+    expect(calls).toContain("npm whoami");
     expect(calls.filter((call) => call.startsWith("npm publish "))).toHaveLength(1);
     expect(calls.some((call) => call.startsWith("pnpm pack") || call.includes(" build")))
       .toBe(false);
+  });
+
+  it("uses GitHub OIDC without a token-only whoami preflight", () => {
+    const calls: string[] = [];
+    runPreparedPublish({
+      explicitTag: "pactile-v0.6.0-beta.1",
+      artifactDir: path.join(os.tmpdir(), "p29-artifacts"),
+      expectedManifestSha256: manifestSha256,
+      runner: fakeGitRunner(calls), packageInfo,
+      loadArtifacts: () => artifact(), npmExists: () => false,
+      env: {
+        GITHUB_SHA: "head-sha",
+        GITHUB_ACTIONS: "true",
+        ACTIONS_ID_TOKEN_REQUEST_URL: "https://example.invalid/oidc",
+        ACTIONS_ID_TOKEN_REQUEST_TOKEN: "present",
+      },
+      log: () => undefined,
+    });
+    expect(calls).not.toContain("npm whoami");
+    expect(calls.filter((call) => call.startsWith("npm publish "))).toHaveLength(1);
   });
 
   it("rejects a changed manifest before tarball inspection or registry access", () => {

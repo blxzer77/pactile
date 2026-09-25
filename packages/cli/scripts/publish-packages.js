@@ -311,7 +311,11 @@ export function runPreparedPublish({
     key,
     item: plan[key],
   }));
-  if (!dryRun && orderedPlan.some((entry) => entry.item.publish)) {
+  const hasGitHubOidc =
+    env.GITHUB_ACTIONS === "true" &&
+    Boolean(env.ACTIONS_ID_TOKEN_REQUEST_URL) &&
+    Boolean(env.ACTIONS_ID_TOKEN_REQUEST_TOKEN);
+  if (!dryRun && !hasGitHubOidc && orderedPlan.some((entry) => entry.item.publish)) {
     try {
       runner("npm", ["whoami"], { cwd: repoRoot, capture: true });
     } catch {

@@ -19,7 +19,7 @@ release documentation/changelog, then open a `develop` → `main` release PR.
 Its body must contain these exact fields:
 
 ```text
-Beta tag: pactile-v0.6.0-beta.1
+Beta tag: pactile-v0.6.0-beta.2
 Beta validation: https://github.com/blxzer77/pactile/actions/runs/<successful-publish-run-id>
 Beta acceptance: <actual beta install and behavior results>
 Post-beta changes: packages/cli/package.json, packages/cli/CHANGELOG.md
@@ -64,10 +64,13 @@ already locked local dependencies. The CI/default path performs a clean npm
 install. Record real desktop-host and model-provider acceptance separately.
 
 The tag workflow repeats these gates before it seals the tarball. Release
-preparation has no npm publish token; the token exists only in the step that
-publishes the previously sealed bytes. The manifest SHA-256 receipt travels
-outside the artifact directory. Failed provenance, package graph, tarball,
-receipt, or npm readback checks stop publication or promotion.
+preparation runs in a job with read-only permissions and no publish credential.
+The separate publish job receives GitHub OIDC permission for npm Trusted
+Publisher and publishes only the sealed artifact. Configure npm Trusted
+Publisher for `blxzer77/pactile` and `.github/workflows/publish.yml`. The
+manifest SHA-256 receipt travels outside the artifact directory. Failed
+provenance, package graph, tarball, receipt, or npm readback checks stop
+publication or promotion.
 
 A plan, dry run, clean CI result, or local merge never grants permission to
 push, merge to `main`, tag, publish, or promote. Historical changelog entries,

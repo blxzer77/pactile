@@ -1,0 +1,9 @@
+{
+  "version": "0.6.0-beta.2",
+  "description": "Trusted Publisher release of the Node-only Pactile beta. The preceding beta manifest retains the one-time review-pool cleanup for direct upgrades.",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "The Node-only Pactile beta is published through npm Trusted Publisher. No additional project migration is needed after 0.6.0-beta.1.",
+  "migrations": [],
+  "notes": "The 0.6.0-beta.1 manifest remains in this package for direct 0.5.0-to-beta.2 upgrades."
+}
