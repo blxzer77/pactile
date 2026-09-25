@@ -13,7 +13,7 @@ import { resolveTaskDir } from "../task/session.js";
 import { readTaskMap, type ChildEntry } from "../task/task-map.js";
 import {
   finalizeJevTaskScheduleAdviceV1,
-  ignoredJevTaskScheduleAdviceV1,
+  finalizeJevTaskScheduleEligibilityV1,
   requestJevTaskScheduleAdviceV1,
   supersedeJevTaskScheduleAdviceV1,
   type JevScheduleAdviceAuditV1,
@@ -1114,59 +1114,52 @@ export async function scheduleParentTaskGraphWithJevV1(
     finalStructuralCandidates,
   );
   let finalRequest = finalSnapshot.request;
-  let audit = requested.audit;
   const advice = requested.advice;
+  const requestStateStable =
+    scheduleSnapshotFingerprint(previewSnapshot) ===
+      scheduleSnapshotFingerprint(finalSnapshot) &&
+    sameTaskIds(
+      structuralCandidates.map(({ taskId }) => taskId),
+      finalStructuralCandidates.map(({ taskId }) => taskId),
+    ) &&
+    eligibilityFingerprint(
+      initialEligibility.filteredCandidates,
+      initialEligibility.candidates,
+    ) ===
+      eligibilityFingerprint(
+        finalEligibility.filteredCandidates,
+        finalEligibility.candidates,
+      );
+  const adviceMatchesFinalCandidates =
+    advice === null ||
+    sameTaskIdSet(
+      advice.taskOrder,
+      finalEligibility.candidates.map(({ taskId }) => taskId),
+    );
+  const eligibilityChanged =
+    !requestStateStable || !adviceMatchesFinalCandidates;
+  let audit = finalizeJevTaskScheduleEligibilityV1(
+    requested.audit,
+    finalEligibility.candidates,
+    finalEligibility.filteredCandidates,
+    {
+      approvalPassedTaskIds: finalEligibility.approvalPassedTaskIds,
+      worktreePassedTaskIds: finalEligibility.worktreePassedTaskIds,
+      activeLeaseCheckAt: finalEligibility.activeLeaseCheckAt,
+    },
+    eligibilityChanged,
+  );
 
   if (advice) {
-    const stable =
-      scheduleSnapshotFingerprint(previewSnapshot) ===
-        scheduleSnapshotFingerprint(finalSnapshot) &&
-      sameTaskIds(
-        structuralCandidates.map(({ taskId }) => taskId),
-        finalStructuralCandidates.map(({ taskId }) => taskId),
-      ) &&
-      eligibilityFingerprint(
-        initialEligibility.filteredCandidates,
-        initialEligibility.candidates,
-      ) ===
-        eligibilityFingerprint(
-          finalEligibility.filteredCandidates,
-          finalEligibility.candidates,
-        ) &&
-      sameTaskIdSet(
-        advice.taskOrder,
-        finalEligibility.candidates.map(({ taskId }) => taskId),
-      );
-    if (stable) {
+    if (!eligibilityChanged) {
       finalRequest = { ...finalSnapshot.request, jevAdvice: advice };
       audit = finalizeJevTaskScheduleAdviceV1(
         audit,
         planTaskScheduleV1(finalRequest),
       );
     } else {
-      audit = ignoredJevTaskScheduleAdviceV1(
-        supersedeJevTaskScheduleAdviceV1(audit),
-        finalEligibility.candidates,
-        finalEligibility.filteredCandidates,
-        {
-          approvalPassedTaskIds: finalEligibility.approvalPassedTaskIds,
-          worktreePassedTaskIds: finalEligibility.worktreePassedTaskIds,
-          activeLeaseCheckAt: finalEligibility.activeLeaseCheckAt,
-        },
-        "eligibility-changed",
-      );
+      audit = supersedeJevTaskScheduleAdviceV1(audit);
     }
-  } else {
-    audit = {
-      ...audit,
-      candidateTaskIds: finalEligibility.candidates.map(({ taskId }) => taskId),
-      filteredCandidates: [...finalEligibility.filteredCandidates],
-      eligibility: {
-        approvalPassedTaskIds: [...finalEligibility.approvalPassedTaskIds],
-        worktreePassedTaskIds: [...finalEligibility.worktreePassedTaskIds],
-        activeLeaseCheckAt: finalEligibility.activeLeaseCheckAt,
-      },
-    };
   }
 
   const plan = planTaskScheduleV1(finalRequest);

@@ -294,14 +294,26 @@ describe("P34 Jev scheduler advice", () => {
     );
     expect(result.receipt.jevAdviceAudit).toMatchObject({
       status: "answered",
-      candidateTaskIds: [firstTaskId, secondTaskId],
+      preparedRequestSnapshot: {
+        candidateTaskIds: [firstTaskId, secondTaskId],
+        inputDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      },
+      sentRequestSnapshot: {
+        candidateTaskIds: [firstTaskId, secondTaskId],
+        inputDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      },
+      finalEligibleCandidates: {
+        candidateTaskIds: [firstTaskId, secondTaskId],
+        filteredCandidates: [],
+        eligibility: {
+          approvalPassedTaskIds: [firstTaskId, secondTaskId],
+          worktreePassedTaskIds: [firstTaskId, secondTaskId],
+        },
+      },
+      eligibilityChanged: false,
       suggestedTaskIds: [secondTaskId, firstTaskId],
       adoptedTaskIds: [secondTaskId, firstTaskId],
       overriddenTaskIds: [],
-      eligibility: {
-        approvalPassedTaskIds: [firstTaskId, secondTaskId],
-        worktreePassedTaskIds: [firstTaskId, secondTaskId],
-      },
       transport: {
         latencyMs: 7,
         attempts: 1,
@@ -319,9 +331,9 @@ describe("P34 Jev scheduler advice", () => {
     expect(invocation.request.taskSummary).not.toMatch(
       /CONFIDENTIAL|SECRET|payroll|internal-plan/u,
     );
-    expect(result.receipt.jevAdviceAudit?.inputDigest).toMatch(
-      /^[a-f0-9]{64}$/u,
-    );
+    expect(
+      result.receipt.jevAdviceAudit?.sentRequestSnapshot?.inputDigest,
+    ).toMatch(/^[a-f0-9]{64}$/u);
     expect(JSON.stringify(result.receipt.jevAdviceAudit)).not.toContain(
       "test-key",
     );
@@ -388,10 +400,13 @@ describe("P34 Jev scheduler advice", () => {
     expect(result.receipt.jevAdviceAudit).toMatchObject({
       status: "skipped",
       reasonCode: "insufficient-candidates",
-      candidateTaskIds: [approvedTaskId],
-      filteredCandidates: [
-        { taskId: unapprovedTaskId, reasonCode: "approval-rejected" },
-      ],
+      sentRequestSnapshot: null,
+      finalEligibleCandidates: {
+        candidateTaskIds: [approvedTaskId],
+        filteredCandidates: [
+          { taskId: unapprovedTaskId, reasonCode: "approval-rejected" },
+        ],
+      },
     });
   });
 
@@ -417,10 +432,9 @@ describe("P34 Jev scheduler advice", () => {
 
     expect(facade.decide).not.toHaveBeenCalled();
     expect(result.receipt.request.jevAdvice).toBeUndefined();
-    expect(result.receipt.jevAdviceAudit?.filteredCandidates).toContainEqual({
-      taskId: firstTaskId,
-      reasonCode: "worktree-rejected",
-    });
+    expect(
+      result.receipt.jevAdviceAudit?.finalEligibleCandidates.filteredCandidates,
+    ).toContainEqual({ taskId: firstTaskId, reasonCode: "worktree-rejected" });
   });
 
   it("does not ask Jev to reorder candidates behind an unmet hard dependency", async () => {
@@ -452,9 +466,9 @@ describe("P34 Jev scheduler advice", () => {
       status: "skipped",
       reasonCode: "insufficient-candidates",
     });
-    expect(result.receipt.jevAdviceAudit?.candidateTaskIds).not.toContain(
-      secondTaskId,
-    );
+    expect(
+      result.receipt.jevAdviceAudit?.finalEligibleCandidates.candidateTaskIds,
+    ).not.toContain(secondTaskId);
     expect(result.receipt.plan.waves[0]?.taskIds).toHaveLength(1);
   });
 
@@ -480,13 +494,17 @@ describe("P34 Jev scheduler advice", () => {
       expect(result.receipt.request.jevAdvice).toBeUndefined();
       expect(result.receipt.jevAdviceAudit).toMatchObject({
         status: "skipped",
-        candidateTaskIds: [secondTaskId],
-        filteredCandidates: [
-          { taskId: firstTaskId, reasonCode: "active-write-lease-conflict" },
-        ],
+        sentRequestSnapshot: null,
+        finalEligibleCandidates: {
+          candidateTaskIds: [secondTaskId],
+          filteredCandidates: [
+            { taskId: firstTaskId, reasonCode: "active-write-lease-conflict" },
+          ],
+        },
       });
       expect(
-        result.receipt.jevAdviceAudit?.eligibility.activeLeaseCheckAt,
+        result.receipt.jevAdviceAudit?.finalEligibleCandidates.eligibility
+          .activeLeaseCheckAt,
       ).toBeTruthy();
     } finally {
       release();
@@ -530,11 +548,14 @@ describe("P34 Jev scheduler advice", () => {
       expect(result.receipt.request.jevAdvice).toBeUndefined();
       expect(result.receipt.jevAdviceAudit).toMatchObject({
         status: "skipped",
-        candidateTaskIds: [],
-        filteredCandidates: taskIds.map((taskId) => ({
-          taskId,
-          reasonCode: "lease-state-unavailable",
-        })),
+        sentRequestSnapshot: null,
+        finalEligibleCandidates: {
+          candidateTaskIds: [],
+          filteredCandidates: taskIds.map((taskId) => ({
+            taskId,
+            reasonCode: "lease-state-unavailable",
+          })),
+        },
       });
     },
   );
@@ -568,10 +589,166 @@ describe("P34 Jev scheduler advice", () => {
     expect(result.receipt.jevAdviceAudit).toMatchObject({
       status: "superseded",
       reasonCode: "eligibility-changed",
+      preparedRequestSnapshot: {
+        candidateTaskIds: [firstTaskId, secondTaskId],
+      },
+      sentRequestSnapshot: {
+        candidateTaskIds: [firstTaskId, secondTaskId],
+        inputDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      },
+      finalEligibleCandidates: {
+        candidateTaskIds: [secondTaskId],
+        filteredCandidates: [
+          { taskId: firstTaskId, reasonCode: "approval-rejected" },
+        ],
+      },
+      eligibilityChanged: true,
       adoptedTaskIds: [],
       overriddenTaskIds: [secondTaskId, firstTaskId],
     });
   });
+
+  it.each([
+    {
+      outcome: "timeout",
+      reasonCode: "deadline-exceeded",
+      drift: "approval",
+      status: null,
+    },
+    {
+      outcome: "503",
+      reasonCode: "service-unavailable",
+      drift: "lease",
+      status: 503,
+    },
+    {
+      outcome: "low-confidence",
+      reasonCode: "low-confidence",
+      drift: "approval",
+      status: 200,
+    },
+  ] as const)(
+    "keeps request-time candidates beside final eligibility after $outcome and $drift drift",
+    async ({ outcome, reasonCode, drift, status }) => {
+      const root = makeRoot();
+      const { first, second } = approvedPair(root);
+      const firstTaskId = scheduleTaskId(root, first);
+      const secondTaskId = scheduleTaskId(root, second);
+      const firstContract = path.join(
+        root,
+        ".pactile",
+        "tasks",
+        first,
+        "implement.md",
+      );
+      const causeDrift = () => {
+        if (drift === "approval") {
+          fs.appendFileSync(firstContract, "# renewed contract\n");
+          return;
+        }
+        const activeDir = path.join(
+          root,
+          ".pactile",
+          "tasks",
+          "legacy-parent",
+          "parallel",
+          "active",
+        );
+        fs.mkdirSync(activeDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(activeDir, "lease-drift.json"),
+          `${JSON.stringify({
+            id: "lease-drift",
+            pid: process.pid,
+            durable: true,
+            touches: ["src/alpha.ts"],
+          })}\n`,
+        );
+      };
+      const fetchImpl = vi.fn(async () => {
+        causeDrift();
+        if (outcome === "timeout") {
+          return await new Promise<Response>(() => undefined);
+        }
+        if (outcome === "503") return new Response("service error", { status });
+        return new Response(
+          JSON.stringify({
+            model: "jev-test",
+            answers: {
+              first_task: {
+                type: "choice",
+                choice: "candidate-02",
+                confidence: 0.4,
+                probabilities: { "candidate-01": 0.4, "candidate-02": 0.6 },
+              },
+            },
+            usage: { input_tokens: 12, output_tokens: 0 },
+          }),
+          { status, headers: { "content-type": "application/json" } },
+        );
+      });
+      const facade = createJevDecisionFacadeV1({
+        enabled: true,
+        transport: {
+          apiKey: "test-key-not-persisted",
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          deadlineMs: outcome === "timeout" ? 10 : 100,
+          maxRetries: 0,
+        },
+      });
+      const baseline = planParentTaskScheduleV1(
+        root,
+        "jev-scheduler-parent",
+        scheduleOptions(root),
+      );
+
+      const result = await scheduleParentTaskGraphWithJevV1(
+        root,
+        "jev-scheduler-parent",
+        scheduleOptions(root),
+        { facade, egress },
+      );
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(result.receipt.plan).toEqual(baseline.plan);
+      expect(result.receipt.request.jevAdvice).toBeUndefined();
+      expect(result.receipt.jevAdviceAudit).toMatchObject({
+        status: "fallback",
+        reasonCode,
+        preparedRequestSnapshot: {
+          candidateTaskIds: [firstTaskId, secondTaskId],
+          inputDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        },
+        sentRequestSnapshot: {
+          candidateTaskIds: [firstTaskId, secondTaskId],
+          inputDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        },
+        finalEligibleCandidates: {
+          candidateTaskIds: [secondTaskId],
+          filteredCandidates: [
+            {
+              taskId: firstTaskId,
+              reasonCode:
+                drift === "approval"
+                  ? "approval-rejected"
+                  : "active-write-lease-conflict",
+            },
+          ],
+        },
+        eligibilityChanged: true,
+        transport: {
+          attempts: 1,
+          httpStatus: outcome === "timeout" ? null : status,
+        },
+      });
+      expect(JSON.stringify(result.receipt.jevAdviceAudit)).not.toContain(
+        "test-key-not-persisted",
+      );
+      expect(JSON.stringify(result.receipt.jevAdviceAudit)).not.toContain(
+        "service error",
+      );
+    },
+  );
 
   it("uses the configured Jev transport and records fallback without changing the deterministic plan", async () => {
     const root = makeRoot();
@@ -612,9 +789,19 @@ describe("P34 Jev scheduler advice", () => {
     expect(result.receipt.jevAdviceAudit).toMatchObject({
       status: "fallback",
       reasonCode: "low-confidence",
-      candidateTaskIds: [firstTaskId, secondTaskId],
+      preparedRequestSnapshot: {
+        candidateTaskIds: [firstTaskId, secondTaskId],
+      },
+      sentRequestSnapshot: {
+        candidateTaskIds: [firstTaskId, secondTaskId],
+        inputDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      },
+      finalEligibleCandidates: {
+        candidateTaskIds: [firstTaskId, secondTaskId],
+        filteredCandidates: [],
+      },
+      eligibilityChanged: false,
       suggestedTaskIds: [],
-      inputDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
       transport: { attempts: 1, httpStatus: 200, model: "jev-test" },
     });
     expect(JSON.stringify(result.receipt.jevAdviceAudit)).not.toContain(
@@ -646,7 +833,8 @@ describe("P34 Jev scheduler advice", () => {
 
     expect(facade.decide).toHaveBeenCalledTimes(1);
     expect(
-      result.receipt.jevAdviceAudit?.eligibility.worktreePassedTaskIds,
+      result.receipt.jevAdviceAudit?.finalEligibleCandidates.eligibility
+        .worktreePassedTaskIds,
     ).toEqual([firstTaskId, secondTaskId]);
   });
 
@@ -672,12 +860,15 @@ describe("P34 Jev scheduler advice", () => {
     expect(result.receipt.jevAdviceAudit).toMatchObject({
       status: "skipped",
       reasonCode: "disabled",
-      candidateTaskIds: [firstTaskId, secondTaskId],
-      eligibility: {
-        approvalPassedTaskIds: [firstTaskId, secondTaskId],
-        worktreePassedTaskIds: [firstTaskId, secondTaskId],
+      preparedRequestSnapshot: null,
+      sentRequestSnapshot: null,
+      finalEligibleCandidates: {
+        candidateTaskIds: [firstTaskId, secondTaskId],
+        eligibility: {
+          approvalPassedTaskIds: [firstTaskId, secondTaskId],
+          worktreePassedTaskIds: [firstTaskId, secondTaskId],
+        },
       },
-      inputDigest: null,
       transport: { latencyMs: 0, attempts: 0 },
     });
 
@@ -698,7 +889,14 @@ describe("P34 Jev scheduler advice", () => {
     expect(missingKey.receipt.jevAdviceAudit).toMatchObject({
       status: "fallback",
       reasonCode: "configuration-missing",
-      candidateTaskIds: [firstTaskId, secondTaskId],
+      preparedRequestSnapshot: {
+        candidateTaskIds: [firstTaskId, secondTaskId],
+        inputDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      },
+      sentRequestSnapshot: null,
+      finalEligibleCandidates: {
+        candidateTaskIds: [firstTaskId, secondTaskId],
+      },
       transport: { attempts: 0, httpStatus: null },
     });
   });
@@ -729,10 +927,19 @@ describe("P34 Jev scheduler advice", () => {
     expect(result.receipt.jevAdviceAudit).toMatchObject({
       status: "fallback",
       reasonCode: "egress-denied",
-      candidateTaskIds: [
-        scheduleTaskId(root, first),
-        scheduleTaskId(root, second),
-      ],
+      sentRequestSnapshot: null,
+      preparedRequestSnapshot: {
+        candidateTaskIds: [
+          scheduleTaskId(root, first),
+          scheduleTaskId(root, second),
+        ],
+      },
+      finalEligibleCandidates: {
+        candidateTaskIds: [
+          scheduleTaskId(root, first),
+          scheduleTaskId(root, second),
+        ],
+      },
       transport: { attempts: 0, httpStatus: null },
     });
   });

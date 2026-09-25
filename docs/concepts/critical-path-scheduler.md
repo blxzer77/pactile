@@ -75,13 +75,18 @@ concurrency limit.
 After Jev responds, the API rebuilds the planning snapshot and repeats the
 approval, worktree, and active-lease checks. It uses the advice only when the
 hard-gate snapshot and eligible tie group still match. It then writes one
-content-addressed final schedule receipt with `jevAdviceAudit`, including the
-eligible and filtered candidate IDs, suggested/adopted/overridden order,
-reason code, synthetic-input SHA-256 and character count, and available
-latency/transport metrics. The receipt does not store the request text,
-provider key, raw errors, or request ID. If approval, worktree, dependencies,
-conflicts, leases, or the candidate group changes during the request, the
-answer is marked superseded and the final receipt uses the deterministic plan.
+content-addressed final schedule receipt with `jevAdviceAudit`. The audit keeps
+`preparedRequestSnapshot` for the candidate IDs and digest given to the Jev
+facade, `sentRequestSnapshot` only when transport reports an HTTP attempt, and
+`finalEligibleCandidates` for the approval, worktree, and lease recheck used by
+the final receipt. A fallback or superseded answer therefore retains the
+request-time candidates and digest even when the final eligible set changed.
+The audit also records suggested/adopted/overridden order, the change flag,
+reason code, and available latency/transport metrics. It does not store the
+request text, provider key, raw errors, or request ID. If approval, worktree,
+dependencies, conflicts, leases, or the candidate group changes during the
+request, the answer is marked superseded and the final receipt uses the
+deterministic plan.
 
 Missing/disabled configuration, denied egress, detected sensitive content,
 cancellation, deadline, provider failure, invalid response, or low confidence
@@ -169,7 +174,7 @@ receipt authorizes the pair.
 | --- | --- |
 | Public async API, same-critical-path tie-break, immutable final receipt and audit | Implemented and covered by focused tests. |
 | Approval, configured worktree, active lease, and post-response eligibility recheck | Implemented with existing validators and covered by positive/negative tests. |
-| No-key, denied-egress, timeout, service error, low-confidence, and privacy-safe input fallback | Covered with facade/transport stubs; no live Jev service call was made. |
+| No-key, denied-egress, timeout, service error, low-confidence, and privacy-safe input fallback | Covered with facade/transport stubs; drift tests preserve request-time snapshots separately from final eligibility; no live Jev service call was made. |
 | `parallel run` / Pi / Codex Host dispatch wiring before P37 admission | Not connected. The current CLI batch path still calls synchronous `scheduleParentTaskGraph`; Host wiring remains a separate P34 node and was intentionally kept outside this slice. |
 | Jev execution-role recommendation | Not implemented here. This slice only breaks equal critical-path ordering ties. |
 

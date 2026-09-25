@@ -26,6 +26,24 @@ export interface JevScheduleCandidateFilterV1 {
     | "candidate-identity-unavailable";
 }
 
+export interface JevScheduleRequestSnapshotV1 {
+  /** Task IDs represented by anonymous labels in the synthetic request. */
+  readonly candidateTaskIds: readonly string[];
+  /** SHA-256 of the exact bounded summary and question supplied to Jev. */
+  readonly inputDigest: string;
+  readonly inputSummaryChars: number;
+}
+
+export interface JevScheduleFinalEligibleCandidatesV1 {
+  readonly candidateTaskIds: readonly string[];
+  readonly filteredCandidates: readonly JevScheduleCandidateFilterV1[];
+  readonly eligibility: {
+    readonly approvalPassedTaskIds: readonly string[];
+    readonly worktreePassedTaskIds: readonly string[];
+    readonly activeLeaseCheckAt: string | null;
+  };
+}
+
 export interface JevScheduleAdviceOptionsV1 {
   readonly facade: JevDecisionFacadeV1;
   readonly egress: JevEgressAuthorizationV1;
@@ -43,20 +61,16 @@ export interface JevScheduleAdviceAuditV1 {
     | "candidate-bound-exceeded"
     | "eligibility-changed"
     | null;
-  /** Only locally eligible candidates are listed here. */
-  readonly candidateTaskIds: readonly string[];
-  readonly filteredCandidates: readonly JevScheduleCandidateFilterV1[];
+  /** Request input built before transport policy and egress checks. */
+  readonly preparedRequestSnapshot: JevScheduleRequestSnapshotV1 | null;
+  /** Present only when the transport reports at least one HTTP attempt. */
+  readonly sentRequestSnapshot: JevScheduleRequestSnapshotV1 | null;
+  /** Eligibility re-read after the Jev call and used for the final receipt. */
+  readonly finalEligibleCandidates: JevScheduleFinalEligibleCandidatesV1;
+  readonly eligibilityChanged: boolean;
   readonly suggestedTaskIds: readonly string[];
   readonly adoptedTaskIds: readonly string[];
   readonly overriddenTaskIds: readonly string[];
-  /** SHA-256 of the bounded, synthetic request summary and question. */
-  readonly inputDigest: string | null;
-  readonly inputSummaryChars: number;
-  readonly eligibility: {
-    readonly approvalPassedTaskIds: readonly string[];
-    readonly worktreePassedTaskIds: readonly string[];
-    readonly activeLeaseCheckAt: string | null;
-  };
   readonly transport: {
     readonly latencyMs: number;
     /** Null when the facade failed before returning transport metrics. */
@@ -99,9 +113,10 @@ function baseAudit(input: {
   reasonCode: JevScheduleAdviceAuditV1["reasonCode"];
   candidates: readonly JevScheduleCandidateV1[];
   filteredCandidates: readonly JevScheduleCandidateFilterV1[];
-  eligibility: JevScheduleAdviceAuditV1["eligibility"];
-  inputDigest?: string | null;
-  inputSummaryChars?: number;
+  eligibility: JevScheduleFinalEligibleCandidatesV1["eligibility"];
+  preparedRequestSnapshot?: JevScheduleRequestSnapshotV1 | null;
+  sentRequestSnapshot?: JevScheduleRequestSnapshotV1 | null;
+  eligibilityChanged?: boolean;
   transport?: JevScheduleAdviceAuditV1["transport"];
   suggestedTaskIds?: readonly string[];
   adoptedTaskIds?: readonly string[];
@@ -111,18 +126,21 @@ function baseAudit(input: {
     schemaVersion: 1,
     status: input.status,
     reasonCode: input.reasonCode,
-    candidateTaskIds: input.candidates.map(({ taskId }) => taskId),
-    filteredCandidates: [...input.filteredCandidates],
+    preparedRequestSnapshot: input.preparedRequestSnapshot ?? null,
+    sentRequestSnapshot: input.sentRequestSnapshot ?? null,
+    finalEligibleCandidates: {
+      candidateTaskIds: input.candidates.map(({ taskId }) => taskId),
+      filteredCandidates: [...input.filteredCandidates],
+      eligibility: {
+        approvalPassedTaskIds: [...input.eligibility.approvalPassedTaskIds],
+        worktreePassedTaskIds: [...input.eligibility.worktreePassedTaskIds],
+        activeLeaseCheckAt: input.eligibility.activeLeaseCheckAt,
+      },
+    },
+    eligibilityChanged: input.eligibilityChanged ?? false,
     suggestedTaskIds: [...(input.suggestedTaskIds ?? [])],
     adoptedTaskIds: [...(input.adoptedTaskIds ?? [])],
     overriddenTaskIds: [...(input.overriddenTaskIds ?? [])],
-    inputDigest: input.inputDigest ?? null,
-    inputSummaryChars: input.inputSummaryChars ?? 0,
-    eligibility: {
-      approvalPassedTaskIds: [...input.eligibility.approvalPassedTaskIds],
-      worktreePassedTaskIds: [...input.eligibility.worktreePassedTaskIds],
-      activeLeaseCheckAt: input.eligibility.activeLeaseCheckAt,
-    },
     transport: input.transport ?? {
       latencyMs: 0,
       attempts: 0,
@@ -135,6 +153,15 @@ function baseAudit(input: {
   };
 }
 
+function attemptedRequestSnapshot(
+  prepared: JevScheduleRequestSnapshotV1,
+  transport: JevScheduleAdviceAuditV1["transport"],
+): JevScheduleRequestSnapshotV1 | null {
+  return transport.attempts !== null && transport.attempts > 0
+    ? prepared
+    : null;
+}
+
 /**
  * Asks Jev to choose a first task only within a locally filtered, equal
  * critical-path candidate group. The caller owns fresh hard-gate checks.
@@ -142,7 +169,7 @@ function baseAudit(input: {
 export async function requestJevTaskScheduleAdviceV1(input: {
   readonly candidates: readonly JevScheduleCandidateV1[];
   readonly filteredCandidates: readonly JevScheduleCandidateFilterV1[];
-  readonly eligibility: JevScheduleAdviceAuditV1["eligibility"];
+  readonly eligibility: JevScheduleFinalEligibleCandidatesV1["eligibility"];
   readonly options?: JevScheduleAdviceOptionsV1;
 }): Promise<JevScheduleAdviceResultV1> {
   const candidates = [...input.candidates].sort((left, right) =>
@@ -221,6 +248,11 @@ export async function requestJevTaskScheduleAdviceV1(input: {
   const inputDigest = createHash("sha256")
     .update(JSON.stringify(requestForDigest), "utf8")
     .digest("hex");
+  const preparedRequestSnapshot: JevScheduleRequestSnapshotV1 = {
+    candidateTaskIds: candidates.map(({ taskId }) => taskId),
+    inputDigest,
+    inputSummaryChars: taskSummary.length,
+  };
 
   const startedAt = Date.now();
   let result: Awaited<ReturnType<JevDecisionFacadeV1["decide"]>>;
@@ -251,8 +283,7 @@ export async function requestJevTaskScheduleAdviceV1(input: {
         candidates,
         filteredCandidates: input.filteredCandidates,
         eligibility: input.eligibility,
-        inputDigest,
-        inputSummaryChars: taskSummary.length,
+        preparedRequestSnapshot,
         transport: {
           latencyMs: Math.max(0, Date.now() - startedAt),
           attempts: null,
@@ -267,6 +298,7 @@ export async function requestJevTaskScheduleAdviceV1(input: {
   }
 
   if (result.status !== "answered") {
+    const transport = auditTransport(result.receipt);
     return {
       advice: null,
       audit: baseAudit({
@@ -275,9 +307,12 @@ export async function requestJevTaskScheduleAdviceV1(input: {
         candidates,
         filteredCandidates: input.filteredCandidates,
         eligibility: input.eligibility,
-        inputDigest,
-        inputSummaryChars: taskSummary.length,
-        transport: auditTransport(result.receipt),
+        preparedRequestSnapshot,
+        sentRequestSnapshot: attemptedRequestSnapshot(
+          preparedRequestSnapshot,
+          transport,
+        ),
+        transport,
       }),
     };
   }
@@ -286,6 +321,7 @@ export async function requestJevTaskScheduleAdviceV1(input: {
   const selectedLabel = answer?.type === "choice" ? answer.choice : undefined;
   const selectedIndex = labels.indexOf(selectedLabel ?? "");
   if (selectedIndex < 0) {
+    const transport = auditTransport(result.receipt);
     return {
       advice: null,
       audit: baseAudit({
@@ -294,15 +330,19 @@ export async function requestJevTaskScheduleAdviceV1(input: {
         candidates,
         filteredCandidates: input.filteredCandidates,
         eligibility: input.eligibility,
-        inputDigest,
-        inputSummaryChars: taskSummary.length,
-        transport: auditTransport(result.receipt),
+        preparedRequestSnapshot,
+        sentRequestSnapshot: attemptedRequestSnapshot(
+          preparedRequestSnapshot,
+          transport,
+        ),
+        transport,
       }),
     };
   }
 
   const selected = candidates[selectedIndex];
   if (!selected) {
+    const transport = auditTransport(result.receipt);
     return {
       advice: null,
       audit: baseAudit({
@@ -311,9 +351,12 @@ export async function requestJevTaskScheduleAdviceV1(input: {
         candidates,
         filteredCandidates: input.filteredCandidates,
         eligibility: input.eligibility,
-        inputDigest,
-        inputSummaryChars: taskSummary.length,
-        transport: auditTransport(result.receipt),
+        preparedRequestSnapshot,
+        sentRequestSnapshot: attemptedRequestSnapshot(
+          preparedRequestSnapshot,
+          transport,
+        ),
+        transport,
       }),
     };
   }
@@ -323,15 +366,19 @@ export async function requestJevTaskScheduleAdviceV1(input: {
       .filter(({ taskId }) => taskId !== selected.taskId)
       .map(({ taskId }) => taskId),
   ];
+  const transport = auditTransport(result.receipt);
   const audit = baseAudit({
     status: "answered",
     reasonCode: null,
     candidates,
     filteredCandidates: input.filteredCandidates,
     eligibility: input.eligibility,
-    inputDigest,
-    inputSummaryChars: taskSummary.length,
-    transport: auditTransport(result.receipt),
+    preparedRequestSnapshot,
+    sentRequestSnapshot: attemptedRequestSnapshot(
+      preparedRequestSnapshot,
+      transport,
+    ),
+    transport,
     suggestedTaskIds: taskOrder,
   });
   return {
@@ -366,6 +413,28 @@ export function finalizeJevTaskScheduleAdviceV1(
   };
 }
 
+export function finalizeJevTaskScheduleEligibilityV1(
+  audit: JevScheduleAdviceAuditV1,
+  candidates: readonly JevScheduleCandidateV1[],
+  filteredCandidates: readonly JevScheduleCandidateFilterV1[],
+  eligibility: JevScheduleFinalEligibleCandidatesV1["eligibility"],
+  eligibilityChanged: boolean,
+): JevScheduleAdviceAuditV1 {
+  return {
+    ...audit,
+    finalEligibleCandidates: {
+      candidateTaskIds: candidates.map(({ taskId }) => taskId),
+      filteredCandidates: [...filteredCandidates],
+      eligibility: {
+        approvalPassedTaskIds: [...eligibility.approvalPassedTaskIds],
+        worktreePassedTaskIds: [...eligibility.worktreePassedTaskIds],
+        activeLeaseCheckAt: eligibility.activeLeaseCheckAt,
+      },
+    },
+    eligibilityChanged,
+  };
+}
+
 export function supersedeJevTaskScheduleAdviceV1(
   audit: JevScheduleAdviceAuditV1,
 ): JevScheduleAdviceAuditV1 {
@@ -376,31 +445,5 @@ export function supersedeJevTaskScheduleAdviceV1(
     reasonCode: "eligibility-changed",
     adoptedTaskIds: [],
     overriddenTaskIds: [...audit.suggestedTaskIds],
-  };
-}
-
-export function ignoredJevTaskScheduleAdviceV1(
-  audit: JevScheduleAdviceAuditV1,
-  candidates: readonly JevScheduleCandidateV1[],
-  filteredCandidates: readonly JevScheduleCandidateFilterV1[],
-  eligibility: JevScheduleAdviceAuditV1["eligibility"],
-  reasonCode:
-    | "insufficient-candidates"
-    | "eligibility-changed"
-    | "candidate-bound-exceeded",
-): JevScheduleAdviceAuditV1 {
-  return {
-    ...audit,
-    status: reasonCode === "eligibility-changed" ? "superseded" : audit.status,
-    reasonCode,
-    candidateTaskIds: candidates.map(({ taskId }) => taskId),
-    filteredCandidates: [...filteredCandidates],
-    adoptedTaskIds: [],
-    overriddenTaskIds: [...audit.suggestedTaskIds],
-    eligibility: {
-      approvalPassedTaskIds: [...eligibility.approvalPassedTaskIds],
-      worktreePassedTaskIds: [...eligibility.worktreePassedTaskIds],
-      activeLeaseCheckAt: eligibility.activeLeaseCheckAt,
-    },
   };
 }

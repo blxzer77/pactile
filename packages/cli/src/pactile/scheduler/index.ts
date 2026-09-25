@@ -31,8 +31,12 @@ export {
   type TaskScheduleLifecycleSnapshotV1,
 } from "./task-map-scheduler.js";
 
-export type { JevScheduleAdviceAuditV1 } from "../jev/scheduler-advice.js";
-export type { JevScheduleAdviceOptionsV1 } from "../jev/scheduler-advice.js";
+export type {
+  JevScheduleAdviceAuditV1,
+  JevScheduleAdviceOptionsV1,
+  JevScheduleFinalEligibleCandidatesV1,
+  JevScheduleRequestSnapshotV1,
+} from "../jev/scheduler-advice.js";
 
 export {
   bindTaskKernelRunDispatchOwnerV1,
