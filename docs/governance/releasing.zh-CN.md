@@ -57,8 +57,8 @@ CI/默认模式会执行全新 npm 安装。真实桌面宿主及模型 Provider
 
 tag 工作流在封装 tarball 前重复质量门槛。准备 Job 只有只读权限且没有发布凭据；
 独立的发布 Job 获取 GitHub OIDC 权限，通过 npm Trusted Publisher 发布已经
-封装的产物。npm Trusted Publisher 需绑定 `blxzer77/pactile` 与
-`.github/workflows/publish.yml`。manifest SHA-256 收据保存在 artifact 目录
+封装的产物。npm Trusted Publisher 需绑定 `blxzer77/pactile`，工作流文件名只填
+`publish.yml`，并允许直接执行 `npm publish`。manifest SHA-256 收据保存在 artifact 目录
 之外。来源、包图、tarball、收据或 npm 回读失败都会阻断发布或晋级。
 
 计划、dry run、CI 通过或本地合入都不自动授权 Push、合入 `main`、打 tag、
