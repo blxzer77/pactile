@@ -50,8 +50,8 @@ pnpm release:check
 pnpm --filter @blxzer/pactile check:pack-files
 pnpm --filter @blxzer/pactile check:release-pack
 pnpm docs:smoke
-node packages/cli/scripts/check-pactile-brand-surface.js --release
-node packages/cli/scripts/release-conformance.js
+pnpm --filter @blxzer/pactile exec tsx scripts/check-pactile-brand-surface.ts --release
+pnpm --filter @blxzer/pactile exec tsx scripts/release-conformance.ts
 ```
 
 The conformance check runs the sealed package in a PATH with Node and no

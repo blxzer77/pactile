@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.scripts.json",
+  "compilerOptions": {
+    "rootDir": "./scripts",
+    "outDir": "./.tmp/p31-script-build",
+    "noEmit": false,
+    "declaration": false,
+    "sourceMap": false
+  }
+}

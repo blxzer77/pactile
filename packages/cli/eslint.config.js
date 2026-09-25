@@ -6,13 +6,13 @@ export default [
   ...tseslint.configs.strict,
   ...tseslint.configs.stylistic,
   {
-    ignores: ["dist/**", "node_modules/**", "*.js", "scripts/**"],
+    ignores: ["dist/**", "node_modules/**", "*.js"],
   },
   {
-    files: ["src/**/*.ts"],
+    files: ["src/**/*.ts", "scripts/**/*.ts"],
     languageOptions: {
       parserOptions: {
-        project: "./tsconfig.json",
+        project: ["./tsconfig.json", "./tsconfig.scripts.json"],
       },
     },
     rules: {
@@ -42,6 +42,16 @@ export default [
       "no-console": "off",
       "prefer-const": "error",
       "no-var": "error",
+    },
+  },
+  {
+    files: ["scripts/**/*.ts"],
+    rules: {
+      // The migrated maintenance scripts receive semantic checks from their
+      // dedicated tsconfig; relax style-only strictness while their API types
+      // are added in focused follow-up edits.
+      "@typescript-eslint/explicit-function-return-type": "off",
+      "@typescript-eslint/prefer-nullish-coalescing": "off",
     },
   },
 ];

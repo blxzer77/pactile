@@ -3,11 +3,11 @@
  * Create migration manifest for a new version.
  *
  * Usage:
- *   node scripts/create-manifest.js                          # interactive
- *   node scripts/create-manifest.js --breaking
- *   node scripts/create-manifest.js --version 0.3.0-rc.0
- *   node scripts/create-manifest.js -y --description "..." --changelog "..."  # non-interactive
- *   echo '{"version":"0.3.9",...}' | node scripts/create-manifest.js         # JSON via stdin
+ *   pnpm --filter @blxzer/pactile exec tsx scripts/create-manifest.ts          # interactive
+ *   pnpm --filter @blxzer/pactile exec tsx scripts/create-manifest.ts --breaking
+ *   pnpm --filter @blxzer/pactile exec tsx scripts/create-manifest.ts --version 0.3.0-rc.0
+ *   pnpm --filter @blxzer/pactile exec tsx scripts/create-manifest.ts -y --description "..." --changelog "..." # non-interactive
+ *   echo '{"version":"0.3.9",...}' | pnpm --filter @blxzer/pactile exec tsx scripts/create-manifest.ts # JSON via stdin
  *
  * Stdin JSON mode (auto-detected when stdin is piped, or force with --stdin):
  *   Reads a JSON object from stdin with fields: version, description, changelog
@@ -42,6 +42,8 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
+import { isRecord } from "./types.js";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MANIFESTS_DIR = path.join(__dirname, "../src/migrations/manifests");
 const PACKAGE_NAME = "@blxzer/pactile";
@@ -53,10 +55,13 @@ const PACKAGE_NAME = "@blxzer/pactile";
  */
 function versionOnNpm(version) {
   try {
-    const out = execSync(`npm view ${PACKAGE_NAME}@${version} version 2>/dev/null`, {
-      encoding: "utf-8",
-      timeout: 8_000,
-    }).trim();
+    const out = execSync(
+      `npm view ${PACKAGE_NAME}@${version} version 2>/dev/null`,
+      {
+        encoding: "utf-8",
+        timeout: 8_000,
+      },
+    ).trim();
     return out === version;
   } catch {
     return false;
@@ -75,8 +80,8 @@ function guardAgainstPublishedManifest(version, manifestPath, allowOverwrite) {
   if (onNpm) {
     console.error(
       `\n✗ Version ${version} is already published on npm.\n` +
-      `  Its manifest is part of the update contract and must NOT be rewritten.\n` +
-      `  If you need to release additional migrations, use the NEXT version number.\n`,
+        `  Its manifest is part of the update contract and must NOT be rewritten.\n` +
+        `  If you need to release additional migrations, use the NEXT version number.\n`,
     );
     process.exit(1);
   }
@@ -84,27 +89,30 @@ function guardAgainstPublishedManifest(version, manifestPath, allowOverwrite) {
   if (exists && !allowOverwrite) {
     console.error(
       `\n✗ ${manifestPath} already exists.\n` +
-      `  Use --force in non-interactive modes, or answer "y" to the overwrite prompt\n` +
-      `  in interactive mode, if you really intend to rewrite a NOT-YET-PUBLISHED manifest.\n`,
+        `  Use --force in non-interactive modes, or answer "y" to the overwrite prompt\n` +
+        `  in interactive mode, if you really intend to rewrite a NOT-YET-PUBLISHED manifest.\n`,
     );
     process.exit(1);
   }
 }
 
-function readPackageVersion() {
+function readPackageVersion(): string {
   const pkg = JSON.parse(
-    fs.readFileSync(path.join(__dirname, "../package.json"), "utf-8")
+    fs.readFileSync(path.join(__dirname, "../package.json"), "utf-8"),
   );
   return pkg.version;
 }
 
-function getNextVersion(currentVersion) {
+function getNextVersion(currentVersion: string) {
   // beta.N → next beta
   const betaMatch = currentVersion.match(/^(\d+\.\d+\.\d+)-beta\.(\d+)$/);
   if (betaMatch) {
     const base = betaMatch[1];
     const next = parseInt(betaMatch[2], 10) + 1;
-    return { suggested: `${base}-beta.${next}`, hint: `or ${base}-rc.0 to promote to RC` };
+    return {
+      suggested: `${base}-beta.${next}`,
+      hint: `or ${base}-rc.0 to promote to RC`,
+    };
   }
   // rc.N → next rc
   const rcMatch = currentVersion.match(/^(\d+\.\d+\.\d+)-rc\.(\d+)$/);
@@ -123,7 +131,7 @@ function getNextVersion(currentVersion) {
   return { suggested: currentVersion, hint: null };
 }
 
-function getArgValue(args, flag) {
+function getArgValue(args: string[], flag: string): string | null {
   const idx = args.indexOf(flag);
   return idx !== -1 && idx + 1 < args.length ? args[idx + 1] : null;
 }
@@ -134,12 +142,18 @@ function getArgValue(args, flag) {
  * the shell delivers literal backslash + n characters. This function converts
  * them to real newlines so JSON.stringify produces correct \n escapes.
  */
-function unescapeLiterals(str) {
+function unescapeLiterals(str: string): string {
   return str.replace(/\\n/g, "\n").replace(/\\t/g, "\t");
 }
 
-function askQuestion(rl, question, defaultValue = "") {
-  const prompt = defaultValue ? `${question} [${defaultValue}]: ` : `${question}: `;
+function askQuestion(
+  rl: readline.Interface,
+  question: string,
+  defaultValue = "",
+): Promise<string> {
+  const prompt = defaultValue
+    ? `${question} [${defaultValue}]: `
+    : `${question}: `;
   return new Promise((resolve) => {
     rl.question(prompt, (answer) => {
       resolve(answer.trim() || defaultValue);
@@ -150,11 +164,13 @@ function askQuestion(rl, question, defaultValue = "") {
 /**
  * Read all data from stdin as a string.
  */
-function readStdin() {
+function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = "";
     process.stdin.setEncoding("utf-8");
-    process.stdin.on("data", (chunk) => { data += chunk; });
+    process.stdin.on("data", (chunk) => {
+      data += chunk;
+    });
     process.stdin.on("end", () => resolve(data));
     process.stdin.on("error", reject);
   });
@@ -176,43 +192,82 @@ async function main() {
   // --- Stdin JSON mode (best for AI / scripting) ---
   if (stdinMode) {
     const input = await readStdin();
-    let data;
+    let parsed: unknown;
     try {
-      data = JSON.parse(input);
-    } catch (e) {
+      parsed = JSON.parse(input);
+    } catch {
       console.error("Error: --stdin expects valid JSON on stdin");
       process.exit(1);
     }
-    if (!data.version || !data.description || !data.changelog) {
-      console.error("Error: --stdin JSON requires version, description, and changelog fields");
+    if (
+      !isRecord(parsed) ||
+      typeof parsed.version !== "string" ||
+      typeof parsed.description !== "string" ||
+      typeof parsed.changelog !== "string"
+    ) {
+      console.error(
+        "Error: --stdin JSON requires version, description, and changelog fields",
+      );
       process.exit(1);
     }
-    const breaking = data.breaking ?? false;
-    const recommendMigrate = data.recommendMigrate ?? breaking;
+    const data = parsed;
+    if (
+      (data.breaking != null && typeof data.breaking !== "boolean") ||
+      (data.recommendMigrate != null &&
+        typeof data.recommendMigrate !== "boolean") ||
+      (data.migrations != null && !Array.isArray(data.migrations)) ||
+      (data.notes != null && typeof data.notes !== "string") ||
+      (data.migrationGuide != null &&
+        typeof data.migrationGuide !== "string") ||
+      (data.aiInstructions != null && typeof data.aiInstructions !== "string")
+    ) {
+      console.error(
+        "Error: optional --stdin manifest fields have invalid types",
+      );
+      process.exit(1);
+    }
+    const version = data.version;
+    const description = data.description;
+    const changelog = data.changelog;
+    const breaking = data.breaking === true;
+    const recommendMigrate =
+      typeof data.recommendMigrate === "boolean"
+        ? data.recommendMigrate
+        : breaking;
     // Breaking releases MUST include a migrationGuide — without it, the
     // generated migration task PRD pulls only older guides from between
     // fromVersion and toVersion, leaving users to migrate blind. See
     // `spec/cli/backend/migrations.md` § "Migration guides are mandatory
     // on breaking releases".
-    if (breaking && recommendMigrate && !data.migrationGuide) {
+    if (
+      breaking &&
+      recommendMigrate &&
+      (typeof data.migrationGuide !== "string" ||
+        data.migrationGuide.length === 0)
+    ) {
       console.error(
         "Error: breaking + recommendMigrate manifests require a migrationGuide field (narrative migration doc that gets templated into the user's migration task PRD). " +
-        "Also recommend aiInstructions (AI hints for helping users migrate)."
+          "Also recommend aiInstructions (AI hints for helping users migrate).",
       );
       process.exit(1);
     }
-    const manifestPath = path.join(MANIFESTS_DIR, `${data.version}.json`);
-    guardAgainstPublishedManifest(data.version, manifestPath, data.force === true);
+    const manifestPath = path.join(MANIFESTS_DIR, `${version}.json`);
+    guardAgainstPublishedManifest(version, manifestPath, data.force === true);
     const manifest = {
-      version: data.version,
-      description: data.description,
+      version,
+      description,
       breaking,
       recommendMigrate,
-      changelog: data.changelog,
-      ...(data.migrationGuide ? { migrationGuide: data.migrationGuide } : {}),
-      ...(data.aiInstructions ? { aiInstructions: data.aiInstructions } : {}),
+      changelog,
+      ...(typeof data.migrationGuide === "string" && data.migrationGuide
+        ? { migrationGuide: data.migrationGuide }
+        : {}),
+      ...(typeof data.aiInstructions === "string" && data.aiInstructions
+        ? { aiInstructions: data.aiInstructions }
+        : {}),
       migrations: data.migrations ?? [],
-      notes: data.notes ?? "No migration required.",
+      notes:
+        typeof data.notes === "string" ? data.notes : "No migration required.",
     };
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
     console.log(`✅ Created: ${manifestPath}`);
@@ -229,13 +284,17 @@ async function main() {
     if (isBreaking) {
       // See rationale in --stdin branch above.
       console.error(
-        "Error: -y mode cannot produce a breaking manifest — migrationGuide + aiInstructions are required and -y has no way to supply them. Use --stdin with JSON input instead."
+        "Error: -y mode cannot produce a breaking manifest — migrationGuide + aiInstructions are required and -y has no way to supply them. Use --stdin with JSON input instead.",
       );
       process.exit(1);
     }
     const version = versionArg || suggested;
     const manifestPath = path.join(MANIFESTS_DIR, `${version}.json`);
-    guardAgainstPublishedManifest(version, manifestPath, args.includes("--force"));
+    guardAgainstPublishedManifest(
+      version,
+      manifestPath,
+      args.includes("--force"),
+    );
 
     const manifest = {
       version,
@@ -246,9 +305,9 @@ async function main() {
       migrations: [],
       notes: notesArg
         ? unescapeLiterals(notesArg)
-        : (isBreaking
+        : isBreaking
           ? "Review changelog and run with --migrate if needed."
-          : "No migration required."),
+          : "No migration required.",
     };
 
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
@@ -281,8 +340,8 @@ async function main() {
     if (versionOnNpm(version)) {
       console.error(
         `\n✗ Version ${version} is already published on npm.\n` +
-        `  Rewriting its manifest would break \`pactile update\` for users\n` +
-        `  currently at that version. Use the NEXT version number instead.\n`,
+          `  Rewriting its manifest would break \`pactile update\` for users\n` +
+          `  currently at that version. Use the NEXT version number instead.\n`,
       );
       rl.close();
       process.exit(1);
@@ -298,22 +357,32 @@ async function main() {
     }
 
     // Get description
-    const description = descriptionArg || await askQuestion(rl, "Description (short)");
+    const description =
+      descriptionArg || (await askQuestion(rl, "Description (short)"));
 
     // Get changelog
-    const changelog = changelogArg || await askQuestion(rl, "Changelog (one line summary)");
+    const changelog =
+      changelogArg || (await askQuestion(rl, "Changelog (one line summary)"));
 
     // Get breaking status
     let breaking = isBreaking;
     if (!isBreaking) {
-      const breakingAnswer = await askQuestion(rl, "Breaking change? (y/n)", "n");
+      const breakingAnswer = await askQuestion(
+        rl,
+        "Breaking change? (y/n)",
+        "n",
+      );
       breaking = breakingAnswer.toLowerCase() === "y";
     }
 
     // Get recommend migrate
     let recommendMigrate = false;
     if (breaking) {
-      const migrateAnswer = await askQuestion(rl, "Recommend --migrate? (y/n)", "y");
+      const migrateAnswer = await askQuestion(
+        rl,
+        "Recommend --migrate? (y/n)",
+        "y",
+      );
       recommendMigrate = migrateAnswer.toLowerCase() === "y";
     }
 
@@ -327,12 +396,14 @@ async function main() {
     if (breaking && recommendMigrate) {
       console.log(
         "\n⚠ Breaking releases require migrationGuide + aiInstructions fields.\n" +
-        "   Interactive mode can't capture multi-paragraph content cleanly;\n" +
-        "   the manifest will be written with TODO placeholders, then you\n" +
-        "   MUST hand-edit the JSON (or re-run via --stdin with full JSON).\n"
+          "   Interactive mode can't capture multi-paragraph content cleanly;\n" +
+          "   the manifest will be written with TODO placeholders, then you\n" +
+          "   MUST hand-edit the JSON (or re-run via --stdin with full JSON).\n",
       );
-      migrationGuide = "TODO: narrative migration guide (gets templated into the user's migration task PRD on pactile update --migrate).";
-      aiInstructions = "TODO: AI hints for helping users migrate (what to check, common pitfalls).";
+      migrationGuide =
+        "TODO: narrative migration guide (gets templated into the user's migration task PRD on pactile update --migrate).";
+      aiInstructions =
+        "TODO: AI hints for helping users migrate (what to check, common pitfalls).";
     }
 
     // Build manifest
@@ -345,9 +416,11 @@ async function main() {
       ...(migrationGuide ? { migrationGuide } : {}),
       ...(aiInstructions ? { aiInstructions } : {}),
       migrations: [],
-      notes: notesArg || (breaking
-        ? "Review changelog and run with --migrate if needed."
-        : "No migration required."),
+      notes:
+        notesArg ||
+        (breaking
+          ? "Review changelog and run with --migrate if needed."
+          : "No migration required."),
     };
 
     // Write manifest
@@ -358,10 +431,16 @@ async function main() {
     console.log(JSON.stringify(manifest, null, 2));
 
     // Detect release type for next steps hint
-    const releaseCmd = version.includes("-beta.") ? "pnpm release:beta" : version.includes("-rc.") ? "pnpm release:rc" : "pnpm release";
+    const releaseCmd = version.includes("-beta.")
+      ? "pnpm release:beta"
+      : version.includes("-rc.")
+        ? "pnpm release:rc"
+        : "pnpm release";
 
     console.log("\n📋 Next steps:");
-    console.log(`  1. Edit ${version}.json if needed (add migrations, migrationGuide, etc.)`);
+    console.log(
+      `  1. Edit ${version}.json if needed (add migrations, migrationGuide, etc.)`,
+    );
     console.log(`  2. ${releaseCmd}`);
   } finally {
     rl.close();

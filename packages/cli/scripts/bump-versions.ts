@@ -3,7 +3,7 @@
  * Bump the single @blxzer/pactile package for a maintainer-authored release PR.
  *
  * Usage:
- *   node scripts/bump-versions.js <type>
+ *   pnpm --filter @blxzer/pactile exec tsx scripts/bump-versions.ts <type>
  *
  * <type>:
  *   patch | minor | major

@@ -190,7 +190,7 @@ Smoke must run on Windows and POSIX from a clean project, an upgraded legacy pro
 Run from the repository root:
 
 ```powershell
-node packages/cli/scripts/check-pactile-brand-surface.js
+pnpm --filter @blxzer/pactile exec tsx scripts/check-pactile-brand-surface.ts
 pnpm --filter @blxzer/cursor-trellis exec vitest run test/docs/pactile-brand-surface.test.ts
 ```
 

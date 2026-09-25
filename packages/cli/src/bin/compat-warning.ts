@@ -1,6 +1,6 @@
 let warned = false;
 
-export function warnLegacyCliOnce() {
+export function warnLegacyCliOnce(): void {
   if (warned) return;
   warned = true;
   process.stderr.write(

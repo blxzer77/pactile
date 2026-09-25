@@ -5,6 +5,8 @@ description: CLI-first web research and source retrieval through the local smart
 
 # Smart Search CLI
 
+This workflow requires the separate Smart Search Middleware CLI to be installed and configured on the user's PATH. Pactile does not bundle or install `smart-search`; its prerequisites are managed independently from Pactile's Node.js runtime.
+
 Use the local `smart-search` command as the default execution layer for web research. The skill decides routing; the CLI performs the work; JSON or saved files provide evidence.
 
 ## Default workflow

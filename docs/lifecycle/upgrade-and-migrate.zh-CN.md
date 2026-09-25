@@ -43,7 +43,7 @@ pactile task list
 条目不在目标内，也无需先执行独立的 `0.5.1-beta.0` 升级。
 
 发布前维护者运行封装 tarball 的
-[`release-conformance.js`](../../packages/cli/scripts/release-conformance.js)
+[`release-conformance.ts`](../../packages/cli/scripts/release-conformance.ts)
 验收。它在无 Python 的 PATH 中记录 CLI 冷启动、后续调用、Pi RPC 冷/热启动、
 并行批次与整体耗时。此验收使用模拟的 Codex 回执和 Pi 响应；真实桌面宿主与
 模型 Provider 的结果应另行记录。

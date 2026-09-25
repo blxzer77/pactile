@@ -3,4 +3,4 @@
 import { warnLegacyCliOnce } from "./compat-warning.js";
 
 warnLegacyCliOnce();
-import("../dist/cli/index.js");
+import("../cli/index.js");

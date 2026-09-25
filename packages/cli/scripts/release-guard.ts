@@ -1,18 +1,33 @@
 import { execFileSync } from "node:child_process";
 
+import type { CommandOptions, CommandRunner } from "./types.js";
+
+type ReleaseChannel = "alpha" | "beta" | "rc" | "stable";
+interface ReleaseVersion {
+  version: string;
+  baseVersion: string;
+  channel: ReleaseChannel;
+  major: number;
+  minor: number;
+  patch: number;
+  prereleaseNumber: number | null;
+}
+type ReleaseTag = ReleaseVersion & { tag: string };
+type AncestryCheck = (ancestor: string, descendant: string) => boolean;
+
 const VERSION_RE =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(beta|rc|alpha)\.(0|[1-9]\d*))?$/;
 
 export const RELEASE_TAG_PREFIX = "pactile-v";
 
-function commandName(command) {
+function commandName(command: string): string {
   if (process.platform !== "win32") return command;
   if (command === "pnpm") return "pnpm.cmd";
   if (command === "npm") return "npm.cmd";
   return command;
 }
 
-function quoteCmdArgument(value) {
+function quoteCmdArgument(value: string): string {
   const text = String(value);
   if (!/[\s"&|<>^()%!]/.test(text)) return text;
   return `"${text.replace(/"/g, '""')}"`;
@@ -22,8 +37,14 @@ function quoteCmdArgument(value) {
  * Default command seam for release scripts. Tests inject a recorder instead,
  * so no credential, tag, push, or publish is needed to exercise the gates.
  */
-export function createCommandRunner({ baseEnv = process.env } = {}) {
-  return (command, args = [], options = {}) => {
+export function createCommandRunner({
+  baseEnv = process.env,
+}: { baseEnv?: NodeJS.ProcessEnv } = {}): CommandRunner {
+  return (
+    command: string,
+    args: string[] = [],
+    options: CommandOptions = {},
+  ) => {
     const windowsPackageShim =
       process.platform === "win32" && (command === "pnpm" || command === "npm");
     const executable = windowsPackageShim
@@ -37,13 +58,13 @@ export function createCommandRunner({ baseEnv = process.env } = {}) {
           [commandName(command), ...args].map(quoteCmdArgument).join(" "),
         ]
       : args;
-    const env = { ...baseEnv, ...options.env };
+    const env: NodeJS.ProcessEnv = {};
+    for (const [key, value] of Object.entries({ ...baseEnv, ...options.env })) {
+      if (value !== undefined) env[key] = value;
+    }
     // `undefined` is an explicit request to remove a value inherited by the
     // parent process. Release preparation uses this to keep registry publish
     // credentials out of every build/test/pack child process.
-    for (const [key, value] of Object.entries(env)) {
-      if (value === undefined) delete env[key];
-    }
     return execFileSync(executable, executableArgs, {
       cwd: options.cwd,
       encoding: "utf-8",
@@ -53,16 +74,26 @@ export function createCommandRunner({ baseEnv = process.env } = {}) {
   };
 }
 
-function outputOf(result) {
+function outputOf(result: string | Buffer | null | undefined): string {
   if (result === undefined || result === null) return "";
   return Buffer.isBuffer(result) ? result.toString("utf-8") : String(result);
 }
 
-function capture(runner, command, args, cwd) {
+function capture(
+  runner: CommandRunner,
+  command: string,
+  args: string[],
+  cwd: string,
+): string {
   return outputOf(runner(command, args, { cwd, capture: true })).trim();
 }
 
-function commandSucceeds(runner, command, args, cwd) {
+function commandSucceeds(
+  runner: CommandRunner,
+  command: string,
+  args: string[],
+  cwd: string,
+): boolean {
   try {
     runner(command, args, { cwd, capture: true });
     return true;
@@ -71,7 +102,7 @@ function commandSucceeds(runner, command, args, cwd) {
   }
 }
 
-export function parseReleaseVersion(version) {
+export function parseReleaseVersion(version: string): ReleaseVersion {
   const match = VERSION_RE.exec(version);
   if (!match) {
     throw new Error(
@@ -82,7 +113,8 @@ export function parseReleaseVersion(version) {
   return {
     version,
     baseVersion: `${match[1]}.${match[2]}.${match[3]}`,
-    channel: match[4] ?? "stable",
+    channel:
+      (match[4] as Exclude<ReleaseChannel, "stable"> | undefined) ?? "stable",
     major: Number(match[1]),
     minor: Number(match[2]),
     patch: Number(match[3]),
@@ -90,13 +122,18 @@ export function parseReleaseVersion(version) {
   };
 }
 
-export function compareReleaseVersions(left, right) {
+export function compareReleaseVersions(left: string, right: string): number {
   const a = parseReleaseVersion(left);
   const b = parseReleaseVersion(right);
-  for (const key of ["major", "minor", "patch"]) {
+  for (const key of ["major", "minor", "patch"] as const) {
     if (a[key] !== b[key]) return a[key] < b[key] ? -1 : 1;
   }
-  const channelRank = { alpha: 0, beta: 1, rc: 2, stable: 3 };
+  const channelRank: Record<ReleaseChannel, number> = {
+    alpha: 0,
+    beta: 1,
+    rc: 2,
+    stable: 3,
+  };
   if (channelRank[a.channel] !== channelRank[b.channel]) {
     return channelRank[a.channel] < channelRank[b.channel] ? -1 : 1;
   }
@@ -105,7 +142,7 @@ export function compareReleaseVersions(left, right) {
   return a.prereleaseNumber < b.prereleaseNumber ? -1 : 1;
 }
 
-export function parseReleaseTag(tag) {
+export function parseReleaseTag(tag: string): ReleaseTag {
   const prefix = RELEASE_TAG_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = new RegExp(`^${prefix}(.+)$`).exec(tag);
   if (!match) {
@@ -117,7 +154,10 @@ export function parseReleaseTag(tag) {
   return { ...parsed, tag };
 }
 
-export function resolveReleaseTag({ explicitTag, env = process.env } = {}) {
+export function resolveReleaseTag({
+  explicitTag,
+  env = process.env,
+}: { explicitTag?: string; env?: NodeJS.ProcessEnv } = {}): string {
   let raw = explicitTag ?? "";
   if (!raw && env.GITHUB_REF?.startsWith("refs/tags/")) {
     raw = env.GITHUB_REF;
@@ -134,7 +174,11 @@ export function assertMatchingVersions({
   cliVersion,
   cliName,
   expectedVersion,
-}) {
+}: {
+  cliVersion: string;
+  cliName?: string;
+  expectedVersion?: string;
+}): string {
   parseReleaseVersion(cliVersion);
   if (cliName !== undefined && cliName !== "@blxzer/pactile") {
     throw new Error(`Release package must be @blxzer/pactile, got ${cliName}.`);
@@ -147,7 +191,7 @@ export function assertMatchingVersions({
   return cliVersion;
 }
 
-export function assertCleanTree(status) {
+export function assertCleanTree(status: string): void {
   if (status.trim() !== "") {
     throw new Error(
       `Release requires a clean working tree. Commit, stash, or discard these ` +
@@ -165,14 +209,22 @@ export function assertCleanTree(status) {
  * where iteration happens and where a `-beta.N` / `-rc.N` version is allowed
  * to be tested before it earns a place on the release line.
  */
-export function allowedReleaseBranches(version) {
+export function allowedReleaseBranches(
+  version: string,
+): ("main" | "develop")[] {
   const { channel } = parseReleaseVersion(version);
   return channel === "stable" ? ["main"] : ["develop"];
 }
 
-export function assertReleaseBranch({ branch, version }) {
+export function assertReleaseBranch({
+  branch,
+  version,
+}: {
+  branch: string;
+  version: string;
+}): void {
   const allowed = allowedReleaseBranches(version);
-  if (!allowed.includes(branch)) {
+  if (!allowed.some((candidate) => candidate === branch)) {
     throw new Error(
       `Release ${version} cannot be prepared from branch "${branch || "(detached)"}". ` +
         `Allowed branches: ${allowed.join(", ")}.`,
@@ -180,7 +232,11 @@ export function assertReleaseBranch({ branch, version }) {
   }
 }
 
-function requireSameCommit(isAncestor, head, remoteRef) {
+function requireSameCommit(
+  isAncestor: AncestryCheck,
+  head: string,
+  remoteRef: string,
+): void {
   if (!isAncestor(head, remoteRef) || !isAncestor(remoteRef, head)) {
     throw new Error(
       `Release branch HEAD (${head}) must exactly match ${remoteRef}; refusing ` +
@@ -196,7 +252,13 @@ export function assertLocalReleaseAncestry({
   version,
   remote,
   isAncestor,
-}) {
+}: {
+  branch: string;
+  head: string;
+  version: string;
+  remote: string;
+  isAncestor: AncestryCheck;
+}): void {
   const developRef = `${remote}/develop`;
   const mainRef = `${remote}/main`;
 
@@ -220,7 +282,14 @@ export function assertPublishProvenance({
   tagCommit,
   remote,
   isAncestor,
-}) {
+}: {
+  tag: string;
+  packageVersion: string;
+  head: string;
+  tagCommit: string;
+  remote: string;
+  isAncestor: AncestryCheck;
+}): ReleaseTag {
   const parsed = parseReleaseTag(tag);
   assertMatchingVersions({
     cliVersion: packageVersion,
@@ -247,7 +316,12 @@ export function inspectLocalRelease({
   cwd,
   version,
   remote = "private",
-}) {
+}: {
+  runner: CommandRunner;
+  cwd: string;
+  version: string;
+  remote?: string;
+}): { branch: string; head: string; remote: string; status: string } {
   const status = capture(
     runner,
     "git",
@@ -285,7 +359,14 @@ export function inspectPublishRelease({
   explicitTag,
   remote = "origin",
   env = process.env,
-}) {
+}: {
+  runner: CommandRunner;
+  cwd: string;
+  packageVersion: string;
+  explicitTag?: string;
+  remote?: string;
+  env?: NodeJS.ProcessEnv;
+}): ReleaseTag & { head: string; remote: string; status: string } {
   const status = capture(
     runner,
     "git",
