@@ -7,6 +7,7 @@ export * from "./exit/index.js";
 export * from "./tiles/loader.js";
 export * from "./tiles/catalog.js";
 export * from "./tiles/compiler.js";
+export * from "./tiles/selection.js";
 
 export * from "./projection/managed-block.js";
 export * from "./projection/structured-merge.js";

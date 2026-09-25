@@ -26,6 +26,7 @@ import { runPiCli } from "../commands/pi.js";
 import { runParallelCli } from "../commands/parallel.js";
 import { runCodexCli } from "../commands/codex.js";
 import { runContextCli } from "../commands/context.js";
+import { runTileSelectionCli } from "../commands/tile-selection.js";
 import { runSessionCli } from "../commands/session.js";
 import {
   PACTILE_ENVIRONMENT_KEYS,
@@ -479,6 +480,17 @@ program
   .argument("[arguments...]")
   .action(() => {
     process.exitCode = runContextCli(process.argv.slice(3));
+  });
+
+program
+  .command("tile-selection")
+  .description("Prepare, decide, and replay a current-Task Tile selection")
+  .addHelpText("after", "\nOperations:\n  prepare --intent <intent> --output <output> [--output <output> ...]\n  decide --offer-fingerprint <sha256> --kind <adopt|override|no-match> --intent <intent> --output <output> [--tile <ref>]\n  replay --snapshot-fingerprint <sha256>\n\nAgent offers include only compiler-checked candidates; a decision does not activate Tiles or authorize a Kernel Run.\n")
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[arguments...]")
+  .action(() => {
+    process.exitCode = runTileSelectionCli(process.argv.slice(3));
   });
 
 program

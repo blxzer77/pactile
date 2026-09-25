@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readKernel, type KernelPhase } from "../../core/task/index.js";
+import { prepareSelectedTaskBatch2TileSelection } from "../registry.js";
 import { resolveSelectedTask, resolveTaskDir } from "./session.js";
+import { taskTileSelectionRequest } from "../tiles/selection.js";
 
 const BASELINE = ["intake-basic", "define-basic", "approval-personal", "execute-agent", "verify-basic", "close-basic", "context-progressive", "observability-local"];
 const NEVER_LAYER2 = new Set(["context-progressive", "observability-local", "debug-recovery", "retention-storage", "retrieval-extended", "personal-memory"]);
@@ -38,6 +40,34 @@ function activeModules(extras: Record<string, unknown>, key: string, fallback: s
   if (!block || typeof block !== "object") return fallback;
   const active = (block as Record<string, unknown>).active;
   return Array.isArray(active) ? active.filter((item): item is string => typeof item === "string") : fallback;
+}
+
+function taskTileOffer(root: string, phase: KernelPhase): Record<string, unknown> {
+  try {
+    const prepared = prepareSelectedTaskBatch2TileSelection(
+      root,
+      taskTileSelectionRequest(phase),
+    );
+    if (!prepared.success) {
+      const receipt = "receipt" in prepared ? prepared.receipt : undefined;
+      return {
+        status: "unavailable",
+        ...(receipt ? { receipt } : {}),
+      };
+    }
+    const decisionOutputs = prepared.data.offer.requiredOutputs
+      .map((output) => `--output ${output}`)
+      .join(" ");
+    return {
+      status: "offered",
+      offer: prepared.data.offer,
+      decisionCommand: `pactile tile-selection decide --offer-fingerprint ${prepared.data.offer.fingerprint} --kind <adopt|override|no-match> --intent ${prepared.data.offer.intent} ${decisionOutputs} [--tile <candidate-ref>]`,
+      replayCommand: "pactile tile-selection replay --snapshot-fingerprint <snapshot-fingerprint>",
+      boundary: "A Tile decision is a receipt only. It does not activate a Tile or authorize a Kernel Run or execution.",
+    };
+  } catch {
+    return { status: "unavailable" };
+  }
 }
 
 /** Five-layer session context; no workflow dump or unactivated contract bodies. */
@@ -94,6 +124,9 @@ export function compileSessionPack(root: string, factGap = false): Record<string
   }
   const contracts = kept.filter((item) => item.kind === "contract");
   const artifacts = kept.filter((item) => item.kind === "artifact");
+  const tileSelection = dir && selected && !stale
+    ? taskTileOffer(root, phase)
+    : null;
   const stuck = stale || condition === "blocked";
   const next = stale ? "Clear the stale selection with `pactile task exit`, then ask what to work on next." : !selected ? "Intake: answer directly, clarify whether there is work, or draft an Open Proposal. Do not create a task without Open approval." : stuck ? "Stop. Classify the stall before retrying the same hypothesis." : NEXT[phase];
   const constraints = ["Do not treat `.pactile/workflow.md` or AGENTS longform as runtime SSOT.", "Modules absent from this pack are not installed.", `Rigor=${rigor}; topology=${topologyKind}.`, selected ? "Stay inside the selected task contract." : "No selected task: no task-directory dump; no Parent/Worker/VCS teaching."];
@@ -105,6 +138,7 @@ export function compileSessionPack(root: string, factGap = false): Record<string
     version: 1, source: "context-progressive",
     activationSource: { kind: "profile-runtime", filter: "phase-intersect-active", baselineActive, ondemandActive, note: "Layer 2 is phase-needed intersect still-active. Unactivated modules are not installed." },
     kernel: { phase, condition, outcome, humanPhase: HUMAN[phase], selected }, rigor, topologyKind,
+    ...(tileSelection ? { tileSelection } : {}),
     layers: [
       { n: 1, name: "resident-min", text: layer1 },
       { n: 2, name: "activated-contracts", moduleIds: contracts.map((item) => item.id), text: contracts.map((item) => `### \`${item.id}\`\n${item.text}`).join("\n\n") },

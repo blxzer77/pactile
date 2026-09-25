@@ -55,6 +55,11 @@ describe("Node context CLI", () => {
       expect(pack.kernel).toMatchObject({ phase: "define", selected: true });
       expect(layers[1].moduleIds).toEqual(["define-basic"]);
       expect(layers[2].items).toHaveLength(1);
+      const selection = pack.tileSelection as { status: string; offer?: { candidates: { ref: string }[] } };
+      expect(selection.status).toBe("offered");
+      expect(selection.offer?.candidates.some((candidate) => candidate.ref === "define-extended@1.0.0")).toBe(true);
+      expect(JSON.stringify(selection)).not.toContain("audit");
+      expect(JSON.stringify(selection)).toContain("does not activate a Tile");
       expect(JSON.stringify(pack)).not.toContain("SECRET WORKFLOW DUMP");
     } finally { vi.unstubAllEnvs(); }
   });
