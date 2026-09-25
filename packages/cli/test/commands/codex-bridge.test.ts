@@ -16,7 +16,7 @@ function fixture(): { root: string; task: string; prompt: string } {
   fs.writeFileSync(path.join(root, ".pactile", "tasks", "locale", "en", "default-prd.md"), "# {title}\n{goal}\n");
   fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), "artifact_locale: en\n");
   fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=tester\n");
-  expect(runTaskCli(["create", "Codex bridge", "--slug", "codex-bridge"], root)).toBe(0);
+  expect(runTaskCli(["legacy-create", "Codex bridge", "--slug", "codex-bridge"], root)).toBe(0);
   const task = fs.readdirSync(path.join(root, ".pactile", "tasks")).find((name) => name.endsWith("-codex-bridge"));
   if (!task) throw new Error("Task fixture missing");
   const prompt = path.join(root, "prompt.md");
