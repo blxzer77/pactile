@@ -333,6 +333,80 @@ describe("optional Jev advice for P33 Tile selection", () => {
     });
   });
 
+  it("preserves the deterministic offer when Jev is configured without a key", async () => {
+    const fetchImpl = fakeFetch(async () => providerResponse({}));
+    const { catalog, facts } = surface([
+      tile("alpha", "selection.result"),
+      tile("beta", "selection.result"),
+    ]);
+    const result = await adviseTileSelectionWithJevV1({
+      catalog,
+      request,
+      facts,
+      jev: {
+        facade: createJevDecisionFacadeV1({ transport: { fetchImpl } }),
+        callOptions: { egress: EGRESS },
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        source: "deterministic",
+        fallback: { reasonCode: "configuration-missing" },
+        jevDecision: { status: "fallback" },
+      },
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    if (!result.success) throw new Error("expected deterministic fallback");
+    expect(result.data.offer.suggestion.complete).toBe(true);
+  });
+
+  it("preserves the deterministic offer and redacts provider error details on service failure", async () => {
+    const serverDetail = "SERVER_SECRET=provider-response-must-not-leak";
+    const fetchImpl = fakeFetch(
+      async () =>
+        new Response(JSON.stringify({ detail: serverDetail }), {
+          status: 503,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const { catalog, facts } = surface([
+      tile("alpha", "selection.result"),
+      tile("beta", "selection.result"),
+    ]);
+    const result = await adviseTileSelectionWithJevV1({
+      catalog,
+      request,
+      facts,
+      jev: {
+        facade: createJevDecisionFacadeV1({
+          transport: {
+            apiKey: "test-key-not-persisted",
+            fetchImpl,
+            maxRetries: 0,
+          },
+        }),
+        callOptions: { egress: EGRESS },
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        source: "deterministic",
+        fallback: { reasonCode: "service-unavailable" },
+        jevDecision: { status: "fallback" },
+        eligibleCandidateCount: 2,
+        consideredCandidateCount: 2,
+        omittedCandidateCount: 0,
+      },
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(result)).not.toContain(serverDetail);
+    expect(JSON.stringify(result)).not.toContain("test-key-not-persisted");
+  });
+
   it("blocks explicitly sensitive candidate metadata before HTTP and explains fallback", async () => {
     const fetchImpl = fakeFetch(async () => providerResponse({}));
     const { catalog, facts } = surface([
