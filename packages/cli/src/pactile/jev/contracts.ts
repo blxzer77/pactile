@@ -100,6 +100,7 @@ export type JevAnswerV1 =
       readonly score: number;
       readonly confidence: number;
       readonly probabilities: Readonly<Record<string, number>>;
+      readonly legend: Readonly<Record<string, string | null>>;
     };
 export type JevTransportResultV1 =
   | {

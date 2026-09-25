@@ -3,6 +3,7 @@ import { MODEL_PATTERN } from "./contracts.js";
 import type { JevAnswerV1, JevQuestionV1 } from "./contracts.js";
 
 const COST_MICRO_USD_PER_INPUT_TOKEN = 0.042;
+const PROBABILITY_SUM_TOLERANCE = 0.01;
 
 function exactFields(
   record: Readonly<Record<string, unknown>>,
@@ -35,7 +36,41 @@ function probabilities(
       return null;
     result[key] = v;
   }
+  const sum = Object.values(result).reduce((total, value) => total + value, 0);
+  if (Math.abs(sum - 1) > PROBABILITY_SUM_TOLERANCE) return null;
   return Object.freeze(result);
+}
+
+function scoreLegend(
+  raw: unknown,
+  criteria: readonly (string | null)[],
+): Readonly<Record<string, string | null>> | null {
+  const source = snapshotPlainOwnDataRecordV3(raw);
+  if (source === null) return null;
+  const keys = criteria.map((_value, index) => String(index));
+  const actual = Object.keys(source).sort();
+  const expected = [...keys].sort();
+  if (
+    actual.length !== expected.length ||
+    actual.some((key, index) => key !== expected[index])
+  )
+    return null;
+  const legend: Record<string, string | null> = Object.create(null) as Record<
+    string,
+    string | null
+  >;
+  for (const key of keys) {
+    const value = source[key];
+    const criterion = criteria[Number(key)];
+    if (
+      criterion === undefined ||
+      (value !== null && typeof value !== "string") ||
+      value !== criterion
+    )
+      return null;
+    legend[key] = value;
+  }
+  return Object.freeze(legend);
 }
 function parseAnswers(
   raw: unknown,
@@ -81,6 +116,7 @@ function parseAnswers(
         return null;
       const p = probabilities(a.probabilities, labels);
       if (p === null) return null;
+      if (p[a.choice] !== Math.max(...Object.values(p))) return null;
       out[name] = Object.freeze({
         type: "choice",
         choice: a.choice,
@@ -109,12 +145,14 @@ function parseAnswers(
       )
         return null;
       const p = probabilities(a.probabilities, scoreKeys);
-      if (p === null) return null;
+      const legend = scoreLegend(a.legend, q.criteria);
+      if (p === null || legend === null) return null;
       out[name] = Object.freeze({
         type: "score",
         score: a.score,
         confidence: a.confidence,
         probabilities: p,
+        legend,
       });
     }
   }

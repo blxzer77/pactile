@@ -55,6 +55,7 @@ describe("optional Jev retrieval planning", () => {
   it("keeps the ordinary deterministic API result when Jev is not configured", async () => {
     const fetchImpl = fakeFetch(async () => providerResponse({}));
     const facade = createJevDecisionFacadeV1({
+      enabled: true,
       transport: { fetchImpl },
     });
     const query = "Describe what happens to a request across the harness.";
@@ -70,6 +71,32 @@ describe("optional Jev retrieval planning", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("uses configured Jev when enabled is omitted and egress is approved", async () => {
+    const fetchImpl = fakeFetch(async () =>
+      providerResponse({
+        semantic: answer("include"),
+        structural: answer("exclude"),
+      }),
+    );
+    const facade = createJevDecisionFacadeV1({
+      transport: {
+        apiKey: "test-key-not-persisted",
+        fetchImpl,
+      },
+    });
+    const query = "Describe what happens to a request across the harness.";
+
+    const result = await planRetrievalWithJevV1({
+      request: { query, requestedPolicy: jevPolicy },
+      jev: { facade, callOptions: { egress } },
+    });
+
+    expect(result.plan.intents).toEqual(["exact", "semantic"]);
+    expect(result.source).toBe("jev-advised");
+    expect(result.decision?.status).toBe("answered");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("adds only confident semantic or structural routes after deterministic exact planning", async () => {
     const fetchImpl = fakeFetch(async () =>
       providerResponse({
@@ -78,6 +105,7 @@ describe("optional Jev retrieval planning", () => {
       }),
     );
     const facade = createJevDecisionFacadeV1({
+      enabled: true,
       transport: {
         apiKey: "test-key-not-persisted",
         fetchImpl,
@@ -109,6 +137,7 @@ describe("optional Jev retrieval planning", () => {
   it("does not invoke Jev for caller-specified intents", async () => {
     const fetchImpl = fakeFetch(async () => providerResponse({}));
     const facade = createJevDecisionFacadeV1({
+      enabled: true,
       transport: {
         apiKey: "test-key-not-persisted",
         fetchImpl,
@@ -137,6 +166,7 @@ describe("optional Jev retrieval planning", () => {
       }),
     );
     const facade = createJevDecisionFacadeV1({
+      enabled: true,
       transport: {
         apiKey: "test-key-not-persisted",
         fetchImpl,
@@ -157,9 +187,59 @@ describe("optional Jev retrieval planning", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    [
+      "selects an answer below the probability maximum",
+      {
+        type: "choice",
+        choice: "include",
+        confidence: 0.9,
+        probabilities: { include: 0.1, exclude: 0.9 },
+      },
+    ],
+    [
+      "returns zero-sum probabilities",
+      {
+        type: "choice",
+        choice: "include",
+        confidence: 0.9,
+        probabilities: { include: 0, exclude: 0 },
+      },
+    ],
+  ])(
+    "preserves the deterministic plan when Jev %s",
+    async (_label, semanticAnswer) => {
+      const fetchImpl = fakeFetch(async () =>
+        providerResponse({
+          semantic: semanticAnswer,
+          structural: answer("exclude"),
+        }),
+      );
+      const facade = createJevDecisionFacadeV1({
+        enabled: true,
+        transport: {
+          apiKey: "test-key-not-persisted",
+          fetchImpl,
+        },
+      });
+      const query = "Describe what happens to a request across the harness.";
+
+      const result = await planRetrievalWithJevV1({
+        request: { query, requestedPolicy: jevPolicy },
+        jev: { facade, callOptions: { egress } },
+      });
+
+      expect(result.plan.intents).toEqual(["exact"]);
+      expect(result.source).toBe("deterministic");
+      expect(result.decision?.fallback?.reasonCode).toBe("invalid-response");
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("keeps deterministic routing after a sensitive query is rejected before egress", async () => {
     const fetchImpl = fakeFetch(async () => providerResponse({}));
     const facade = createJevDecisionFacadeV1({
+      enabled: true,
       transport: {
         apiKey: "test-key-not-persisted",
         fetchImpl,
@@ -185,6 +265,7 @@ describe("optional Jev retrieval planning", () => {
   it("lets the retrieval policy deny Jev even when the call option allows egress", async () => {
     const fetchImpl = fakeFetch(async () => providerResponse({}));
     const facade = createJevDecisionFacadeV1({
+      enabled: true,
       transport: {
         apiKey: "test-key-not-persisted",
         fetchImpl,

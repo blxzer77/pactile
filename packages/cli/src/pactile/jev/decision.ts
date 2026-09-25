@@ -27,7 +27,7 @@ const DEFAULT_MAX_DECISIONS = 1;
 const MAX_DECISIONS = 32;
 
 export interface JevDecisionFacadeConfigV1 {
-  /** Explicit opt-in. False keeps every decision on the local path. */
+  /** Optional kill switch. A configured key and approved egress enable calls unless false. */
   readonly enabled?: boolean;
   /** Maximum provider decisions for this facade instance, excluding retries. */
   readonly maxDecisions?: number;

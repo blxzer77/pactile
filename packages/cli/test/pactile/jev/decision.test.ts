@@ -54,6 +54,7 @@ describe("Jev decision facade", () => {
   it("falls back without a configured key and does not call fetch", async () => {
     const fetchImpl = fakeFetch(async () => jsonResponse(success));
     const facade = createJevDecisionFacadeV1({
+      enabled: true,
       transport: { fetchImpl },
     });
 
@@ -89,9 +90,25 @@ describe("Jev decision facade", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("allows configured key and approved egress when enabled is omitted", async () => {
+    const fetchImpl = fakeFetch(async () => jsonResponse(success));
+    const facade = createJevDecisionFacadeV1({
+      transport: {
+        apiKey: "test-key-not-persisted",
+        fetchImpl,
+      },
+    });
+
+    const result = await facade.decide(invocation);
+
+    expect(result.status).toBe("answered");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("records a bounded call budget and reported usage cost without content", async () => {
     const fetchImpl = fakeFetch(async () => jsonResponse(success));
     const facade = createJevDecisionFacadeV1({
+      enabled: true,
       maxDecisions: 1,
       transport: {
         apiKey: "test-key-not-persisted",
@@ -138,6 +155,7 @@ describe("Jev decision facade", () => {
   it("fails closed for sensitive text and denied destinations", async () => {
     const fetchImpl = fakeFetch(async () => jsonResponse(success));
     const facade = createJevDecisionFacadeV1({
+      enabled: true,
       transport: {
         apiKey: "test-key-not-persisted",
         fetchImpl,
@@ -178,6 +196,7 @@ describe("Jev decision facade", () => {
         }),
     );
     const facade = createJevDecisionFacadeV1({
+      enabled: true,
       maxDeadlineMs: 15,
       transport: {
         apiKey: "test-key-not-persisted",

@@ -17,17 +17,25 @@ const MAX_SNIPPETS = 3;
 const MAX_SNIPPET_CHARS = 3_500;
 const MAX_SUMMARY_CHARS = 2_000;
 
-const SENSITIVE: readonly RegExp[] = [
+const CREDENTIAL_PATTERNS: readonly RegExp[] = [
   /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/iu,
   /\b(?:gh[pousr]_[A-Za-z0-9]{12,}|github_pat_[A-Za-z0-9_]{12,}|glpat-[A-Za-z0-9_-]{12,}|xox[baprs]-[A-Za-z0-9-]{12,})\b/u,
   /\bAKIA[0-9A-Z]{16}\b/u,
   /\bsk-(?:live|test|proj)?[_-]?[A-Za-z0-9_-]{20,}\b/u,
+  /\bsk_(?:live|test)_[A-Za-z0-9_-]{12,}\b/iu,
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/u,
   /\b(?:[A-Z0-9_-]*(?:API[_-]?KEY|ACCESS[_-]?TOKEN|AUTH[_-]?TOKEN|REFRESH[_-]?TOKEN|CLIENT[_-]?SECRET|SECRET|PASSWORD|PASSWD|CREDENTIALS?)[A-Z0-9_-]*)\b\s*(?:=|:)\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/iu,
   /\bBearer\s+[A-Za-z0-9._~+/-]{8,}={0,2}\b/iu,
   /\bhttps?:\/\/[^/\s:@]+:[^/\s@]+@/iu,
   /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/iu,
-  /\b(?:CONFIDENTIAL|SENSITIVE(?: CONTENT)?|SECRET|PRIVATE|PERSONAL DATA|PII|PROPRIETARY|RESTRICTED|DO NOT SHARE EXTERNALLY|DO NOT SEND EXTERNALLY|INTERNAL ONLY)\b/iu,
+];
+const EXPLICIT_SENSITIVE_MARKERS: readonly RegExp[] = [
+  /\bCONFIDENTIAL\b/iu,
+  /\bSENSITIVE[ _-]?(?:CONTENT|INFORMATION|DATA)\b/iu,
+  /\b(?:PERSONAL DATA|PII|PROPRIETARY|RESTRICTED|INTERNAL ONLY|INTERNAL USE ONLY|FOR INTERNAL USE ONLY|DO NOT SHARE EXTERNALLY|DO NOT SEND EXTERNALLY|DO NOT SEND OUTSIDE|NOT FOR EXTERNAL USE)\b/iu,
+  /\bPRIVATE\s+(?:KEY|CONTENT|DATA|INFORMATION)\b/iu,
+  /\bSECRET\s+(?:KEY|TOKEN|CREDENTIALS?|INFORMATION|CONTENT|DATA)\b/iu,
+  /(?:内部机密|机密(?:内容|信息|资料)|敏感(?:内容|信息|资料)|不得对外(?:发送|提供|披露)|禁止对外(?:发送|提供|披露)|禁止(?:外发|外传)|请勿(?:对外发送|外发|外传)|仅限内部|内部使用|不可外发|不得分享给外部)/u,
 ];
 
 function exactFields(
@@ -41,7 +49,10 @@ function safeText(text: string): boolean {
   return text.length > 0 && !UNSAFE_CONTROL.test(text);
 }
 function hasSensitive(text: string): boolean {
-  return SENSITIVE.some((pattern) => pattern.test(text));
+  return (
+    CREDENTIAL_PATTERNS.some((pattern) => pattern.test(text)) ||
+    EXPLICIT_SENSITIVE_MARKERS.some((pattern) => pattern.test(text))
+  );
 }
 function validateQuestion(name: string, raw: unknown): JevQuestionV1 | null {
   if (!QUESTION_ID.test(name)) return null;

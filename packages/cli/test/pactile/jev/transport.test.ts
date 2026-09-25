@@ -145,10 +145,15 @@ describe("optional Jev transport input and egress boundary", () => {
 
   it.each([
     ["credential assignment", "TYPESAFE_API_KEY=sk-test-12345678901234567890"],
+    ["sk_live credential", "sk_live_0123456789abcdef0123456789"],
     ["secret assignment", "SECRET=top-secret-value"],
     ["email address", "contact me at engineer@example.test"],
+    [
+      "Chinese explicit egress marker",
+      "内部机密，不得对外发送：未发布的评审结论",
+    ],
     ["sensitive marker", "CONFIDENTIAL implementation detail"],
-    ["plain sensitivity marker", "This snippet is marked SENSITIVE."],
+    ["sensitive content marker", "This snippet is marked SENSITIVE CONTENT."],
     ["private key marker", "-----BEGIN PRIVATE KEY-----"],
   ])("blocks %s before network egress", async (_label, text) => {
     const fetchImpl = fakeFetch(async () => response(success));
@@ -163,6 +168,25 @@ describe("optional Jev transport input and egress boundary", () => {
     expect(result.fallback?.reasonCode).toBe("sensitive-content");
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(JSON.stringify(result.receipt)).not.toContain(text);
+  });
+
+  it("allows ordinary TypeScript private methods through the text boundary", async () => {
+    const fetchImpl = fakeFetch(async () => response(success));
+    const ordinarySource =
+      "private calculateRoute(input: string): boolean { return input.length > 0; }";
+    const result = await createJevTransportV1({
+      apiKey: "test-key",
+      fetchImpl,
+    })(
+      {
+        ...request,
+        sourceSnippets: [{ ref: "retrieval.planner", text: ordinarySource }],
+      },
+      { egress },
+    );
+
+    expect(result.status).toBe("answered");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("rejects filesystem paths and oversized input before network egress", async () => {
@@ -237,7 +261,7 @@ describe("optional Jev transport input and egress boundary", () => {
           type: "choice",
           choice: "semantic",
           confidence: 0.4,
-          probabilities: { exact: 0.6, semantic: 0.4 },
+          probabilities: { exact: 0.4, semantic: 0.6 },
         },
       },
     };
@@ -340,8 +364,106 @@ describe("optional Jev transport input and egress boundary", () => {
       type: "score",
       score: 1.6,
       confidence: 0.88,
+      legend: { 0: "weak", 1: "moderate", 2: "strong" },
     });
     expect(result).not.toHaveProperty("assurance");
+  });
+
+  it.each([
+    [
+      "choice does not match its highest probability",
+      {
+        ...success,
+        answers: {
+          route: {
+            type: "choice",
+            choice: "semantic",
+            confidence: 0.9,
+            probabilities: { exact: 0.9, semantic: 0.1 },
+          },
+        },
+      },
+    ],
+    [
+      "probabilities do not sum to one",
+      {
+        ...success,
+        answers: {
+          route: {
+            type: "choice",
+            choice: "semantic",
+            confidence: 0.9,
+            probabilities: { exact: 0.1, semantic: 0.7 },
+          },
+        },
+      },
+    ],
+    [
+      "probabilities sum to zero",
+      {
+        ...success,
+        answers: {
+          route: {
+            type: "choice",
+            choice: "semantic",
+            confidence: 0.9,
+            probabilities: { exact: 0, semantic: 0 },
+          },
+        },
+      },
+    ],
+  ])("rejects responses when %s", async (_label, body) => {
+    const fetchImpl = fakeFetch(async () => response(body));
+    const result = await createJevTransportV1({
+      apiKey: "test-key",
+      fetchImpl,
+    })(request, { egress });
+
+    expect(result.status).toBe("fallback");
+    expect(result.answers).toBeNull();
+    expect(result.fallback?.reasonCode).toBe("invalid-response");
+  });
+
+  it.each([
+    ["omits the legend", undefined],
+    [
+      "does not match the request criteria",
+      { 0: "weak", 1: "wrong", 2: "strong" },
+    ],
+  ])("rejects a Score answer when its legend %s", async (_label, legend) => {
+    const scoreRequest = {
+      taskSummary: "Rank the supplied bounded route fit.",
+      questions: {
+        fit: {
+          type: "score" as const,
+          instructions: "How strong is the fit?",
+          criteria: ["weak", "moderate", "strong"],
+        },
+      },
+    };
+    const scoreAnswer: Record<string, unknown> = {
+      type: "score",
+      score: 2,
+      confidence: 0.9,
+      probabilities: { 0: 0.05, 1: 0.05, 2: 0.9 },
+    };
+    if (legend !== undefined) scoreAnswer.legend = legend;
+    const fetchImpl = fakeFetch(async () =>
+      response({
+        model: "jev-1.13.0",
+        answers: { fit: scoreAnswer },
+        usage: { input_tokens: 90, output_tokens: 0 },
+      }),
+    );
+    const result = await createJevTransportV1({
+      apiKey: "test-key",
+      fetchImpl,
+    })(scoreRequest, {
+      egress: { ...egress, contentDecision: "task-summary-approved" },
+    });
+
+    expect(result.status).toBe("fallback");
+    expect(result.fallback?.reasonCode).toBe("invalid-response");
   });
   it("rejects malformed response contracts", async () => {
     const malformed = {
