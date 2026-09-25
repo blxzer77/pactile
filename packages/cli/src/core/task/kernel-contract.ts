@@ -211,7 +211,13 @@ export type KernelErrorCode =
   | "IDEMPOTENCY_MISMATCH"
   | "CORRUPT_STATE"
   | "LOCK_TIMEOUT"
-  | "HALF_CONVERSION";
+  | "HALF_CONVERSION"
+  | "DEPENDENCY_UNSATISFIED"
+  | "TASK_GATE_UNSATISFIED"
+  | "ACCEPTANCE_EVIDENCE_MISSING"
+  | "CANDIDATE_MISMATCH"
+  | "REVIEW_NOT_INDEPENDENT"
+  | "INVALID_DELIVERY_EVIDENCE";
 
 export class KernelError extends Error {
   readonly code: KernelErrorCode;
@@ -277,6 +283,15 @@ export const KERNEL_COMMAND_OPS = [
   "migrate",
   "inspect-projection",
   "repair-projection",
+  "task-read",
+  "task-create",
+  "dependency-add",
+  "run-start",
+  "run-resume",
+  "run-result",
+  "review-record",
+  "task-close-check",
+  "task-close",
 ] as const;
 
 export type KernelCommandOp = (typeof KERNEL_COMMAND_OPS)[number];
