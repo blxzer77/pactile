@@ -54,6 +54,8 @@ pactile codex unblock <receiver-task> <block-id> --resolution-message-id <reques
 
 跨 Task 消息正文上限为 4096 UTF-8 字节。默认是纯协调消息：允许目标 Task 正在 waiting/blocked 时接收，但不会改 Run、解除阻塞或授予写权限，提示会要求收件方保留阻塞状态。当前切片因尚未接入 P37 admission、lease、Resume 和 block 校验，对 Task Kernel v2 Execute create 与 `--resume-execute` 一律 fail closed。完成这些 gate 接线后，写入派发仍须先由 Kernel 明确 Resume 并通过 P37 admission；发送回执本身不授予派发许可。只有非 stale 的成功发送回执可用于创建与消息关联的 block；消息关联的 unblock 要求成功的 `desktop-native` resolution 证据，模拟发送不能解除阻塞。“sent”只表示 Host 接受发送请求，不表示收件方已读。每次解除都会留下独立日志事件。用户也可在给出原因后手动解除。
 
+Pi Review 升级消息可在跨 Task `message` 请求上添加 `--escalation-id pi-escalation:<pi-run-uuid>`；来源必须是当前 V2 Verify Task、最新的非通过 Review 和匹配的候选 Run。配对请求与规范化回执会记录升级 ID、来源/目标 Task 与 Run/候选、thread/Host 及请求指纹。读取回复时，在目标 Task 上准备带相同 `--reply-to-escalation-id` 的 `read` 请求；成功的原生结果必须含 `status: completed` 和有界 `reply_evidence`，其中包含精确升级 ID、响应 turn ID、正文与 SHA-256。只有从 Codex 桌面工具实际取得的结果才可标记 `desktop-native`。此桥只写自己的 request/receipt 文件，不会把 P40 升级产物改为 `sent` 或 `answered`；P40 reader 与状态更新仍是单独的集成门。
+
 创建 worktree 任务时，App 可能先只返回 `clientThreadId`。此时记录 `outcome: queued` 与 `client_thread_id`；临时 ID 不能用于发消息或等待。App 报告就绪的 `threadId`、`hostId` 后，再记录最终 `outcome: ok`，同时带上原 `client_thread_id` 和就绪 ID。`pactile codex status` 在此期间显示排队请求。
 
 桥接回执标记为 `host-reported`：这是 Node 从调用方提供的原生工具结果中记录的事实，不是产品认证的桌面签名。哈希链和 receipt 不会把模拟结果升级成桌面证据；测试中的模拟回执不能证明真实桌面验收。回执不代替代码审查、Pi 结果检查、AC 证据或 Kernel gate。若收到回执时 Kernel revision 或 Run candidate 已变化，回执标记 `contract_stale`，应重新核对任务契约。规划仅允许在 Open/Define/Approve；审核仅允许在 Verify/Integrate。Pi 实现派发继续由 `pactile pi run` 校验已记录的用户批准和工作契约。不要把 Codex CLI/App Server/ACP 会话当作桌面任务，也不要派发 Codex subagent。此桥接无需后台常驻服务。桌面原生工具不可用时在当前任务串行工作，并记录原因。

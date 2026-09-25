@@ -1,9 +1,11 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fingerprintTaskValue } from "../../src/core/task/index.js";
 import { runTaskCli } from "../../src/commands/task.js";
+import { runCodexCli } from "../../src/commands/codex.js";
 import {
   blockCodexTask,
   codexBridgeStatus,
@@ -23,6 +25,7 @@ import { approvedTask as approvedPiTask } from "../../src/pactile/pi/bridge.js";
 
 const roots: string[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of roots.splice(0))
     fs.rmSync(root, { recursive: true, force: true });
 });
@@ -792,6 +795,411 @@ describe("Codex desktop request and receipt bridge", () => {
       expect(codexBridgeStatus(root, senderTask).pending).toEqual([]);
     },
   );
+
+  it("writes paired Pi escalation send and native read receipts through Codex CLI", () => {
+    const { root, task: replyTask, prompt } = fixture();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const sourceSlug = "pi-escalation-source";
+    expect(
+      runTaskCli(
+        [
+          "create",
+          "Pi Review escalation source",
+          "--slug",
+          sourceSlug,
+          "--description",
+          "A V2 Review that requests Codex coordination",
+          "--deliverable",
+          "A reviewable result",
+          "--delivery-level",
+          "documentation",
+          "--accept",
+          "AC-1=The current Review can request bounded Codex input",
+        ],
+        root,
+      ),
+    ).toBe(0);
+    const sourceTask = fs
+      .readdirSync(path.join(root, ".pactile", "tasks"))
+      .find((name) => name.endsWith(`-${sourceSlug}`));
+    if (!sourceTask) throw new Error("Pi escalation source Task missing");
+    expect(
+      runTaskCli(
+        [
+          "run-start",
+          sourceTask,
+          "--actor",
+          "implementer",
+          "--input-summary",
+          "Implement the approved deliverable",
+          "--approved-by",
+          "approver",
+          "--authorization-scope",
+          "the reviewed documentation file",
+          "--authorization-evidence",
+          "approval.json",
+          "--write-set",
+          "docs/result.md",
+          "--wait",
+        ],
+        root,
+      ),
+    ).toBe(0);
+    let sourceKernel = JSON.parse(
+      fs.readFileSync(
+        path.join(root, ".pactile", "tasks", sourceTask, "kernel.json"),
+        "utf8",
+      ),
+    ) as {
+      revision: number;
+      runs: {
+        id: string;
+        candidateSnapshot: { id: string; fingerprint: string } | null;
+      }[];
+    };
+    const sourceRunId = sourceKernel.runs.at(-1)?.id;
+    if (!sourceRunId) throw new Error("Pi escalation source Run missing");
+    expect(
+      runTaskCli(
+        ["run-resume", sourceTask, sourceRunId, "--actor", "scheduler"],
+        root,
+      ),
+    ).toBe(0);
+    expect(
+      runTaskCli(
+        [
+          "run-result",
+          sourceTask,
+          sourceRunId,
+          "--outcome",
+          "completed",
+          "--summary",
+          "Candidate ready for independent Review",
+          "--candidate",
+          `docs/result.md=${"d".repeat(64)}`,
+          "--evidence",
+          "test-output.txt",
+        ],
+        root,
+      ),
+    ).toBe(0);
+    sourceKernel = JSON.parse(
+      fs.readFileSync(
+        path.join(root, ".pactile", "tasks", sourceTask, "kernel.json"),
+        "utf8",
+      ),
+    ) as typeof sourceKernel;
+    const sourceRun = sourceKernel.runs.at(-1);
+    const candidate = sourceRun?.candidateSnapshot;
+    if (!candidate) throw new Error("Pi escalation source candidate missing");
+    expect(
+      runTaskCli(
+        [
+          "review",
+          sourceTask,
+          "--run",
+          sourceRunId,
+          "--decision",
+          "needs-changes",
+          "--candidate-id",
+          candidate.id,
+          "--candidate-fingerprint",
+          candidate.fingerprint,
+          "--reviewer",
+          "tester",
+          "--actor",
+          "tester",
+          "--evidence",
+          "review.md",
+          "--blocker",
+          "Codex input is required for an uncertain finding",
+        ],
+        root,
+      ),
+    ).toBe(0);
+
+    const targetThread = prepareCodexRequest({
+      root,
+      task: replyTask,
+      tool: "create_thread",
+      role: "plan",
+      promptFile: prompt,
+      targetType: "projectless",
+    });
+    recordCodexReceipt(
+      root,
+      replyTask,
+      targetThread.request_id,
+      result(root, {
+        request_id: targetThread.request_id,
+        tool: targetThread.tool,
+        outcome: "ok",
+        thread_id: "p40-escalation-thread",
+        host_id: "local",
+      }),
+    );
+
+    const escalationId = "pi-escalation:12345678-1234-1234-1234-123456789abc";
+    expect(
+      runCodexCli(
+        [
+          "prepare",
+          sourceTask,
+          "--tool",
+          "message",
+          "--thread-id",
+          "p40-escalation-thread",
+          "--to-task",
+          replyTask,
+          "--run-id",
+          sourceRunId,
+          "--escalation-id",
+          escalationId,
+          "--prompt-file",
+          prompt,
+        ],
+        root,
+      ),
+    ).toBe(0);
+    const sendPending = codexBridgeStatus(root, sourceTask).pending.at(-1);
+    if (!sendPending) throw new Error("Escalation send request missing");
+    const sourceDir = path.join(root, ".pactile", "tasks", sourceTask);
+    const sendRequest = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          sourceDir,
+          "codex-bridge",
+          "requests",
+          `${sendPending.request_id}.json`,
+        ),
+        "utf8",
+      ),
+    ) as CodexBridgeRequest;
+    expect(sendRequest).toMatchObject({
+      request_id: sendPending.request_id,
+      escalation_id: escalationId,
+      task_id: codexBridgeStatus(root, sourceTask).task_id,
+      run_id: sourceRunId,
+      candidate_snapshot_id: candidate.id,
+      candidate_fingerprint: candidate.fingerprint,
+      to_task_id: codexBridgeStatus(root, replyTask).task_id,
+      to_run_id: null,
+      to_candidate_snapshot_id: null,
+      to_candidate_fingerprint: null,
+      thread_id: "p40-escalation-thread",
+      host_id: "local",
+    });
+    const sendResult = result(root, {
+      request_id: sendRequest.request_id,
+      tool: "send_message_to_thread",
+      outcome: "ok",
+      thread_id: "p40-escalation-thread",
+      host_id: "local",
+    });
+    expect(
+      runCodexCli(
+        [
+          "receipt",
+          sourceTask,
+          sendRequest.request_id,
+          "--result-file",
+          path.relative(root, sendResult),
+        ],
+        root,
+      ),
+    ).toBe(1);
+    const sendReceiptFile = path.join(
+      sourceDir,
+      "codex-bridge",
+      "receipts",
+      `${sendRequest.request_id}.json`,
+    );
+    expect(fs.existsSync(sendReceiptFile)).toBe(false);
+    expect(
+      runCodexCli(
+        [
+          "receipt",
+          sourceTask,
+          sendRequest.request_id,
+          "--result-file",
+          path.relative(root, sendResult),
+          "--evidence-level",
+          "desktop-native",
+        ],
+        root,
+      ),
+    ).toBe(0);
+    const sendReceipt = JSON.parse(
+      fs.readFileSync(sendReceiptFile, "utf8"),
+    ) as CodexBridgeReceipt;
+    expect(sendReceipt).toMatchObject({
+      request_id: sendRequest.request_id,
+      request_fingerprint: sendRequest.request_fingerprint,
+      escalation_id: escalationId,
+      task_id: sendRequest.task_id,
+      run_id: sourceRunId,
+      candidate_snapshot_id: candidate.id,
+      candidate_fingerprint: candidate.fingerprint,
+      to_task_id: sendRequest.to_task_id,
+      to_run_id: null,
+      to_candidate_snapshot_id: null,
+      to_candidate_fingerprint: null,
+      thread_id: "p40-escalation-thread",
+      host_id: "local",
+      evidence_level: "desktop-native",
+      contract_stale: false,
+    });
+
+    expect(
+      runCodexCli(
+        [
+          "prepare",
+          replyTask,
+          "--tool",
+          "read",
+          "--thread-id",
+          "p40-escalation-thread",
+          "--reply-to-escalation-id",
+          escalationId,
+        ],
+        root,
+      ),
+    ).toBe(0);
+    const readPending = codexBridgeStatus(root, replyTask).pending.at(-1);
+    if (!readPending) throw new Error("Escalation read request missing");
+    const replyDir = path.join(root, ".pactile", "tasks", replyTask);
+    const readRequest = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          replyDir,
+          "codex-bridge",
+          "requests",
+          `${readPending.request_id}.json`,
+        ),
+        "utf8",
+      ),
+    ) as CodexBridgeRequest;
+    expect(readRequest).toMatchObject({
+      request_id: readPending.request_id,
+      tool: "read_thread",
+      reply_to_escalation_id: escalationId,
+      task_id: codexBridgeStatus(root, replyTask).task_id,
+      run_id: null,
+      candidate_snapshot_id: null,
+      candidate_fingerprint: null,
+      thread_id: "p40-escalation-thread",
+      host_id: "local",
+    });
+    const replyBody = "Codex reply: the review finding is supported by the linked test result.";
+    const readResult = result(root, {
+      request_id: readRequest.request_id,
+      tool: "read_thread",
+      outcome: "ok",
+      status: "completed",
+      thread_id: "p40-escalation-thread",
+      host_id: "local",
+      reply_to_escalation_id: escalationId,
+      reply_evidence: {
+        reply_to_escalation_id: escalationId,
+        response_turn_id: "turn:codex-reply-1",
+        body: replyBody,
+        body_sha256: createHash("sha256").update(replyBody, "utf8").digest("hex"),
+      },
+    });
+    expect(
+      runCodexCli(
+        [
+          "receipt",
+          replyTask,
+          readRequest.request_id,
+          "--result-file",
+          path.relative(root, readResult),
+        ],
+        root,
+      ),
+    ).toBe(1);
+    const readReceiptFile = path.join(
+      replyDir,
+      "codex-bridge",
+      "receipts",
+      `${readRequest.request_id}.json`,
+    );
+    expect(fs.existsSync(readReceiptFile)).toBe(false);
+    const invalidReadResult = result(root, {
+      request_id: readRequest.request_id,
+      tool: "read_thread",
+      outcome: "ok",
+      status: "completed",
+      thread_id: "p40-escalation-thread",
+      host_id: "local",
+      reply_to_escalation_id: escalationId,
+      reply_evidence: {
+        reply_to_escalation_id: escalationId,
+        response_turn_id: "turn:codex-reply-1",
+        body: "A tampered reply hash must be rejected.",
+        body_sha256: "0".repeat(64),
+      },
+    });
+    expect(
+      runCodexCli(
+        [
+          "receipt",
+          replyTask,
+          readRequest.request_id,
+          "--result-file",
+          path.relative(root, invalidReadResult),
+          "--evidence-level",
+          "desktop-native",
+        ],
+        root,
+      ),
+    ).toBe(1);
+    expect(fs.existsSync(readReceiptFile)).toBe(false);
+    expect(
+      runCodexCli(
+        [
+          "receipt",
+          replyTask,
+          readRequest.request_id,
+          "--result-file",
+          path.relative(root, readResult),
+          "--evidence-level",
+          "desktop-native",
+        ],
+        root,
+      ),
+    ).toBe(0);
+    const readReceipt = JSON.parse(
+      fs.readFileSync(readReceiptFile, "utf8"),
+    ) as CodexBridgeReceipt;
+    expect(readReceipt).toMatchObject({
+      request_id: readRequest.request_id,
+      request_fingerprint: readRequest.request_fingerprint,
+      reply_to_escalation_id: escalationId,
+      task_id: readRequest.task_id,
+      run_id: null,
+      candidate_snapshot_id: null,
+      candidate_fingerprint: null,
+      thread_id: "p40-escalation-thread",
+      host_id: "local",
+      evidence_level: "desktop-native",
+      status: "completed",
+      contract_stale: false,
+      reply_evidence: {
+        reply_to_escalation_id: escalationId,
+        response_turn_id: "turn:codex-reply-1",
+        body: replyBody,
+        body_sha256: createHash("sha256").update(replyBody, "utf8").digest("hex"),
+      },
+    });
+    expect(path.relative(root, sendReceiptFile).replaceAll("\\", "/")).toBe(
+      `.pactile/tasks/${sourceTask}/codex-bridge/receipts/${sendRequest.request_id}.json`,
+    );
+    expect(path.relative(root, readReceiptFile).replaceAll("\\", "/")).toBe(
+      `.pactile/tasks/${replyTask}/codex-bridge/receipts/${readRequest.request_id}.json`,
+    );
+  });
 
   it("binds a native desktop task and records message/wait receipts without changing Kernel", () => {
     const { root, task, prompt } = fixture();

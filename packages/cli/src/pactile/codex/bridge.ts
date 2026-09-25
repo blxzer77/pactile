@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   fingerprintTaskValue,
   readTaskKernel,
+  type TaskReviewV2,
   type TaskRunV2,
 } from "../../core/task/index.js";
 import { resolveTaskDir } from "../task/session.js";
@@ -59,6 +60,8 @@ export interface CodexBridgeRequest {
   to_candidate_snapshot_id?: string | null;
   to_candidate_fingerprint?: string | null;
   coordination_message_id?: string | null;
+  escalation_id?: string;
+  reply_to_escalation_id?: string;
   created_at: string;
   tool: CodexBridgeTool;
   role: CodexBridgeRole;
@@ -77,6 +80,16 @@ export interface CodexBridgeReceipt {
   candidate_fingerprint?: string | null;
   to_task_id?: string | null;
   to_run_id?: string | null;
+  to_candidate_snapshot_id?: string | null;
+  to_candidate_fingerprint?: string | null;
+  escalation_id?: string;
+  reply_to_escalation_id?: string;
+  reply_evidence?: {
+    reply_to_escalation_id: string;
+    response_turn_id: string;
+    body: string;
+    body_sha256: string;
+  };
   destination_kernel_revision_at_receipt?: number | null;
   request_fingerprint?: string;
   evidence_level?: "simulated" | "desktop-native";
@@ -124,6 +137,7 @@ interface BridgeTaskContext {
   kernelKind: CodexTaskKernelKind;
   contractFingerprint: string | null;
   runs: TaskRunV2[];
+  reviews: TaskReviewV2[];
   archived: boolean;
 }
 
@@ -137,6 +151,11 @@ interface SelectedRun {
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const escalationIdPattern =
+  /^pi-escalation:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const transportIdentifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
+const escalationSecretPattern =
+  /\b(?:bearer\s+[a-z0-9._~+/-]{12,}|(?:sk[-_]|gh[pousr]_|glpat-|plane_api_)[a-z0-9_-]{12,}|(?:api[_-]?key|token|password|secret)\s*[:=]\s*\S+)/iu;
 
 function taskContextFromDirectory(
   root: string,
@@ -155,6 +174,7 @@ function taskContextFromDirectory(
       kernelKind: read.kind,
       contractFingerprint: fingerprintTaskValue(kernel.definition),
       runs: kernel.runs,
+      reviews: kernel.reviews,
       archived,
     };
   }
@@ -168,6 +188,7 @@ function taskContextFromDirectory(
     kernelKind: read.kind,
     contractFingerprint: null,
     runs: [],
+    reviews: [],
     archived,
   };
 }
@@ -490,6 +511,42 @@ function coordinationReceiptEvidence(
   throw new Error("--evidence-level must be simulated or desktop-native");
 }
 
+function normalizeReplyEvidence(
+  value: unknown,
+  escalationId: string,
+): NonNullable<CodexBridgeReceipt["reply_evidence"]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Native read reply requires structured reply_evidence");
+  }
+  const evidence = value as Record<string, unknown>;
+  const body = evidence.body;
+  const responseTurnId = evidence.response_turn_id;
+  const bodySha256 = evidence.body_sha256;
+  if (
+    evidence.reply_to_escalation_id !== escalationId ||
+    typeof responseTurnId !== "string" ||
+    !transportIdentifierPattern.test(responseTurnId) ||
+    typeof body !== "string" ||
+    body.trim() !== body ||
+    Buffer.byteLength(body, "utf8") < 1 ||
+    Buffer.byteLength(body, "utf8") > 4_096 ||
+    escalationSecretPattern.test(body) ||
+    typeof bodySha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(bodySha256) ||
+    createHash("sha256").update(body, "utf8").digest("hex") !== bodySha256
+  ) {
+    throw new Error(
+      "Native read reply evidence must match the escalation and bounded body hash",
+    );
+  }
+  return {
+    reply_to_escalation_id: escalationId,
+    response_turn_id: responseTurnId,
+    body,
+    body_sha256: bodySha256,
+  };
+}
+
 export function prepareCodexRequest(input: {
   root: string;
   task: string;
@@ -506,8 +563,35 @@ export function prepareCodexRequest(input: {
   toTask?: string;
   toRunId?: string;
   resumeExecute?: boolean;
+  escalationId?: string;
+  replyToEscalationId?: string;
 }): CodexBridgeRequest {
   const context = taskContext(input.root, input.task);
+  if (
+    input.escalationId !== undefined &&
+    !escalationIdPattern.test(input.escalationId)
+  ) {
+    throw new Error("--escalation-id must be pi-escalation:<Pi Run UUID>");
+  }
+  if (
+    input.replyToEscalationId !== undefined &&
+    !escalationIdPattern.test(input.replyToEscalationId)
+  ) {
+    throw new Error(
+      "--reply-to-escalation-id must be pi-escalation:<Pi Run UUID>",
+    );
+  }
+  if (input.escalationId && input.replyToEscalationId) {
+    throw new Error("A Codex request cannot send and reply to an escalation");
+  }
+  if (input.escalationId && input.tool !== "send_message_to_thread") {
+    throw new Error("--escalation-id is only valid for a Codex message");
+  }
+  if (input.replyToEscalationId && input.tool !== "read_thread") {
+    throw new Error(
+      "--reply-to-escalation-id is only valid for a Codex read",
+    );
+  }
   if (input.toTask && input.tool === "create_thread") {
     throw new Error("--to-task is only valid for cross-task message");
   }
@@ -606,6 +690,32 @@ export function prepareCodexRequest(input: {
   const targetRun = crossTask
     ? selectRun(targetContext, role, input.toRunId, executionDispatch)
     : selectedRun;
+  if (input.escalationId) {
+    const sourceRun = context.runs.at(-1);
+    const review = context.reviews.at(-1);
+    if (
+      !crossTask ||
+      context.kernelKind !== "task-kernel-v2" ||
+      context.phase !== "verify" ||
+      !input.runId ||
+      sourceRun?.id !== input.runId ||
+      sourceRun.state !== "completed" ||
+      !sourceRun.candidateSnapshot ||
+      selectedRun.runId !== sourceRun.id ||
+      selectedRun.candidateSnapshotId !== sourceRun.candidateSnapshot.id ||
+      selectedRun.candidateFingerprint !==
+        sourceRun.candidateSnapshot.fingerprint ||
+      !review ||
+      review.decision === "pass" ||
+      review.runId !== sourceRun.id ||
+      review.candidateSnapshotId !== sourceRun.candidateSnapshot.id ||
+      review.candidateFingerprint !== sourceRun.candidateSnapshot.fingerprint
+    ) {
+      throw new Error(
+        "Codex escalation send requires the current V2 non-passing Review and candidate Run",
+      );
+    }
+  }
   if (
     executionDispatch &&
     role === "execute" &&
@@ -796,6 +906,10 @@ export function prepareCodexRequest(input: {
     to_candidate_fingerprint: crossTask ? targetRun.candidateFingerprint : null,
     coordination_message_id:
       crossTask && input.tool === "send_message_to_thread" ? requestId : null,
+    ...(input.escalationId ? { escalation_id: input.escalationId } : {}),
+    ...(input.replyToEscalationId
+      ? { reply_to_escalation_id: input.replyToEscalationId }
+      : {}),
     created_at: new Date().toISOString(),
     tool: input.tool,
     role,
@@ -986,6 +1100,53 @@ export function recordCodexReceipt(
     typeof result.status === "string" && result.status.length <= 80
       ? result.status
       : null;
+  if (request.escalation_id) {
+    if (
+      request.tool !== "send_message_to_thread" ||
+      request.reply_to_escalation_id ||
+      evidenceLevel !== "desktop-native" ||
+      !request.to_task_id ||
+      !request.thread_id ||
+      !request.host_id ||
+      (successful &&
+        (result.thread_id !== request.thread_id ||
+          result.host_id !== request.host_id))
+    ) {
+      throw new Error(
+        "Pi escalation send requires a desktop-native cross-task message receipt bound to its Task and thread",
+      );
+    }
+  }
+  let replyEvidence: CodexBridgeReceipt["reply_evidence"];
+  if (request.reply_to_escalation_id) {
+    if (
+      request.tool !== "read_thread" ||
+      request.escalation_id ||
+      evidenceLevel !== "desktop-native" ||
+      !request.thread_id ||
+      !request.host_id
+    ) {
+      throw new Error(
+        "Escalation reply requires a desktop-native read_thread request bound to its Task and thread",
+      );
+    }
+    if (successful) {
+      if (
+        status !== "completed" ||
+        result.reply_to_escalation_id !== request.reply_to_escalation_id ||
+        result.thread_id !== request.thread_id ||
+        result.host_id !== request.host_id
+      ) {
+        throw new Error(
+          "Native escalation reply read must complete on the bound thread with exact escalation correlation",
+        );
+      }
+      replyEvidence = normalizeReplyEvidence(
+        result.reply_evidence,
+        request.reply_to_escalation_id,
+      );
+    }
+  }
   if (
     successful &&
     request.tool === "wait_threads" &&
@@ -1052,10 +1213,19 @@ export function recordCodexReceipt(
     candidate_fingerprint: request.candidate_fingerprint ?? null,
     to_task_id: request.to_task_id ?? null,
     to_run_id: request.to_run_id ?? null,
+    to_candidate_snapshot_id: request.to_candidate_snapshot_id ?? null,
+    to_candidate_fingerprint: request.to_candidate_fingerprint ?? null,
     destination_kernel_revision_at_receipt:
       destinationContext?.revision ?? null,
     request_fingerprint: requestFingerprint,
     evidence_level: evidenceLevel,
+    ...(request.escalation_id
+      ? { escalation_id: request.escalation_id }
+      : {}),
+    ...(request.reply_to_escalation_id
+      ? { reply_to_escalation_id: request.reply_to_escalation_id }
+      : {}),
+    ...(replyEvidence ? { reply_evidence: replyEvidence } : {}),
     ...(threadCreationState
       ? { thread_creation_state: threadCreationState }
       : {}),
