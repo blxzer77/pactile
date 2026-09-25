@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "identity": { "taskId": "closed-lite-legacy" },
+  "revision": 2,
+  "phase": "close",
+  "condition": "ready",
+  "outcome": "completed",
+  "audit": [
+    {
+      "id": "legacy-archive-audit-1",
+      "at": "2026-08-20T15:00:00.000Z",
+      "actor": "task.py archive",
+      "idempotencyKey": "archive:closed-lite-legacy:2026-08-20",
+      "evidence": "task.py archive",
+      "from": { "phase": "verify", "condition": "ready", "outcome": null, "revision": 1 },
+      "to": { "phase": "close", "condition": "ready", "outcome": "completed", "revision": 2 }
+    }
+  ],
+  "gates": { "schemaVersion": 1, "transitions": {} },
+  "projection": {
+    "status": "completed",
+    "record": { "id": "closed-lite-legacy", "status": "completed" },
+    "extras": {}
+  }
+}

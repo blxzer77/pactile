@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "identity": { "taskId": "parent-legacy" },
+  "revision": 2,
+  "phase": "execute",
+  "condition": "active",
+  "outcome": null,
+  "audit": [
+    {
+      "id": "legacy-parent-audit-1",
+      "at": "2026-08-21T10:00:00.000Z",
+      "actor": "user",
+      "idempotencyKey": "start:parent-legacy:2026-08-21T10:00:00Z",
+      "evidence": "task.py start-execution --approved",
+      "from": { "phase": "define", "condition": "ready", "outcome": null, "revision": 1 },
+      "to": { "phase": "execute", "condition": "active", "outcome": null, "revision": 2 }
+    }
+  ],
+  "gates": { "schemaVersion": 1, "transitions": {} },
+  "projection": {
+    "status": "in_progress",
+    "record": { "id": "parent-legacy", "status": "in_progress" },
+    "extras": {
+      "execution_approval": {
+        "schema_version": 1,
+        "transition": "start-execution",
+        "approved_by": "user",
+        "approved_at": "2026-08-21T10:00:00Z"
+      }
+    }
+  }
+}
