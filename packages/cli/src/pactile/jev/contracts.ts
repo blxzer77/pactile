@@ -54,6 +54,7 @@ export interface JevCallOptionsV1 {
 }
 export type JevFallbackCodeV1 =
   | "disabled"
+  | "budget-exhausted"
   | "runtime-unsupported"
   | "configuration-missing"
   | "configuration-invalid"
@@ -120,6 +121,8 @@ export type JevTransportResultV1 =
 const EXPLANATION: Readonly<Record<JevFallbackCodeV1, string>> = {
   disabled:
     "Jev is not configured; continue with the local deterministic path.",
+  "budget-exhausted":
+    "The local Jev decision budget is exhausted; continue with the local deterministic path.",
   "runtime-unsupported": "Jev requires Node.js 20 or newer; continue locally.",
   "configuration-missing": "No Jev API key is configured; continue locally.",
   "configuration-invalid": "Jev configuration is invalid; continue locally.",
