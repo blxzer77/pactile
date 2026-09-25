@@ -7,6 +7,10 @@ import {
   emptyTaskRecord,
   neutralKernelExtrasBoundary,
 } from "../../../src/core/task/index.js";
+import { canonicalizePactileJsonV1 } from "../../../src/core/index.js";
+import { readTaskKernel } from "../../../src/core/task/index.js";
+import { runContextCli } from "../../../src/commands/context.js";
+import { runTaskCli } from "../../../src/commands/task.js";
 import { runTileSelectionCli } from "../../../src/commands/tile-selection.js";
 import { selectTask } from "../../../src/pactile/task/session.js";
 import { BASELINE_TILE_IDS } from "../../../src/pactile/tiles/content/baseline/index.js";
@@ -129,4 +133,109 @@ describe("current Task tile-selection CLI", () => {
     ], root)).toBe(0);
     expect(lastJson(spy)).toMatchObject({ success: true, receipt: { decision: "invalid", outcome: "invalid-selection" } });
   });
+
+  it("offers Tile candidates through the V2 session path and binds elevated grants to the approved active Run", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-v2-tile-selection-cli-"));
+    roots.push(root);
+    fs.mkdirSync(path.join(root, ".pactile", "tasks"), { recursive: true });
+    fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=alice\n");
+    vi.stubEnv("PACTILE_CONTEXT_ID", "codex_v2_tile_selection");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(runTaskCli([
+      "create", "V2 Tile grant task", "--slug", "v2-tile-grant", "--description", "Exercise Tile grant binding",
+      "--deliverable", "a checked local result", "--delivery-level", "local-result", "--accept", "AC-1=The result is recorded",
+    ], root)).toBe(0);
+    expect(runTaskCli(["select", "v2-tile-grant"], root)).toBe(0);
+
+    const taskDir = path.join(root, ".pactile", "tasks", mustTaskDir(root));
+    const beforeRun = readTaskKernel({ root, taskDir, cwd: root });
+    expect(beforeRun.kind).toBe("task-kernel-v2");
+    if (beforeRun.kind !== "task-kernel-v2") throw new Error("expected V2 Task Kernel");
+    expect(beforeRun.kernel.phase).toBe("define");
+
+    expect(runContextCli(["--mode", "session", "--json"], root)).toBe(0);
+    const sessionOffer = JSON.parse(String(log.mock.lastCall?.[0])) as {
+      tileSelection: { status: string; offer?: { taskLifecycle: { selectionGrant: { source: string } }; candidates: { ref: string }[] } };
+    };
+    expect(sessionOffer.tileSelection.status).toBe("offered");
+    expect(sessionOffer.tileSelection.offer?.taskLifecycle.selectionGrant.source).toBe("safe-default");
+    expect(sessionOffer.tileSelection.offer?.candidates.some((candidate) => candidate.ref === "worker-orchestration@1.0.0")).toBe(false);
+    expect(JSON.stringify(sessionOffer)).not.toContain("audit");
+
+    const grant = {
+      schemaVersion: 1,
+      policyCeiling: {
+        filesystem: "write", process: "execute", network: "forbidden", credentials: "forbidden",
+        privacy: "local-only", egressDestinations: [], telemetry: "local-only", cost: "medium",
+      },
+      capabilities: [{ id: "agent.dispatch", assurance: "evidence-backed" }],
+      providerFacts: [],
+    };
+    const grantScope = `pactile-tile-selection/v1:${canonicalizePactileJsonV1(grant)}`;
+    expect(runTaskCli([
+      "run-start", "v2-tile-grant", "--actor", "alice", "--input-summary", "Implement AC-1",
+      "--approved-by", "user", "--approved-at", "2026-09-26T00:00:00.000Z",
+      "--authorization-scope", grantScope, "--authorization-evidence", "approval.json",
+    ], root)).toBe(0);
+
+    const active = readTaskKernel({ root, taskDir, cwd: root });
+    expect(active.kind).toBe("task-kernel-v2");
+    if (active.kind !== "task-kernel-v2") throw new Error("expected V2 Task Kernel");
+    const activeRun = active.kernel.runs.at(-1);
+    expect(activeRun).toBeDefined();
+    expect(active.kernel.phase).toBe("execute");
+    expect(active.kernel.condition).toBe("active");
+
+    const requestFile = path.join(root, "tile-request.json");
+    fs.writeFileSync(requestFile, JSON.stringify({
+      intent: "structural", requiredOutputs: ["worker.handoff"],
+      policyCeiling: grant.policyCeiling, capabilities: grant.capabilities, providerFacts: [],
+    }));
+    expect(runTileSelectionCli(["prepare", "--request-file", "tile-request.json"], root)).toBe(0);
+    const authorizedOffer = lastJson(log).offer as {
+      taskLifecycle: { phase: string; selectionGrant: { source: string; assurance: string } };
+      candidates: { ref: string }[];
+    };
+    expect(authorizedOffer.taskLifecycle).toMatchObject({
+      phase: "execute", selectionGrant: { source: "task-kernel-approval-snapshot", assurance: "recorded-user-assertion" },
+    });
+    expect(authorizedOffer.candidates.some((candidate) => candidate.ref === "worker-orchestration@1.0.0")).toBe(true);
+    const authorizedOfferFingerprint = (lastJson(log).offer as { fingerprint: string }).fingerprint;
+    expect(runTileSelectionCli([
+      "decide", "--request-file", "tile-request.json", "--offer-fingerprint", authorizedOfferFingerprint, "--kind", "adopt",
+    ], root)).toBe(0);
+    const decided = lastJson(log);
+    expect(decided).toMatchObject({ success: true, executionAuthorization: "not-granted", receipt: { outcome: "selected", compilerPassed: true } });
+    const snapshot = decided.snapshot as { fingerprint: string; fileName: string };
+    const snapshotText = fs.readFileSync(path.join(root, ".pactile", "runtime", "receipts", snapshot.fileName), "utf8");
+    expect(snapshotText).not.toContain(root);
+    expect(snapshotText).not.toContain("audit");
+    expect(runTileSelectionCli(["replay", "--snapshot-fingerprint", snapshot.fingerprint], root)).toBe(0);
+    expect(lastJson(log)).toMatchObject({ success: true, data: { offerFingerprint: authorizedOfferFingerprint } });
+
+    const current = readTaskKernel({ root, taskDir, cwd: root });
+    if (current.kind !== "task-kernel-v2" || !activeRun) throw new Error("expected the active V2 Run");
+    expect(runTaskCli([
+      "run-result", "v2-tile-grant", activeRun.id, "--outcome", "completed", "--summary", "Result recorded",
+      "--candidate", `result.txt=${"a".repeat(64)}`,
+    ], root)).toBe(0);
+    expect(runTileSelectionCli(["prepare", "--request-file", "tile-request.json"], root)).toBe(0);
+    const completedRunOffer = lastJson(log).offer as {
+      taskLifecycle: { phase: string; selectionGrant: { source: string; assurance: string } };
+      candidates: { ref: string }[];
+    };
+    expect(completedRunOffer.taskLifecycle).toMatchObject({
+      phase: "verify", selectionGrant: { source: "safe-default", assurance: "no-grant" },
+    });
+    expect(completedRunOffer.candidates.some((candidate) => candidate.ref === "worker-orchestration@1.0.0")).toBe(false);
+  });
 });
+
+function mustTaskDir(root: string): string {
+  const entry = fs.readdirSync(path.join(root, ".pactile", "tasks"))
+    .find((name) => name.endsWith("-v2-tile-grant"));
+  if (!entry) throw new Error("created V2 Task directory is missing");
+  return entry;
+}

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { localDate } from "../utils/local-date.js";
 import { readPactileConfig } from "../pactile/task/config.js";
+import { readTaskKernel } from "../core/task/index.js";
 import { searchSessionMemory } from "../pactile/task/session-memory.js";
 import { resolveSelectedTask, resolveTaskDir } from "../pactile/task/session.js";
 import { readDeveloper } from "../utils/developer.js";
@@ -20,7 +21,17 @@ function git(root: string, args: string[]): string {
 function selectedRecord(root: string): Record<string, unknown> | null {
   const selected = resolveSelectedTask(root);
   if (!selected.taskPath || selected.stale) return null;
-  try { return JSON.parse(fs.readFileSync(path.join(resolveTaskDir(root, selected.taskPath), "task.json"), "utf8")) as Record<string, unknown>; }
+  try {
+    const dir = resolveTaskDir(root, selected.taskPath);
+    if (!fs.existsSync(path.join(dir, "kernel.json"))) return JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8")) as Record<string, unknown>;
+    const read = readTaskKernel({ root, taskDir: dir, cwd: root });
+    if (read.kind === "task-kernel-v2") return {
+      id: read.kernel.identity.taskId, name: read.kernel.definition.title, title: read.kernel.definition.title,
+      status: read.kernel.phase === "close" ? "closed" : read.kernel.phase, phase: read.kernel.phase,
+      deliveryLevel: read.kernel.definition.deliveryLevel, dependencies: read.kernel.definition.dependencies,
+    };
+    return JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8")) as Record<string, unknown>;
+  }
   catch { return null; }
 }
 

@@ -46,7 +46,7 @@ describe("Node context CLI", () => {
     fs.writeFileSync(path.join(root, ".pactile", "modules", "index.json"), JSON.stringify({ modules: [{ id: "define-basic", contract: "define-basic/contract.md" }] }));
     fs.writeFileSync(path.join(root, ".pactile", "modules", "define-basic", "contract.md"), "Define the Acceptance Criteria.");
     fs.writeFileSync(path.join(root, ".pactile", "workflow.md"), "SECRET WORKFLOW DUMP");
-    expect(runTaskCli(["create", "Example", "--slug", "example"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Example", "--slug", "example"], root)).toBe(0);
     vi.stubEnv("PACTILE_CONTEXT_ID", "codex_context_test");
     try {
       expect(runTaskCli(["select", "example"], root)).toBe(0);

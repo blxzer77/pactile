@@ -37,6 +37,26 @@ import {
   type KernelTransitionResult,
 } from "./kernel-store.js";
 import type { ProjectionInspection, ProjectionRepairReceipt } from "./kernel-surface.js";
+import {
+  addTaskDependency,
+  checkTaskClose,
+  closeTaskKernel,
+  createTaskKernel,
+  readTaskKernel,
+  recordTaskReview,
+  recordTaskRunResult,
+  resumeTaskRun,
+  startTaskRun,
+} from "./task-kernel.js";
+import type { AnyTaskKernelReadResult, TaskKernelMutationResult } from "./task-kernel.js";
+import type {
+  CheckTaskCloseRequest,
+  CloseTaskKernelRequest,
+  CreateTaskKernelRequest,
+  RecordTaskReviewRequest,
+  RecordTaskRunResultRequest,
+  StartTaskRunRequest,
+} from "./task-kernel.js";
 
 export type KernelCliSuccess =
   | ({ ok: true; op: "inspect-projection" } & ProjectionInspection)
@@ -47,7 +67,10 @@ export type KernelCliSuccess =
       ok: true;
       op: "create" | "start" | "record-gate" | "archive" | "patch";
     } & KernelCommandResult)
-  | ({ ok: true; op: "migrate" } & ContractMigrateReport);
+  | ({ ok: true; op: "migrate" } & ContractMigrateReport)
+  | ({ ok: true; op: "task-read"; result: AnyTaskKernelReadResult })
+  | ({ ok: true; op: "task-create" | "dependency-add" | "run-start" | "run-resume" | "run-result" | "review-record" | "task-close"; result: TaskKernelMutationResult })
+  | ({ ok: true; op: "task-close-check"; errors: string[] });
 
 export interface KernelCliFailure {
   ok: false;
@@ -154,6 +177,104 @@ function dispatchKernelRequest(
   }
   if (op === "migrate") {
     return { ok: true, op: "migrate", ...parseMigrateDryRun(input, cwd) };
+  }
+  const taskCwd = optionalCwd(input.cwd, cwd);
+  const taskRoot = requestRoot(input.root, taskCwd);
+  if (op === "task-read") {
+    const taskDir = requireTaskDir(input.taskDir);
+    return { ok: true, op, result: readTaskKernel({ root: taskRoot, taskDir, cwd: taskCwd }) };
+  }
+  if (op === "task-create") {
+    if (!isPlainObject(input.definition)) throw new KernelError("INVALID_REQUEST", "definition must be a JSON object");
+    const request: CreateTaskKernelRequest = {
+      root: taskRoot, taskDir: requireTaskDir(input.taskDir),
+      definition: input.definition as CreateTaskKernelRequest["definition"],
+      actor: requireString(input.actor, "actor"), idempotencyKey: requireString(input.idempotencyKey, "idempotencyKey"),
+      cwd: taskCwd,
+    };
+    return { ok: true, op, result: createTaskKernel(request) };
+  }
+  if (op === "dependency-add") {
+    return { ok: true, op, result: addTaskDependency({
+      root: taskRoot, taskDir: requireTaskDir(input.taskDir), expectedRevision: requireRevision(input.expectedRevision),
+      dependencyId: requireString(input.dependencyId, "dependencyId"), actor: requireString(input.actor, "actor"),
+      idempotencyKey: requireString(input.idempotencyKey, "idempotencyKey"), cwd: taskCwd,
+    }) };
+  }
+  if (op === "run-start") {
+    if (!isPlainObject(input.input) || !isPlainObject(input.authorization)) throw new KernelError("INVALID_REQUEST", "run-start requires input and authorization objects");
+    if (input.workspace !== undefined && input.workspace !== null && !isPlainObject(input.workspace)) throw new KernelError("INVALID_REQUEST", "workspace must be a JSON object");
+    if (input.host !== undefined && input.host !== null && !isPlainObject(input.host)) throw new KernelError("INVALID_REQUEST", "host must be a JSON object");
+    const request: StartTaskRunRequest = {
+      root: taskRoot, taskDir: requireTaskDir(input.taskDir), expectedRevision: requireRevision(input.expectedRevision),
+      actor: requireString(input.actor, "actor"), idempotencyKey: requireString(input.idempotencyKey, "idempotencyKey"),
+      input: input.input as unknown as StartTaskRunRequest["input"], authorization: input.authorization as unknown as StartTaskRunRequest["authorization"],
+      ...(input.initialState === undefined ? {} : { initialState: requireString(input.initialState, "initialState") as StartTaskRunRequest["initialState"] }),
+      ...(input.writeSetSnapshot === undefined ? {} : { writeSetSnapshot: parseStringArray(input.writeSetSnapshot, "writeSetSnapshot", true) }),
+      ...(input.estimatedDurations === undefined ? {} : { estimatedDurations: input.estimatedDurations as StartTaskRunRequest["estimatedDurations"] }),
+      ...(input.workspace ? { workspace: input.workspace as StartTaskRunRequest["workspace"] } : {}),
+      ...(input.host ? { host: input.host as StartTaskRunRequest["host"] } : {}),
+      cwd: taskCwd,
+    };
+    return { ok: true, op, result: startTaskRun(request) };
+  }
+  if (op === "run-resume") {
+    return { ok: true, op, result: resumeTaskRun({
+      root: taskRoot, taskDir: requireTaskDir(input.taskDir), expectedRevision: requireRevision(input.expectedRevision), runId: requireString(input.runId, "runId"),
+      actor: requireString(input.actor, "actor"), idempotencyKey: requireString(input.idempotencyKey, "idempotencyKey"), cwd: taskCwd,
+    }) };
+  }
+  if (op === "run-result") {
+    if (input.failure !== undefined && input.failure !== null && !isPlainObject(input.failure)) throw new KernelError("INVALID_REQUEST", "failure must be a JSON object");
+    const request: RecordTaskRunResultRequest = {
+      root: taskRoot, taskDir: requireTaskDir(input.taskDir), expectedRevision: requireRevision(input.expectedRevision), runId: requireString(input.runId, "runId"),
+      outcome: requireString(input.outcome, "outcome") as RecordTaskRunResultRequest["outcome"],
+      ...(input.summary === undefined ? {} : { summary: requireString(input.summary, "summary") }),
+      evidenceRefs: input.evidenceRefs === undefined ? [] : parseStringArray(input.evidenceRefs, "evidenceRefs"),
+      candidateEntries: input.candidateEntries === undefined ? [] : input.candidateEntries as RecordTaskRunResultRequest["candidateEntries"],
+      ...(input.measurementRefs === undefined ? {} : { measurementRefs: input.measurementRefs as RecordTaskRunResultRequest["measurementRefs"] }),
+      ...(input.failure ? { failure: input.failure as RecordTaskRunResultRequest["failure"] } : {}),
+      actor: requireString(input.actor, "actor"), idempotencyKey: requireString(input.idempotencyKey, "idempotencyKey"), cwd: taskCwd,
+    };
+    return { ok: true, op, result: recordTaskRunResult(request) };
+  }
+  if (op === "review-record") {
+    if (input.acceptanceEvidence !== undefined && input.acceptanceEvidence !== null && !isPlainObject(input.acceptanceEvidence)) throw new KernelError("INVALID_REQUEST", "acceptanceEvidence must be a JSON object");
+    if (input.unresolvedBlockers !== undefined) parseStringArray(input.unresolvedBlockers, "unresolvedBlockers", true);
+    const request: RecordTaskReviewRequest = {
+      root: taskRoot, taskDir: requireTaskDir(input.taskDir), expectedRevision: requireRevision(input.expectedRevision), runId: requireString(input.runId, "runId"),
+      candidateSnapshotId: requireString(input.candidateSnapshotId, "candidateSnapshotId"), candidateFingerprint: requireString(input.candidateFingerprint, "candidateFingerprint"), reviewer: requireString(input.reviewer, "reviewer"),
+      decision: requireString(input.decision, "decision") as RecordTaskReviewRequest["decision"],
+      evidenceRefs: parseStringArray(input.evidenceRefs, "evidenceRefs"),
+      ...(input.acceptanceEvidence ? { acceptanceEvidence: input.acceptanceEvidence as Record<string, string[]> } : {}),
+      ...(input.unresolvedBlockers ? { unresolvedBlockers: parseStringArray(input.unresolvedBlockers, "unresolvedBlockers", true) } : {}),
+      ...(input.measurementRef === undefined ? {} : { measurementRef: requireString(input.measurementRef, "measurementRef") }),
+      actor: requireString(input.actor, "actor"), idempotencyKey: requireString(input.idempotencyKey, "idempotencyKey"), cwd: taskCwd,
+    };
+    return { ok: true, op, result: recordTaskReview(request) };
+  }
+  if (op === "task-close-check") {
+    if (!isPlainObject(input.deliveryEvidence)) throw new KernelError("INVALID_REQUEST", "deliveryEvidence must be a JSON object");
+    if (!isPlainObject(input.candidateObservation)) throw new KernelError("INVALID_REQUEST", "candidateObservation must be a JSON object");
+    const request: CheckTaskCloseRequest = {
+      root: taskRoot, taskDir: requireTaskDir(input.taskDir), expectedRevision: requireRevision(input.expectedRevision),
+      runId: requireString(input.runId, "runId"), reviewId: requireString(input.reviewId, "reviewId"),
+      candidateObservation: input.candidateObservation as unknown as CloseTaskKernelRequest["candidateObservation"],
+      deliveryEvidence: input.deliveryEvidence as unknown as CloseTaskKernelRequest["deliveryEvidence"], cwd: taskCwd,
+    };
+    return { ok: true, op, errors: checkTaskClose(request) };
+  }
+  if (op === "task-close") {
+    if (!isPlainObject(input.deliveryEvidence)) throw new KernelError("INVALID_REQUEST", "deliveryEvidence must be a JSON object");
+    if (!isPlainObject(input.candidateObservation)) throw new KernelError("INVALID_REQUEST", "candidateObservation must be a JSON object");
+    const request: CloseTaskKernelRequest = {
+      root: taskRoot, taskDir: requireTaskDir(input.taskDir), expectedRevision: requireRevision(input.expectedRevision),
+      runId: requireString(input.runId, "runId"), reviewId: requireString(input.reviewId, "reviewId"),
+      candidateObservation: input.candidateObservation as unknown as CloseTaskKernelRequest["candidateObservation"],
+      deliveryEvidence: input.deliveryEvidence as unknown as CloseTaskKernelRequest["deliveryEvidence"],
+      actor: requireString(input.actor, "actor"), idempotencyKey: requireString(input.idempotencyKey, "idempotencyKey"), cwd: taskCwd,
+    };
+    return { ok: true, op, result: closeTaskKernel(request) };
   }
   throw new KernelError(
     "INVALID_REQUEST",
@@ -379,6 +500,24 @@ function requireString(value: unknown, field: string): string {
     throw new KernelError("INVALID_REQUEST", `${field} must be a non-empty string`);
   }
   return value;
+}
+
+function requireRevision(value: unknown): number {
+  if (!isNonNegativeInt(value)) throw new KernelError("INVALID_REQUEST", "expectedRevision must be a non-negative integer");
+  return value;
+}
+
+function requestRoot(value: unknown, cwd: string | undefined): string {
+  if (value === undefined || value === null) return cwd ?? process.cwd();
+  return requireString(value, "root");
+}
+
+function parseStringArray(value: unknown, field: string, allowEmpty = true): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim())) {
+    throw new KernelError("INVALID_REQUEST", `${field} must be an array of non-empty strings`);
+  }
+  if (!allowEmpty && value.length === 0) throw new KernelError("INVALID_REQUEST", `${field} must contain at least one reference`);
+  return [...value] as string[];
 }
 
 function optionalCwd(fromRequest: unknown, fallback: string | undefined): string | undefined {
