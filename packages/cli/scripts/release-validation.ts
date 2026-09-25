@@ -8,14 +8,38 @@ import {
   resolveNpmTag,
   validatePackedCliPackage,
 } from "./release-preflight.js";
+import type {
+  CliPackageManifest,
+  CommandRunner,
+  PackageInfo,
+  PreparedReleaseArtifacts,
+  ReleaseArtifactRecord,
+  ReleasePackageDefinition,
+} from "./types.js";
+import { isRecord } from "./types.js";
+
+interface ReleaseArtifactManifest {
+  schemaVersion: 2;
+  version: string;
+  npmTag: string;
+  releaseTag: string | null;
+  commit: string;
+  packages: ReleaseArtifactRecord[];
+}
 
 export const RELEASE_ARTIFACT_MANIFEST = "release-artifacts-v1.json";
 
-export function candidateValidationCommands({ repoRoot, cliDir }) {
+export function candidateValidationCommands({
+  repoRoot,
+  cliDir,
+}: {
+  repoRoot: string;
+  cliDir: string;
+}) {
   return [
     {
-      command: process.execPath,
-      args: [path.join(cliDir, "scripts/check-manifest-continuity.js")],
+      command: "pnpm",
+      args: ["exec", "tsx", "scripts/check-manifest-continuity.ts"],
       cwd: cliDir,
       label: "manifest/npm continuity (registry read only)",
     },
@@ -56,8 +80,8 @@ export function candidateValidationCommands({ repoRoot, cliDir }) {
       label: "release pack preview",
     },
     {
-      command: process.execPath,
-      args: [path.join(cliDir, "scripts/release-conformance.js")],
+      command: "pnpm",
+      args: ["exec", "tsx", "scripts/release-conformance.ts"],
       cwd: repoRoot,
       label: "single tarball Node-only install",
     },
@@ -65,7 +89,17 @@ export function candidateValidationCommands({ repoRoot, cliDir }) {
 }
 
 /** Run every fallible candidate check before a publish command is possible. */
-export function runCandidateValidation({ runner, repoRoot, cliDir, env = {} }) {
+export function runCandidateValidation({
+  runner,
+  repoRoot,
+  cliDir,
+  env = {},
+}: {
+  runner: CommandRunner;
+  repoRoot: string;
+  cliDir: string;
+  env?: NodeJS.ProcessEnv;
+}) {
   const commands = candidateValidationCommands({ repoRoot, cliDir });
   for (const item of commands) {
     runner(item.command, item.args, {
@@ -77,7 +111,13 @@ export function runCandidateValidation({ runner, repoRoot, cliDir, env = {} }) {
   return commands;
 }
 
-function assertArtifactDirectory({ artifactDir, repoRoot }) {
+function assertArtifactDirectory({
+  artifactDir,
+  repoRoot,
+}: {
+  artifactDir: string;
+  repoRoot: string;
+}): string {
   const resolvedArtifactDir = path.resolve(artifactDir);
   const relative = path.relative(path.resolve(repoRoot), resolvedArtifactDir);
   if (
@@ -102,7 +142,9 @@ function assertArtifactDirectory({ artifactDir, repoRoot }) {
   return resolvedArtifactDir;
 }
 
-function credentialFreeEnvironment(extra = {}) {
+function credentialFreeEnvironment(
+  extra: NodeJS.ProcessEnv = {},
+): NodeJS.ProcessEnv {
   return {
     ...extra,
     NODE_AUTH_TOKEN: undefined,
@@ -110,18 +152,18 @@ function credentialFreeEnvironment(extra = {}) {
   };
 }
 
-function expectedTarballName(packageName, version) {
+function expectedTarballName(packageName: string, version: string): string {
   return `${packageName.replace(/^@/, "").replaceAll("/", "-")}-${version}.tgz`;
 }
 
-function sha256File(file) {
+function sha256File(file: string): string {
   return `sha256:${crypto
     .createHash("sha256")
     .update(fs.readFileSync(file))
     .digest("hex")}`;
 }
 
-export function assertManifestSha256(value) {
+export function assertManifestSha256(value: unknown): string {
   if (typeof value !== "string" || !/^sha256:[0-9a-f]{64}$/.test(value)) {
     throw new Error(
       "Expected manifest SHA-256 must use the form sha256:<64 lowercase hex characters>.",
@@ -130,7 +172,7 @@ export function assertManifestSha256(value) {
   return value;
 }
 
-function tarballEntries(runner, tarballPath) {
+function tarballEntries(runner: CommandRunner, tarballPath: string): string[] {
   const output = String(
     runner("tar", ["-tzf", tarballPath], {
       capture: true,
@@ -148,13 +190,24 @@ function tarballEntries(runner, tarballPath) {
     .filter((entry) => entry !== "" && !entry.endsWith("/"));
 }
 
-function tarballPackageJson(runner, tarballPath) {
+function tarballPackageJson(
+  runner: CommandRunner,
+  tarballPath: string,
+): CliPackageManifest {
   const output = runner("tar", ["-xOf", tarballPath, "package/package.json"], {
     capture: true,
     env: credentialFreeEnvironment(),
   });
   try {
-    return JSON.parse(String(output));
+    const parsed: unknown = JSON.parse(String(output));
+    if (
+      !isRecord(parsed) ||
+      typeof parsed.name !== "string" ||
+      typeof parsed.version !== "string"
+    ) {
+      throw new Error("Packed package.json is missing name or version.");
+    }
+    return parsed as CliPackageManifest;
   } catch (error) {
     throw new Error(
       `Packed package.json is not valid JSON in ${tarballPath}: ${
@@ -164,7 +217,10 @@ function tarballPackageJson(runner, tarballPath) {
   }
 }
 
-function validatePackageIdentity(packedPackage, expected) {
+function validatePackageIdentity(
+  packedPackage: CliPackageManifest,
+  expected: { name: string; version: string },
+): void {
   if (packedPackage.name !== expected.name) {
     throw new Error(
       `Packed package name is "${packedPackage.name ?? "missing"}"; expected "${expected.name}".`,
@@ -177,7 +233,17 @@ function validatePackageIdentity(packedPackage, expected) {
   }
 }
 
-export function inspectReleaseTarball({ runner, tarballPath, key, expected }) {
+export function inspectReleaseTarball({
+  runner,
+  tarballPath,
+  key,
+  expected,
+}: {
+  runner: CommandRunner;
+  tarballPath: string;
+  key: "cli";
+  expected: { name: string; version: string };
+}): { entries: string[]; packedPackage: CliPackageManifest } {
   if (key !== "cli") throw new Error(`Unknown release package key "${key}".`);
   const entries = tarballEntries(runner, tarballPath);
   const packedPackage = tarballPackageJson(runner, tarballPath);
@@ -188,13 +254,23 @@ export function inspectReleaseTarball({ runner, tarballPath, key, expected }) {
   return { entries, packedPackage };
 }
 
-function packPackage({ runner, packageDir, artifactDir, name, version }) {
+function packPackage({
+  runner,
+  packageDir,
+  artifactDir,
+  name,
+  version,
+}: {
+  runner: CommandRunner;
+  packageDir: string;
+  artifactDir: string;
+  name: string;
+  version: string;
+}): string {
   runner("pnpm", ["pack", "--pack-destination", artifactDir], {
     cwd: packageDir,
     capture: true,
-    env: credentialFreeEnvironment({
-      PACTILE_SKIP_SMART_SEARCH_POSTINSTALL: "1",
-    }),
+    env: credentialFreeEnvironment(),
   });
   const tarballPath = path.join(
     artifactDir,
@@ -208,7 +284,17 @@ function packPackage({ runner, packageDir, artifactDir, name, version }) {
   return tarballPath;
 }
 
-function artifactRecord({ key, name, version, tarballPath }) {
+function artifactRecord({
+  key,
+  name,
+  version,
+  tarballPath,
+}: {
+  key: "cli";
+  name: string;
+  version: string;
+  tarballPath: string;
+}): ReleaseArtifactRecord {
   return {
     key,
     name,
@@ -219,7 +305,12 @@ function artifactRecord({ key, name, version, tarballPath }) {
   };
 }
 
-function hydrateManifest(manifest, artifactDir) {
+function hydrateManifest(
+  manifest: ReleaseArtifactManifest,
+  artifactDir: string,
+): Omit<ReleaseArtifactManifest, "packages"> & {
+  packages: (ReleaseArtifactRecord & { tarballPath: string })[];
+} {
   return {
     ...manifest,
     packages: manifest.packages.map((item) => ({
@@ -237,7 +328,14 @@ export function prepareReleaseArtifacts({
   packageInfo,
   provenance,
   npmTag,
-}) {
+}: {
+  runner: CommandRunner;
+  repoRoot: string;
+  artifactDir: string;
+  packageInfo: PackageInfo;
+  provenance: { head: string; tag: string | null };
+  npmTag?: string;
+}): PreparedReleaseArtifacts {
   const resolvedArtifactDir = assertArtifactDirectory({
     artifactDir,
     repoRoot,
@@ -252,7 +350,7 @@ export function prepareReleaseArtifacts({
     }),
   );
 
-  const records = [];
+  const records: ReleaseArtifactRecord[] = [];
   for (const definition of definitions) {
     const tarballPath = packPackage({
       runner,
@@ -270,7 +368,7 @@ export function prepareReleaseArtifacts({
     records.push(artifactRecord({ ...definition, tarballPath }));
   }
 
-  const manifest = {
+  const manifest: ReleaseArtifactManifest = {
     schemaVersion: 2,
     version,
     npmTag: resolvedNpmTag,
@@ -295,53 +393,68 @@ export function prepareReleaseArtifacts({
   };
 }
 
-function requireObject(value, label) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+function requireObject(value: unknown, label: string): Record<string, unknown> {
+  if (!isRecord(value)) {
     throw new Error(`${label} must be an object.`);
   }
   return value;
 }
 
-function validateArtifactRecord(record, expected, artifactDir) {
-  requireObject(record, `Release artifact ${expected.key}`);
+function validateArtifactRecord(
+  record: unknown,
+  expected: ReleasePackageDefinition,
+  artifactDir: string,
+): ReleaseArtifactRecord & { tarballPath: string } {
+  const value = requireObject(record, `Release artifact ${expected.key}`);
   if (
-    record.key !== expected.key ||
-    record.name !== expected.name ||
-    record.version !== expected.version
+    value.key !== expected.key ||
+    value.name !== expected.name ||
+    value.version !== expected.version
   ) {
     throw new Error(`Release artifact identity mismatch for ${expected.key}.`);
   }
   if (
-    typeof record.filename !== "string" ||
-    path.basename(record.filename) !== record.filename ||
-    record.filename !== expectedTarballName(expected.name, expected.version)
+    typeof value.filename !== "string" ||
+    path.basename(value.filename) !== value.filename ||
+    value.filename !== expectedTarballName(expected.name, expected.version)
   ) {
     throw new Error(`Unsafe release artifact filename for ${expected.key}.`);
   }
   if (
-    typeof record.sha256 !== "string" ||
-    !/^sha256:[0-9a-f]{64}$/.test(record.sha256)
+    typeof value.sha256 !== "string" ||
+    !/^sha256:[0-9a-f]{64}$/.test(value.sha256)
   ) {
     throw new Error(`Invalid release artifact hash for ${expected.key}.`);
   }
-  if (!Number.isSafeInteger(record.size) || record.size < 1) {
+  if (
+    typeof value.size !== "number" ||
+    !Number.isSafeInteger(value.size) ||
+    value.size < 1
+  ) {
     throw new Error(`Invalid release artifact size for ${expected.key}.`);
   }
-  const tarballPath = path.join(artifactDir, record.filename);
+  const filename = value.filename;
+  const size = value.size;
+  const sha256 = value.sha256;
+  const tarballPath = path.join(artifactDir, filename);
   if (!fs.existsSync(tarballPath)) {
     throw new Error(`Missing prepared release artifact: ${tarballPath}`);
   }
-  if (fs.statSync(tarballPath).size !== record.size) {
-    throw new Error(
-      `Prepared release artifact size changed: ${record.filename}`,
-    );
+  if (fs.statSync(tarballPath).size !== size) {
+    throw new Error(`Prepared release artifact size changed: ${filename}`);
   }
-  if (sha256File(tarballPath) !== record.sha256) {
-    throw new Error(
-      `Prepared release artifact hash changed: ${record.filename}`,
-    );
+  if (sha256File(tarballPath) !== sha256) {
+    throw new Error(`Prepared release artifact hash changed: ${filename}`);
   }
-  return { ...record, tarballPath };
+  return {
+    key: expected.key,
+    name: expected.name,
+    version: expected.version,
+    filename,
+    size,
+    sha256,
+    tarballPath,
+  };
 }
 
 /** Re-open and fully validate the sealed package set before any registry operation. */
@@ -351,7 +464,13 @@ export function readPreparedReleaseArtifacts({
   packageInfo,
   expectedReleaseTag,
   expectedManifestSha256,
-}) {
+}: {
+  runner: CommandRunner;
+  artifactDir: string;
+  packageInfo: PackageInfo;
+  expectedReleaseTag?: string | null;
+  expectedManifestSha256: string;
+}): PreparedReleaseArtifacts {
   assertManifestSha256(expectedManifestSha256);
   const resolvedArtifactDir = path.resolve(artifactDir);
   const manifestPath = path.join(
@@ -371,7 +490,7 @@ export function readPreparedReleaseArtifacts({
       `Release artifact manifest SHA-256 receipt mismatch: expected ${expectedManifestSha256}, actual ${actualManifestSha256}.`,
     );
   }
-  let parsedManifest;
+  let parsedManifest: unknown;
   try {
     parsedManifest = JSON.parse(manifestBytes.toString("utf-8"));
   } catch (error) {
@@ -386,40 +505,54 @@ export function readPreparedReleaseArtifacts({
     throw new Error("Unsupported release artifact manifest schemaVersion.");
   }
   if (
+    typeof manifest.version !== "string" ||
     manifest.version !== packageInfo.cliVersion
   ) {
     throw new Error("Release artifact version no longer matches the checkout.");
   }
+  const version = manifest.version;
+  const npmTag = manifest.npmTag;
+  const releaseTag = manifest.releaseTag;
+  const commit = manifest.commit;
   try {
     if (
-      typeof manifest.npmTag !== "string" ||
-      resolveNpmTag(manifest.version, manifest.npmTag) !== manifest.npmTag
+      typeof npmTag !== "string" ||
+      resolveNpmTag(version, npmTag) !== npmTag
     ) {
       throw new Error("invalid npm tag");
     }
   } catch {
     throw new Error("Release artifact npm tag does not match its version.");
   }
-  if (
-    expectedReleaseTag !== undefined &&
-    manifest.releaseTag !== expectedReleaseTag
-  ) {
+  if (expectedReleaseTag !== undefined && releaseTag !== expectedReleaseTag) {
     throw new Error(
-      `Prepared release tag ${manifest.releaseTag ?? "(none)"} does not match ${expectedReleaseTag}.`,
+      `Prepared release tag ${releaseTag ?? "(none)"} does not match ${expectedReleaseTag}.`,
     );
   }
-  if (!Array.isArray(manifest.packages) || manifest.packages.length !== 1) {
+  const packageRecords = manifest.packages;
+  if (!Array.isArray(packageRecords) || packageRecords.length !== 1) {
     throw new Error(
       "Release artifact manifest must contain exactly the single Pactile package.",
     );
   }
+  if (
+    typeof commit !== "string" ||
+    (releaseTag !== null && typeof releaseTag !== "string")
+  ) {
+    throw new Error("Release artifact manifest provenance fields are invalid.");
+  }
+  if (typeof npmTag !== "string") {
+    throw new Error("Release artifact npm tag does not match its version.");
+  }
+  const validatedReleaseTag =
+    typeof releaseTag === "string" ? releaseTag : null;
   const expected = releasePackageDefinitions(packageInfo).map((definition) => ({
     ...definition,
-    version: manifest.version,
+    version,
   }));
   const packages = expected.map((definition) => {
-    const matches = manifest.packages.filter(
-      (item) => item?.key === definition.key,
+    const matches = packageRecords.filter(
+      (item) => isRecord(item) && item.key === definition.key,
     );
     if (matches.length !== 1) {
       throw new Error(
@@ -440,7 +573,11 @@ export function readPreparedReleaseArtifacts({
     return record;
   });
   return {
-    ...manifest,
+    schemaVersion: 2,
+    version,
+    npmTag,
+    releaseTag: validatedReleaseTag,
+    commit,
     packages,
     manifestPath,
     manifestSha256: actualManifestSha256,

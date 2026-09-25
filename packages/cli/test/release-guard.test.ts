@@ -26,7 +26,11 @@ import {
   RELEASE_ARTIFACT_MANIFEST,
 } from "../scripts/release-validation.js";
 import { validateReleasePackPaths, REQUIRED_RELEASE_FILES } from "../scripts/check-release-pack-contents.js";
-import { assertSinglePackageContract } from "../scripts/release-conformance.js";
+import {
+  assertSinglePackageContract,
+  buildSealedTarballInstallArgs,
+  createNodeOnlyInstallEnvironment,
+} from "../scripts/release-conformance.js";
 
 const packageInfo = {
   cliName: "@blxzer/pactile",
@@ -102,13 +106,19 @@ describe("single-package release policy", () => {
       .toMatchObject({ tag: "beta", cli: { publish: true } });
     const packed = {
       name: packageInfo.cliName, version: packageInfo.cliVersion,
-      engines: { node: ">=18.17.0" },
-      bin: { pactile: "./bin/pactile.js", cstl: "./bin/cstl.js", "smart-search": "./bin/smart-search.js" },
+      engines: { node: ">=20.0.0" },
+      bin: { pactile: "./dist/bin/pactile.js", cstl: "./dist/bin/cstl.js" },
       exports: { "./core": {}, "./core/task": {}, "./core/compat": {} },
       dependencies: { chalk: "^5.3.0" },
     };
     expect(() => validatePackedCliPackage(packed, packageInfo.cliVersion)).not.toThrow();
     expect(assertSinglePackageContract(packed)).toBe(packageInfo.cliVersion);
+    expect(() => validatePackedCliPackage({ ...packed, optionalDependencies: { "@blxzer/smart-search": "^0.2.0" } }, packageInfo.cliVersion))
+      .toThrow(/external Smart Search Middleware Provider/);
+    expect(() => assertSinglePackageContract({ ...packed, dependencies: { "@blxzer/smart-search": "^0.2.0" } }))
+      .toThrow(/external Middleware Provider/);
+    expect(() => assertSinglePackageContract({ ...packed, bin: { ...packed.bin, "smart-search": "./dist/bin/smart-search.js" } }))
+      .toThrow(/external Middleware Provider/);
     expect(() => validatePackedCliPackage({ ...packed, dependencies: { "@blxzer/pactile-core": "0.6.0" } }, packageInfo.cliVersion))
       .toThrow(/retired package/);
     const releasePaths = [
@@ -121,6 +131,28 @@ describe("single-package release policy", () => {
       .toContain("missing required packed file: dist/core/index.js");
     expect(validateReleasePackPaths([...releasePaths, "dist/legacy.py"]))
       .toContain("forbidden packed path: dist/legacy.py");
+  });
+
+  it("checks the sealed install with a Node-only PATH and default lifecycle scripts", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-node-only-install-"));
+    roots.push(root);
+    const userConfig = path.join(root, "empty-npmrc");
+    fs.writeFileSync(userConfig, "", "utf8");
+    const env = createNodeOnlyInstallEnvironment(root, userConfig);
+    const pathEntries = env.PATH?.split(path.delimiter) ?? [];
+    expect(pathEntries).toContain(path.dirname(process.execPath));
+    expect(env.PATH).not.toBe(process.env.PATH);
+    expect(env.PACTILE_SKIP_SMART_SEARCH_POSTINSTALL).toBeUndefined();
+    expect(env.npm_config_ignore_scripts).toBeUndefined();
+    expect(env.NPM_CONFIG_IGNORE_SCRIPTS).toBeUndefined();
+
+    const args = buildSealedTarballInstallArgs({
+      prefix: path.join(root, "install"),
+      cacheDir: path.join(root, "cache"),
+      tarballPath: path.join(root, "pactile.tgz"),
+    });
+    expect(args).toContain("install");
+    expect(args).not.toContain("--ignore-scripts");
   });
 });
 

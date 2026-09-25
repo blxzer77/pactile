@@ -24,13 +24,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI_DIR = path.resolve(__dirname, "..");
 const REPO_ROOT = path.resolve(CLI_DIR, "../..");
 
-const RELEASE_TYPES = new Set([
-  "patch",
-  "minor",
-  "major",
-  "beta",
-  "promote",
-]);
+const RELEASE_TYPES = new Set(["patch", "minor", "major", "beta", "promote"]);
 const EXPLICIT_VERSION =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.(0|[1-9]\d*))?$/;
 
@@ -149,7 +143,6 @@ export function runReleaseCandidate({
       cliDir,
       env: {
         PACTILE_KERNEL_CLI: `node ${quoted} kernel --json`,
-        PACTILE_SKIP_SMART_SEARCH_POSTINSTALL: "1",
       },
     });
   }

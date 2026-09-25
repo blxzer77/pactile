@@ -17,7 +17,7 @@ Pactile 把受契约约束的能力积木，按需拼成 Codex 可用、且有�
 
 ## 五分钟上手
 
-前置条件：Node.js 18.17 或更高版本。Pactile 的任务、上下文和会话命令使用 Node.js，不要求 Python。
+前置条件：Node.js 20 或更高版本。Pactile 的任务、上下文和会话命令使用 Node.js，不要求 Python。
 
 ```bash
 npm install -g @blxzer/pactile
@@ -112,7 +112,7 @@ pnpm lint
 
 ## 范围边界
 
-Pactile 是本地项目工具。它不承诺云端编排、插件市场、自动安装宿主原生资产，也不取得凭据或 OAuth 状态的所有权。可选 Middleware Provider 仍需独立安装并显式探测。
+Pactile 是本地项目工具。它不承诺云端编排、插件市场、自动安装宿主原生资产，也不取得凭据或 OAuth 状态的所有权。可选 Middleware Provider 仍需独立安装并显式探测。Smart Search 是单独的可选 package；需要外部知识检索时，请自行安装并配置。它的前置条件与 Pactile 的 Node-only 运行时要求分开管理。
 
 项目沿革、版权与许可证通知保留在 [COPYRIGHT](COPYRIGHT) 和 [LICENSE](LICENSE) 中。
 

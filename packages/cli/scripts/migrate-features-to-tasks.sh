@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# HISTORICAL ONLY (P31): the archived 0.2.0 migration manifest mentions this
+# utility. It is not called by the current CLI, package scripts, or workflows,
+# and it is not included in the npm package. This old-project mutator requires
+# Bash and jq; do not run it as part of the current Node-only Pactile path.
+# Keep it only while the archived manifest retains the historical reference.
+
 # Migration script: Convert features to unified tasks system
 # Usage: ./migrate-features-to-tasks.sh [--dry-run] [project-dir]
 #

@@ -11,7 +11,7 @@ npm install -g @blxzer/pactile
 pactile --version
 ```
 
-需要 Node.js 18.17 或更高版本。Pactile 的任务、上下文和会话命令使用 Node.js，不要求 Python。Smart Search 等 Middleware Provider 是可选、独立探测的能力；Pactile 不会静默安装宿主原生资产，也不会复制凭据。
+需要 Node.js 20 或更高版本。Pactile 的任务、上下文和会话命令使用 Node.js，不要求 Python。Smart Search 等 Middleware Provider 是可选、独立探测的能力；Pactile 不会静默安装宿主原生资产，也不会复制凭据。
 
 ## 第一个项目
 

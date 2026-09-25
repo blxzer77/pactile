@@ -53,7 +53,7 @@ const CONTRACT_IDS = {
   documentationMap: "pactile.documentation-map/v1",
 };
 const CANONICAL_POLICY_DIGESTS = {
-  inventory: "607dce00564b8856d06f96c6f4020b6bfd86205b327fd68b4861291099d4e41e",
+  inventory: "1b80e5487f3409671babfd5bd44f8a53066cbafcb4ccee2f34317e2ced64a6aa",
   renameMap: "e7e3a0eeb7ba5c97b5ed614b13c8ac628e9e3781d57ec763be06f405bb1b91aa",
   documentationMap:
     "03942755efb2d1bedc1689af353ae972d31bbeeb4804e00c1e0c2ca99b083c29",
@@ -349,13 +349,13 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
-function sortedUnique(values) {
+function sortedUnique(values: string[]): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
 }
 
-function duplicateValues(values) {
-  const seen = new Set();
-  const duplicates = new Set();
+function duplicateValues(values: string[]): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
   for (const value of values) {
     if (seen.has(value)) duplicates.add(value);
     seen.add(value);
@@ -449,10 +449,10 @@ function walkFiles(rootDir, relativeDir) {
  * Include every tracked and non-ignored untracked file. Brand-sensitive files
  * must not escape the guard merely because Batch 3 work is still uncommitted.
  */
-function inventoryFiles(repoRoot, trackedFiles) {
+function inventoryFiles(repoRoot: string, trackedFiles: string[]): string[] {
   const controlFiles = [
     ...walkFiles(repoRoot, "docs/pactile"),
-    "packages/cli/scripts/check-pactile-brand-surface.js",
+    "packages/cli/scripts/check-pactile-brand-surface.ts",
     "packages/cli/test/docs/pactile-brand-surface.test.ts",
   ].filter((relativePath) =>
     fs.existsSync(path.join(repoRoot, ...relativePath.split("/"))),
@@ -1032,9 +1032,14 @@ function validateDocumentationMap(
   for (const duplicate of duplicateValues(pageIds)) {
     errors.push(`documentation target has duplicate id: ${duplicate}`);
   }
-  const targetById = new Map(
-    documentationMap.targetPages.map((page) => [page.id, page]),
-  );
+  const targetById = new Map<
+    string,
+    {
+      navigationGroup?: string;
+      status?: string;
+      paths?: Record<string, string>;
+    }
+  >(documentationMap.targetPages.map((page) => [page.id, page] as const));
   errors.push(
     ...exactSetErrors(
       "canonical target pages",
@@ -1225,8 +1230,13 @@ function validateDocumentationMap(
     ),
   );
 
-  const mappingByPath = new Map(
-    documentationMap.sourceMappings.map((entry) => [entry.path, entry]),
+  const mappingByPath = new Map<
+    string,
+    { path: string; classification: string }
+  >(
+    documentationMap.sourceMappings.map(
+      (entry) => [entry.path, entry] as const,
+    ),
   );
   const cursorPlusLiveDocs = sortedUnique(
     scan.occurrences
@@ -1302,7 +1312,10 @@ function loadContracts(repoRoot) {
   };
 }
 
-function auditBrandSurface(repoRoot, options = {}) {
+function auditBrandSurface(
+  repoRoot: string,
+  options: { skipSnapshotCheck?: boolean; releaseMode?: boolean } = {},
+) {
   const contracts = loadContracts(repoRoot);
   const trackedFiles = gitInventoryFiles(repoRoot);
   const files = inventoryFiles(repoRoot, trackedFiles);
@@ -1332,7 +1345,7 @@ function auditBrandSurface(repoRoot, options = {}) {
     ...validateRenameMap(contracts.renameMap),
     ...documentation.errors,
   ];
-  const filesByClassification = {};
+  const filesByClassification: Record<string, string[]> = {};
   for (const occurrence of scan.occurrences) {
     const values = filesByClassification[occurrence.classification] ?? [];
     values.push(occurrence.path);

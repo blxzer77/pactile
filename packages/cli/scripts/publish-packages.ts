@@ -45,9 +45,155 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI_DIR = path.resolve(__dirname, "..");
 const REPO_ROOT = path.resolve(CLI_DIR, "../..");
 
+interface PackageInfo {
+  cliName: string;
+  cliVersion: string;
+  cliDir: string;
+}
+
+interface CommandOptions {
+  cwd?: string;
+  capture?: boolean;
+  env?: NodeJS.ProcessEnv;
+}
+
+type CommandRunner = (
+  command: string,
+  args?: string[],
+  options?: CommandOptions,
+) => string;
+
+interface ReleasePackageArtifact {
+  key: string;
+  name: string;
+  version: string;
+  filename: string;
+  tarballPath: string;
+  size?: number;
+  sha256?: string;
+}
+
+interface PreparedReleaseArtifacts {
+  version: string;
+  npmTag: string;
+  releaseTag: string | null;
+  commit: string;
+  manifestSha256: string;
+  manifestPath?: string;
+  packages: ReleasePackageArtifact[];
+}
+
+interface PublishPlanEntry {
+  name: string;
+  publish: boolean;
+  alreadyOnNpm: boolean | null;
+}
+
+interface PublishPlan {
+  version: string;
+  tag: string;
+  registryChecked: boolean;
+  cli: PublishPlanEntry;
+  [key: string]: unknown;
+}
+
+type CandidateValidator = (input: {
+  runner: CommandRunner;
+  repoRoot: string;
+  cliDir: string;
+  env: NodeJS.ProcessEnv;
+}) => unknown;
+
+type PrepareArtifacts = (input: {
+  runner: CommandRunner;
+  repoRoot: string;
+  artifactDir: string;
+  packageInfo: PackageInfo;
+  provenance: unknown;
+  npmTag?: string;
+}) => PreparedReleaseArtifacts;
+
+type LoadArtifacts = (input: {
+  runner: CommandRunner;
+  artifactDir: string;
+  packageInfo: PackageInfo;
+  expectedReleaseTag: string | undefined;
+  expectedManifestSha256: string;
+}) => PreparedReleaseArtifacts;
+
+type NpmVersionExists = (
+  name: string,
+  version: string,
+  options: { runner: CommandRunner },
+) => boolean;
+
+type ReleaseLogger = (message: string) => void;
+
+interface CandidatePreparationOptions {
+  dryRun?: boolean;
+  explicitTag?: string;
+  explicitNpmTag?: string;
+  remote?: string;
+  artifactDir?: string;
+  runner?: CommandRunner;
+  packageInfo?: PackageInfo;
+  repoRoot?: string;
+  validateCandidate?: CandidateValidator;
+  prepareArtifacts?: PrepareArtifacts;
+  env?: NodeJS.ProcessEnv;
+  log?: ReleaseLogger;
+}
+
+interface PreparedPublishOptions {
+  dryRun?: boolean;
+  explicitTag?: string;
+  explicitNpmTag?: string;
+  artifactDir?: string;
+  expectedManifestSha256?: string;
+  runner?: CommandRunner;
+  packageInfo?: PackageInfo;
+  repoRoot?: string;
+  loadArtifacts?: LoadArtifacts;
+  npmExists?: NpmVersionExists;
+  env?: NodeJS.ProcessEnv;
+  log?: ReleaseLogger;
+}
+
+type PublishDryRunOptions = CandidatePreparationOptions &
+  Pick<PreparedPublishOptions, "loadArtifacts" | "npmExists">;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPublishPlanEntry(value: unknown): value is PublishPlanEntry {
+  return (
+    isRecord(value) &&
+    typeof value.name === "string" &&
+    typeof value.publish === "boolean" &&
+    (typeof value.alreadyOnNpm === "boolean" || value.alreadyOnNpm === null)
+  );
+}
+
+function requirePublishPlan(value: unknown): PublishPlan {
+  if (!isRecord(value)) {
+    throw new Error("Publish plan is missing its CLI package entry.");
+  }
+  const { version, tag, registryChecked, cli } = value;
+  if (
+    typeof version !== "string" ||
+    typeof tag !== "string" ||
+    typeof registryChecked !== "boolean" ||
+    !isPublishPlanEntry(cli)
+  ) {
+    throw new Error("Publish plan is missing its CLI package entry.");
+  }
+  return { ...value, version, tag, registryChecked, cli };
+}
+
 export const PUBLISH_CREDENTIAL_ENV_KEYS = ["NODE_AUTH_TOKEN", "NPM_TOKEN"];
 
-export function readPackageInfo() {
+export function readPackageInfo(): PackageInfo {
   const cli = readVersions();
   return {
     ...cli,
@@ -55,7 +201,9 @@ export function readPackageInfo() {
   };
 }
 
-export function assertCredentialFreePreparation(env = process.env) {
+export function assertCredentialFreePreparation(
+  env: NodeJS.ProcessEnv = process.env,
+): void {
   const present = PUBLISH_CREDENTIAL_ENV_KEYS.filter(
     (key) => typeof env[key] === "string" && env[key].trim() !== "",
   );
@@ -68,19 +216,21 @@ export function assertCredentialFreePreparation(env = process.env) {
   }
 }
 
-function validationEnvironment(cliDir, env) {
-  const bin = path.join(cliDir, "bin", "pactile.js");
+function validationEnvironment(
+  cliDir: string,
+  env: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const bin = path.join(cliDir, "dist", "bin", "pactile.js");
   const quoted = /\s/.test(bin) ? `"${bin}"` : bin;
   return {
     PACTILE_KERNEL_CLI:
       env.PACTILE_KERNEL_CLI ?? `node ${quoted} kernel --json`,
-    PACTILE_SKIP_SMART_SEARCH_POSTINSTALL: "1",
     NODE_AUTH_TOKEN: undefined,
     NPM_TOKEN: undefined,
   };
 }
 
-function credentialFreeRunner(runner) {
+function credentialFreeRunner(runner: CommandRunner): CommandRunner {
   return (command, args = [], options = {}) =>
     runner(command, args, {
       ...options,
@@ -96,7 +246,7 @@ function credentialFreeRunner(runner) {
     });
 }
 
-function isPathInside(parent, candidate) {
+function isPathInside(parent: string, candidate: string): boolean {
   const relative = path.relative(path.resolve(parent), path.resolve(candidate));
   return (
     relative === "" ||
@@ -110,7 +260,11 @@ export function writeManifestReceiptOutput({
   outputPath,
   artifactDir,
   manifestSha256,
-}) {
+}: {
+  outputPath: string | undefined;
+  artifactDir: string;
+  manifestSha256: string;
+}): void {
   assertManifestSha256(manifestSha256);
   if (!outputPath) throw new Error("--receipt-output requires a path.");
   if (isPathInside(artifactDir, outputPath)) {
@@ -125,8 +279,8 @@ export function writeManifestReceiptOutput({
   );
 }
 
-function dryRunPlan(packageInfo, npmTag) {
-  const plan = {
+function dryRunPlan(packageInfo: PackageInfo, npmTag: string): PublishPlan {
+  const plan: Record<string, unknown> = {
     version: packageInfo.cliVersion,
     tag: resolveNpmTag(packageInfo.cliVersion, npmTag),
     registryChecked: false,
@@ -138,10 +292,10 @@ function dryRunPlan(packageInfo, npmTag) {
       alreadyOnNpm: null,
     };
   }
-  return plan;
+  return requirePublishPlan(plan);
 }
 
-function statusAfter(runner, repoRoot) {
+function statusAfter(runner: CommandRunner, repoRoot: string): string {
   return String(
     runner("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
       cwd: repoRoot,
@@ -169,13 +323,17 @@ export function runCandidatePreparation({
   prepareArtifacts = prepareReleaseArtifacts,
   env = process.env,
   log = console.log,
-} = {}) {
+}: CandidatePreparationOptions = {}) {
   assertCredentialFreePreparation(process.env);
   assertCredentialFreePreparation(env);
   if (!artifactDir)
     throw new Error("Release preparation requires --artifact-dir.");
   const preparationRunner = credentialFreeRunner(runner);
-  const version = assertMatchingVersions(packageInfo);
+  const version = assertMatchingVersions({
+    cliVersion: packageInfo.cliVersion,
+    cliName: packageInfo.cliName,
+    expectedVersion: packageInfo.cliVersion,
+  });
   const provenance = dryRun
     ? inspectLocalRelease({
         runner: preparationRunner,
@@ -216,7 +374,10 @@ export function runCandidatePreparation({
   return { artifacts, manifestSha256, provenance, validationCommands };
 }
 
-function packageArtifact(artifacts, key) {
+function packageArtifact(
+  artifacts: PreparedReleaseArtifacts,
+  key: string,
+): ReleasePackageArtifact {
   const item = artifacts.packages.find((entry) => entry.key === key);
   if (!item) throw new Error(`Prepared release artifact is missing ${key}.`);
   return item;
@@ -236,15 +397,20 @@ export function runPreparedPublish({
   npmExists = npmVersionExists,
   env = process.env,
   log = console.log,
-} = {}) {
+}: PreparedPublishOptions = {}) {
   if (!artifactDir)
     throw new Error("Prepared publish requires --artifact-dir.");
   assertManifestSha256(expectedManifestSha256);
-  assertMatchingVersions(packageInfo);
+  assertMatchingVersions({
+    cliVersion: packageInfo.cliVersion,
+    cliName: packageInfo.cliName,
+    expectedVersion: packageInfo.cliVersion,
+  });
 
   let releaseTag;
   if (!dryRun) {
-    releaseTag = resolveReleaseTag({ explicitTag, env });
+    const tagOptions = { explicitTag, env };
+    releaseTag = resolveReleaseTag(tagOptions);
     const parsed = parseReleaseTag(releaseTag);
     if (parsed.version !== packageInfo.cliVersion) {
       throw new Error(
@@ -289,7 +455,7 @@ export function runPreparedPublish({
 
   // All artifact parsing, content checks, and checksum verification are above
   // the first registry query and therefore above the first possible publish.
-  const plan = dryRun
+  const planned = dryRun
     ? dryRunPlan(packageInfo, artifacts.npmTag)
     : {
         ...createPublishPlan({
@@ -299,6 +465,7 @@ export function runPreparedPublish({
         }),
         registryChecked: true,
       };
+  const plan = requirePublishPlan(planned);
   if (plan.tag !== artifacts.npmTag || plan.version !== artifacts.version) {
     throw new Error("Prepared artifact manifest does not match publish plan.");
   }
@@ -307,15 +474,22 @@ export function runPreparedPublish({
     `publish plan: ${plan.cli.name}@${plan.version} -> ${plan.tag} ` +
       `(${plan.cli.publish ? "publish" : "skip"})`,
   );
-  const orderedPlan = releasePackageDefinitions(packageInfo).map(({ key }) => ({
-    key,
-    item: plan[key],
-  }));
+  const orderedPlan = releasePackageDefinitions(packageInfo).map(({ key }) => {
+    const item = plan[key];
+    if (!isPublishPlanEntry(item)) {
+      throw new Error(`Publish plan is missing package ${key}.`);
+    }
+    return { key, item };
+  });
   const hasGitHubOidc =
     env.GITHUB_ACTIONS === "true" &&
     Boolean(env.ACTIONS_ID_TOKEN_REQUEST_URL) &&
     Boolean(env.ACTIONS_ID_TOKEN_REQUEST_TOKEN);
-  if (!dryRun && !hasGitHubOidc && orderedPlan.some((entry) => entry.item.publish)) {
+  if (
+    !dryRun &&
+    !hasGitHubOidc &&
+    orderedPlan.some((entry) => entry.item.publish)
+  ) {
     try {
       runner("npm", ["whoami"], { cwd: repoRoot, capture: true });
     } catch {
@@ -360,7 +534,10 @@ export function runPreparedPublish({
 }
 
 /** Credential/tag-free rehearsal; registry continuity is read-only, not skipped. */
-export function runPublishDryRun({ artifactDir, ...options } = {}) {
+export function runPublishDryRun({
+  artifactDir,
+  ...options
+}: PublishDryRunOptions = {}) {
   const ownDirectory = !artifactDir;
   const target =
     artifactDir ??
@@ -384,7 +561,9 @@ export function runPublishDryRun({ artifactDir, ...options } = {}) {
 }
 
 /** Backwards-compatible programmatic entry point: only safe dry-run is combined. */
-export function runPublishPipeline(options = {}) {
+export function runPublishPipeline(
+  options: PublishDryRunOptions & { dryRun?: boolean } = {},
+) {
   if (!options.dryRun) {
     throw new Error(
       "Real release requires separate --prepare-only and --publish-only invocations.",
@@ -393,7 +572,11 @@ export function runPublishPipeline(options = {}) {
   return runPublishDryRun(options);
 }
 
-function optionValue(args, flag, fallback) {
+function optionValue(
+  args: string[],
+  flag: string,
+  fallback?: string,
+): string | undefined {
   const index = args.indexOf(flag);
   return index >= 0 ? args[index + 1] : fallback;
 }

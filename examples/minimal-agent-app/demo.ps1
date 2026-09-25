@@ -1,55 +1,114 @@
-# minimal-agent-app demo — pactile init → capability smoke → list tree
+# minimal-agent-app demo — Pactile init -> capability smoke -> generated tree
 $ErrorActionPreference = "Stop"
 
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$RepoRoot = Resolve-Path (Join-Path $ScriptDir "..\..")
-$Workspace = Join-Path $ScriptDir "_demo-workspace"
+$ScriptDir = [System.IO.Path]::GetFullPath((Split-Path -Parent $MyInvocation.MyCommand.Path))
+$RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "..\.."))
+$NodeCommand = Get-Command node -ErrorAction SilentlyContinue
+if (-not $NodeCommand) {
+    throw "Node.js 20 or newer is required. Install Node.js and try again."
+}
+$NodeVersionText = (& $NodeCommand.Source --version).Trim()
+if ($LASTEXITCODE -ne 0 -or $NodeVersionText -notmatch "^v(?<Major>\d+)\.") {
+    throw "Could not read the Node.js version from '$($NodeCommand.Source)'."
+}
+if ([int]$Matches.Major -lt 20) {
+    throw "Node.js 20 or newer is required (found $NodeVersionText)."
+}
+Write-Host "Using Node.js $NodeVersionText"
 
-function Resolve-Pactile {
-    $built = Join-Path $RepoRoot "packages\cli\bin\pactile.js"
-    if (Test-Path $built) {
-        $dist = Join-Path $RepoRoot "packages\cli\dist\cli\index.js"
-        if (-not (Test-Path $dist)) {
-            Write-Host "Building CLI from monorepo..."
-            Push-Location $RepoRoot
+$WorkspaceInput = if ($env:PACTILE_DEMO_WORKSPACE) {
+    $env:PACTILE_DEMO_WORKSPACE
+} else {
+    Join-Path $ScriptDir "_demo-workspace"
+}
+if (-not [System.IO.Path]::IsPathRooted($WorkspaceInput)) {
+    $WorkspaceInput = Join-Path $ScriptDir $WorkspaceInput
+}
+$Workspace = [System.IO.Path]::GetFullPath($WorkspaceInput)
+if (
+    $Workspace -eq [System.IO.Path]::GetPathRoot($Workspace) -or
+    $Workspace -eq $ScriptDir -or
+    $Workspace -eq $RepoRoot
+) {
+    throw "Refusing to use a filesystem or repository root as the demo workspace."
+}
+
+$BuiltCli = Join-Path $RepoRoot "packages\cli\dist\bin\pactile.js"
+$PactileCommand = $null
+$PactilePrefix = @()
+if (Test-Path -LiteralPath $BuiltCli) {
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot "packages\cli\dist\cli\index.js"))) {
+        Write-Host "Building CLI from monorepo..."
+        Push-Location $RepoRoot
+        try {
             pnpm build
+            if ($LASTEXITCODE -ne 0) {
+                throw "pnpm build failed with exit code $LASTEXITCODE."
+            }
+        } finally {
             Pop-Location
         }
-        return $built
     }
-    $global = Get-Command pactile -ErrorAction SilentlyContinue
-    if ($global) {
-        return $global.Source
+    if (-not (Test-Path -LiteralPath $BuiltCli)) {
+        throw "Build did not create $BuiltCli."
     }
-    Write-Error "pactile not found. Install: npm install -g @blxzer/pactile`nOr run from the Pactile repo after pnpm build."
+    $PactileCommand = $NodeCommand.Source
+    $PactilePrefix = @($BuiltCli)
+} else {
+    $GlobalPactile = Get-Command pactile -ErrorAction SilentlyContinue
+    if (-not $GlobalPactile) {
+        throw "pactile not found. Install: npm install -g @blxzer/pactile`nOr run from the Pactile repo after pnpm build."
+    }
+    $PactileCommand = if ($GlobalPactile.Source) { $GlobalPactile.Source } else { $GlobalPactile.Name }
 }
 
-$Pactile = Resolve-Pactile
-Write-Host "Using CLI: $Pactile"
+function Invoke-Pactile {
+    $Arguments = @($script:PactilePrefix) + @($args)
+    & $script:PactileCommand @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "pactile command failed with exit code $LASTEXITCODE."
+    }
+}
 
-if (Test-Path $Workspace) {
-    Remove-Item -Recurse -Force $Workspace
+Write-Host "Using CLI: $PactileCommand $($PactilePrefix -join ' ')"
+if (Test-Path -LiteralPath $Workspace) {
+    $WorkspaceItem = Get-Item -LiteralPath $Workspace -Force
+    if ($WorkspaceItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "Refusing to replace a link or junction at $Workspace."
+    }
+    Remove-Item -LiteralPath $Workspace -Recurse -Force
 }
 New-Item -ItemType Directory -Path $Workspace | Out-Null
-Set-Location $Workspace
+Push-Location $Workspace
+try {
+    Write-Host ""
+    Write-Host "==> pactile --version"
+    Invoke-Pactile --version
+
+    Write-Host ""
+    Write-Host "==> verify pactile init --help supports --codex"
+    $InitHelp = (Invoke-Pactile init --help | Out-String)
+    if ($InitHelp -notmatch "--codex") {
+        throw "pactile init --help does not advertise --codex."
+    }
+    Write-Host "init help advertises --codex"
+
+    Write-Host ""
+    Write-Host "==> pactile init --codex --yes --skip-readiness --user pactile-demo"
+    Invoke-Pactile init --codex --yes --skip-readiness --user pactile-demo
+} finally {
+    Pop-Location
+}
 
 Write-Host ""
-Write-Host "==> pactile init --cursor --codex -y"
-node $Pactile init --cursor --codex -y
-
-Write-Host ""
-Write-Host "==> pactile capability-smoke --json"
-node $Pactile capability-smoke --json
-
-Write-Host ""
-Write-Host "==> Generated layout ($Workspace)"
-Get-ChildItem -Force | ForEach-Object { $_.Name }
+Write-Host "==> Generated Codex layout ($Workspace)"
+Get-ChildItem -Force $Workspace | ForEach-Object { $_.Name }
 Write-Host ""
 Write-Host ".pactile/"
-Get-ChildItem .pactile -ErrorAction SilentlyContinue | ForEach-Object { "  $($_.Name)" }
+Get-ChildItem (Join-Path $Workspace ".pactile") -ErrorAction SilentlyContinue | ForEach-Object { "  $($_.Name)" }
 Write-Host ""
-Write-Host ".cursor/"
-Get-ChildItem .cursor -ErrorAction SilentlyContinue | ForEach-Object { "  $($_.Name)" }
+Write-Host ".agents/skills/"
+Get-ChildItem (Join-Path $Workspace ".agents\skills") -ErrorAction SilentlyContinue | ForEach-Object { "  $($_.Name)" }
 
 Write-Host ""
-Write-Host "Done. Open $Workspace in Cursor or Codex to continue with your normal workflow."
+Write-Host "Done. Open $Workspace in Codex to continue with your normal workflow."
