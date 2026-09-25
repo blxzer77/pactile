@@ -12,6 +12,7 @@ import {
   applyKernelCreate,
   applyKernelPatch,
   applyKernelStart,
+  readKernel,
 } from "../../../src/core/task/kernel-store.js";
 import {
   EXTERNAL_KNOWLEDGE_CAPABILITY,
@@ -28,6 +29,7 @@ import {
   type ProviderResolutionInputV1,
 } from "../../../src/core/task/adapter-middleware.js";
 import { resolveRequiredControls } from "../../../src/core/task/full-quality.js";
+import { fixtureApproval, fixturePlanningGates } from "./start-fixture.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const coreRoot = path.resolve(here, "../../../src/core");
@@ -47,7 +49,7 @@ function stage6Record(overrides: Parameters<typeof emptyTaskRecord>[0] = {}) {
 }
 
 function writeSurfaces(taskDir: string): void {
-  fs.writeFileSync(path.join(taskDir, "prd.md"), "# Stage 6\n", "utf-8");
+  fs.writeFileSync(path.join(taskDir, "prd.md"), "# Stage 6\n\n## Acceptance Criteria\n\n- [ ] Stage 6 behavior works\n", "utf-8");
   fs.writeFileSync(
     path.join(taskDir, "verify.md"),
     "- validation: core test\n- acceptance: stage6 close\n",
@@ -155,7 +157,7 @@ describe("Stage 6 Adapter and Middleware", () => {
       actor: "task.py start-execution --approved",
       idempotencyKey: "start:stage6-lite",
       record: { ...stage6Record(), status: "in_progress" },
-      extras: { execution_approval: { approved_by: "user" } },
+      extras: { execution_approval: fixtureApproval(taskDir) },
       evidence: "task.py start-execution --approved",
     });
     expect(started.legacy.status).toBe("in_progress");
@@ -178,7 +180,7 @@ describe("Stage 6 Adapter and Middleware", () => {
   });
 
   it("starts Full Quality without an implicitly required Provider", () => {
-    const created = applyKernelCreate({
+    applyKernelCreate({
       taskDir,
       actor: "task.py create",
       idempotencyKey: "create:stage6-full",
@@ -194,19 +196,20 @@ describe("Stage 6 Adapter and Middleware", () => {
     writeSurfaces(taskDir);
     fs.writeFileSync(
       path.join(taskDir, "implement.md"),
-      "execution_mode: inline\nverification_profile: standard\n",
+      "execution_mode: inline\nisolation: main-worktree\nverification_profile: standard\nretrieval_profile: exact-only\noptional_capabilities: []\nquality_gates:\n  mode: profile\n",
       "utf-8",
     );
+    fixturePlanningGates(taskDir);
     const started = applyKernelStart({
       taskDir,
-      expectedRevision: created.kernel.revision,
+      expectedRevision: readKernel({ taskDir }).kernel.revision,
       actor: "a",
       idempotencyKey: "start:stage6-full",
       record: {
         ...stage6Record({ id: "stage6-full", name: "stage6-full" }),
         status: "in_progress",
       },
-      extras: { execution_approval: { approved_by: "user" } },
+      extras: { execution_approval: fixtureApproval(taskDir) },
       evidence: "approved",
     });
     expect(started.legacy.status).toBe("in_progress");
@@ -261,7 +264,7 @@ describe("Stage 6 Adapter and Middleware", () => {
       idempotencyKey: "start:stage6-degrade",
       record: { ...stage6Record(), status: "in_progress" },
       extras: {
-        execution_approval: { approved_by: "user" },
+        execution_approval: fixtureApproval(taskDir),
         external_knowledge_policy: "degrade",
       },
       evidence: "approved",
@@ -434,7 +437,7 @@ describe("Stage 6 Adapter and Middleware", () => {
         ...stage6Record({ id: "stage6-optional", name: "stage6-optional" }),
         status: "in_progress",
       },
-      extras: { execution_approval: { approved_by: "user" } },
+      extras: { execution_approval: fixtureApproval(taskDir) },
       evidence: "task.py start-execution --approved",
     });
     expect(started.legacy.status).toBe("in_progress");

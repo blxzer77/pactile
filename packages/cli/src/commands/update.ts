@@ -42,6 +42,8 @@ import {
   shouldExcludeFromHash,
 } from "../utils/template-hash.js";
 import { compareVersions } from "../utils/compare-versions.js";
+import { applyDeferredLiveWrites, captureDeferredLiveWrite, clearDeferredLivePlan, commitDeferredLivePlan,
+  prepareDeferredLivePlan, resumeDeferredLivePlan, type DeferredLiveWrite } from "../pactile/lifecycle/deferred-live.js";
 import { toPosix } from "../utils/posix.js";
 import { setupProxy } from "../utils/proxy.js";
 import {
@@ -1912,28 +1914,6 @@ function candidatePath(
   return path.join(root, ...relativePath.replace(/\\/g, "/").split("/"));
 }
 
-interface DeferredLiveWrite {
-  readonly content: string;
-  readonly executable: boolean;
-}
-
-/**
- * Apply template writes that are outside the canonical generation only after
- * lifecycle commit. Canonical paths are staged in the OS temporary root; live
- * paths are kept as bytes in memory until ProjectionStore/lifecycle succeeds.
- */
-function applyDeferredLiveWrites(
-  cwd: string,
-  writes: ReadonlyMap<string, DeferredLiveWrite>,
-): void {
-  for (const [relativePath, write] of writes) {
-    const target = path.join(cwd, ...relativePath.replace(/\\/g, "/").split("/"));
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, write.content);
-    if (write.executable) fs.chmodSync(target, 0o755);
-  }
-}
-
 function migrationRoot(item: MigrationItem): "canonical" | "live" {
   const paths = [item.from, item.to].filter(
     (value): value is string => typeof value === "string" && value.length > 0,
@@ -2039,6 +2019,10 @@ async function runUpdateLifecycle(
  */
 export async function update(options: UpdateOptions): Promise<void> {
   const cwd = process.cwd();
+  if (!options.dryRun) {
+    const active = new InstallStateStore(cwd).read()?.state.generationId ?? null;
+    resumeDeferredLivePlan(cwd, active);
+  }
   const rolloutOpts = rolloutOptionsFromUpdate(options);
   let readinessSnapshot: UpdateReadinessSnapshot | null = null;
   let projectVersion = "unknown";
@@ -2851,7 +2835,7 @@ export async function update(options: UpdateOptions): Promise<void> {
     const executable =
       relativePath.endsWith(".sh") || relativePath.endsWith(".py");
     if (!isCanonicalGenerationPath(relativePath)) {
-      deferredLiveWrites.set(relativePath, { content, executable });
+      deferredLiveWrites.set(relativePath, captureDeferredLiveWrite(cwd, relativePath, content, executable));
       return;
     }
     const target = candidatePath(cwd, canonicalBuildRoot, relativePath);
@@ -3020,11 +3004,22 @@ export async function update(options: UpdateOptions): Promise<void> {
       activePlatforms,
       VERSION,
     );
-    lifecycleResult = await runUpdateLifecycle(
-      cwd,
-      "update",
-      canonicalCandidate,
-    );
+    const sourceGenerationId = new InstallStateStore(cwd).read()?.state.generationId;
+    if (!sourceGenerationId) throw new Error("Missing active generation before deferred live update");
+    prepareDeferredLivePlan(cwd, sourceGenerationId, deferredLiveWrites);
+    try {
+      lifecycleResult = await runUpdateLifecycle(
+        cwd,
+        "update",
+        canonicalCandidate,
+      );
+      if (lifecycleResult.installState) {
+        commitDeferredLivePlan(cwd, lifecycleResult.installState.state.generationId);
+      }
+    } catch (error) {
+      if (new InstallStateStore(cwd).read()?.state.generationId === sourceGenerationId) clearDeferredLivePlan(cwd);
+      throw error;
+    }
   } finally {
     fs.rmSync(canonicalBuildRoot, { recursive: true, force: true });
   }
@@ -3103,6 +3098,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   }
 
   applyDeferredLiveWrites(cwd, deferredLiveWrites);
+  clearDeferredLivePlan(cwd);
   if (deferredLiveConfigSections.length > 0) {
     configSectionsAppended += applyConfigSectionsAdded(
       deferredLiveConfigSections,

@@ -20,6 +20,7 @@ import {
   LiteContextPackError,
   buildLiteContextPack,
 } from "../../../src/core/task/lite-context-pack.js";
+import { fixtureApproval } from "./start-fixture.js";
 
 function liteRecord() {
   return emptyTaskRecord({
@@ -101,10 +102,7 @@ describe("Stage 3 Personal Lite path", () => {
       idempotencyKey: "start:personal-lite",
       record: { ...liteRecord(), status: "in_progress" },
       extras: {
-        execution_approval: {
-          approved_by: "user",
-          approval_source: "task.py start-execution --approved",
-        },
+        execution_approval: fixtureApproval(taskDir),
       },
       evidence: "task.py start-execution --approved",
     });

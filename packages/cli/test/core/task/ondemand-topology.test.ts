@@ -34,6 +34,7 @@ import {
   residentOnDemandModules,
 } from "../../../src/core/task/ondemand-topology.js";
 import { resolveRequiredControls } from "../../../src/core/task/full-quality.js";
+import { fixtureApproval } from "./start-fixture.js";
 
 function stage5Record(
   overrides: Parameters<typeof emptyTaskRecord>[0] = {},
@@ -104,7 +105,7 @@ describe("Stage 5 On-demand and Topology", () => {
       idempotencyKey: "start:stage5-lite",
       record: { ...stage5Record(), status: "in_progress" },
       extras: {
-        execution_approval: { approved_by: "user" },
+        execution_approval: fixtureApproval(taskDir),
       },
       evidence: "task.py start-execution --approved",
     });
@@ -323,18 +324,20 @@ describe("Stage 5 On-demand and Topology", () => {
         },
       },
     });
+    fs.writeFileSync(path.join(advisoryDir, "prd.md"), "# Advisory\n");
     const started = applyKernelStart({
       taskDir: advisoryDir,
       expectedRevision: 1,
       actor: "a",
       idempotencyKey: "start:advisory",
       record: { ...stage5Record({ id: "advisory", name: "advisory" }), status: "in_progress" },
+      extras: { execution_approval: fixtureApproval(advisoryDir) },
       evidence: "start",
     });
     expect(started.legacy.status).toBe("in_progress");
   });
 
-  it("starts after requires is satisfied and projects task-map from the Kernel graph", () => {
+  it("rejects an unverified satisfaction claim and projects task-map from the Kernel graph", () => {
     const created = applyKernelCreate({
       taskDir,
       actor: "a",
@@ -365,16 +368,21 @@ describe("Stage 5 On-demand and Topology", () => {
     expect(projection.children).toEqual([{ id: "child-a", depends_on: ["other"] }]);
     expect(renderTaskMapProjection(projection)).toMatch(/graph_authority: kernel-extras/);
 
-    applyKernelStart({
+    const upstream = path.join(tmp, ".pactile", "tasks", "upstream");
+    fs.mkdirSync(upstream, { recursive: true });
+    fs.writeFileSync(path.join(upstream, "task.json"), JSON.stringify({ status: "completed" }));
+    fs.writeFileSync(path.join(taskDir, "prd.md"), "# Graph\n");
+    expect(() => applyKernelStart({
       taskDir,
+      cwd: tmp,
       expectedRevision: created.kernel.revision,
       actor: "a",
       idempotencyKey: "start:satisfied",
       record: { ...stage5Record({ children: ["child-a"] }), status: "in_progress" },
-      extras: { dependency_satisfied: ["upstream"] },
+      extras: { dependency_satisfied: ["upstream"], execution_approval: fixtureApproval(taskDir) },
       evidence: "start",
-    });
-    expect(readKernel({ taskDir }).legacy.status).toBe("in_progress");
+    })).toThrow(/unverified dependency satisfaction/);
+    expect(readKernel({ taskDir }).kernel.phase).toBe("define");
   });
 
   it("rejects Child integrate-child and keeps Parent authority", () => {
@@ -548,12 +556,14 @@ describe("Stage 5 On-demand and Topology", () => {
       record: stage5Record(),
     });
     expect(created.legacy.status).toBe("planning");
+    fs.writeFileSync(path.join(taskDir, "prd.md"), "# Retention\n");
     const started = applyKernelStart({
       taskDir,
       expectedRevision: created.kernel.revision,
       actor: "a",
       idempotencyKey: "start:retention",
       record: { ...stage5Record(), status: "in_progress" },
+      extras: { execution_approval: fixtureApproval(taskDir) },
       evidence: "start",
     });
     expect(started.legacy.status).toBe("in_progress");

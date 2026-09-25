@@ -52,13 +52,17 @@ pactile task start-execution <task> --check
 pactile task start-execution <task> --approved
 ```
 
-第一条是 read-only readiness preflight；第二条记录显式批准并进入 Execute。类似地，`archive <task> --check` 只是 preflight；`archive <task>` 执行 Close、写入 completion/audit 状态并把目录移入 archive。
+第一条是只读预检；第二条由调用者声明已获得明确批准，并记录任务 ID、来源、时间与当前任务/工件指纹后进入 Execute。CLI 无法验证屏幕另一端的身份，因此 `approved_by: user` 是调用者声明，不是身份认证。Kernel 在最终提交前再次核对这些数据；工件或审核结论变化会阻断启动。相同的已批准启动请求可安全重试。类似地，`archive <task> --check` 只是预检；`archive <task>` 执行 Close、写入 completion/audit 状态并把目录移入 archive。
 
-`pactile task set-deps <task> <required-task-id>` 声明 Kernel 的硬 `requires` 边。依赖未满足时，预检与执行默认都会阻断。CLI 会从活动或已归档任务核实完成状态；只有已完成的任务才能满足依赖，取消不算完成。只有用户明确批准，才能用 `--ignore-deps` 记录覆盖，且不会伪称依赖已经满足。
+`pactile init` 自动建立的 bootstrap 与 onboarding 任务均从 Planning 开始。初始化只创建工作清单；处理这些任务时仍需按普通任务运行启动预检并获得 Execute 批准。任务创建先写齐 PRD 和 Kernel 再发布目录；创建失败可重试，已有不完整目录会明确报待恢复，避免覆盖用户内容。
+
+`pactile task set-deps <task> <required-task-id>` 声明 Kernel 的硬 `requires` 边。依赖未满足时，预检与执行默认都会阻断。CLI 会从活动或已归档任务的 Kernel 核实完成状态；只有已完成的任务才能满足依赖，取消不算完成。只有用户明确批准，才能用 `--ignore-deps` 记录覆盖，且不会伪称依赖已经满足；有效覆盖也适用于随后由可选宿主发起的 Execute。
 
 ## Gates 与 Evidence
 
 Gate result 只有在对应已知 transition 且具备 reviewed Evidence 时才会接受。Contract 与 artifact fingerprints 防止 definition 变化后静默复用过期 review。Reviewer gate 必须显式记录，不能从绿测或自述文本推断。
+
+Full 任务在 `start-execution --check` 前，须用 `pactile task record-gate` 分别记录当前策略所需的 `requirements-review`，以及需要时的 `architecture-review`。`--approved` 只消费这些结果，不会替 reviewer 写入 PASS；FAIL、缺失和指纹过期都会阻断启动。
 
 Closeout Evidence 通常标识：
 

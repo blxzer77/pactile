@@ -18,6 +18,7 @@ import {
   setKernelAfterWriteHook,
 } from "../../../src/core/task/kernel-store.js";
 import { handleKernelRequest } from "../../../src/core/task/kernel-cli.js";
+import { fixtureApproval } from "./start-fixture.js";
 
 function demoRecord() {
   return emptyTaskRecord({
@@ -81,6 +82,7 @@ describe("Stage 2 Kernel commands + half-conversion", () => {
       idempotencyKey: "create:kernel-cmd",
       record: demoRecord(),
     });
+    fs.writeFileSync(path.join(taskDir, "prd.md"), "# Kernel command\n");
     const started = applyKernelStart({
       taskDir,
       expectedRevision: 1,
@@ -88,7 +90,7 @@ describe("Stage 2 Kernel commands + half-conversion", () => {
       idempotencyKey: "start:kernel-cmd:fp1",
       record: { ...demoRecord(), status: "in_progress" },
       extras: {
-        execution_approval: { approved_by: "user", transition: "start-execution" },
+        execution_approval: fixtureApproval(taskDir),
       },
       evidence: "task.py start-execution --approved",
     });
@@ -177,12 +179,14 @@ describe("Stage 2 Kernel commands + half-conversion", () => {
       idempotencyKey: "create:kernel-cmd",
       record: demoRecord(),
     });
+    fs.writeFileSync(path.join(taskDir, "prd.md"), "# Kernel command\n");
     applyKernelStart({
       taskDir,
       expectedRevision: 1,
       actor: "a",
       idempotencyKey: "start:1",
       record: { ...demoRecord(), status: "in_progress" },
+      extras: { execution_approval: fixtureApproval(taskDir) },
     });
     const current = readKernel({ taskDir });
     const archived = applyKernelArchive({
@@ -320,6 +324,7 @@ describe("Stage 2 Kernel commands + half-conversion", () => {
     if (!created.ok) return;
     expect(created.op).toBe("create");
     expect(created.kernel.revision).toBe(1);
+    fs.writeFileSync(path.join(taskDir, "prd.md"), "# Kernel command\n");
 
     const started = handleKernelRequest({
       op: "start",
@@ -328,7 +333,7 @@ describe("Stage 2 Kernel commands + half-conversion", () => {
       actor: "cli",
       idempotencyKey: "start:json",
       record: { ...demoRecord(), status: "in_progress" },
-      extras: { execution_approval: { approved_by: "user" } },
+      extras: { execution_approval: fixtureApproval(taskDir) },
     });
     expect(started.ok).toBe(true);
     if (!started.ok) return;

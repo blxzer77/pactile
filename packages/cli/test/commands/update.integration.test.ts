@@ -309,6 +309,28 @@ describe("update() integration", () => {
     120_000,
   );
 
+  it("retries a deferred project file after its post-commit write fails", async () => {
+    await setupProject();
+    const target = projectFile("CONTEXT.md");
+    if (fs.existsSync(target)) fs.unlinkSync(target);
+    writeHashesV2(hashFilePath(), removeHashEntry(readHashesV2(hashFilePath()), "CONTEXT.md") as Record<string, string>);
+    const actualWrite = fs.writeFileSync;
+    const fault = vi.spyOn(fs, "writeFileSync").mockImplementation(((file, content, options) => {
+      if (String(file) === target) throw new Error("injected deferred write failure");
+      return actualWrite(file, content, options);
+    }) as typeof fs.writeFileSync);
+    try { await expect(runUpdate({})).rejects.toThrow("injected deferred write failure"); }
+    finally { fault.mockRestore(); }
+    expect(fs.existsSync(target)).toBe(false);
+    const pendingFile = projectFile(".pactile/.runtime/update-deferred-live.json");
+    expect(fs.existsSync(pendingFile)).toBe(true);
+    const pending = JSON.parse(fs.readFileSync(pendingFile, "utf8")) as { committedGenerationId: string | null; writes: { path: string }[] };
+    expect(pending.committedGenerationId).not.toBeNull();
+    expect(pending.writes.map((entry) => entry.path)).toContain("CONTEXT.md");
+    await runUpdate({});
+    expect(fs.readFileSync(target, "utf8")).toContain("# CONTEXT");
+  }, 120_000);
+
   it("retires hash-matched installed Python scripts and preserves user edits", async () => {
     await setupProject();
     const clean = ".pactile/scripts/task.py";

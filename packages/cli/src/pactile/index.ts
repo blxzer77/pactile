@@ -1,4 +1,4 @@
-/** Public host-neutral Pactile foundation APIs. Host adapters opt in separately. */
+/** Public Pactile foundation APIs plus optional host adapter exports. Importing does not install an adapter. */
 
 export * from "./runtime/index.js";
 export * from "./lifecycle/index.js";

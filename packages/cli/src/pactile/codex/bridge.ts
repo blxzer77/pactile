@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { readKernel } from "../../core/task/index.js";
 import { resolveTaskDir } from "../task/session.js";
-import { approvedTask } from "../pi/bridge.js";
+import { approvedExecuteTask } from "../task/authorization.js";
+import { readStrategyContract } from "../task/strategy.js";
 import { parallelChild, releaseParallelChild, reserveParallelChild } from "../parallel/policy.js";
 
 export type CodexBridgeTool = "create_thread" | "send_message_to_thread" | "wait_threads" | "read_thread";
@@ -163,7 +164,13 @@ export function prepareCodexRequest(input: {
   if (!role) throw new Error(input.tool === "create_thread" ? "--role plan|review|execute is required" : "Thread is not bound to this Pactile task");
   if (role !== "plan" && role !== "review" && role !== "execute") throw new Error("Codex role must be plan, review or execute");
   if (input.tool === "create_thread" || input.tool === "send_message_to_thread") checkPhase(role, context.phase);
-  if (role === "execute" && (input.tool === "create_thread" || input.tool === "send_message_to_thread")) approvedTask(input.root, input.task, "implement");
+  if (role === "execute" && (input.tool === "create_thread" || input.tool === "send_message_to_thread")) {
+    const dir = approvedExecuteTask(input.root, input.task);
+    if (fs.existsSync(path.join(dir, "implement.md"))) {
+      const parsed = readStrategyContract(dir);
+      if (parsed.errors.length) throw new Error(`Invalid execution contract: ${parsed.errors.join("; ")}`);
+    }
+  }
   if ((input.tool === "wait_threads" || input.tool === "read_thread") && input.promptFile) {
     throw new Error("wait/read do not accept --prompt-file");
   }

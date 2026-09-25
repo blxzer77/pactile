@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { emptyTaskRecord } from "../../../src/core/task/index.js";
 import { handleKernelRequest } from "../../../src/core/task/kernel-cli.js";
 import { applyKernelCreate, applyKernelStart } from "../../../src/core/task/kernel-store.js";
+import { fixtureApproval } from "./start-fixture.js";
 import { scanContractMigration } from "../../../src/core/task/contract-migrate.js";
 
 function writeJson(file: string, value: unknown): void {
@@ -131,8 +132,8 @@ describe("Stage 7 contract migrate dry-run", () => {
       expectedRevision: created.kernel.revision,
       actor: "a",
       idempotencyKey: "start:new-task",
-      record: { ...emptyTaskRecord({ id: "new-task", name: "new-task" }), status: "in_progress" },
-      extras: { task_type: "full" },
+      record: { ...created.kernel.projection?.record, status: "in_progress" },
+      extras: { task_type: "full", execution_approval: fixtureApproval(taskDir) },
       evidence: "start",
     });
     const disk = JSON.parse(

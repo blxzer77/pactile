@@ -2,10 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { readDependencyGraph, readKernel, unmetRequires } from "../../core/task/index.js";
 import { readStrategyContract } from "../task/strategy.js";
-import { checkStartExecution } from "../task/guards.js";
-import { resolveTaskDir } from "../task/session.js";
+import { approvedExecuteTask } from "../task/authorization.js";
 import { parallelChild, reserveParallelChild, updateParallelChildPid } from "../parallel/policy.js";
 import { sameGitRoot } from "../../utils/git-root.js";
 import { PiRpcClient, type PiRpcLaunch } from "./rpc.js";
@@ -94,26 +92,7 @@ function evidenceEvent(event: Record<string, unknown>): Record<string, unknown> 
 }
 
 export function approvedTask(root: string, reference: string, role: PiRunInput["role"]): string {
-  const dir = resolveTaskDir(root, reference);
-  if (!fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`Task not found: ${reference}`);
-  const { kernel } = readKernel({ taskDir: dir, cwd: root });
-  if (kernel.phase !== "execute" || kernel.projection?.status !== "in_progress") {
-    throw new Error("Pi dispatch requires an approved task in Kernel Execute phase");
-  }
-  const approval = kernel.projection.extras.execution_approval;
-  if (!approval || typeof approval !== "object" || (approval as Record<string, unknown>).approved_by !== "user") {
-    throw new Error("Pi dispatch requires recorded user execution approval");
-  }
-  const stamp = approval as Record<string, unknown>;
-  const current = kernel.projection.record;
-  const satisfied = Array.isArray(kernel.projection.extras.dependency_satisfied)
-    ? kernel.projection.extras.dependency_satisfied.filter((item): item is string => typeof item === "string") : [];
-  const unmet = unmetRequires(readDependencyGraph(kernel.projection.extras), satisfied, current.id);
-  if (unmet.length) throw new Error(`requires unmet: ${unmet.join(", ")}`);
-  const fingerprints = [current, { ...current, status: "planning" }]
-    .map((candidate) => checkStartExecution(root, dir, candidate))
-    .some((guard) => guard.contractFingerprint === stamp.contract_fingerprint && guard.artifactFingerprint === stamp.artifact_fingerprint);
-  if (!fingerprints) throw new Error("Execution contract changed after approval; return to Define and renew approval");
+  const dir = approvedExecuteTask(root, reference);
   const implementation = path.join(dir, "implement.md");
   if (role === "implement" && !fs.existsSync(implementation)) throw new Error("Pi implement dispatch requires implement.md");
   if (fs.existsSync(implementation)) {

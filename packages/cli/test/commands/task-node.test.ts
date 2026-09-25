@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runTaskCli } from "../../src/commands/task.js";
+import { emptyTaskRecord } from "../../src/core/task/index.js";
+import { createTaskWithArtifacts } from "../../src/pactile/task/creation.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -64,6 +66,45 @@ describe("Node task CLI", () => {
     expect(fs.existsSync(dir)).toBe(false);
     expect(runTaskCli(["list-archive", month], root)).toBe(0);
     expect(runTaskCli(["list-archive", "../.."], root)).toBe(1);
+  });
+
+  it("keeps a failed PRD write invisible and allows task creation to be retried", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-create-retry-"));
+    roots.push(root);
+    const tasks = path.join(root, ".pactile", "tasks");
+    fs.mkdirSync(path.join(tasks, "locale", "en"), { recursive: true });
+    fs.writeFileSync(path.join(tasks, "locale", "en", "default-prd.md"), "# {title}\n{goal}\n");
+    fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), "artifact_locale: en\n");
+    fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=alice\n");
+    const original = fs.writeFileSync;
+    const fault = vi.spyOn(fs, "writeFileSync").mockImplementation(((file, content, options) => {
+      if (String(file).includes("-faulty-") && String(file).endsWith("prd.md")) throw new Error("injected PRD write failure");
+      return original(file, content, options);
+    }) as typeof fs.writeFileSync);
+    try { expect(runTaskCli(["create", "Faulty", "--slug", "faulty"], root)).toBe(1); }
+    finally { fault.mockRestore(); }
+    expect(fs.readdirSync(tasks).some((name) => name.endsWith("-faulty"))).toBe(false);
+    expect(runTaskCli(["create", "Faulty", "--slug", "faulty"], root)).toBe(0);
+    const dir = path.join(tasks, fs.readdirSync(tasks).find((name) => name.endsWith("-faulty")) ?? "");
+    expect(fs.readFileSync(path.join(dir, "prd.md"), "utf8")).toContain("# Faulty");
+    expect(JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8"))).toMatchObject({ status: "planning", id: "faulty" });
+  });
+
+  it("does not accept a malformed existing Kernel as a complete init task", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-create-existing-"));
+    roots.push(root);
+    const dirName = "00-bootstrap-guidelines";
+    const record = emptyTaskRecord({ id: "bootstrap-guidelines", name: dirName, title: "Bootstrap" });
+    const input = { root, dirName, record, artifacts: new Map([["prd.md", "# Bootstrap\n"]]),
+      actor: "pactile init", idempotencyKey: "init:bootstrap", evidence: "init task", ifExists: "keep-complete" as const };
+    const created = createTaskWithArtifacts(input);
+    expect(created.created).toBe(true);
+    expect(createTaskWithArtifacts(input).created).toBe(false);
+    const kernelPath = path.join(created.taskDir, "kernel.json");
+    fs.writeFileSync(kernelPath, JSON.stringify({ identity: { taskId: record.id } }));
+
+    expect(() => createTaskWithArtifacts(input)).toThrow(/needs recovery/);
+    expect(fs.readFileSync(kernelPath, "utf8")).toContain(record.id);
   });
 
   it("keeps unrelated staged changes out of an archive auto-commit", () => {
@@ -152,6 +193,9 @@ describe("Node task CLI", () => {
       "retrieval_profile: exact-only", "optional_capabilities: []", "quality_gates:", "  mode: profile", "",
     ].join("\n"));
     fs.writeFileSync(path.join(dir, "design.md"), "# Design\n\nThe change follows the existing task store.\n");
+    expect(runTaskCli(["start-execution", name, "--check"], root)).toBe(1);
+    expect(runTaskCli(["record-gate", name, "--transition", "start-execution", "--gate", "requirements-review",
+      "--result", "PASS", "--reviewer", "reviewer", "--evidence", "prd.md#requirements"], root)).toBe(0);
     expect(runTaskCli(["start-execution", name, "--check"], root)).toBe(0);
     expect(runTaskCli(["start-execution", name, "--approved"], root)).toBe(0);
     expect(runTaskCli(["archive", name, "--check"], root)).toBe(1);

@@ -17,10 +17,9 @@ import {
   type WriteMode,
 } from "../utils/file-writer.js";
 import {
-  applyKernelCreate,
-  applyKernelStart,
   writeWaveCConfirmed,
 } from "../core/task/index.js";
+import { createTaskWithArtifacts } from "../pactile/task/creation.js";
 import { emptyTaskJson, type TaskJson } from "../utils/task-json.js";
 import { initializeDeveloper, readDeveloper } from "../utils/developer.js";
 import {
@@ -111,10 +110,10 @@ export function slugifyDeveloperName(name: string): string {
 }
 
 /**
- * Write a task skeleton (task.json + prd.md).
+ * Publish a complete Planning task skeleton (kernel.json + task.json + prd.md).
  *
- * Idempotent: if the task dir already exists, returns true without touching
- * anything. Shared by both creator bootstrap and joiner onboarding flows.
+ * A complete existing task is kept. A partial one is reported for recovery,
+ * never silently treated as a successful init.
  */
 function writeTaskSkeleton(
   cwd: string,
@@ -122,31 +121,25 @@ function writeTaskSkeleton(
   taskJson: TaskJson,
   prdContent: string,
 ): boolean {
-  const taskDir = path.join(cwd, PATHS.TASKS, taskName);
-  if (fs.existsSync(taskDir)) return true; // idempotent
-
+  const marker = path.join(cwd, PATHS.TASKS, `.pending-${taskName}`);
   try {
-    fs.mkdirSync(taskDir, { recursive: true });
-    const created = applyKernelCreate({
-      taskDir,
+    createTaskWithArtifacts({
+      root: cwd,
+      dirName: taskName,
+      record: { ...taskJson, status: "planning" },
+      artifacts: new Map([[FILE_NAMES.PRD, prdContent]]),
       actor: "pactile init",
       idempotencyKey: `init:${taskName}`,
-      record: { ...taskJson, status: "planning" },
-      evidence: "pactile init skeleton",
+      evidence: "pactile init planning skeleton",
+      ifExists: "keep-complete",
     });
-    if (taskJson.status === "in_progress") {
-      applyKernelStart({
-        taskDir,
-        expectedRevision: created.kernel.revision,
-        actor: "pactile init",
-        idempotencyKey: `init-start:${taskName}`,
-        record: { ...taskJson, status: "in_progress" },
-        evidence: "pactile init skeleton start",
-      });
-    }
-    fs.writeFileSync(path.join(taskDir, FILE_NAMES.PRD), prdContent, "utf-8");
+    if (fs.existsSync(marker)) fs.unlinkSync(marker);
     return true;
   } catch {
+    try {
+      fs.mkdirSync(path.dirname(marker), { recursive: true });
+      fs.writeFileSync(marker, "Task creation was interrupted; retry pactile init.\n", { encoding: "utf8", flag: "w" });
+    } catch { /* A read-only task directory will still be reported as failed. */ }
     return false;
   }
 }
@@ -243,7 +236,7 @@ function getBootstrapPrdContent(
 
   const header = `# Bootstrap Task: Fill Project Development Guidelines
 
-**You (the AI) are running this task. The developer does not read this file.**
+**This task starts in Planning. Start execution only after explicit approval.**
 
 The developer just ran \`pactile init\` on this project for the first time.
 \`.pactile/\` now exists with empty spec scaffolding, and this bootstrap task
@@ -427,7 +420,7 @@ function getBootstrapTaskJson(
     name: BOOTSTRAP_TASK_NAME,
     title: "Bootstrap Guidelines",
     description: "Fill in project development guidelines for AI agents",
-    status: "in_progress",
+    status: "planning",
     dev_type: "docs",
     priority: "P1",
     creator: developer,
@@ -474,7 +467,7 @@ function getJoinerTaskJson(developer: string, taskName: string): TaskJson {
     title: `Joining: Onboard to this Pactile project (${developer})`,
     description:
       "Onboard a new developer to an existing Pactile project: learn the workflow, conventions, and find assigned work",
-    status: "in_progress",
+    status: "planning",
     dev_type: "docs",
     priority: "P1",
     creator: developer,
@@ -518,7 +511,7 @@ ${selectedCapabilityChecklist}
   }
   return `# Joiner Onboarding Task
 
-**You (the AI) are running this task. The developer does not read this file.**
+**This task starts in Planning. Start execution only after explicit approval.**
 
 \`${developer}\` just ran \`pactile init\` on a fresh clone, saw "Developer
 initialized", and will now start asking you questions in chat. This joiner task
@@ -1020,15 +1013,20 @@ export async function init(options: InitOptions): Promise<void> {
   // to the full flow so the main-dispatch tasksEmpty fallback fires —
   // handleReinit's joiner branch would otherwise mis-route the recovery.
   const tasksDirEarly = path.join(cwd, PATHS.TASKS);
+  const pendingBootstrap = fs.existsSync(path.join(tasksDirEarly, `.pending-${BOOTSTRAP_TASK_NAME}`));
+  const pendingJoiner = developerName
+    ? fs.existsSync(path.join(tasksDirEarly, `.pending-00-join-${slugifyDeveloperName(developerName)}`)) : false;
   const tasksEmptyEarly =
-    !fs.existsSync(tasksDirEarly) || fs.readdirSync(tasksDirEarly).length === 0;
+    !fs.existsSync(tasksDirEarly) || fs.readdirSync(tasksDirEarly).filter((entry) => entry !== ".creating" && !entry.startsWith(".pending-")).length === 0;
 
   if (
     !isFirstInit &&
     !importingCstl &&
     !options.force &&
     !options.skipExisting &&
-    !tasksEmptyEarly
+    !tasksEmptyEarly &&
+    !pendingBootstrap &&
+    !pendingJoiner
   ) {
     const reinitDone = await handleReinit(
       cwd,
@@ -1877,9 +1875,9 @@ export async function init(options: InitOptions): Promise<void> {
     // swallowed.
     const tasksDir = path.join(cwd, PATHS.TASKS);
     const tasksEmpty =
-      !fs.existsSync(tasksDir) || fs.readdirSync(tasksDir).length === 0;
+      !fs.existsSync(tasksDir) || fs.readdirSync(tasksDir).filter((entry) => entry !== ".creating" && !entry.startsWith(".pending-")).length === 0;
 
-    if ((isFirstInit && !importingCstl) || tasksEmpty) {
+    if ((isFirstInit && !importingCstl) || pendingBootstrap || (tasksEmpty && !pendingJoiner)) {
       const bootstrapCreated = createBootstrapTask(
         cwd,
         developerName,
@@ -1893,8 +1891,10 @@ export async function init(options: InitOptions): Promise<void> {
             `Next: complete ${BOOTSTRAP_TASK_NAME} to verify selected capabilities and fill the project spec.`,
           ),
         );
+      } else {
+        console.warn(chalk.yellow(`⚠ Failed to create ${BOOTSTRAP_TASK_NAME}; inspect .pactile/tasks/ and retry pactile init.`));
       }
-    } else if (!hadDeveloperFileAtStart) {
+    } else if (!hadDeveloperFileAtStart || pendingJoiner) {
       try {
         if (!createJoinerOnboardingTask(cwd, developerName)) {
           console.warn(

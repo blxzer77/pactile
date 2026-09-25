@@ -1,13 +1,14 @@
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { assertFullQualityForPhase, parseAcceptanceItems, readDependencyGraph, readKernel, unmetRequires, type PactileTaskRecord } from "../../core/task/index.js";
+import { dependencyStatus, startFingerprints } from "../../core/task/start-authority.js";
 import { currentGateErrors, readStrategyContract, requiredGates } from "./strategy.js";
 import { parentArchiveErrors, readTaskMap } from "./task-map.js";
 
+export { dependencyStatus } from "../../core/task/start-authority.js";
+
 const REQUIRED_LIFECYCLE_SLOTS = ["define-basic", "approval-personal", "execute-agent", "verify-basic", "close-basic"];
 const BASELINE_EIGHT = ["intake-basic", ...REQUIRED_LIFECYCLE_SLOTS, "context-progressive", "observability-local"];
-const STABLE_TASK_KEYS = ["id", "name", "title", "description", "status", "dev_type", "scope", "package", "priority", "creator", "assignee", "parent", "children", "subtasks", "relatedFiles", "notes", "meta", "branch", "base_branch", "task_kind", "task_type", "kind", "mode", "contract_epoch", "depends_on"];
 
 export interface TaskGuard {
   ok: boolean;
@@ -78,23 +79,6 @@ export function checkArchive(dir: string, record: PactileTaskRecord): ArchiveGua
   return { ok: errors.length === 0, errors };
 }
 
-function sorted(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sorted);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, nested]) => [key, sorted(nested)]));
-  }
-  return value;
-}
-
-function fingerprint(value: unknown): string {
-  return `sha256:${createHash("sha256").update(JSON.stringify(sorted(value))).digest("hex")}`;
-}
-
-function stableTask(record: PactileTaskRecord): Record<string, unknown> {
-  const source = record as unknown as Record<string, unknown>;
-  return Object.fromEntries(STABLE_TASK_KEYS.filter((key) => key in source).map((key) => [key, source[key]]));
-}
-
 function requiredFileErrors(dir: string, names: string[]): string[] {
   const errors: string[] = [];
   for (const name of names) {
@@ -129,32 +113,6 @@ function baselineSlots(dir: string, record: PactileTaskRecord): string[] {
   return Array.isArray(active) ? active.filter((item): item is string => typeof item === "string") : [];
 }
 
-export function dependencyStatus(root: string, dir: string, record: PactileTaskRecord): { warnings: string[]; satisfied: string[] } {
-  const raw = record as unknown as Record<string, unknown>;
-  const deps = Array.isArray(raw.depends_on) ? raw.depends_on.filter((item): item is string => typeof item === "string") : [];
-  const warnings: string[] = [];
-  const satisfied: string[] = [];
-  const taskRoot = path.join(root, ".pactile", "tasks");
-  for (const ref of deps) {
-    const active = fs.readdirSync(taskRoot, { withFileTypes: true })
-      .filter((item) => item.isDirectory() && (item.name === ref || item.name.endsWith(`-${ref}`)))
-      .map((item) => path.join(taskRoot, item.name));
-    const archiveRoot = path.join(taskRoot, "archive");
-    const archived = fs.existsSync(archiveRoot) ? fs.readdirSync(archiveRoot, { withFileTypes: true })
-      .filter((month) => month.isDirectory()).flatMap((month) => fs.readdirSync(path.join(archiveRoot, month.name), { withFileTypes: true })
-        .filter((item) => item.isDirectory() && (item.name === ref || item.name.endsWith(`-${ref}`)))
-        .map((item) => path.join(archiveRoot, month.name, item.name))) : [];
-    const target = [...active, ...archived].find((candidate) => candidate !== dir);
-    if (!target) { warnings.push(`dangling dependency: ${ref}`); continue; }
-    try {
-      const data = JSON.parse(fs.readFileSync(path.join(target, "task.json"), "utf8")) as Record<string, unknown>;
-      if (data.status === "completed") satisfied.push(ref);
-      else warnings.push(`dependency not satisfied: ${ref} (status=${String(data.status)})`);
-    } catch { warnings.push(`dangling dependency: ${ref}`); }
-  }
-  return { warnings, satisfied };
-}
-
 /** Check the Node lifecycle and dependency gates before execution starts. */
 export function checkStartExecution(root: string, dir: string, record: PactileTaskRecord, _mutate = false, ignoreDeps = false): TaskGuard {
   const errors = requiredFileErrors(dir, ["prd.md"]);
@@ -177,6 +135,8 @@ export function checkStartExecution(root: string, dir: string, record: PactileTa
           if (!/^\s*#{1,6}\s*acceptance\s+criteria\s*$/im.test(prd) || !parseAcceptanceItems(prd).length) errors.push("prd.md needs a non-placeholder Acceptance Criteria checkbox for requirements-review");
         } else if (gate === "architecture-review") errors.push(...requiredFileErrors(dir, ["design.md", "implement.md"]));
       }
+      errors.push(...currentGateErrors(dir, record, "start-execution", requiredGates("start-execution", contract),
+        contract, readKernel({ taskDir: dir, cwd: root }).kernel.gates as unknown as Record<string, unknown>));
     }
     try { assertFullQualityForPhase(dir, extras, "start"); }
     catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
@@ -190,18 +150,13 @@ export function checkStartExecution(root: string, dir: string, record: PactileTa
   const status = dependencyStatus(root, dir, record);
   const warnings = status.warnings;
   const graph = readDependencyGraph(extras);
-  const satisfied = Array.isArray(extras.dependency_satisfied)
-    ? extras.dependency_satisfied.filter((item): item is string => typeof item === "string") : [];
-  const missing = unmetRequires(graph, [...satisfied, ...status.satisfied], record.id);
+  const missing = unmetRequires(graph, status.satisfied, record.id);
   if (missing.length && !ignoreDeps) errors.push(`requires unmet: ${missing.join(", ")}`);
   if (missing.length && ignoreDeps) warnings.push(`explicit dependency override requested: ${missing.join(", ")}`);
-  const stable = stableTask(record);
-  const files = ["prd.md", "design.md", "implement.md"].map((name) => ({ path: name, content: fs.existsSync(path.join(dir, name)) ? fs.readFileSync(path.join(dir, name), "utf8") : null }));
   return {
     ok: errors.length === 0,
     errors,
     warnings,
-    contractFingerprint: fingerprint({ schema_version: 1, task_dir: path.basename(dir), stable_task: stable, strategy_contract: {} }),
-    artifactFingerprint: fingerprint({ schema_version: 1, transition: "start-execution", gate: "baseline-check", task_dir: path.basename(dir), stable_task: stable, parent_contract: null, reviewed_change_set: null, files }),
+    ...startFingerprints(dir, record),
   };
 }

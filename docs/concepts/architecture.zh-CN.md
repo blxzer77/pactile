@@ -51,6 +51,8 @@ Adapter 有独立结果和重试次数。宿主投影处于 degraded 时，已�
 5. 每次覆盖、恢复或删除都受 Ownership 与当前 bytes 检查约束。
 6. 外部资产和 Provider 保留原 owner、安装面、认证状态与删除边界。
 
+`.pactile/.runtime/` 保存本机会话选择和更新重试记录，属于项目内的私有运行状态，不进入 sealed generation。`update` 在 canonical lifecycle 完成后才写非 canonical 的项目模板文件；它先保存待写计划，写入前核对当前 bytes，失败时回滚已尝试的文件。重跑 `update` 只会在记录的 generation 仍为 active 时恢复待写计划；若 generation 已发生无法确认的变化，则要求人工核对。
+
 ## 故障隔离
 
 | 故障                                | 必须采取的行为                                                 |

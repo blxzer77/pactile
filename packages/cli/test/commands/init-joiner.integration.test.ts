@@ -108,6 +108,22 @@ describe("init() joiner onboarding", () => {
     expect(fs.existsSync(joiner)).toBe(false);
   });
 
+  it("retries bootstrap after a failed PRD write without publishing a partial task", async () => {
+    const original = fs.writeFileSync;
+    const fault = vi.spyOn(fs, "writeFileSync").mockImplementation(((file, content, options) => {
+      if (String(file).includes("00-bootstrap-guidelines") && String(file).endsWith("prd.md")) throw new Error("injected PRD failure");
+      return original(file, content, options);
+    }) as typeof fs.writeFileSync);
+    try { await init({ yes: true, user: "alice" }); }
+    finally { fault.mockRestore(); }
+    const bootstrap = path.join(tmpDir, PATHS.TASKS, "00-bootstrap-guidelines");
+    expect(fs.existsSync(bootstrap)).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, PATHS.TASKS, ".pending-00-bootstrap-guidelines"))).toBe(true);
+    await init({ yes: true, user: "alice" });
+    expect(fs.readFileSync(path.join(bootstrap, FILE_NAMES.PRD), "utf8")).toContain("Bootstrap");
+    expect(JSON.parse(fs.readFileSync(path.join(bootstrap, FILE_NAMES.TASK_JSON), "utf8"))).toMatchObject({ status: "planning" });
+  });
+
   it("#2 existing .pactile/ + no .developer → joiner onboarding task created", async () => {
     simulateExistingCheckout();
 
@@ -121,7 +137,7 @@ describe("init() joiner onboarding", () => {
     );
     expect(taskJson.id).toBe("00-join-bob");
     expect(taskJson.name).toBe("00-join-bob");
-    expect(taskJson.status).toBe("in_progress");
+    expect(taskJson.status).toBe("planning");
     expect(taskJson.dev_type).toBe("docs");
     expect(taskJson.priority).toBe("P1");
     expect(taskJson.creator).toBe("bob");
@@ -129,11 +145,11 @@ describe("init() joiner onboarding", () => {
     expect(taskJson.title).toContain("bob");
 
     const prd = fs.readFileSync(path.join(joiner, FILE_NAMES.PRD), "utf-8");
-    // PRD is AI-facing instructions ("you (the AI) are running this task").
+    // PRD is AI-facing instructions for a Planning task.
     // Mentions the developer in context + user-facing elements the AI should
     // reference.
     expect(prd).toContain("bob");
-    expect(prd).toContain("You (the AI) are running this task");
+    expect(prd).toContain("This task starts in Planning");
     expect(prd).toContain("workflow.md");
     expect(prd).toContain(".pactile/spec/");
     expect(prd).toContain("00-join-bob");
@@ -321,6 +337,11 @@ describe("init() joiner onboarding", () => {
     ).toBe(true);
 
     writeSpy.mockRestore();
+    const joiner = path.join(tmpDir, PATHS.TASKS, "00-join-eve");
+    expect(fs.existsSync(joiner)).toBe(false);
+    await init({ yes: true, user: "eve", force: true });
+    expect(JSON.parse(fs.readFileSync(path.join(joiner, FILE_NAMES.TASK_JSON), "utf8"))).toMatchObject({ status: "planning" });
+    expect(fs.readFileSync(path.join(joiner, FILE_NAMES.PRD), "utf8")).toContain("Joiner Onboarding Task");
   });
 
   // Tests #7/#8 cover the handleReinit path — the default flow when .pactile/
@@ -341,7 +362,7 @@ describe("init() joiner onboarding", () => {
       fs.readFileSync(path.join(joiner, FILE_NAMES.TASK_JSON), "utf-8"),
     );
     expect(taskJson.creator).toBe("frank");
-    expect(taskJson.status).toBe("in_progress");
+    expect(taskJson.status).toBe("planning");
 
     expect(fs.existsSync(path.join(tmpDir, PATHS.CURRENT_TASK_FILE))).toBe(
       false,

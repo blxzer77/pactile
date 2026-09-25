@@ -51,6 +51,8 @@ The adapter has its own result and retry count. A committed generation may remai
 5. Ownership and current-byte checks constrain every overwrite, restore, and removal.
 6. External assets and providers keep their original owner, installation, authentication, and deletion boundary.
 
+`.pactile/.runtime/` holds local session selection and update retry records. It is private project runtime state and is excluded from sealed generations. After the canonical lifecycle completes, `update` writes noncanonical project template files from a saved plan. It checks current bytes before writing and rolls back attempted files on failure. A later `update` resumes the plan only while its recorded generation is still active; an ambiguous generation change requires review.
+
 ## Failure isolation
 
 | Failure                                             | Required behavior                                                                   |

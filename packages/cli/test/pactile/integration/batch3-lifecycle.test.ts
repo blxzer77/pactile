@@ -52,6 +52,27 @@ afterEach(() => {
 });
 
 describe("Batch 3 lifecycle integration", () => {
+  it("keeps local .runtime state out of sealed generations and live materialization", () => {
+    const projectRoot = tempRoot("pactile-b3-runtime-boundary-");
+    const buildRoot = tempRoot("pactile-b3-runtime-build-");
+    const session = ".pactile/.runtime/sessions/current.json";
+    write(projectRoot, ".pactile/workflow.md", "old workflow\n");
+    write(projectRoot, session, '{"selectedTask":"local"}\n');
+
+    expect(discoverCanonicalGenerationPaths(projectRoot)).toEqual([".pactile/workflow.md"]);
+    expect(seedCanonicalBuildRoot(projectRoot, buildRoot)).toEqual([".pactile/workflow.md"]);
+    expect(fs.existsSync(path.join(buildRoot, session))).toBe(false);
+    expect(candidate(projectRoot).map((file) => file.path)).not.toContain(".runtime/sessions/current.json");
+
+    materializeCanonicalGeneration(projectRoot, {
+      generationId: "g-runtime-boundary",
+      files: [{ path: "workflow.md", fingerprint: "test" }],
+      readFile: () => Buffer.from("new workflow\n"),
+    });
+    expect(fs.readFileSync(path.join(projectRoot, ".pactile/workflow.md"), "utf8")).toBe("new workflow\n");
+    expect(fs.readFileSync(path.join(projectRoot, session), "utf8")).toBe('{"selectedTask":"local"}\n');
+  });
+
   it("keeps update construction isolated and resumes post-commit materialization", async () => {
     const projectRoot = tempRoot("pactile-b3-project-");
     const initBuildRoot = tempRoot("pactile-b3-init-");

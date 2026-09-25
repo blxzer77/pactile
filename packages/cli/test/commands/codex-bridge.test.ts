@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runTaskCli } from "../../src/commands/task.js";
 import { codexBridgeStatus, prepareCodexRequest, recordCodexReceipt } from "../../src/pactile/codex/bridge.js";
+import { approvedTask as approvedPiTask } from "../../src/pactile/pi/bridge.js";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
@@ -30,6 +31,24 @@ function result(root: string, body: Record<string, unknown>): string {
 }
 
 describe("Codex desktop request and receipt bridge", () => {
+  it("uses shared Execute approval while keeping Pi worker mode specific to Pi", () => {
+    const { root, task, prompt } = fixture();
+    const dir = path.join(root, ".pactile", "tasks", task);
+    fs.writeFileSync(path.join(dir, "design.md"), "# Inline design\n");
+    fs.writeFileSync(path.join(dir, "implement.md"), [
+      "execution_mode: inline", "isolation: git-worktree", "verification_profile: standard",
+      "retrieval_profile: exact-only", "optional_capabilities: []", "quality_gates:", "  mode: profile", "",
+    ].join("\n"));
+    const input = { root, task, tool: "create_thread" as const, role: "execute" as const, promptFile: prompt,
+      projectId: "project-1", environment: "worktree" as const };
+    expect(() => prepareCodexRequest(input)).toThrow("approved Execute task");
+    expect(runTaskCli(["start-execution", task, "--approved"], root)).toBe(0);
+    expect(prepareCodexRequest(input).role).toBe("execute");
+    expect(() => approvedPiTask(root, task, "implement")).toThrow("execution_mode: worker");
+    fs.appendFileSync(path.join(dir, "prd.md"), "\nUnapproved scope change.\n");
+    expect(() => prepareCodexRequest(input)).toThrow("Execution contract changed after approval");
+  });
+
   it("binds a native desktop task and records message/wait receipts without changing Kernel", () => {
     const { root, task, prompt } = fixture();
     const create = prepareCodexRequest({ root, task, tool: "create_thread", role: "plan", promptFile: prompt,

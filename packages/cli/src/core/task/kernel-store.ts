@@ -22,6 +22,7 @@ import {
 } from "./kernel-surface.js";
 import { stripRetiredExtras, stripRetiredMeta } from "./contract-migrate.js";
 import { loadTaskRecord, writeTaskRecord } from "./records.js";
+import { startAuthorityErrors } from "./start-authority.js";
 import {
   TASK_RECORD_FIELD_ORDER,
   isPlainObject,
@@ -677,6 +678,7 @@ function lifecycleProjectionExtras(dir: string, extras: Record<string, unknown>)
 function commitKernelAndProject(
   dir: string,
   snapshot: KernelSnapshot,
+  validation?: { afterKernelWrite: () => void; rollback: KernelSnapshot },
 ): KernelCommandResult {
   if (!snapshot.projection) {
     throw new KernelError(
@@ -685,9 +687,18 @@ function commitKernelAndProject(
     );
   }
   persistKernelSnapshot(dir, snapshot);
+  let rolledBack = false;
   try {
     if (kernelAfterWriteHook) {
       kernelAfterWriteHook();
+    }
+    if (validation) {
+      try { validation.afterKernelWrite(); }
+      catch (error) {
+        persistKernelSnapshot(dir, validation.rollback);
+        rolledBack = true;
+        throw error;
+      }
     }
     writeTaskRecord({
       taskDir: dir,
@@ -695,6 +706,7 @@ function commitKernelAndProject(
       extra: lifecycleProjectionExtras(dir, snapshot.projection.extras),
     });
   } catch (err) {
+    if (rolledBack) throw err;
     if (err instanceof KernelError && err.code === "HALF_CONVERSION") {
       throw err;
     }
@@ -972,6 +984,17 @@ export function applyKernelStart(
       request.extrasBoundary,
     );
     assertFullQualityForPhase(dir, extras, "start");
+    const taskContainer = path.dirname(dir);
+    const authorityRoot = request.cwd ?? (
+      path.basename(taskContainer) === "tasks" && path.basename(path.dirname(taskContainer)) === ".pactile"
+        ? path.dirname(path.dirname(taskContainer))
+        : taskContainer
+    );
+    const assertAuthority = (): void => {
+      const errors = startAuthorityErrors(authorityRoot, dir, current.kernel, record, extras);
+      if (errors.length) throw new KernelError("INVALID_TRANSITION", errors.join("; "));
+    };
+    assertAuthority();
     const hops = hopsToExecute(current.kernel.phase);
     const hopped = hopKernelSnapshot(current.kernel, hops, {
       actor,
@@ -984,7 +1007,7 @@ export function applyKernelStart(
       extras,
       "in_progress",
     );
-    const result = commitKernelAndProject(dir, next);
+    const result = commitKernelAndProject(dir, next, { afterKernelWrite: assertAuthority, rollback: current.kernel });
     return { ...result, audit: hopped.audit, idempotent: hopped.idempotent };
   });
 }

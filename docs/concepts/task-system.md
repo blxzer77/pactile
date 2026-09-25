@@ -52,13 +52,17 @@ pactile task start-execution <task> --check
 pactile task start-execution <task> --approved
 ```
 
-The first command is a read-only readiness preflight. The second records explicit approval and starts Execute. Likewise, `archive <task> --check` is a preflight, while `archive <task>` performs Close, writes completion and audit state, and moves the directory into the archive.
+The first command is a read-only readiness preflight. With the second, the caller asserts that explicit approval was obtained; Pactile records the task ID, source, time, and current task and artifact fingerprints before starting Execute. The CLI does not verify the caller's identity, so `approved_by: user` is an assertion rather than authentication. The Kernel checks the approval and review evidence again at the final transition; a changed artifact or review blocks the start. Repeating the same approved start is safe. Likewise, `archive <task> --check` is a preflight, while `archive <task>` performs Close, writes completion and audit state, and moves the directory into the archive.
 
-`pactile task set-deps <task> <required-task-id>` declares a Kernel hard `requires` edge. An unmet dependency blocks both preflight and execution by default. Only a completed task, checked from active or archived records, satisfies it; cancellation does not. `--ignore-deps` requires explicit user approval and records an override rather than claiming the dependency was satisfied.
+Bootstrap and onboarding tasks created by `pactile init` start in Planning. Init creates work lists; starting either task still follows the normal preflight and Execute approval path. Task creation publishes its directory only after the PRD and Kernel record are complete. A failed creation can be retried; an existing incomplete directory is reported for recovery rather than overwritten.
+
+`pactile task set-deps <task> <required-task-id>` declares a Kernel hard `requires` edge. An unmet dependency blocks both preflight and execution by default. Only a completed task, checked from the Kernel in active or archived records, satisfies it; cancellation does not. `--ignore-deps` requires explicit user approval and records an override rather than claiming the dependency was satisfied. A valid override also applies to later Execute requests from optional hosts.
 
 ## Gates and Evidence
 
 A gate result is accepted only for a known transition and reviewed Evidence. Its contract and artifact fingerprints prevent a stale review from being silently reused after the definition changes. Reviewer gates are recorded explicitly; they are not inferred from green tests or self-authored prose.
+
+Before `start-execution --check` on a Full task, record the strategy's required `requirements-review` and, when applicable, `architecture-review` with `pactile task record-gate`. `--approved` consumes these results; it never writes a reviewer PASS. A FAIL, missing review, or stale fingerprint blocks the start.
 
 Closeout Evidence normally identifies:
 

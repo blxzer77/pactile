@@ -4,6 +4,7 @@ import path from "node:path";
 import { expect, it } from "vitest";
 import { handleKernelRequest } from "../../../src/core/task/kernel-cli.js";
 import { emptyTaskRecord } from "../../../src/core/task/schema.js";
+import { fixtureApproval } from "./start-fixture.js";
 
 it("walks an isolated PRD through Node Kernel create, execute, and close", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kernel-walkthrough-"));
@@ -17,7 +18,7 @@ it("walks an isolated PRD through Node Kernel create, execute, and close", () =>
     const started = handleKernelRequest({
       op: "start", taskDir, actor: "fixture", idempotencyKey: "start", expectedRevision: 1,
       record: { ...record, status: "in_progress" },
-      extras: { execution_approval: { approved_by: "fixture", transition: "start-execution" } },
+      extras: { execution_approval: fixtureApproval(taskDir) },
     });
     expect(started).toMatchObject({ ok: true, kernel: { phase: "execute" } });
     const startRevision = JSON.parse(fs.readFileSync(path.join(taskDir, "kernel.json"), "utf8")).revision as number;

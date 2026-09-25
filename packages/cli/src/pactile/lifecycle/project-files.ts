@@ -12,6 +12,7 @@ import type {
 const CANONICAL_PREFIX = ".pactile/";
 const EXCLUDED_PREFIXES = [
   ".pactile/runtime/",
+  ".pactile/.runtime/",
   ".pactile/tasks/",
   ".pactile/workspace/",
   ".pactile/spec/",

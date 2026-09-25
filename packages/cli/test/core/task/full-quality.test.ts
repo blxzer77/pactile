@@ -22,6 +22,7 @@ import {
   qualityFingerprint,
   resolveRequiredControls,
 } from "../../../src/core/task/full-quality.js";
+import { fixtureApproval, fixturePlanningGates } from "./start-fixture.js";
 
 function fullRecord() {
   return emptyTaskRecord({
@@ -49,7 +50,12 @@ const IMPLEMENT = [
   "# Implement",
   "",
   "execution_mode: inline",
+  "isolation: main-worktree",
   "verification_profile: standard",
+  "retrieval_profile: exact-only",
+  "optional_capabilities: []",
+  "quality_gates:",
+  "  mode: profile",
   "",
 ].join("\n");
 
@@ -111,6 +117,18 @@ function selfReview(codeFingerprint = "code-v1") {
   });
 }
 
+function startFull(taskDir: string): ReturnType<typeof applyKernelStart> {
+  fixturePlanningGates(taskDir);
+  return applyKernelStart({
+    taskDir,
+    expectedRevision: readKernel({ taskDir }).kernel.revision,
+    actor: "a",
+    idempotencyKey: "start:full",
+    record: { ...fullRecord(), status: "in_progress" },
+    extras: { execution_approval: fixtureApproval(taskDir) },
+  });
+}
+
 describe("Stage 4 Full Quality", () => {
   let tmp: string;
   let taskDir: string;
@@ -166,15 +184,7 @@ describe("Stage 4 Full Quality", () => {
     writeSurfaces(taskDir, { implement: true });
     expect(fs.existsSync(path.join(taskDir, "design.md"))).toBe(false);
 
-    const started = applyKernelStart({
-      taskDir,
-      expectedRevision: 1,
-      actor: "a",
-      idempotencyKey: "start:full",
-      record: { ...fullRecord(), status: "in_progress" },
-      extras: { execution_approval: { approved_by: "user" } },
-      evidence: "task.py start-execution --approved",
-    });
+    const started = startFull(taskDir);
     expect(started.kernel.phase).toBe("execute");
     expect(started.legacy.status).toBe("in_progress");
   });
@@ -219,13 +229,7 @@ describe("Stage 4 Full Quality", () => {
       extras: fullControls(),
     });
     writeSurfaces(taskDir, { implement: true, verify: true });
-    applyKernelStart({
-      taskDir,
-      expectedRevision: 1,
-      actor: "a",
-      idempotencyKey: "start:full",
-      record: { ...fullRecord(), status: "in_progress" },
-    });
+    startFull(taskDir);
     const patched = applyKernelPatch({
       taskDir,
       expectedRevision: readKernel({ taskDir }).kernel.revision,
@@ -257,13 +261,7 @@ describe("Stage 4 Full Quality", () => {
       extras: fullControls(),
     });
     writeSurfaces(taskDir, { implement: true, verify: true });
-    applyKernelStart({
-      taskDir,
-      expectedRevision: 1,
-      actor: "a",
-      idempotencyKey: "start:full",
-      record: { ...fullRecord(), status: "in_progress" },
-    });
+    startFull(taskDir);
     applyKernelPatch({
       taskDir,
       expectedRevision: readKernel({ taskDir }).kernel.revision,
@@ -304,13 +302,7 @@ describe("Stage 4 Full Quality", () => {
       }),
     });
     writeSurfaces(taskDir, { implement: true, verify: true });
-    applyKernelStart({
-      taskDir,
-      expectedRevision: 1,
-      actor: "a",
-      idempotencyKey: "start:full",
-      record: { ...fullRecord(), status: "in_progress" },
-    });
+    startFull(taskDir);
     applyKernelPatch({
       taskDir,
       expectedRevision: readKernel({ taskDir }).kernel.revision,
@@ -345,13 +337,7 @@ describe("Stage 4 Full Quality", () => {
       extras: fullControls(),
     });
     writeSurfaces(taskDir, { implement: true, verify: true });
-    applyKernelStart({
-      taskDir,
-      expectedRevision: 1,
-      actor: "a",
-      idempotencyKey: "start:full",
-      record: { ...fullRecord(), status: "in_progress" },
-    });
+    startFull(taskDir);
     applyKernelPatch({
       taskDir,
       expectedRevision: readKernel({ taskDir }).kernel.revision,
@@ -471,6 +457,7 @@ describe("Stage 4 Full Quality", () => {
           priority: "P2",
         }),
       },
+      extras: { execution_approval: fixtureApproval(taskDir) },
     });
     const archived = applyKernelArchive({
       taskDir,

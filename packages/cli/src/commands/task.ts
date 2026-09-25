@@ -1,8 +1,10 @@
 import { execFileSync, execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { applyKernelArchive, applyKernelCreate, applyKernelPatch, applyKernelRecordGate, applyKernelStart, assertFullQualityForPhase, buildAcEvidenceLedger, emptyTaskRecord, parseAcceptanceItems, qualityFingerprint, readDependencyGraph, readKernel, readTopology, resolveRequiredControls, unmetRequires, type PactileTaskRecord } from "../core/task/index.js";
+import { applyKernelArchive, applyKernelPatch, applyKernelRecordGate, applyKernelStart, assertFullQualityForPhase, buildAcEvidenceLedger, emptyTaskRecord, parseAcceptanceItems, qualityFingerprint, readDependencyGraph, readKernel, readTopology, resolveRequiredControls, unmetRequires, type PactileTaskRecord } from "../core/task/index.js";
 import { addContextEntry, CONTEXT_FILES, readContextEntries, validateContextFile } from "../pactile/task/context.js";
+import { approvedExecuteTask } from "../pactile/task/authorization.js";
+import { createTaskWithArtifacts } from "../pactile/task/creation.js";
 import { readPactileConfig } from "../pactile/task/config.js";
 import { checkArchive, checkStartExecution, dependencyStatus } from "../pactile/task/guards.js";
 import { exitTask, resolveSelectedTask, resolveTaskDir, selectTask } from "../pactile/task/session.js";
@@ -141,21 +143,18 @@ function createTask(args: string[], root: string): void {
   });
   const rigor = option(args, "--rigor") ?? "lite";
   if (rigor !== "lite" && rigor !== "full") throw new Error("--rigor must be lite or full");
-  fs.mkdirSync(dir, { recursive: true });
-  applyKernelCreate({ taskDir: dir, record, actor: "pactile task create", idempotencyKey: `create:${slug}`, evidence: "pactile task create", cwd: root,
-    extras: { required_controls: resolveRequiredControls({ rigor }) } });
-  const prd = path.join(dir, "prd.md");
-  const verify = path.join(dir, "verify.md");
-  if (!fs.existsSync(prd)) {
-    fs.writeFileSync(prd, prdTemplate.replaceAll("{title}", title).replaceAll("{goal}", description || (taskLocale === "zh" ? "待补充。" : "TBD.")), "utf8");
-  }
-  if (!fs.existsSync(verify)) fs.writeFileSync(verify, verifySeed(taskLocale), "utf8");
+  const artifacts = new Map<string, string>([
+    ["prd.md", prdTemplate.replaceAll("{title}", title).replaceAll("{goal}", description || (taskLocale === "zh" ? "待补充。" : "TBD."))],
+    ["verify.md", verifySeed(taskLocale)],
+  ]);
   if (fs.existsSync(path.join(root, ".codex"))) {
     for (const name of CONTEXT_FILES) {
-      const file = path.join(dir, name);
-      if (!fs.existsSync(file)) fs.writeFileSync(file, `${contextSeeds.map((entry) => JSON.stringify({ file: entry, reason: "default spec seed — curate entries for this task" })).join("\n")}\n`, "utf8");
+      artifacts.set(name, `${contextSeeds.map((entry) => JSON.stringify({ file: entry, reason: "default spec seed — curate entries for this task" })).join("\n")}\n`);
     }
   }
+  createTaskWithArtifacts({ root, dirName, record, artifacts, actor: "pactile task create",
+    idempotencyKey: `create:${slug}`, evidence: "pactile task create", ifExists: "error",
+    extras: { required_controls: resolveRequiredControls({ rigor }) } });
   if (parentRef) linkChild(root, parentRef, dirName);
   runTaskHooks(root, "after_create", path.join(dir, "task.json"));
   console.log(path.relative(root, dir).replaceAll("\\", "/"));
@@ -445,6 +444,12 @@ function startExecution(root: string, args: string[]): number {
   const check = args.includes("--check");
   const approved = args.includes("--approved");
   if (check === approved) throw new Error("choose --check or --approved");
+  const existing = readKernel({ taskDir: dir, cwd: root }).kernel;
+  if (approved && existing.phase === "execute" && existing.projection?.status === "in_progress") {
+    approvedExecuteTask(root, path.basename(dir));
+    console.log(`Execution already approved for: ${path.relative(root, dir).replaceAll("\\", "/")}\nStatus: in_progress`);
+    return 0;
+  }
   const guard = checkStartExecution(root, dir, record, approved, args.includes("--ignore-deps"));
   for (const warning of guard.warnings) console.error(`[dependencies] WARN: ${warning}`);
   if (!guard.ok) {
@@ -457,13 +462,6 @@ function startExecution(root: string, args: string[]): number {
     return 0;
   }
   const prior = record as unknown as Record<string, unknown>;
-  const priorApproval = prior.execution_approval;
-  if (priorApproval && typeof priorApproval === "object") {
-    const old = priorApproval as Record<string, unknown>;
-    if (old.contract_fingerprint !== guard.contractFingerprint || old.artifact_fingerprint !== guard.artifactFingerprint) {
-      throw new Error("stale execution approval; return to Planning and ask for explicit approval again");
-    }
-  }
   const checkedAt = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   const baseline = {
     schema_version: 1, transition: "start-execution", gate: "baseline-check", result: "PASS",
@@ -480,39 +478,18 @@ function startExecution(root: string, args: string[]): number {
     schema_version: 1,
     contract_fingerprint: guard.contractFingerprint,
     artifact_fingerprint: guard.artifactFingerprint,
-    transitions: { ...transitions, "start-execution": { "baseline-check": baseline } },
+    transitions: { ...transitions, "start-execution": { ...(transitions["start-execution"] as Record<string, unknown> ?? {}), "baseline-check": baseline } },
   };
   const approval = {
     schema_version: 1, transition: "start-execution", approved_at: checkedAt,
-    approved_by: "user", approval_source: "pactile task start-execution --approved",
+    approved_by: "user", task_id: record.id, assurance: "caller-asserted",
+    approval_source: "pactile task start-execution --approved",
     contract_fingerprint: guard.contractFingerprint, artifact_fingerprint: guard.artifactFingerprint,
   };
   const extras: Record<string, unknown> = { quality_gate_results: qualityGateResults, execution_approval: approval };
   const dependencyFacts = dependencyStatus(root, dir, record);
   const priorExtras = readKernel({ taskDir: dir, cwd: root }).kernel.projection?.extras ?? {};
-  const attestedSatisfied = Array.isArray(priorExtras.dependency_satisfied)
-    ? priorExtras.dependency_satisfied.filter((item): item is string => typeof item === "string") : [];
-  extras.dependency_satisfied = [...new Set([...attestedSatisfied, ...dependencyFacts.satisfied])];
-  const controls = readKernel({ taskDir: dir, cwd: root }).kernel.projection?.extras?.required_controls;
-  if (controls && typeof controls === "object" && (controls as Record<string, unknown>).rigor === "full") {
-    const parsed = readStrategyContract(dir);
-    if (!parsed.contract) throw new Error(parsed.errors.join("; "));
-    const currentContract = contractFingerprint(dir, record, parsed.contract);
-    const autoGates = requiredGates("start-execution", parsed.contract);
-    for (const gate of autoGates) {
-      const stamp = new Date().toISOString();
-      const artifact = artifactFingerprint(dir, record, "start-execution", gate);
-      const gateRecord = { schema_version: 1, transition: "start-execution", gate, result: "PASS", reviewer: "pactile-cli", evidence: gate === "requirements-review" ? "prd.md" : "design.md + implement.md",
-        checked_at: stamp, contract_fingerprint: currentContract, artifact_fingerprint: artifact,
-        issue_fingerprint: null, consecutive_failures: 0, approved_skip: null };
-      const gateRevision = readKernel({ taskDir: dir, cwd: root }).kernel.revision;
-      applyKernelRecordGate({ taskDir: dir, cwd: root, expectedRevision: gateRevision,
-        actor: "pactile task start-execution planning review", idempotencyKey: `planning:${record.id}:${gate}:r${gateRevision}`,
-        transition: "start-execution", gateName: gate, record: gateRecord, evidence: String(gateRecord.evidence) });
-      const transitionRows = (qualityGateResults.transitions as Record<string, unknown>)["start-execution"] as Record<string, unknown>;
-      transitionRows[gate] = gateRecord;
-    }
-  }
+  extras.dependency_satisfied = dependencyFacts.satisfied;
   if (args.includes("--ignore-deps")) {
     extras.dependency_override = {
       schema_version: 1,
