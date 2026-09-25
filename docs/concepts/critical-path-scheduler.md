@@ -33,7 +33,9 @@ Task Kernel records and do not need or create a Parent / Child map.
   Concrete paths are project-relative, normalized to `/` and NFC. On Windows,
   case is folded for conflict checks to match the default case-insensitive
   filesystem behavior; this may conservatively serialize paths inside a
-  case-sensitive Windows directory. Empty legacy write sets are treated as
+  case-sensitive Windows directory. On Windows, ASCII colons in any write-set
+  path segment are rejected to prevent NTFS alternate data stream aliases;
+  POSIX filenames may retain colons. Empty legacy write sets are treated as
   unknown and conflict with every writer. A parent path overlaps each
   descendant. NFKC is not applied, so compatibility characters remain distinct.
 - Overlapping writers are serial by default. Parallel overlap requires an

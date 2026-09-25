@@ -186,11 +186,15 @@ export function normalizeProjectWriteSet(
           .replace(/\/$/, "")
           .normalize("NFC");
         const segments = normalized.split("/");
+        const hasWindowsAlternateDataStream =
+          process.platform === "win32" &&
+          segments.some((segment) => segment.includes(":"));
         if (
           !normalized ||
           normalized === "." ||
           normalized.startsWith("/") ||
           /^[A-Za-z]:/.test(normalized) ||
+          hasWindowsAlternateDataStream ||
           normalized.includes("*") ||
           normalized.includes("?") ||
           normalized.includes("[") ||
