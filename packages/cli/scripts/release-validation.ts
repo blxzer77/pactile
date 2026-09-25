@@ -270,9 +270,7 @@ function packPackage({
   runner("pnpm", ["pack", "--pack-destination", artifactDir], {
     cwd: packageDir,
     capture: true,
-    env: credentialFreeEnvironment({
-      PACTILE_SKIP_SMART_SEARCH_POSTINSTALL: "1",
-    }),
+    env: credentialFreeEnvironment(),
   });
   const tarballPath = path.join(
     artifactDir,

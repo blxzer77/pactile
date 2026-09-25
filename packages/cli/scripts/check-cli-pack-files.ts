@@ -3,13 +3,13 @@
 import {
   compareCliPackageFiles,
   defaultPackageRoot,
-} from "./smart-search-vendor-utils.js";
+} from "./cli-pack-files-utils.js";
 
 const errors = compareCliPackageFiles(defaultPackageRoot());
 
 if (errors.length > 0) {
   console.error(
-    "CLI package.json files drift from Smart Search vendor allowlist:",
+    "CLI package.json files drift from the package allowlist:",
   );
   for (const error of errors) {
     console.error(`  - ${error}`);
@@ -21,5 +21,5 @@ if (errors.length > 0) {
 }
 
 console.log(
-  "ok CLI package.json files match Smart Search vendor pack allowlist.",
+    "ok CLI package.json files match the package allowlist.",
 );

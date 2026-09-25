@@ -7,7 +7,6 @@ export const REQUIRED_RELEASE_FILES = [
   "dist/bin/pactile.js",
   "dist/bin/cstl.js",
   "dist/bin/compat-warning.js",
-  "dist/bin/smart-search.js",
   "dist/cli/index.js",
   "dist/commands/pi.js",
   "dist/commands/codex.js",
@@ -33,6 +32,7 @@ export const REQUIRED_RELEASE_FILES = [
 ];
 
 const FORBIDDEN_FRAGMENTS = [
+  "dist/bin/smart-search.js",
   ".smart-search-python",
   "vendor/",
   "__pycache__",
@@ -81,13 +81,7 @@ export function checkReleasePackContents({
   const raw = runner(
     "npm",
     ["pack", "--dry-run", "--json", "--ignore-scripts"],
-    {
-      capture: true,
-      env: {
-        ...process.env,
-        PACTILE_SKIP_SMART_SEARCH_POSTINSTALL: "1",
-      },
-    },
+    { capture: true },
   );
   const payload = JSON.parse(String(raw));
   const paths = (payload[0]?.files ?? []).map((file) => file.path);

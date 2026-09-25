@@ -143,7 +143,6 @@ export function runReleaseCandidate({
       cliDir,
       env: {
         PACTILE_KERNEL_CLI: `node ${quoted} kernel --json`,
-        PACTILE_SKIP_SMART_SEARCH_POSTINSTALL: "1",
       },
     });
   }

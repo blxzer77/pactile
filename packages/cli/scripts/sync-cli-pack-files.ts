@@ -5,7 +5,7 @@ import path from "node:path";
 import {
   defaultPackageRoot,
   expectedCliPackageFiles,
-} from "./smart-search-vendor-utils.js";
+} from "./cli-pack-files-utils.js";
 
 const packageRoot = defaultPackageRoot();
 const packageJsonPath = path.join(packageRoot, "package.json");

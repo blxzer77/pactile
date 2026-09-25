@@ -375,7 +375,6 @@ function packWorkspacePackage(
     runner("pnpm", ["pack", "--pack-destination", destinationDir], {
       cwd: packageDir,
       capture: true,
-      env: { PACTILE_SKIP_SMART_SEARCH_POSTINSTALL: "1" },
     }),
   );
   const filename = out.trim().split(/\r?\n/).filter(Boolean).pop() ?? "";
@@ -453,6 +452,14 @@ export function validatePackedCliPackage(
       );
     }
   }
+  if (
+    packedPackage.dependencies?.["@blxzer/smart-search"] ||
+    packedPackage.optionalDependencies?.["@blxzer/smart-search"]
+  ) {
+    errors.push(
+      "packed Pactile must not install the external Smart Search Middleware Provider",
+    );
+  }
   const bins = packedPackage.bin ?? {};
   if (normalizeBin(bins.pactile) !== "dist/bin/pactile.js") {
     errors.push(
@@ -462,9 +469,9 @@ export function validatePackedCliPackage(
   if (normalizeBin(bins.cstl) !== "dist/bin/cstl.js") {
     errors.push(`packed CLI bin "cstl" does not resolve to dist/bin/cstl.js`);
   }
-  if (normalizeBin(bins["smart-search"]) !== "dist/bin/smart-search.js") {
+  if (bins["smart-search"] !== undefined) {
     errors.push(
-      `packed CLI bin "smart-search" does not resolve to dist/bin/smart-search.js`,
+      "packed Pactile must not publish a smart-search bin; install the external provider separately",
     );
   }
   if (errors.length > 0) throw new Error(errors.join("\n"));

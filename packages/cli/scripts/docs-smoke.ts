@@ -128,7 +128,6 @@ function childEnvironment(home) {
     HOMEPATH:
       path.parse(home).root.slice(2) + home.slice(path.parse(home).root.length),
     NO_COLOR: "1",
-    PACTILE_SKIP_SMART_SEARCH_POSTINSTALL: "1",
     PACTILE_SKIP_PYTHON_CHECK: "1",
   };
 }

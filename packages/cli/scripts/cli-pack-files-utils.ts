@@ -2,9 +2,8 @@
 /**
  * CLI package.json `files` allowlist helpers.
  *
- * Historically also synced a vendored Smart Search tree. Vendor packing was
- * removed when `@blxzer/smart-search` became a normal dependency; this module
- * keeps only the pack-files check/sync surface used by:
+ * Pactile publishes one package with an explicit file allowlist. This module
+ * contains the pack-files check/sync surface used by:
  *   - scripts/sync-cli-pack-files.ts
  *   - scripts/check-cli-pack-files.ts
  */
@@ -13,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Static npm `files` entries for @blxzer/pactile (no vendor tree). */
+/** Static npm `files` entries for @blxzer/pactile. */
 const cliPackFilesStatic = ["dist", "README.md", "CHANGELOG.md", "LICENSE"];
 
 export function defaultPackageRoot() {
@@ -50,16 +49,6 @@ export function compareCliPackageFiles(packageRoot = defaultPackageRoot()) {
     }
   }
   for (const file of actual) {
-    if (file === "vendor/smart-search") {
-      errors.push(
-        "package.json files must not include broad vendor/smart-search directory (use explicit allowlist)",
-      );
-      continue;
-    }
-    if (file.startsWith("vendor/smart-search/")) {
-      errors.push(`extra vendor pack entry (vendor packing removed): ${file}`);
-      continue;
-    }
     if (!expectedSet.has(file)) {
       errors.push(`extra pack entry: ${file}`);
     }

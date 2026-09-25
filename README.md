@@ -113,7 +113,7 @@ The complete Core and CLI test suite is the final release gate. Focused changes 
 
 ## Scope
 
-Pactile is local project tooling. It does not promise cloud orchestration, a plugin marketplace, automatic installation of host-native assets, or ownership of credentials and OAuth state. Optional middleware providers remain independently installed and explicitly probed.
+Pactile is local project tooling. It does not promise cloud orchestration, a plugin marketplace, automatic installation of host-native assets, or ownership of credentials and OAuth state. Optional middleware providers remain independently installed and explicitly probed. Smart Search is a separate optional package; install and configure it independently if you need external-knowledge searches. Its prerequisites are separate from Pactile's Node-only runtime.
 
 Lineage, copyright, and license notices are preserved in [COPYRIGHT](COPYRIGHT) and [LICENSE](LICENSE).
 

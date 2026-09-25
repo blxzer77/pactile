@@ -7,8 +7,7 @@
   "types": "./dist/index.d.ts",
   "bin": {
     "pactile": "./dist/bin/pactile.js",
-    "cstl": "./dist/bin/cstl.js",
-    "smart-search": "./dist/bin/smart-search.js"
+    "cstl": "./dist/bin/cstl.js"
   },
   "exports": {
     "./package.json": "./package.json",
@@ -97,9 +96,6 @@
     "inquirer": "^9.3.7",
     "undici": "^6.21.0",
     "zod": "^4.4.2"
-  },
-  "optionalDependencies": {
-    "@blxzer/smart-search": "^0.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",

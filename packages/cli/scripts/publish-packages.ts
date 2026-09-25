@@ -225,7 +225,6 @@ function validationEnvironment(
   return {
     PACTILE_KERNEL_CLI:
       env.PACTILE_KERNEL_CLI ?? `node ${quoted} kernel --json`,
-    PACTILE_SKIP_SMART_SEARCH_POSTINSTALL: "1",
     NODE_AUTH_TOKEN: undefined,
     NPM_TOKEN: undefined,
   };

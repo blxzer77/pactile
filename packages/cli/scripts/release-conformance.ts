@@ -20,7 +20,6 @@ const NODE_ENGINE = ">=20.0.0";
 const EXPECTED_BINS = {
   pactile: "dist/bin/pactile.js",
   cstl: "dist/bin/cstl.js",
-  "smart-search": "dist/bin/smart-search.js",
 };
 
 export function assertSinglePackageContract(packedPackage: {
@@ -29,6 +28,8 @@ export function assertSinglePackageContract(packedPackage: {
   engines?: { node?: string };
   bin?: Record<string, unknown>;
   exports?: Record<string, unknown>;
+  dependencies?: Record<string, unknown>;
+  optionalDependencies?: Record<string, unknown>;
 }) {
   if (packedPackage.name !== "@blxzer/pactile") {
     throw new Error(
@@ -46,6 +47,22 @@ export function assertSinglePackageContract(packedPackage: {
     ) {
       throw new Error(`Packed Pactile bin ${name} must point to ${target}.`);
     }
+  }
+  if (
+    packedPackage.bin?.["smart-search"] !== undefined ||
+    packedPackage.dependencies?.["@blxzer/smart-search"] !== undefined ||
+    packedPackage.optionalDependencies?.["@blxzer/smart-search"] !== undefined
+  ) {
+    throw new Error(
+      "Smart Search is an external Middleware Provider, not a Pactile bin or package dependency.",
+    );
+  }
+  const actualBins = Object.keys(packedPackage.bin ?? {}).sort();
+  const expectedBins = Object.keys(EXPECTED_BINS).sort();
+  if (JSON.stringify(actualBins) !== JSON.stringify(expectedBins)) {
+    throw new Error(
+      `Pactile must expose exactly these bins: ${expectedBins.join(", ")}.`,
+    );
   }
   for (const subpath of ["./core", "./core/task", "./core/compat"]) {
     if (!packedPackage.exports?.[subpath]) {
@@ -74,10 +91,87 @@ function runtimeEnvironment(root, userConfig) {
     NODE_AUTH_TOKEN: undefined,
     NPM_TOKEN: undefined,
     NPM_CONFIG_USERCONFIG: userConfig,
-    PACTILE_SKIP_SMART_SEARCH_POSTINSTALL: "1",
+    PYTHON: undefined,
+    PYTHON3: undefined,
     PYTHONHOME: undefined,
     PYTHONPATH: undefined,
+    PY_PYTHON: undefined,
+    UV_PYTHON: undefined,
+    VIRTUAL_ENV: undefined,
+    CONDA_PREFIX: undefined,
   };
+}
+
+export function createNodeOnlyInstallEnvironment(root, userConfig) {
+  const nodeInstallDir = path.dirname(process.execPath);
+  const supportBin = path.join(root, "node-only-install-tools");
+  fs.mkdirSync(supportBin, { recursive: true });
+  if (process.platform !== "win32") {
+    fs.symlinkSync("/bin/sh", path.join(supportBin, "sh"));
+  }
+  const pathEntries = [nodeInstallDir, supportBin];
+  if (process.platform === "win32") {
+    pathEntries.push(
+      path.join(process.env.SystemRoot ?? "C:\\Windows", "System32"),
+    );
+  }
+  const restrictedPath = pathEntries.join(path.delimiter);
+  return {
+    PATH: restrictedPath,
+    Path: restrictedPath,
+    PATHEXT: process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
+    NODE_AUTH_TOKEN: undefined,
+    NPM_TOKEN: undefined,
+    NPM_CONFIG_USERCONFIG: userConfig,
+    npm_config_ignore_scripts: undefined,
+    NPM_CONFIG_IGNORE_SCRIPTS: undefined,
+    PYTHON: undefined,
+    PYTHON3: undefined,
+    PYTHONHOME: undefined,
+    PYTHONPATH: undefined,
+    PY_PYTHON: undefined,
+    UV_PYTHON: undefined,
+    VIRTUAL_ENV: undefined,
+    CONDA_PREFIX: undefined,
+  };
+}
+
+export function buildSealedTarballInstallArgs({
+  prefix,
+  cacheDir,
+  tarballPath,
+}: {
+  prefix: string;
+  cacheDir: string;
+  tarballPath: string;
+}) {
+  return [
+    "--prefix",
+    prefix,
+    "install",
+    "--no-audit",
+    "--no-fund",
+    "--no-save",
+    "--package-lock=false",
+    "--cache",
+    cacheDir,
+    "--registry=https://registry.npmjs.org/",
+    tarballPath,
+  ];
+}
+
+function assertNoPythonOnPath({ runner, cwd, env }) {
+  const probe = [
+    "const { spawnSync } = require('node:child_process');",
+    "for (const command of ['python', 'python3', 'py']) {",
+    "  const result = spawnSync(command, ['--version'], { stdio: 'ignore', windowsHide: true });",
+    "  if (result.error?.code !== 'ENOENT') {",
+    "    console.error(`Python command is available on the conformance PATH: ${command}`);",
+    "    process.exitCode = 1;",
+    "  }",
+    "}",
+  ].join("\n");
+  runner(process.execPath, ["-e", probe], { cwd, capture: true, env });
 }
 
 export async function verifyReleaseConformance({
@@ -149,6 +243,8 @@ export async function verifyReleaseConformance({
     assertSinglePackageContract(packedPackage);
 
     const offline = process.env.PACTILE_CONFORMANCE_OFFLINE === "1";
+    let installScriptsEnabled = false;
+    let noPythonOnInstallPath = false;
     if (offline) {
       // Local rehearsal: unpack the sealed bytes and borrow the already locked
       // workspace dependencies. CI uses the clean npm install path below.
@@ -178,31 +274,31 @@ export async function verifyReleaseConformance({
         );
       }
     } else {
+      fs.mkdirSync(prefix, { recursive: true });
+      const env = createNodeOnlyInstallEnvironment(root, userConfig);
+      const ignoreScripts = String(
+        runner("npm", ["config", "get", "ignore-scripts"], {
+          cwd: prefix,
+          capture: true,
+          env,
+        }),
+      ).trim();
+      if (ignoreScripts !== "false") {
+        throw new Error(
+          `Default npm install must run lifecycle scripts (ignore-scripts=${ignoreScripts}).`,
+        );
+      }
+      installScriptsEnabled = true;
+      assertNoPythonOnPath({ runner, cwd: prefix, env });
+      noPythonOnInstallPath = true;
       runner(
         "npm",
-        [
-          "--prefix",
+        buildSealedTarballInstallArgs({
           prefix,
-          "install",
-          "--ignore-scripts",
-          "--no-audit",
-          "--no-fund",
-          "--no-save",
-          "--package-lock=false",
-          "--cache",
           cacheDir,
-          "--registry=https://registry.npmjs.org/",
-          tarball.tarballPath,
-        ],
-        {
-          capture: false,
-          env: {
-            NODE_AUTH_TOKEN: undefined,
-            NPM_TOKEN: undefined,
-            NPM_CONFIG_USERCONFIG: userConfig,
-            PACTILE_SKIP_SMART_SEARCH_POSTINSTALL: "1",
-          },
-        },
+          tarballPath: tarball.tarballPath,
+        }),
+        { capture: false, env },
       );
     }
     const installed = path.join(prefix, "node_modules", "@blxzer", "pactile");
@@ -279,10 +375,12 @@ export async function verifyReleaseConformance({
       packageOrder: ["cli"],
       nodeOnlyVerified: true,
       offlineDependencyFixture: offline,
+      installScriptsEnabled,
+      noPythonOnInstallPath,
       acceptance,
     };
     log(
-      `ok release conformance ${version}: one sealed tarball, Node-only lifecycle and bridges (${acceptance.endToEndMs} ms E2E).`,
+      `ok release conformance ${version}: one sealed tarball; default npm lifecycle install=${installScriptsEnabled}, no Python on install PATH=${noPythonOnInstallPath}; Node-only lifecycle and bridges (${acceptance.endToEndMs} ms E2E).`,
     );
     log(
       `baseline ms: CLI cold=${acceptance.coldStartMs}, subsequent=${acceptance.steadyCliMs}, Pi cold=${acceptance.piColdStartupMs}, Pi warm=${acceptance.piWarmStartupMs}, parallel=${acceptance.parallelWallMs}; offline dependency fixture=${offline}.`,
