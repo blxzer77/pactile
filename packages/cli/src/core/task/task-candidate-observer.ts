@@ -67,6 +67,8 @@ export interface GitCandidateObservation {
   readonly observedAt: string;
   readonly expectedBaseSha: string | null;
   readonly expectedBranch: string | null;
+  /** True when the caller bound a branch, including an explicit detached-HEAD expectation. */
+  readonly expectedBranchBound: boolean;
   readonly head: string;
   readonly branch: string | null;
   readonly allowedWriteSet: GitWriteSet;
@@ -687,6 +689,7 @@ function stableSnapshotFingerprint(input: {
   repositoryIdentitySha256: string;
   expectedBaseSha: string | null;
   expectedBranch: string | null;
+  expectedBranchBound: boolean;
   head: string;
   branch: string | null;
   allowedWriteSet: GitWriteSet;
@@ -718,6 +721,7 @@ export function observeGitCandidate(
   const allowedWriteSet = normalizeWriteSet(input.allowedWriteSet);
   const expectedBaseSha = input.expectedBaseSha ?? null;
   const expectedBranch = input.expectedBranch ?? null;
+  const expectedBranchBound = input.expectedBranch !== undefined;
   if (
     expectedBranch !== null &&
     (expectedBranch.trim().length === 0 ||
@@ -800,7 +804,7 @@ export function observeGitCandidate(
   }
 
   const workspaceMismatch =
-    expectedBranch !== null && expectedBranch !== initial.branch;
+    expectedBranchBound && expectedBranch !== initial.branch;
   const scopeStatus: GitCandidateScopeStatus =
     initial.conflictPaths.length > 0
       ? "conflicted"
@@ -813,6 +817,7 @@ export function observeGitCandidate(
     repositoryIdentitySha256,
     expectedBaseSha: expectedBaseSha?.toLowerCase() ?? null,
     expectedBranch,
+    expectedBranchBound,
     head: initial.head,
     branch: initial.branch,
     allowedWriteSet,
@@ -849,6 +854,7 @@ export function verifyGitCandidateObservation(
       repositoryIdentitySha256,
       expectedBaseSha,
       expectedBranch,
+      expectedBranchBound,
       head,
       branch,
       allowedWriteSet,
@@ -873,6 +879,7 @@ export function verifyGitCandidateObservation(
         repositoryIdentitySha256,
         expectedBaseSha,
         expectedBranch,
+        expectedBranchBound,
         head,
         branch,
         allowedWriteSet,
@@ -992,7 +999,8 @@ export function observeTaskRunCandidate(
       "A repository root is required for a Run without a workspace binding.",
     );
   }
-  const expectedBaseSha = run.candidateBaseSha ?? run.workspace?.baseSha ?? null;
+  const expectedBaseSha =
+    run.candidateBaseSha ?? run.workspace?.baseSha ?? null;
   if (expectedBaseSha === null) {
     throw new GitCandidateObservationError(
       "candidate-not-eligible",
@@ -1003,8 +1011,7 @@ export function observeTaskRunCandidate(
     repositoryRoot,
     allowedWriteSet: runWriteSet,
     expectedBaseSha,
-    expectedBranch:
-      run.workspace?.branch ?? run.candidateBaseBranch ?? null,
+    expectedBranch: run.workspace?.branch ?? run.candidateBaseBranch ?? null,
   });
 }
 

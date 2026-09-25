@@ -65,6 +65,7 @@ export interface VerificationReceiptObservation {
   readonly repositoryIdentitySha256: string;
   readonly expectedBaseSha: string | null;
   readonly expectedBranch: string | null;
+  readonly expectedBranchBound: boolean;
   readonly head: string;
   readonly branch: string | null;
   readonly allowedWriteSet: GitWriteSet;
@@ -72,6 +73,7 @@ export interface VerificationReceiptObservation {
   readonly unstagedPaths: readonly string[];
   readonly untrackedPaths: readonly string[];
   readonly conflictPaths: readonly string[];
+  readonly committedPaths: readonly string[];
   readonly affectedPaths: readonly string[];
   readonly inScopePaths: readonly string[];
   readonly outOfScopePaths: readonly string[];
@@ -358,6 +360,7 @@ function copyObservation(
     repositoryIdentitySha256: observation.repositoryIdentitySha256,
     expectedBaseSha: observation.expectedBaseSha,
     expectedBranch: observation.expectedBranch,
+    expectedBranchBound: observation.expectedBranchBound,
     head: observation.head,
     branch: observation.branch,
     allowedWriteSet: {
@@ -368,6 +371,7 @@ function copyObservation(
     unstagedPaths: [...observation.unstagedPaths],
     untrackedPaths: [...observation.untrackedPaths],
     conflictPaths: [...observation.conflictPaths],
+    committedPaths: [...observation.committedPaths],
     affectedPaths: [...observation.affectedPaths],
     inScopePaths: [...observation.inScopePaths],
     outOfScopePaths: [...observation.outOfScopePaths],

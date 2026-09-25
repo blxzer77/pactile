@@ -123,6 +123,8 @@ describe("candidate-bound verification receipts", () => {
         candidateFingerprint: run.candidateSnapshot?.fingerprint,
         observationFingerprint: observation.fingerprint,
       });
+      expect(receipt.observation.expectedBranchBound).toBe(false);
+      expect(receipt.observation.committedPaths).toEqual([]);
       expect(
         receipt.results.map(({ checkId, outcome }) => [checkId, outcome]),
       ).toEqual([

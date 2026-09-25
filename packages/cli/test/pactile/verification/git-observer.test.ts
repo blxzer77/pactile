@@ -6,6 +6,7 @@ import {
   fingerprintCurrentRepositoryFile,
   GitCandidateObservationError,
   observeGitCandidate,
+  observeGitRepositoryBaseline,
   observeTaskRunCandidate,
 } from "../../../src/pactile/verification/index.js";
 import type { TaskRunObservationSource } from "../../../src/pactile/verification/index.js";
@@ -222,6 +223,45 @@ describe("read-only Git candidate observation", () => {
       });
       expect(mismatch.scopeStatus).toBe("workspace-mismatch");
       expect(() => createTaskCandidateEntry(mismatch)).toThrow(
+        /workspace-mismatch/,
+      );
+    } finally {
+      removeTemporaryGitRepository(repository);
+    }
+  });
+
+  it("preserves a detached-HEAD baseline as an explicit branch expectation", () => {
+    const repository = createTemporaryGitRepository();
+    try {
+      runGit(repository.root, [
+        "checkout",
+        "--quiet",
+        "--detach",
+        repository.head,
+      ]);
+      const baseline = observeGitRepositoryBaseline(repository.root);
+      expect(baseline.headSha).toBe(repository.head);
+      expect(baseline.branch).toBeNull();
+
+      runGit(repository.root, [
+        "checkout",
+        "--quiet",
+        "-b",
+        "attached-at-same-head",
+      ]);
+      const observation = observeGitCandidate({
+        repositoryRoot: repository.root,
+        expectedBaseSha: baseline.headSha,
+        expectedBranch: baseline.branch,
+        allowedWriteSet: { exactPaths: ["src/task.ts"], directoryPrefixes: [] },
+      });
+
+      expect(observation.head).toBe(baseline.headSha);
+      expect(observation.expectedBranchBound).toBe(true);
+      expect(observation.expectedBranch).toBeNull();
+      expect(observation.branch).toBe("attached-at-same-head");
+      expect(observation.scopeStatus).toBe("workspace-mismatch");
+      expect(() => createTaskCandidateEntry(observation)).toThrow(
         /workspace-mismatch/,
       );
     } finally {
