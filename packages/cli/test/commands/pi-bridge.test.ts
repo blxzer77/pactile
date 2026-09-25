@@ -18,7 +18,7 @@ function fixture(approve = true): { root: string; script: string; task: string }
   fs.writeFileSync(path.join(root, ".pactile", "tasks", "locale", "en", "default-prd.md"), "# {title}\n{goal}\n");
   fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), "artifact_locale: en\n");
   fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=tester\n");
-  expect(runTaskCli(["create", "Pi bridge", "--slug", "pi-bridge"], root)).toBe(0);
+  expect(runTaskCli(["legacy-create", "Pi bridge", "--slug", "pi-bridge"], root)).toBe(0);
   const task = fs.readdirSync(path.join(root, ".pactile", "tasks")).find((entry) => entry.endsWith("-pi-bridge"));
   if (!task) throw new Error("task fixture missing");
   const dir = path.join(root, ".pactile", "tasks", task);
