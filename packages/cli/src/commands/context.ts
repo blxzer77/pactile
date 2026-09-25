@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { buildLiteContextPack, readKernel, type LitePackArtifact, type KernelPhase } from "../core/task/index.js";
+import { buildLiteContextPack, readTaskKernel, type LitePackArtifact, type KernelPhase } from "../core/task/index.js";
 import { readPactileConfig, type PactileConfig } from "../pactile/task/config.js";
 import { resolveSelectedTask, resolveTaskDir } from "../pactile/task/session.js";
 import { compileSessionPack } from "../pactile/task/session-pack.js";
@@ -10,6 +10,14 @@ import { readWorkflowPhase } from "../pactile/task/workflow-phase.js";
 import { buildRetrievalPack } from "../pactile/retrieval/pack.js";
 
 type JsonRecord = Record<string, unknown>;
+
+function phaseFromLegacyStatus(status: unknown): KernelPhase {
+  if (status === "in_progress") return "execute";
+  if (status === "review") return "verify";
+  if (status === "completed") return "close";
+  if (status === "planning") return "define";
+  return "open";
+}
 
 function mapping(value: unknown): PactileConfig {
   return value && typeof value === "object" && !Array.isArray(value) ? value as PactileConfig : {};
@@ -41,8 +49,24 @@ function activeTasks(root: string): (JsonRecord & { dir: string })[] {
   return fs.readdirSync(tasksRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory() && !["archive", "locale", "templates"].includes(entry.name))
     .flatMap((entry) => {
       try {
-        const record: unknown = JSON.parse(fs.readFileSync(path.join(tasksRoot, entry.name, "task.json"), "utf8"));
-        return record && typeof record === "object" && !Array.isArray(record) ? [{ ...(record as JsonRecord), dir: entry.name }] : [];
+        const taskDir = path.join(tasksRoot, entry.name);
+        const kernelFile = path.join(taskDir, "kernel.json");
+        if (fs.existsSync(kernelFile)) {
+          const read = readTaskKernel({ root, taskDir, cwd: root });
+          if (read.kind === "task-kernel-v2") {
+            const kernel = read.kernel;
+            const status = kernel.phase === "close" ? "closed" : kernel.phase;
+            return [{ id: kernel.identity.taskId, name: kernel.definition.title, title: kernel.definition.title, status, phase: kernel.phase,
+              assignee: kernel.definition.createdBy, createdBy: kernel.definition.createdBy, deliveryLevel: kernel.definition.deliveryLevel,
+              dependencies: kernel.definition.dependencies, acceptanceCriteria: kernel.definition.acceptanceCriteria, dir: entry.name, kernelVersion: 2 }];
+          }
+        }
+        const record: unknown = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
+        if (record && typeof record === "object" && !Array.isArray(record)) {
+          const legacy = record as JsonRecord;
+          return [{ ...legacy, phase: phaseFromLegacyStatus(legacy.status), dir: entry.name, kernelVersion: 1 }];
+        }
+        return [];
       } catch { return []; }
     }).sort((a, b) => a.dir.localeCompare(b.dir));
 }
@@ -52,8 +76,21 @@ function selectedTask(root: string): JsonRecord | null {
   if (!selected.taskPath || selected.stale) return null;
   const dir = resolveTaskDir(root, selected.taskPath);
   try {
+    if (fs.existsSync(path.join(dir, "kernel.json"))) {
+      const read = readTaskKernel({ root, taskDir: dir, cwd: root });
+      if (read.kind === "task-kernel-v2") {
+        return { path: selected.taskPath, taskId: read.kernel.identity.taskId, name: read.kernel.definition.title,
+          status: read.kernel.phase === "close" ? "closed" : read.kernel.phase, phase: read.kernel.phase,
+          condition: read.kernel.condition, revision: read.kernel.revision, kernelVersion: 2,
+          source: selected.source, contextKey: selected.contextKey };
+      }
+      const record = JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8")) as JsonRecord;
+      return { path: selected.taskPath, name: record.name, status: record.status, phase: read.kernel.kernel.phase,
+        revision: read.kernel.kernel.revision, kernelVersion: 1, source: selected.source, contextKey: selected.contextKey };
+    }
     const data = JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8")) as JsonRecord;
-    return { path: selected.taskPath, name: data.name, status: data.status, source: selected.source, contextKey: selected.contextKey };
+    return { path: selected.taskPath, taskId: data.id, name: data.name, status: data.status, phase: phaseFromLegacyStatus(data.status), kernelVersion: 1,
+      source: selected.source, contextKey: selected.contextKey };
   } catch { return null; }
 }
 
@@ -116,7 +153,7 @@ function context(root: string, mode: "default" | "record"): JsonRecord {
     ...base,
     myTasks: tasks.filter((task) => task.assignee === developer).map((task) => ({
       dir: task.dir, title: task.title, status: task.status, priority: task.priority,
-      children: task.children ?? [], parent: task.parent ?? null, meta: task.meta ?? {},
+      children: task.children ?? [], parent: task.parent ?? null, meta: task.meta ?? { deliveryLevel: task.deliveryLevel, dependencies: task.dependencies },
     })),
     selectedTask: selected,
   };
@@ -151,8 +188,18 @@ function liteContext(root: string): ReturnType<typeof buildLiteContextPack> {
   const selected = resolveSelectedTask(root);
   if (!selected.taskPath || selected.stale) return buildLiteContextPack({ phase: "open" });
   const dir = resolveTaskDir(root, selected.taskPath);
-  const phase = readKernel({ taskDir: dir, cwd: root }).kernel.phase as KernelPhase;
+  const read = fs.existsSync(path.join(dir, "kernel.json")) ? readTaskKernel({ root, taskDir: dir, cwd: root }) : null;
+  const legacy = read?.kind === "legacy-task-kernel-v1" ? read.kernel.kernel : null;
+  const legacyTask = !read ? JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8")) as JsonRecord : null;
+  const phase = read?.kind === "task-kernel-v2" ? read.kernel.phase : legacy?.phase ?? phaseFromLegacyStatus(legacyTask?.status);
   const artifacts: LitePackArtifact[] = [];
+  if (read?.kind === "task-kernel-v2") {
+    const definition = read.kernel.definition;
+    const text = [definition.title, `Deliverable: ${definition.deliverable}`, `Delivery level: ${definition.deliveryLevel}`,
+      `Dependencies: ${definition.dependencies.join(", ") || "none"}`,
+      "Acceptance criteria:", ...definition.acceptanceCriteria.map((criterion) => `- ${criterion.id}: ${criterion.description}`)].join("\n");
+    artifacts.push({ role: "definition", path: ".pactile/tasks/kernel.json", content: text.slice(0, 12_000) });
+  }
   for (const [role, name] of [["definition", "prd.md"], ["evidence", "verify.md"]] as const) {
     const file = path.join(dir, name);
     if (fs.existsSync(file)) artifacts.push({ role, path: name, content: fs.readFileSync(file, "utf8").slice(0, 12_000) });
