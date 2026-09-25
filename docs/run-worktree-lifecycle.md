@@ -1,6 +1,6 @@
 # Run worktree lifecycle core
 
-`packages/cli/src/pactile/worktree/manager.ts` owns the Git checks for a local Run workspace. Its `RunWorkspaceBinding` is a structural mirror of P35 `TaskRunWorkspaceBinding`: owner Run ID, canonical absolute path, branch, base commit SHA, write set, integration state, and reclamation state. The caller must persist the returned binding to the Task Kernel before dispatching work and must read it back before later lifecycle operations.
+`packages/cli/src/pactile/worktree/manager.ts` is the public facade for a local Run workspace. A binding records the owner Run ID, canonical absolute path, branch, base commit SHA, write set, integration state, and reclamation state. It also carries a manager credential, an integration receipt, and a persistent cleanup lease. The caller must persist a newly created or adopted manager binding to the Task Kernel before dispatching work and read it back before later lifecycle operations.
 
 ## Create and adopt
 
@@ -14,10 +14,14 @@
 
 `verifyWorktreeIntegration` does not run a merge. It verifies that a completed Run has preserved result evidence, its clean worktree changes stay within the Run write set, and the requested target commit contains the worktree HEAD. The returned binding records `integrated` and `pending` reclamation; the caller must persist that transition before cleanup.
 
-`planRunWorktreeCleanup` only produces a manual cleanup plan for a completed Run with verified manager ownership, persisted result evidence, integrated state, pending reclamation, and a clean registered checkout under the allowed absolute path. The plan records the expected HEAD, branch, common and per-worktree Git directories, target branch/head, and a non-force `git worktree remove` argument vector. Automatic deletion is disabled because a clean commit can arrive between preflight and removal; the branch ref remaining would not preserve the worktree contents. A human must re-inspect all recorded values immediately before executing the plan and retain the checkout on any mismatch. `reclaimRunWorktree` remains a deprecated compatibility alias that also only returns this plan. No manager path recursively deletes a worktree.
+`integrateTaskRunWorktree` verifies and persists the integration receipt against the completed Run's result evidence and candidate. It does not run the merge; the target branch must already contain the clean worktree HEAD.
+
+`reclaimRunWorktree` performs automatic cleanup only after the same candidate is reviewed and the Task is closed with delivery evidence. It also requires the durable integration receipt, a host stop receipt verified from the associated Codex desktop or Pactile Pi bridge, exact ownership and Git registration, the expected integrated HEAD, and a clean worktree. A persisted lease prevents concurrent Pactile cleaners. The manager immediately repeats these checks before invoking non-force `git worktree remove`; it never recursively deletes a checkout.
+
+If a user edit, ignored or untracked file, unintegrated commit, host-receipt mismatch, stale lease, or path anomaly is found, the worktree is retained with a reason. If Git removes its registration but leaves ignored contents, the state is recorded as `partial-removal`; the residue is preserved and is not treated as a valid checkout. If a clean commit arrives in the final race window, the manager restores the checkout at the preserved branch head and records `recovery-required`. If restoration cannot be verified, Git refs and any remaining path are left for manual reconciliation. `planRunWorktreeCleanup` remains a manual fallback for cases that fail an automatic cleanup gate.
 
 ## Parallel write sets
 
 `decideParallelWriteSets` treats empty or undeclared write sets as `*`. Overlapping paths are denied by default. An exception requires a receipt naming the exact Run pair and overlap paths, approver, evidence, and integration plan. Persist this authorization with the scheduling decision; the helper itself does not dispatch work.
 
-The module does not wire Run Kernel transitions or CLI commands. The eventual caller must make Run state changes with the Kernel revision check, preserve result evidence before integration or cleanup, and keep failed, blocked, cancelled, interrupted, dirty, or unintegrated worktrees available for recovery.
+The manager's Run Kernel mutations use revision checks for host binding, settlement refs, result persistence, workspace integration, cleanup lease acquisition, and cleanup outcome. The generic worktree manager remains separate from `commands/task.ts`; CLI lifecycle wiring is a later integration step. Failed, blocked, cancelled, interrupted, dirty, or unintegrated worktrees remain available for recovery.

@@ -21,6 +21,10 @@ function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).replace(/\r?\n$/, "");
 }
 
+function alternateCase(value: string): string {
+  return value.replace(/[a-z]/gi, (letter) => letter === letter.toUpperCase() ? letter.toLowerCase() : letter.toUpperCase());
+}
+
 function hasRegisteredWorktree(root: string, target: string): boolean {
   const expected = path.resolve(target).replaceAll("\\", "/").toLowerCase();
   return git(root, "worktree", "list", "--porcelain").split(/\r?\n/)
@@ -117,6 +121,24 @@ describe("Run worktree manager", () => {
     expect(inspection).toMatchObject({ state: "unintegrated", actualPath: binding.canonicalPath, branch: binding.branch, headSha: baseSha });
     expect(inspection.issues).toEqual(["unintegrated"]);
     expect(git(root, "worktree", "list", "--porcelain")).toContain(`branch refs/heads/${binding.branch}`);
+  });
+
+  it("resolves Windows case-only path spellings to the registered physical worktree", () => {
+    if (process.platform !== "win32") return;
+    const { root, baseSha } = fixture();
+    const binding = create({ root, baseSha });
+    const aliasRoot = alternateCase(root);
+    const aliasBinding = { ...binding, canonicalPath: alternateCase(binding.canonicalPath) };
+    const inspection = inspectRunWorktree({
+      repoRoot: aliasRoot, runId: binding.ownerRunId, runState: "running", binding: aliasBinding, knownOwners: [],
+    });
+
+    expect(inspection.state).toBe("unintegrated");
+    expect(inspection.actualPath?.replaceAll("\\", "/").toLowerCase())
+      .toBe(fs.realpathSync(binding.canonicalPath).replaceAll("\\", "/").toLowerCase());
+    expect(fs.realpathSync(aliasBinding.canonicalPath).replaceAll("\\", "/").toLowerCase())
+      .toBe(inspection.actualPath?.replaceAll("\\", "/").toLowerCase());
+    expect(git(root, "worktree", "list", "--porcelain").toLowerCase()).toContain(`branch refs/heads/${binding.branch.toLowerCase()}`);
   });
 
   it("rejects unsafe Run ids, invalid branches, and an existing destination without touching another path", () => {

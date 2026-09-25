@@ -104,14 +104,14 @@ export function acquireTaskRunWorkspaceCleanupLease(request: AcquireTaskRunWorks
       throw new KernelError("INVALID_TRANSITION", "Workspace cleanup requires a completed Run with preserved result and candidate evidence");
     }
     const closure = current.closure;
-    if (current.phase !== "close" || !closure || closure.runId !== run.id
+    if (current.phase !== "close" || closure?.runId !== run.id
       || closure.candidateSnapshotId !== run.candidateSnapshot.id
       || closure.candidateFingerprint !== run.candidateSnapshot.fingerprint
       || closure.deliveryEvidence.reference.trim() === "") {
       throw new KernelError("INVALID_TRANSITION", "Workspace cleanup is allowed only after the same candidate is closed with delivery evidence");
     }
     const terminal = run.host?.stopReceipt;
-    if (!terminal || terminal.runId !== run.id || terminal.taskId !== current.identity.taskId || terminal.contractStale) {
+    if (terminal?.runId !== run.id || terminal.taskId !== current.identity.taskId || terminal.contractStale) {
       throw new KernelError("INVALID_TRANSITION", "Workspace cleanup requires a verified, persisted host terminal receipt");
     }
     const eligibleHost = run.host?.host === "codex-desktop"
@@ -146,15 +146,16 @@ export function finishTaskRunWorkspaceCleanup(request: FinishTaskRunWorkspaceCle
   return mutateTaskKernel(request.root, request.taskDir, request.expectedRevision, actor, request.idempotencyKey, fingerprint, request.cwd, (current) => {
     const { run, index } = runAt(current, runId);
     const workspace = run.workspace;
+    const manager = workspace?.manager;
     const lease = workspace?.cleanupLease;
-    if (!workspace?.manager || !lease || lease.state !== "held" || lease.leaseId !== leaseId) {
+    if (!manager || lease?.state !== "held" || lease.leaseId !== leaseId) {
       throw new KernelError("INVALID_TRANSITION", "Cleanup result does not match the currently held Run workspace lease");
     }
     if (request.updatedManagerBinding) {
       const update = request.updatedManagerBinding;
-      if (!workspace.manager || update.version !== 1 || update.credentialId !== workspace.manager.credentialId
-        || update.projectRoot !== workspace.manager.projectRoot || update.commonDir !== workspace.manager.commonDir
-        || update.source !== workspace.manager.source || !path.isAbsolute(update.gitDir)) {
+      if (update.version !== 1 || update.credentialId !== manager.credentialId
+        || update.projectRoot !== manager.projectRoot || update.commonDir !== manager.commonDir
+        || update.source !== manager.source || !path.isAbsolute(update.gitDir)) {
         throw new KernelError("INVALID_REQUEST", "Workspace recovery manager binding does not preserve the original owner credential and Git common directory");
       }
     }

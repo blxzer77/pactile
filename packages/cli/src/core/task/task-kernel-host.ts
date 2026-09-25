@@ -62,6 +62,9 @@ export function appendTaskRunHostSettlementRefs(request: AppendTaskRunHostSettle
     const { run, index } = runAt(current, runId);
     if (!run.host) throw new KernelError("INVALID_TRANSITION", "Run has no manager-bound host receipt");
     if (run.host.stopReceipt) throw new KernelError("INVALID_TRANSITION", "Run host already has a terminal receipt");
+    if (run.state !== "running" && run.state !== "waiting") {
+      throw new KernelError("INVALID_TRANSITION", "Host settlement references must be recorded while the Run is active");
+    }
     const appendOnly = (existing: string[], added: string[], field: string): string[] => {
       if (!Array.isArray(added) || added.some((item) => typeof item !== "string" || !item.trim())) {
         throw new KernelError("INVALID_REQUEST", `${field} must contain non-empty references`);
