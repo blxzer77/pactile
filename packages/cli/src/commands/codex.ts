@@ -1,6 +1,13 @@
 import path from "node:path";
-import { codexBridgeStatus, prepareCodexRequest, recordCodexReceipt,
-  type CodexBridgeRole, type CodexBridgeTool } from "../pactile/codex/bridge.js";
+import {
+  blockCodexTask,
+  codexBridgeStatus,
+  prepareCodexRequest,
+  recordCodexReceipt,
+  unblockCodexTask,
+  type CodexBridgeRole,
+  type CodexBridgeTool,
+} from "../pactile/codex/bridge.js";
 
 function option(args: string[], flag: string): string | undefined {
   const index = args.indexOf(flag);
@@ -13,7 +20,10 @@ function required(value: string | undefined, label: string): string {
 }
 
 const tools: Record<string, CodexBridgeTool> = {
-  create: "create_thread", message: "send_message_to_thread", wait: "wait_threads", read: "read_thread",
+  create: "create_thread",
+  message: "send_message_to_thread",
+  wait: "wait_threads",
+  read: "read_thread",
 };
 
 /** The desktop host invokes the native tool; Node owns request and receipt evidence. */
@@ -27,29 +37,99 @@ export function runCodexCli(argv: string[], root = process.cwd()): number {
     }
     if (operation === "receipt") {
       const requestId = required(args[0], "request id");
-      const resultFile = path.resolve(root, required(option(args, "--result-file"), "--result-file"));
-      console.log(JSON.stringify(recordCodexReceipt(root, task, requestId, resultFile), null, 2));
+      const resultFile = path.resolve(
+        root,
+        required(option(args, "--result-file"), "--result-file"),
+      );
+      const evidenceLevel = option(args, "--evidence-level");
+      console.log(
+        JSON.stringify(
+          recordCodexReceipt(
+            root,
+            task,
+            requestId,
+            resultFile,
+            evidenceLevel as "simulated" | "desktop-native" | undefined,
+          ),
+          null,
+          2,
+        ),
+      );
       return 0;
     }
-    if (operation !== "prepare") throw new Error("Usage: pactile codex <prepare|receipt|status> <task> ...");
-    const toolName = required(option(args, "--tool"), "--tool create|message|wait|read");
+    if (operation === "block") {
+      console.log(
+        JSON.stringify(
+          blockCodexTask(root, task, {
+            messageId: option(args, "--message-id"),
+            blockedByTaskId: option(args, "--blocked-by-task"),
+            reason: required(option(args, "--reason"), "--reason"),
+            actorId: option(args, "--actor"),
+          }),
+          null,
+          2,
+        ),
+      );
+      return 0;
+    }
+    if (operation === "unblock") {
+      const blockId = required(args[0], "block id");
+      console.log(
+        JSON.stringify(
+          unblockCodexTask(root, task, {
+            blockId,
+            unblockedByTaskId: option(args, "--unblocked-by-task"),
+            resolutionMessageId: option(args, "--resolution-message-id"),
+            reason: required(option(args, "--reason"), "--reason"),
+            actorId: option(args, "--actor"),
+          }),
+          null,
+          2,
+        ),
+      );
+      return 0;
+    }
+    if (operation !== "prepare")
+      throw new Error(
+        "Usage: pactile codex <prepare|receipt|status|block|unblock> <task> ...",
+      );
+    const toolName = required(
+      option(args, "--tool"),
+      "--tool create|message|wait|read",
+    );
     const tool = tools[toolName];
     if (!tool) throw new Error("--tool must be create, message, wait or read");
     const promptFile = option(args, "--prompt-file");
     const timeout = option(args, "--timeout-ms");
-    const request = prepareCodexRequest({ root, task, tool,
+    const request = prepareCodexRequest({
+      root,
+      task,
+      tool,
       role: option(args, "--role") as CodexBridgeRole | undefined,
       threadId: option(args, "--thread-id"),
+      runId: option(args, "--run-id"),
+      toTask: option(args, "--to-task"),
+      toRunId: option(args, "--to-run-id"),
+      resumeExecute: args.includes("--resume-execute"),
       promptFile: promptFile ? path.resolve(root, promptFile) : undefined,
       projectId: option(args, "--project-id"),
-      targetType: option(args, "--target") as "project" | "projectless" | undefined,
-      environment: option(args, "--environment") as "local" | "worktree" | undefined,
-      title: option(args, "--title"), timeoutMs: timeout === undefined ? undefined : Number(timeout),
+      targetType: option(args, "--target") as
+        | "project"
+        | "projectless"
+        | undefined,
+      environment: option(args, "--environment") as
+        | "local"
+        | "worktree"
+        | undefined,
+      title: option(args, "--title"),
+      timeoutMs: timeout === undefined ? undefined : Number(timeout),
     });
     console.log(JSON.stringify(request, null, 2));
     return 0;
   } catch (error) {
-    console.error(`Codex bridge: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `Codex bridge: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return 1;
   }
 }
