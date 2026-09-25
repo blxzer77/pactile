@@ -330,4 +330,30 @@ describe("managed Run worktree reclamation", () => {
     expect(run?.workspace?.cleanupLease?.state).toBe("recovery-required");
     expect(path.resolve(run?.workspace?.manager?.gitDir ?? "")).toBe(path.resolve(git(prepared.workspace.canonicalPath, "rev-parse", "--absolute-git-dir")));
   });
+
+  it("restores the Run checkout when the target rewrites deliverable content after the final pre-removal check", async () => {
+    const { root, baseSha } = fixture();
+    const prepared = prepareIntegratedRun({ root, baseSha, taskId: "cleanup-target-race", close: true });
+    const remove = gitRemoval.removeManagedGitWorktree;
+    vi.spyOn(gitRemoval, "removeManagedGitWorktree").mockImplementationOnce((repoRoot, worktreePath, verifyBeforeRemove) => {
+      verifyBeforeRemove();
+      fs.writeFileSync(path.join(root, "src", "feature.ts"), "export const targetRewrite = true;\n");
+      git(root, "add", "--", "src/feature.ts");
+      git(root, "commit", "-q", "-m", "target rewrite after preflight");
+      remove(repoRoot, worktreePath, () => undefined);
+    });
+
+    const result = await reclaimRunWorktree({
+      repoRoot: root, taskDir: prepared.taskDir, runId: prepared.runId,
+      actor: closer, idempotencyKey: "cleanup-target-race:reclaim",
+    });
+
+    const run = readKernel(root, prepared.taskDir).runs.find((item) => item.id === prepared.runId);
+    expect(result.state, JSON.stringify(result)).toBe("recovery-required");
+    expect(fs.readFileSync(path.join(root, "src", "feature.ts"), "utf8")).toContain("targetRewrite");
+    expect(fs.readFileSync(path.join(prepared.workspace.canonicalPath, "src", "feature.ts"), "utf8")).toContain("feature = true");
+    expect(git(prepared.workspace.canonicalPath, "rev-parse", "HEAD")).toBe(git(root, "rev-parse", `refs/heads/${prepared.workspace.branch}`));
+    expect(hasRegisteredWorktree(root, prepared.workspace.canonicalPath)).toBe(true);
+    expect(run?.workspace?.cleanupLease?.state).toBe("recovery-required");
+  });
 });

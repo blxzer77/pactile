@@ -25,7 +25,7 @@ import {
   type ManagerProvenance,
   type RunWorkspaceBinding,
 } from "./manager-types.js";
-import { verifyWorktreeIntegration, type WorktreeCleanupResult } from "./integration-evidence.js";
+import { fingerprintRunContentAtTarget, verifyWorktreeIntegration, type WorktreeCleanupResult } from "./integration-evidence.js";
 import {
   acquireTaskRunWorkspaceCleanupLease,
   fingerprintTaskValue,
@@ -532,14 +532,40 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
     return keepLeaseResult("Git registration remains although the worktree path disappeared", "recovery-required");
   }
 
-  const branchHead = resolveCommit(identity.root, branchRef(identity.root, binding.branch));
-  const targetAfter = resolveLocalBranchTarget(identity.root, integrationReceipt.targetBranch);
-  if (branchHead !== expectedHeadSha || !isAncestor(identity.root, expectedHeadSha, targetAfter.headSha)) {
+  const restoreAndRetain = (reason: string): WorktreeCleanupResult => {
     const restoration = restoreRemovedWorktree(identity, binding);
     return keepLeaseResult(restoration.binding
-      ? "A commit or integration change raced with removal; the checkout was restored at the latest branch head"
-      : `The worktree was removed but its branch/integration evidence changed; retain repository refs and reconcile manually${restoration.reason ? ` (${restoration.reason})` : ""}`,
+      ? `${reason}; the checkout was restored at the preserved Run branch head`
+      : `${reason}; preserve repository refs and reconcile manually${restoration.reason ? ` (${restoration.reason})` : ""}`,
     "recovery-required", restoration.binding ?? undefined);
+  };
+  let branchHead: string;
+  let targetAfter: ReturnType<typeof resolveLocalBranchTarget>;
+  try {
+    branchHead = resolveCommit(identity.root, branchRef(identity.root, binding.branch));
+    targetAfter = resolveLocalBranchTarget(identity.root, integrationReceipt.targetBranch);
+  } catch (error) {
+    return restoreAndRetain(`The worktree was removed but post-removal branch verification failed${error instanceof Error ? `: ${error.message}` : ""}`);
+  }
+  if (branchHead !== expectedHeadSha || !isAncestor(identity.root, expectedHeadSha, targetAfter.headSha)) {
+    return restoreAndRetain("A Run branch or integration ancestry change raced with removal");
+  }
+  try {
+    const contentFingerprint = fingerprintRunContentAtTarget({
+      repoRoot: identity.root,
+      runId: run.id,
+      baseSha: binding.baseSha,
+      worktreeHeadSha: expectedHeadSha,
+      targetHeadSha: targetAfter.headSha,
+      candidateSnapshotId: run.candidateSnapshot.id,
+      candidateFingerprint: run.candidateSnapshot.fingerprint,
+      resultEvidenceRefs: run.result.evidenceRefs,
+    });
+    if (contentFingerprint !== integrationReceipt.contentFingerprint) {
+      return restoreAndRetain("The target tree changed Run deliverable content after Git removed the checkout");
+    }
+  } catch (error) {
+    return restoreAndRetain(`Target content verification failed after Git removed the checkout${error instanceof Error ? `: ${error.message}` : ""}`);
   }
   return keepLeaseResult(removalError ?? "", "reclaimed");
 }

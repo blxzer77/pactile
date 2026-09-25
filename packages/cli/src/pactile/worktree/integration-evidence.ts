@@ -15,6 +15,7 @@ import {
   repoIdentity,
   resolveLocalBranchTarget,
   treePathEntries,
+  validateSha,
 } from "./git-probe.js";
 import {
   WorktreeManagerError,
@@ -41,6 +42,49 @@ export interface WorktreeIntegrationReceipt {
   candidateSnapshotId: string | null;
   candidateFingerprint: string | null;
   contentFingerprint: string;
+}
+
+export interface RunContentFingerprintInput {
+  repoRoot: string;
+  runId: string;
+  baseSha: string;
+  worktreeHeadSha: string;
+  targetHeadSha: string;
+  candidateSnapshotId: string | null;
+  candidateFingerprint: string | null;
+  resultEvidenceRefs: readonly string[];
+}
+
+export function fingerprintRunContentAtTarget(input: RunContentFingerprintInput): string {
+  const identity = repoIdentity(input.repoRoot);
+  const baseSha = validateSha(input.baseSha);
+  const worktreeHeadSha = validateSha(input.worktreeHeadSha);
+  const targetHeadSha = validateSha(input.targetHeadSha);
+  const paths = changedPaths(identity.root, baseSha, worktreeHeadSha);
+  const runEntries = treePathEntries(identity.root, worktreeHeadSha, paths);
+  const targetEntries = treePathEntries(identity.root, targetHeadSha, paths);
+  const runEntriesByPath = new Map<string, typeof runEntries>();
+  const targetEntriesByPath = new Map<string, typeof targetEntries>();
+  for (const entry of runEntries) runEntriesByPath.set(entry.path, [...(runEntriesByPath.get(entry.path) ?? []), entry]);
+  for (const entry of targetEntries) targetEntriesByPath.set(entry.path, [...(targetEntriesByPath.get(entry.path) ?? []), entry]);
+  const contentPaths = paths.map((relativePath) => {
+    const runPathEntries = runEntriesByPath.get(relativePath) ?? [];
+    const targetPathEntries = targetEntriesByPath.get(relativePath) ?? [];
+    if (JSON.stringify(runPathEntries) !== JSON.stringify(targetPathEntries)) {
+      throw new WorktreeManagerError("integration-content-not-preserved", `Target tree does not preserve Run changes at ${relativePath}`);
+    }
+    return { path: relativePath, entries: runPathEntries };
+  });
+  return fingerprintTaskValue({
+    schemaVersion: 1,
+    runId: input.runId,
+    baseSha,
+    worktreeHeadSha,
+    candidateSnapshotId: input.candidateSnapshotId,
+    candidateFingerprint: input.candidateFingerprint,
+    resultEvidenceRefs: [...input.resultEvidenceRefs],
+    changedPaths: contentPaths,
+  });
 }
 
 export function verifyWorktreeIntegration(input: {
@@ -70,32 +114,17 @@ export function verifyWorktreeIntegration(input: {
   if (!isAncestor(identity.root, inspection.headSha, targetHeadSha)) {
     throw new WorktreeManagerError("integration-not-proven", "Target ref does not contain the Run worktree HEAD", input.binding.canonicalPath);
   }
-  const paths = changedPaths(identity.root, input.binding.baseSha, inspection.headSha);
-  const runEntries = treePathEntries(identity.root, inspection.headSha, paths);
-  const targetEntries = treePathEntries(identity.root, targetHeadSha, paths);
-  const runEntriesByPath = new Map<string, typeof runEntries>();
-  const targetEntriesByPath = new Map<string, typeof targetEntries>();
-  for (const entry of runEntries) runEntriesByPath.set(entry.path, [...(runEntriesByPath.get(entry.path) ?? []), entry]);
-  for (const entry of targetEntries) targetEntriesByPath.set(entry.path, [...(targetEntriesByPath.get(entry.path) ?? []), entry]);
-  const contentPaths = paths.map((relativePath) => {
-    const runPathEntries = runEntriesByPath.get(relativePath) ?? [];
-    const targetPathEntries = targetEntriesByPath.get(relativePath) ?? [];
-    if (JSON.stringify(runPathEntries) !== JSON.stringify(targetPathEntries)) {
-      throw new WorktreeManagerError("integration-content-not-preserved", `Target tree does not preserve Run changes at ${relativePath}`, input.binding.canonicalPath);
-    }
-    return { path: relativePath, entries: runPathEntries };
-  });
   const candidateSnapshotId = input.result.candidateSnapshotId ?? null;
   const candidateFingerprint = input.result.candidateFingerprint ?? null;
-  const contentFingerprint = fingerprintTaskValue({
-    schemaVersion: 1,
+  const contentFingerprint = fingerprintRunContentAtTarget({
+    repoRoot: identity.root,
     runId: input.runId,
-    baseSha: input.binding.baseSha.toLowerCase(),
+    baseSha: input.binding.baseSha,
     worktreeHeadSha: inspection.headSha,
+    targetHeadSha,
     candidateSnapshotId,
     candidateFingerprint,
     resultEvidenceRefs: input.result.evidenceRefs,
-    changedPaths: contentPaths,
   });
   const receipt: WorktreeIntegrationReceipt = {
     runId: input.runId,
