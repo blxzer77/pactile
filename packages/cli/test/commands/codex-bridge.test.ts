@@ -668,6 +668,131 @@ describe("Codex desktop request and receipt bridge", () => {
     expect(codexBridgeStatus(root, receiverTask).pending).toEqual([]);
   });
 
+  it.each(["plan", "review"] as const)(
+    "fails closed on V2 --resume-execute sent through a bound %s thread",
+    (role) => {
+      const { root, task: senderTask, prompt } = fixture();
+      const slug = `resume-${role}-receiver`;
+      expect(
+        runTaskCli(
+          [
+            "create",
+            `Resume ${role} receiver`,
+            "--slug",
+            slug,
+            "--description",
+            "A V2 Task with a bound non-Execute thread",
+            "--deliverable",
+            "A reviewable implementation",
+            "--delivery-level",
+            "documentation",
+            "--accept",
+            "AC-1=Resume dispatch remains fail closed",
+          ],
+          root,
+        ),
+      ).toBe(0);
+      const receiverTask = fs
+        .readdirSync(path.join(root, ".pactile", "tasks"))
+        .find((name) => name.endsWith(`-${slug}`));
+      if (!receiverTask) throw new Error("V2 receiver Task missing");
+
+      let runId: string | undefined;
+      if (role === "review") {
+        expect(
+          runTaskCli(
+            [
+              "run-start",
+              receiverTask,
+              "--actor",
+              "implementer",
+              "--input-summary",
+              "Implement the approved deliverable",
+              "--approved-by",
+              "approver",
+              "--authorization-scope",
+              "the reviewed documentation file",
+              "--authorization-evidence",
+              "approval.json",
+              "--write-set",
+              "docs/result.md",
+              "--wait",
+            ],
+            root,
+          ),
+        ).toBe(0);
+        const startedKernel = JSON.parse(
+          fs.readFileSync(
+            path.join(root, ".pactile", "tasks", receiverTask, "kernel.json"),
+            "utf8",
+          ),
+        ) as { runs: { id: string }[] };
+        runId = startedKernel.runs.at(-1)?.id;
+        if (!runId) throw new Error("V2 Review Run missing");
+        expect(
+          runTaskCli(
+            ["run-resume", receiverTask, runId, "--actor", "scheduler"],
+            root,
+          ),
+        ).toBe(0);
+        expect(
+          runTaskCli(
+            [
+              "run-result",
+              receiverTask,
+              runId,
+              "--outcome",
+              "completed",
+              "--summary",
+              "The candidate is ready for review",
+              "--candidate",
+              `docs/result.md=${"a".repeat(64)}`,
+              "--evidence",
+              "test-output.txt",
+            ],
+            root,
+          ),
+        ).toBe(0);
+      }
+
+      const targetThread = prepareCodexRequest({
+        root,
+        task: receiverTask,
+        tool: "create_thread",
+        role,
+        ...(runId ? { runId } : {}),
+        promptFile: prompt,
+        targetType: "projectless",
+      });
+      recordCodexReceipt(
+        root,
+        receiverTask,
+        targetThread.request_id,
+        result(root, {
+          request_id: targetThread.request_id,
+          tool: targetThread.tool,
+          outcome: "ok",
+          thread_id: `resume-${role}-thread`,
+          host_id: "local",
+        }),
+      );
+
+      expect(() =>
+        prepareCodexRequest({
+          root,
+          task: senderTask,
+          tool: "send_message_to_thread",
+          threadId: `resume-${role}-thread`,
+          toTask: receiverTask,
+          ...(runId ? { toRunId: runId } : {}),
+          resumeExecute: true,
+          promptFile: prompt,
+        }),
+      ).toThrow("Task Kernel v2 --resume-execute dispatch is disabled");
+      expect(codexBridgeStatus(root, senderTask).pending).toEqual([]);
+    },
+  );
+
   it("binds a native desktop task and records message/wait receipts without changing Kernel", () => {
     const { root, task, prompt } = fixture();
     const create = prepareCodexRequest({

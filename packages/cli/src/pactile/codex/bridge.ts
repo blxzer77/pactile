@@ -540,6 +540,11 @@ export function prepareCodexRequest(input: {
       "--resume-execute requires a Task Kernel v2 destination Run",
     );
   }
+  if (input.resumeExecute && targetContext.kernelKind === "task-kernel-v2") {
+    throw new Error(
+      "Task Kernel v2 --resume-execute dispatch is disabled until P37 admission, lease and Resume/block validation are connected",
+    );
+  }
   const bound = input.threadId
     ? boundThreads(targetContext.dir).get(input.threadId)
     : undefined;
