@@ -23,3 +23,4 @@ export type {
   JevTransportConfigV1,
   JevTransportResultV1,
 } from "./transport.js";
+export type { JevScheduleAdviceOptionsV1 } from "./scheduler-advice.js";

@@ -8,8 +8,24 @@ import {
   type TaskKernelSnapshotV2,
   type TaskRunV2,
 } from "../../core/task/index.js";
+import { approvedTask, piWorkdir } from "../pi/bridge.js";
 import { resolveTaskDir } from "../task/session.js";
 import { readTaskMap, type ChildEntry } from "../task/task-map.js";
+import {
+  finalizeJevTaskScheduleAdviceV1,
+  ignoredJevTaskScheduleAdviceV1,
+  requestJevTaskScheduleAdviceV1,
+  supersedeJevTaskScheduleAdviceV1,
+  type JevScheduleAdviceAuditV1,
+  type JevScheduleAdviceOptionsV1,
+  type JevScheduleCandidateFilterV1,
+  type JevScheduleCandidateV1,
+} from "../jev/scheduler-advice.js";
+import {
+  listProjectWriteLeases,
+  projectWriteSetsConflict,
+  withProjectSchedulerMutex,
+} from "./project-lease-store.js";
 import {
   planTaskScheduleV1,
   type SchedulerCostVectorV1,
@@ -75,6 +91,7 @@ export interface TaskScheduleDecisionReceiptV1 {
   request: TaskScheduleRequestV1;
   plan: TaskScheduleReceiptV1;
   lifecycle: TaskScheduleLifecycleSnapshotV1[];
+  jevAdviceAudit?: JevScheduleAdviceAuditV1;
 }
 
 export interface PersistedTaskScheduleV1 {
@@ -859,6 +876,312 @@ export function scheduleParentTaskGraph(
     lifecycle: snapshot.lifecycle,
   };
   const stored = persistReceipt(snapshot.parentDir, receiptBase);
+  return { ...stored, receiptFile: relativeTaskDir(root, stored.receiptFile) };
+}
+
+export type JevParentScheduleOptionsV1 = Omit<
+  TaskMapScheduleOptionsV1,
+  "jevAdvice"
+>;
+
+function firstCriticalPathCandidates(
+  plan: TaskScheduleReceiptV1,
+): JevScheduleCandidateV1[] {
+  const firstWave = plan.waves[0];
+  if (!firstWave) return [];
+  const decisions = new Map(plan.decisions.map((item) => [item.taskId, item]));
+  const candidates = firstWave.candidateTaskIds
+    .map((taskId) => decisions.get(taskId))
+    .filter(
+      (decision): decision is NonNullable<typeof decision> =>
+        !!decision && decision.action === "scheduled",
+    );
+  if (candidates.length < 2) return [];
+  const highestCriticalPath = Math.max(
+    ...candidates.map((candidate) => candidate.criticalPathMs),
+  );
+  return candidates
+    .filter((candidate) => candidate.criticalPathMs === highestCriticalPath)
+    .map((candidate) => ({
+      taskId: candidate.taskId,
+      criticalPathMs: candidate.criticalPathMs,
+      estimatedCostMs: candidate.estimatedCostMs,
+    }))
+    .sort((left, right) => compareText(left.taskId, right.taskId));
+}
+
+function sameTaskIds(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((taskId, index) => taskId === right[index])
+  );
+}
+
+function sameTaskIdSet(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    left.length === right.length &&
+    new Set(left).size === left.length &&
+    new Set(right).size === right.length &&
+    left.every((taskId) => right.includes(taskId))
+  );
+}
+
+function eligibilityFingerprint(
+  filteredCandidates: readonly JevScheduleCandidateFilterV1[],
+  candidates: readonly JevScheduleCandidateV1[],
+): string {
+  return fingerprintTaskValue({
+    candidateTaskIds: candidates.map(({ taskId }) => taskId),
+    filteredCandidates: filteredCandidates.map(({ taskId, reasonCode }) => ({
+      taskId,
+      reasonCode,
+    })),
+  });
+}
+
+function verifyJevScheduleCandidates(
+  root: string,
+  snapshot: ReturnType<typeof buildPlanningSnapshot>,
+  candidates: readonly JevScheduleCandidateV1[],
+): {
+  candidates: JevScheduleCandidateV1[];
+  filteredCandidates: JevScheduleCandidateFilterV1[];
+  approvalPassedTaskIds: string[];
+  worktreePassedTaskIds: string[];
+  activeLeaseCheckAt: string | null;
+} {
+  let activeLeases: ReturnType<typeof listProjectWriteLeases> | null = null;
+  let activeLeaseCheckAt: string | null = null;
+  try {
+    activeLeases = withProjectSchedulerMutex(root, () =>
+      listProjectWriteLeases(root),
+    );
+    activeLeaseCheckAt = new Date().toISOString();
+  } catch {
+    // An unreadable lease set is not safe input for an external advice request.
+  }
+
+  const byTaskId = new Map(
+    snapshot.lifecycle.map((item) => [item.taskId, item]),
+  );
+  const eligible: JevScheduleCandidateV1[] = [];
+  const filteredCandidates: JevScheduleCandidateFilterV1[] = [];
+  const approvalPassedTaskIds: string[] = [];
+  const worktreePassedTaskIds: string[] = [];
+  for (const candidate of candidates) {
+    const lifecycle = byTaskId.get(candidate.taskId);
+    const taskRef = lifecycle?.taskMapChildId;
+    if (!lifecycle || !taskRef) {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode: "candidate-identity-unavailable",
+      });
+      continue;
+    }
+    let taskDir: string;
+    try {
+      taskDir = approvedTask(root, taskRef, "implement");
+      approvalPassedTaskIds.push(candidate.taskId);
+    } catch {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode: "approval-rejected",
+      });
+      continue;
+    }
+    try {
+      piWorkdir(root, taskDir, "implement");
+      worktreePassedTaskIds.push(candidate.taskId);
+    } catch {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode: "worktree-rejected",
+      });
+      continue;
+    }
+    if (activeLeases === null) {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode: "lease-state-unavailable",
+      });
+      continue;
+    }
+    const conflictsWithActiveLease = activeLeases.some(({ lease }) => {
+      if (lifecycle.writeSet?.length === 0) return false;
+      return projectWriteSetsConflict(lifecycle.writeSet ?? [], lease.touches);
+    });
+    if (conflictsWithActiveLease) {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode: "active-write-lease-conflict",
+      });
+      continue;
+    }
+    eligible.push(candidate);
+  }
+  return {
+    candidates: eligible,
+    filteredCandidates,
+    approvalPassedTaskIds,
+    worktreePassedTaskIds,
+    activeLeaseCheckAt,
+  };
+}
+
+function scheduleSnapshotFingerprint(
+  snapshot: ReturnType<typeof buildPlanningSnapshot>,
+): string {
+  return fingerprintTaskValue({
+    taskMapFingerprint: snapshot.taskMapFingerprint,
+    request: snapshot.request,
+    lifecycle: snapshot.lifecycle,
+  });
+}
+
+/**
+ * Plans a Parent graph with an optional Jev tie-break after deterministic,
+ * execution-approval, worktree, and active-lease checks. The API persists only
+ * one final immutable schedule receipt; P37 admission must still recheck it.
+ */
+export async function scheduleParentTaskGraphWithJevV1(
+  rootValue: string,
+  parentRef: string,
+  options: JevParentScheduleOptionsV1 = {},
+  jev?: JevScheduleAdviceOptionsV1,
+): Promise<PersistedTaskScheduleV1> {
+  const root = path.resolve(rootValue);
+  const planningOptions: TaskMapScheduleOptionsV1 = { ...options };
+  delete planningOptions.jevAdvice;
+
+  const previewSnapshot = buildPlanningSnapshot(
+    root,
+    parentRef,
+    planningOptions,
+  );
+  const previewPlan = planTaskScheduleV1(previewSnapshot.request);
+  const structuralCandidates = firstCriticalPathCandidates(previewPlan);
+  let initialEligibility: ReturnType<typeof verifyJevScheduleCandidates> = {
+    candidates: [],
+    filteredCandidates: [],
+    approvalPassedTaskIds: [],
+    worktreePassedTaskIds: [],
+    activeLeaseCheckAt: null,
+  };
+  let requested: Awaited<ReturnType<typeof requestJevTaskScheduleAdviceV1>>;
+
+  if (structuralCandidates.length > 0) {
+    initialEligibility = verifyJevScheduleCandidates(
+      root,
+      previewSnapshot,
+      structuralCandidates,
+    );
+    requested = await requestJevTaskScheduleAdviceV1({
+      candidates: initialEligibility.candidates,
+      filteredCandidates: initialEligibility.filteredCandidates,
+      eligibility: {
+        approvalPassedTaskIds: initialEligibility.approvalPassedTaskIds,
+        worktreePassedTaskIds: initialEligibility.worktreePassedTaskIds,
+        activeLeaseCheckAt: initialEligibility.activeLeaseCheckAt,
+      },
+      options: jev,
+    });
+  } else {
+    requested = await requestJevTaskScheduleAdviceV1({
+      candidates: [],
+      filteredCandidates: [],
+      eligibility: {
+        approvalPassedTaskIds: [],
+        worktreePassedTaskIds: [],
+        activeLeaseCheckAt: null,
+      },
+      options: jev,
+    });
+  }
+
+  const finalSnapshot = buildPlanningSnapshot(root, parentRef, planningOptions);
+  const finalStructuralCandidates = firstCriticalPathCandidates(
+    planTaskScheduleV1(finalSnapshot.request),
+  );
+  const finalEligibility = verifyJevScheduleCandidates(
+    root,
+    finalSnapshot,
+    finalStructuralCandidates,
+  );
+  let finalRequest = finalSnapshot.request;
+  let audit = requested.audit;
+  const advice = requested.advice;
+
+  if (advice) {
+    const stable =
+      scheduleSnapshotFingerprint(previewSnapshot) ===
+        scheduleSnapshotFingerprint(finalSnapshot) &&
+      sameTaskIds(
+        structuralCandidates.map(({ taskId }) => taskId),
+        finalStructuralCandidates.map(({ taskId }) => taskId),
+      ) &&
+      eligibilityFingerprint(
+        initialEligibility.filteredCandidates,
+        initialEligibility.candidates,
+      ) ===
+        eligibilityFingerprint(
+          finalEligibility.filteredCandidates,
+          finalEligibility.candidates,
+        ) &&
+      sameTaskIdSet(
+        advice.taskOrder,
+        finalEligibility.candidates.map(({ taskId }) => taskId),
+      );
+    if (stable) {
+      finalRequest = { ...finalSnapshot.request, jevAdvice: advice };
+      audit = finalizeJevTaskScheduleAdviceV1(
+        audit,
+        planTaskScheduleV1(finalRequest),
+      );
+    } else {
+      audit = ignoredJevTaskScheduleAdviceV1(
+        supersedeJevTaskScheduleAdviceV1(audit),
+        finalEligibility.candidates,
+        finalEligibility.filteredCandidates,
+        {
+          approvalPassedTaskIds: finalEligibility.approvalPassedTaskIds,
+          worktreePassedTaskIds: finalEligibility.worktreePassedTaskIds,
+          activeLeaseCheckAt: finalEligibility.activeLeaseCheckAt,
+        },
+        "eligibility-changed",
+      );
+    }
+  } else {
+    audit = {
+      ...audit,
+      candidateTaskIds: finalEligibility.candidates.map(({ taskId }) => taskId),
+      filteredCandidates: [...finalEligibility.filteredCandidates],
+      eligibility: {
+        approvalPassedTaskIds: [...finalEligibility.approvalPassedTaskIds],
+        worktreePassedTaskIds: [...finalEligibility.worktreePassedTaskIds],
+        activeLeaseCheckAt: finalEligibility.activeLeaseCheckAt,
+      },
+    };
+  }
+
+  const plan = planTaskScheduleV1(finalRequest);
+  const receiptBase: Omit<
+    TaskScheduleDecisionReceiptV1,
+    "schemaVersion" | "receiptFingerprint" | "createdAt"
+  > = {
+    parentTaskDir: relativeTaskDir(root, finalSnapshot.parentDir),
+    taskMapFingerprint: finalSnapshot.taskMapFingerprint,
+    request: finalRequest,
+    plan,
+    lifecycle: finalSnapshot.lifecycle,
+    jevAdviceAudit: audit,
+  };
+  const stored = persistReceipt(finalSnapshot.parentDir, receiptBase);
   return { ...stored, receiptFile: relativeTaskDir(root, stored.receiptFile) };
 }
 
