@@ -5,6 +5,22 @@ export const COORDINATION_MAX_EVENT_BYTES = 16 * 1024;
 export const COORDINATION_MAX_LOG_BYTES = 16 * 1024 * 1024;
 export const COORDINATION_MAX_LOG_EVENTS = 20_000;
 
+export type CoordinationErrorCode =
+  | "invalid-input"
+  | "unsafe-path"
+  | "store-corrupt"
+  | "store-locked"
+  | "store-limit"
+  | "state-conflict"
+  | "store-io";
+
+export class CoordinationError extends Error {
+  constructor(readonly code: CoordinationErrorCode) {
+    super(code);
+    this.name = "CoordinationError";
+  }
+}
+
 const logicalId = z
   .string()
   .min(1)
