@@ -24,7 +24,7 @@ describe("Node task CLI", () => {
     fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), "artifact_locale: zh\n");
     fs.writeFileSync(path.join(root, ".pactile", "spec", "guides", "index.md"), "# Guides\n");
     fs.writeFileSync(path.join(root, ".pactile", "framework", "verification-strength-guide.md"), "# Verify\n");
-    expect(runTaskCli(["create", "Example", "--slug", "example"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Example", "--slug", "example"], root)).toBe(0);
     const tasks = path.join(root, ".pactile", "tasks");
     const created = fs.readdirSync(tasks).find((name) => name.endsWith("-example"));
     expect(created).toBeTruthy();
@@ -81,10 +81,10 @@ describe("Node task CLI", () => {
       if (String(file).includes("-faulty-") && String(file).endsWith("prd.md")) throw new Error("injected PRD write failure");
       return original(file, content, options);
     }) as typeof fs.writeFileSync);
-    try { expect(runTaskCli(["create", "Faulty", "--slug", "faulty"], root)).toBe(1); }
+    try { expect(runTaskCli(["legacy-create", "Faulty", "--slug", "faulty"], root)).toBe(1); }
     finally { fault.mockRestore(); }
     expect(fs.readdirSync(tasks).some((name) => name.endsWith("-faulty"))).toBe(false);
-    expect(runTaskCli(["create", "Faulty", "--slug", "faulty"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Faulty", "--slug", "faulty"], root)).toBe(0);
     const dir = path.join(tasks, fs.readdirSync(tasks).find((name) => name.endsWith("-faulty")) ?? "");
     expect(fs.readFileSync(path.join(dir, "prd.md"), "utf8")).toContain("# Faulty");
     expect(JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8"))).toMatchObject({ status: "planning", id: "faulty" });
@@ -119,7 +119,7 @@ describe("Node task CLI", () => {
     fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), "artifact_locale: zh\nsession_auto_commit: true\n");
     fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=alice\n");
     fs.writeFileSync(path.join(root, "unrelated.txt"), "original\n");
-    expect(runTaskCli(["create", "Archive sample", "--slug", "archive-sample"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Archive sample", "--slug", "archive-sample"], root)).toBe(0);
     const created = fs.readdirSync(path.join(root, ".pactile", "tasks")).find((name) => name.endsWith("-archive-sample")) ?? "";
     const dir = path.join(root, ".pactile", "tasks", created);
     expect(runTaskCli(["start-execution", created, "--approved"], root)).toBe(0);
@@ -145,7 +145,7 @@ describe("Node task CLI", () => {
     fs.writeFileSync(path.join(root, ".pactile", "tasks", "locale", "en", "default-prd.md"), "# {title}\n{goal}\n");
     fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), "artifact_locale: en\n");
     fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=tester\n");
-    expect(runTaskCli(["create", "Ignored archive", "--slug", "ignored-archive"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Ignored archive", "--slug", "ignored-archive"], root)).toBe(0);
     const task = fs.readdirSync(path.join(root, ".pactile", "tasks")).find((name) => name.endsWith("-ignored-archive")) ?? "";
     expect(runTaskCli(["start-execution", task, "--approved"], root)).toBe(0);
     fs.appendFileSync(path.join(root, ".pactile", "tasks", task, "verify.md"),
@@ -164,7 +164,7 @@ describe("Node task CLI", () => {
     fs.mkdirSync(path.join(root, ".pactile", "tasks", "locale", "zh"), { recursive: true });
     fs.writeFileSync(path.join(root, ".pactile", "tasks", "locale", "zh", "default-prd.md"), "# {title}\n{goal}\n");
     fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=alice\n");
-    expect(runTaskCli(["create", "Dependency sample", "--slug", "dependency-sample"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Dependency sample", "--slug", "dependency-sample"], root)).toBe(0);
     expect(runTaskCli(["set-deps", "dependency-sample", "upstream"], root)).toBe(0);
     expect(runTaskCli(["start-execution", "dependency-sample", "--check"], root)).toBe(1);
     expect(runTaskCli(["set-depends-mode", "dependency-sample", "warn"], root)).toBe(1);
@@ -184,7 +184,7 @@ describe("Node task CLI", () => {
     fs.writeFileSync(path.join(root, ".pactile", "tasks", "locale", "en", "default-prd.md"), "# {title}\n\n## Acceptance Criteria\n\n- [ ] implemented behavior works\n");
     fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), "artifact_locale: en\n");
     fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=alice\n");
-    expect(runTaskCli(["create", "Full sample", "--slug", "full-sample", "--rigor", "full"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Full sample", "--slug", "full-sample", "--rigor", "full"], root)).toBe(0);
     const name = fs.readdirSync(path.join(root, ".pactile", "tasks")).find((entry) => entry.endsWith("-full-sample")) ?? "";
     const dir = path.join(root, ".pactile", "tasks", name);
     expect(runTaskCli(["start-execution", name, "--check"], root)).toBe(1);
@@ -220,8 +220,8 @@ describe("Node task CLI", () => {
     fs.writeFileSync(path.join(root, ".pactile", "tasks", "locale", "en", "default-prd.md"), "# {title}\n\n## Acceptance Criteria\n\n- [ ] work accepted\n");
     fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), "artifact_locale: en\n");
     fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=alice\n");
-    expect(runTaskCli(["create", "Parent", "--slug", "parent"], root)).toBe(0);
-    expect(runTaskCli(["create", "Child", "--slug", "child", "--parent", "parent"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Parent", "--slug", "parent"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Child", "--slug", "child", "--parent", "parent"], root)).toBe(0);
     const taskRoot = path.join(root, ".pactile", "tasks");
     const parentName = fs.readdirSync(taskRoot).find((entry) => entry.endsWith("-parent")) ?? "";
     const childName = fs.readdirSync(taskRoot).find((entry) => entry.endsWith("-child")) ?? "";
@@ -232,7 +232,7 @@ describe("Node task CLI", () => {
     expect(JSON.parse(fs.readFileSync(path.join(childDir, "task.json"), "utf8")).parent).toBe(parentName);
     expect(runTaskCli(["start-execution", parentName, "--check"], root)).toBe(0);
     expect(runTaskCli(["start-execution", parentName, "--approved"], root)).toBe(0);
-    expect(runTaskCli(["create", "Late child", "--slug", "late-child", "--parent", parentName], root)).toBe(1);
+    expect(runTaskCli(["legacy-create", "Late child", "--slug", "late-child", "--parent", parentName], root)).toBe(1);
     expect(fs.readdirSync(taskRoot).some((entry) => entry.endsWith("-late-child"))).toBe(false);
     expect(runTaskCli(["start-execution", childName, "--approved"], root)).toBe(0);
     expect(runTaskCli(["integrate-child", parentName, childName, "accepted", "--evidence", "review", "--ref", "git:abc"], root)).toBe(1);
@@ -260,8 +260,8 @@ describe("Node task CLI", () => {
     fs.writeFileSync(path.join(root, ".pactile", "tasks", "locale", "en", "default-prd.md"), "# {title}\n\n{goal}\n");
     fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), "artifact_locale: en\n");
     fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=alice\n");
-    expect(runTaskCli(["create", "Upstream", "--slug", "upstream"], root)).toBe(0);
-    expect(runTaskCli(["create", "Downstream", "--slug", "downstream"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Upstream", "--slug", "upstream"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Downstream", "--slug", "downstream"], root)).toBe(0);
     const tasks = path.join(root, ".pactile", "tasks");
     const upstream = fs.readdirSync(tasks).find((name) => name.endsWith("-upstream")) ?? "";
     const downstream = fs.readdirSync(tasks).find((name) => name.endsWith("-downstream")) ?? "";
@@ -296,8 +296,8 @@ describe("Node task CLI", () => {
     fs.writeFileSync(path.join(root, ".pactile", "tasks", "locale", "en", "default-prd.md"), "# {title}\n");
     fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), "artifact_locale: en\n");
     fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=alice\n");
-    expect(runTaskCli(["create", "Parent", "--slug", "parent"], root)).toBe(0);
-    expect(runTaskCli(["create", "Child", "--slug", "child", "--parent", "parent"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Parent", "--slug", "parent"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Child", "--slug", "child", "--parent", "parent"], root)).toBe(0);
     const tasks = path.join(root, ".pactile", "tasks");
     const parent = fs.readdirSync(tasks).find((entry) => entry.endsWith("-parent")) ?? "";
     const child = fs.readdirSync(tasks).find((entry) => entry.endsWith("-child")) ?? "";
@@ -332,8 +332,8 @@ describe("Node task CLI", () => {
     fs.writeFileSync(path.join(root, ".pactile", "tasks", "locale", "en", "default-prd.md"), "# {title}\n");
     fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), "artifact_locale: en\n");
     fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=alice\n");
-    expect(runTaskCli(["create", "Parent", "--slug", "parent"], root)).toBe(0);
-    expect(runTaskCli(["create", "Child", "--slug", "child", "--parent", "parent"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Parent", "--slug", "parent"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Child", "--slug", "child", "--parent", "parent"], root)).toBe(0);
     const tasks = path.join(root, ".pactile", "tasks");
     const parent = fs.readdirSync(tasks).find((entry) => entry.endsWith("-parent")) ?? "";
     const child = fs.readdirSync(tasks).find((entry) => entry.endsWith("-child")) ?? "";

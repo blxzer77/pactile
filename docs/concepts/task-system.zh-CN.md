@@ -4,6 +4,50 @@
 
 Pactile task 把需要跨越对话的工作变成 `.pactile/tasks/` 下持久、可审阅的项目状态。Artifacts 说明需求与 Evidence；Kernel records 拥有阶段转换与 audit chain。
 
+## Task Kernel v2：新 Task 的默认模型
+
+`pactile task create` 会在 `kernel.json` 中创建 Task Kernel v2 记录。Task 声明一个可交付结果、验收标准与交付层级：`local-result`、`pull-request`、`merged-result` 或 `documentation`。新 Task 不再创建 Lite/Full 或 Parent/Child 种类；硬依赖通过 `--depends-on <task-id>` 显式关联。
+
+V2 的 `kernel.json` 是唯一可写的生命周期权威，包含 Task 定义、带 revision 的事件与 audit、所有 Run、所有 Review 和 Close 记录。V2 创建不会再写一份并列的 `task.json` 状态。`task list`、`show`、`selected`、context 与 session pack 同时读取 V2 和旧记录，因此新建 Task 可被常用入口发现与继续处理。
+
+这条命令路径与宿主无关，不要求 Codex、Pi 或常驻服务：
+
+```bash
+pactile task create "搜索结果" --slug search-result \
+  --deliverable "经过测试的本地结果" --delivery-level local-result \
+  --accept AC-1="结果满足所需行为"
+pactile task run-start search-result --actor alice \
+  --input-summary "实现 AC-1" --approved-by alice \
+  --authorization-scope "声明的交付物" --authorization-evidence approval.md
+pactile task run-result search-result <run-id> --outcome completed \
+  --summary "已生成结果" --candidate src/result.ts=<sha256>
+pactile task review search-result --actor reviewer --run <run-id> \
+  --candidate-id <snapshot-id> --candidate-fingerprint <sha256> \
+  --reviewer reviewer --decision pass --evidence review.md \
+  --criterion AC-1=src/result.ts
+pactile task close search-result --run <run-id> --review <review-id> \
+  --candidate-id <snapshot-id> --candidate-fingerprint <sha256> \
+  --candidate-observed-by reviewer --candidate-observation-source declared \
+  --candidate-observation-ref observation.md --delivery-level local-result \
+  --delivery-ref src/result.ts --delivery-summary "审核结果已存在"
+```
+
+一个 Run 表示一次隔离尝试。Kernel 保留其输入、显式授权、attempt 编号、write-set snapshot、可选宿主/session 回执、可选 worktree 身份、candidate snapshot、结果或失败以及可选耗时证据。等待或阻塞的 Run 不能 Close；后续重试会追加 Run，不会覆盖历史。宿主、worktree 与调度字段都是可选数据，不意味着有常驻服务。
+
+Review 绑定一次已完成的 Run 及其 candidate snapshot ID 与 fingerprint。PASS 必须包含 Review 和每条已声明验收标准的 evidence ref、未解决 blocker 必须为零，且 reviewer 必须不同于 Run 实施者和授权者。多个 Review 会保留在历史中；Close 必须采用最新 Run candidate 对应的最新 Review。诸如 `Pi settled` 的桥接回执不能自动生成 PASS Review。
+
+Close 由同一个 Kernel 权威提交。它检查 Task 已处于 Verify、最新 Run 已完成、Review 通过且绑定该候选、所有硬依赖均已成功 Close、验收证据齐全，并且交付证据符合 Task 声明的交付层级。Pull request 和 merged-result 的证据引用必须是 HTTPS URL；Kernel 校验声明的证据格式，但不会访问远端确认合并状态。
+
+本切片对候选新鲜度有明确限制：Close 要求调用方提交当前 observation ID/fingerprint，并记录来源和 evidence ref。Kernel 会把该 observation 与冻结的 Run snapshot 对照，但不会重新计算当前 Git HEAD、暂存/未暂存状态或文件字节。因此，Git/文件观察器接入前，这只是声明性观察。只读 `readTaskKernel` reader 与 `projectTaskKernelLifecycle` projection 会导出 Kernel revision、phase、已记录的审批字段和 gate snapshot；这些审批字段也是调用方声明，projection 只供只读判断，最终权限仍由每次 Kernel mutation 检查。
+
+0.5.x Kernel v1 与 `task.json` 记录仍可读取，并保留旧命令路径。V2 读取时不会迁移旧数据。`pactile task legacy-create` 是显式兼容入口；旧数据自动迁移由 P36 单独处理。
+
+新 `task create` 命令必须提供 `--deliverable`、`--delivery-level` 和至少一条 `--accept`。旧的 `task create <title> --slug <slug>` 不再是 V2 创建方式；需要显式创建 0.5.x Task 时使用 `task legacy-create`。这样新写入不会静默沿用 Lite/Full 或 Parent/Child 预设。
+
+actor、approver、reviewer、observer、approval、candidate observation 与 evidence ref 都是调用方声明的值。Kernel 校验字段形状以及 Task、Run、候选、Review、Close 之间的关联，并要求 evidence ref 存在；它不会认证这些身份、打开被引用文件、向宿主验证审批，也不会查询 PR 或合并服务。Git/文件观察器接入并核对外部事实前，候选 observation 仍是声明。
+
+## 0.5.x Kernel v1 记录与命令
+
 ## 定义
 
 Task 是一组可读 artifacts 与一份 canonical machine record。对话被压缩或交接后，artifacts 仍可继续使用；Kernel 则防止 Agent 或宿主集成绕过 approval、review 或 close 要求。
