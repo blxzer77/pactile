@@ -39,6 +39,10 @@ import {
   type TaskRunState,
   type TaskRunV2,
   type TaskRunWorkspaceBinding,
+  type TaskRunWorkspaceCleanupLease,
+  type TaskRunWorkspaceIntegrationReceipt,
+  type TaskRunWorkspaceManagerBinding,
+  type TaskRunHostStopReceipt,
   type TaskSnapshotEntry,
 } from "./task-kernel-types.js";
 
@@ -48,11 +52,13 @@ export function requireArrayEntry<T>(value: T | undefined, field: string): T {
 }
 const FINGERPRINT_RE = /^[a-f0-9]{64}$/;
 const TASK_ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const RUN_STATES: readonly TaskRunState[] = ["waiting", "running", "completed", "failed", "blocked"];
+const RUN_STATES: readonly TaskRunState[] = ["waiting", "running", "completed", "failed", "blocked", "cancelled"];
 export const REVIEW_DECISIONS: readonly TaskReviewDecision[] = ["pass", "fail", "needs-changes"];
 const EVENT_TYPES: readonly TaskKernelEventType[] = [
   "task.created", "task.dependency-added", "run.queued", "run.started", "run.resumed", "run.completed",
-  "run.failed", "run.blocked", "review.recorded", "task.closed",
+  "run.failed", "run.blocked", "run.cancelled", "run.host-bound", "run.host-settlement-recorded", "run.host-settled",
+  "run.workspace-bound", "run.workspace-integrated", "run.workspace-cleanup-acquired", "run.workspace-reclaimed",
+  "run.workspace-retained", "run.workspace-recovery-required", "review.recorded", "task.closed",
 ];
 
 export function isTaskDeliveryLevel(value: unknown): value is TaskDeliveryLevel {
@@ -233,7 +239,7 @@ function parseRun(value: unknown, field: string): TaskRunV2 {
   const failure = input.failure === null ? null : parseFailure(input.failure, `${field}.failure`);
   if ((state === "running" || state === "waiting") && (snapshot || result || failure || input.completedAt !== null)) throw new KernelError("CORRUPT_STATE", `${field} non-terminal state cannot have terminal data`);
   if (state === "completed" && (!snapshot || !result || failure || typeof input.completedAt !== "string")) throw new KernelError("CORRUPT_STATE", `${field} completed state requires candidate, result, and completion time`);
-  if ((state === "failed" || state === "blocked") && (!failure || typeof input.completedAt !== "string" || result && !result.summary)) throw new KernelError("CORRUPT_STATE", `${field} failed/blocked state requires failure details and completion time`);
+  if ((state === "failed" || state === "blocked" || state === "cancelled") && (!failure || typeof input.completedAt !== "string" || result && !result.summary)) throw new KernelError("CORRUPT_STATE", `${field} failed/blocked/cancelled state requires failure details and completion time`);
   return {
     id: requireNonEmptyString(input.id, `${field}.id`), taskId: requireTaskId(input.taskId, `${field}.taskId`),
     attempt: requirePositiveInt(input.attempt, `${field}.attempt`), sequence: requirePositiveInt(input.sequence, `${field}.sequence`), state: state as TaskRunState,
@@ -379,7 +385,7 @@ export function parseWorkspaceBinding(value: unknown, runId: string, field: stri
   const canonicalPath = requireNonEmptyString(input.canonicalPath, `${field}.canonicalPath`);
   if (!path.isAbsolute(canonicalPath)) throw new KernelError("INVALID_REQUEST", `${field}.canonicalPath must be absolute`);
   if (input.integrationState !== "not-integrated" && input.integrationState !== "integrated") throw new KernelError("CORRUPT_STATE", `${field}.integrationState is invalid`);
-  if (!["not-requested", "pending", "reclaimed", "failed"].includes(String(input.reclamationState))) throw new KernelError("CORRUPT_STATE", `${field}.reclamationState is invalid`);
+  if (!["not-requested", "pending", "reclaimed", "failed", "recovery-required"].includes(String(input.reclamationState))) throw new KernelError("CORRUPT_STATE", `${field}.reclamationState is invalid`);
   return {
     ownerRunId: runId,
     canonicalPath,
@@ -388,6 +394,96 @@ export function parseWorkspaceBinding(value: unknown, runId: string, field: stri
     writeSet: parseStringArray(input.writeSet, `${field}.writeSet`, true),
     integrationState: input.integrationState,
     reclamationState: input.reclamationState as TaskRunWorkspaceBinding["reclamationState"],
+    manager: input.manager === null || input.manager === undefined ? null : parseWorkspaceManagerBinding(input.manager, `${field}.manager`),
+    integrationReceipt: input.integrationReceipt === null || input.integrationReceipt === undefined ? null : parseWorkspaceIntegrationReceipt(input.integrationReceipt, `${field}.integrationReceipt`),
+    cleanupLease: input.cleanupLease === null || input.cleanupLease === undefined ? null : parseWorkspaceCleanupLease(input.cleanupLease, `${field}.cleanupLease`),
+  };
+}
+
+function parseWorkspaceManagerBinding(value: unknown, field: string): TaskRunWorkspaceManagerBinding {
+  const input = parseObject(value, field);
+  if (input.version !== 1) throw new KernelError("CORRUPT_STATE", `${field}.version is invalid`);
+  if (input.source !== "created" && input.source !== "adopted") throw new KernelError("CORRUPT_STATE", `${field}.source is invalid`);
+  for (const name of ["projectRoot", "commonDir", "gitDir"] as const) {
+    const candidate = requireNonEmptyString(input[name], `${field}.${name}`);
+    if (!path.isAbsolute(candidate)) throw new KernelError("CORRUPT_STATE", `${field}.${name} must be absolute`);
+  }
+  return {
+    version: 1,
+    credentialId: requireNonEmptyString(input.credentialId, `${field}.credentialId`),
+    projectRoot: input.projectRoot as string,
+    commonDir: input.commonDir as string,
+    gitDir: input.gitDir as string,
+    source: input.source,
+    recordedAt: requireNonEmptyString(input.recordedAt, `${field}.recordedAt`),
+  };
+}
+
+export function parseWorkspaceIntegrationReceipt(value: unknown, field: string): TaskRunWorkspaceIntegrationReceipt {
+  const input = parseObject(value, field);
+  return {
+    runId: requireNonEmptyString(input.runId, `${field}.runId`),
+    worktreeHeadSha: requireNonEmptyString(input.worktreeHeadSha, `${field}.worktreeHeadSha`),
+    targetRef: requireNonEmptyString(input.targetRef, `${field}.targetRef`),
+    targetBranch: requireNonEmptyString(input.targetBranch, `${field}.targetBranch`),
+    targetHeadSha: requireNonEmptyString(input.targetHeadSha, `${field}.targetHeadSha`),
+    verifiedAt: requireNonEmptyString(input.verifiedAt, `${field}.verifiedAt`),
+    resultEvidenceRefs: parseStringArray(input.resultEvidenceRefs, `${field}.resultEvidenceRefs`),
+    candidateSnapshotId: requireNonEmptyString(input.candidateSnapshotId, `${field}.candidateSnapshotId`),
+    candidateFingerprint: requireFingerprint(input.candidateFingerprint, `${field}.candidateFingerprint`),
+  };
+}
+
+export function parseWorkspaceCleanupLease(value: unknown, field: string): TaskRunWorkspaceCleanupLease {
+  const input = parseObject(value, field);
+  const states: readonly TaskRunWorkspaceCleanupLease["state"][] = ["held", "reclaimed", "retained", "partial-removal", "recovery-required"];
+  if (typeof input.state !== "string" || !states.includes(input.state as TaskRunWorkspaceCleanupLease["state"])) {
+    throw new KernelError("CORRUPT_STATE", `${field}.state is invalid`);
+  }
+  if (!isNonNegativeInt(input.processId) || input.processId === 0) throw new KernelError("CORRUPT_STATE", `${field}.processId is invalid`);
+  return {
+    leaseId: requireNonEmptyString(input.leaseId, `${field}.leaseId`),
+    state: input.state as TaskRunWorkspaceCleanupLease["state"],
+    processId: input.processId,
+    acquiredAt: requireNonEmptyString(input.acquiredAt, `${field}.acquiredAt`),
+    expectedHeadSha: requireNonEmptyString(input.expectedHeadSha, `${field}.expectedHeadSha`),
+    targetBranch: requireNonEmptyString(input.targetBranch, `${field}.targetBranch`),
+    targetHeadSha: requireNonEmptyString(input.targetHeadSha, `${field}.targetHeadSha`),
+    receiptRef: requireNonEmptyString(input.receiptRef, `${field}.receiptRef`),
+    reason: input.reason === null ? null : requireNonEmptyString(input.reason, `${field}.reason`),
+  };
+}
+
+export function parseHostStopReceipt(value: unknown, field: string): TaskRunHostStopReceipt {
+  const input = parseObject(value, field);
+  if (typeof input.contractStale !== "boolean") throw new KernelError("CORRUPT_STATE", `${field}.contractStale is invalid`);
+  if (!isNonNegativeInt(input.requestKernelRevision) || !isNonNegativeInt(input.receiptKernelRevision)) {
+    throw new KernelError("CORRUPT_STATE", `${field} kernel revisions are invalid`);
+  }
+  if (input.candidateSource !== null && input.candidateSource !== "captured" && input.candidateSource !== "derived") {
+    throw new KernelError("CORRUPT_STATE", `${field}.candidateSource is invalid`);
+  }
+  return {
+    source: requireNonEmptyString(input.source, `${field}.source`),
+    assurance: requireNonEmptyString(input.assurance, `${field}.assurance`),
+    evidenceLevel: requireNonEmptyString(input.evidenceLevel, `${field}.evidenceLevel`),
+    taskId: requireTaskId(input.taskId, `${field}.taskId`),
+    runId: requireNonEmptyString(input.runId, `${field}.runId`),
+    sessionId: input.sessionId === null ? null : requireNonEmptyString(input.sessionId, `${field}.sessionId`),
+    threadId: input.threadId === null ? null : requireNonEmptyString(input.threadId, `${field}.threadId`),
+    startRequestId: requireNonEmptyString(input.startRequestId, `${field}.startRequestId`),
+    settleReceiptId: requireNonEmptyString(input.settleReceiptId, `${field}.settleReceiptId`),
+    terminalStatus: requireNonEmptyString(input.terminalStatus, `${field}.terminalStatus`),
+    requestKernelRevision: input.requestKernelRevision,
+    receiptKernelRevision: input.receiptKernelRevision,
+    contractFingerprint: requireFingerprint(input.contractFingerprint, `${field}.contractFingerprint`),
+    contractStale: input.contractStale,
+    candidateSnapshotId: input.candidateSnapshotId === null ? null : requireNonEmptyString(input.candidateSnapshotId, `${field}.candidateSnapshotId`),
+    candidateFingerprint: input.candidateFingerprint === null ? null : requireFingerprint(input.candidateFingerprint, `${field}.candidateFingerprint`),
+    candidateSource: input.candidateSource,
+    receiptRef: requireNonEmptyString(input.receiptRef, `${field}.receiptRef`),
+    evidenceRef: requireNonEmptyString(input.evidenceRef, `${field}.evidenceRef`),
+    recordedAt: requireNonEmptyString(input.recordedAt, `${field}.recordedAt`),
   };
 }
 
@@ -398,6 +494,7 @@ export function parseHostBinding(value: unknown, field: string): TaskRunHostBind
     host: requireNonEmptyString(input.host, `${field}.host`),
     role: requireNonEmptyString(input.role, `${field}.role`),
     sessionId: input.sessionId === null || input.sessionId === undefined ? null : requireNonEmptyString(input.sessionId, `${field}.sessionId`),
+    hostId: input.hostId === null || input.hostId === undefined ? null : requireNonEmptyString(input.hostId, `${field}.hostId`),
     threadId: input.threadId === null || input.threadId === undefined ? null : requireNonEmptyString(input.threadId, `${field}.threadId`),
     kernelRevision: input.kernelRevision,
     contractFingerprint: requireFingerprint(input.contractFingerprint, `${field}.contractFingerprint`),
@@ -405,6 +502,7 @@ export function parseHostBinding(value: unknown, field: string): TaskRunHostBind
     eventRefs: parseStringArray(input.eventRefs ?? [], `${field}.eventRefs`, true),
     resultRefs: parseStringArray(input.resultRefs ?? [], `${field}.resultRefs`, true),
     assuranceSource: input.assuranceSource === null || input.assuranceSource === undefined ? null : requireNonEmptyString(input.assuranceSource, `${field}.assuranceSource`),
+    stopReceipt: input.stopReceipt === null || input.stopReceipt === undefined ? null : parseHostStopReceipt(input.stopReceipt, `${field}.stopReceipt`),
   };
 }
 
