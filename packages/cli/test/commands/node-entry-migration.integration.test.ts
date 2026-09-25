@@ -116,7 +116,7 @@ describe("installed 0.5.0 project to Node entry", () => {
     expect(install?.state.generationId).toBeTruthy();
     const seal = new GenerationStore(root).verify(install?.state.generationId ?? "");
     expect(seal.files.some((file) => file.path.startsWith("scripts/"))).toBe(false);
-    expect(runTaskCli(["create", "Migrated", "--slug", "migrated"], root)).toBe(0);
+    expect(runTaskCli(["legacy-create", "Migrated", "--slug", "migrated"], root)).toBe(0);
   });
 
   it("backs up a metadata-only claim release while retaining edited scripts", async () => {
