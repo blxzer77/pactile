@@ -25,7 +25,7 @@ import { runTaskCli } from "../commands/task.js";
 import { runPiCli } from "../commands/pi.js";
 import { runParallelCli } from "../commands/parallel.js";
 import { runCodexCli } from "../commands/codex.js";
-import { runContextCli } from "../commands/context.js";
+import { runContextCliAsync } from "../commands/context.js";
 import { runTileSelectionCli } from "../commands/tile-selection.js";
 import { runSessionCli } from "../commands/session.js";
 import {
@@ -478,8 +478,8 @@ program
   .allowUnknownOption()
   .allowExcessArguments()
   .argument("[arguments...]")
-  .action(() => {
-    process.exitCode = runContextCli(process.argv.slice(3));
+  .action(async () => {
+    process.exitCode = await runContextCliAsync(process.argv.slice(3));
   });
 
 program

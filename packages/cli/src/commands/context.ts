@@ -4,6 +4,7 @@ import path from "node:path";
 import { buildLiteContextPack, readTaskKernel, type LitePackArtifact, type KernelPhase } from "../core/task/index.js";
 import { readPactileConfig, type PactileConfig } from "../pactile/task/config.js";
 import { resolveSelectedTask, resolveTaskDir } from "../pactile/task/session.js";
+import { compileSessionPackWithJevV1 } from "../pactile/task/session-jev.js";
 import { compileSessionPack } from "../pactile/task/session-pack.js";
 import { readDeveloper } from "../utils/developer.js";
 import { readWorkflowPhase } from "../pactile/task/workflow-phase.js";
@@ -285,6 +286,28 @@ export function runContextCli(args: string[], root = process.cwd()): number {
     if (mode !== "default" && mode !== "record") throw new Error(`Context mode ${mode} is not yet available in the Node runtime`);
     const data = context(root, mode);
     console.log(json ? JSON.stringify(data, null, 2) : renderContext(data, root, mode));
+    return 0;
+  } catch (error) {
+    console.error(`Context error: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+}
+
+/** Async CLI entry point for the optionally provider-advised session mode. */
+export async function runContextCliAsync(
+  args: string[],
+  root = process.cwd(),
+): Promise<number> {
+  const modeIndex = args.indexOf("--mode") >= 0 ? args.indexOf("--mode") : args.indexOf("-m");
+  const mode = modeIndex >= 0 ? args[modeIndex + 1] : "default";
+  if (mode !== "session") return runContextCli(args, root);
+  try {
+    const json = args.includes("--json") || args.includes("-j");
+    const pack = await compileSessionPackWithJevV1(
+      root,
+      process.env.PACTILE_SESSION_FACT_GAP === "1",
+    );
+    console.log(JSON.stringify(pack, null, json ? 2 : undefined));
     return 0;
   } catch (error) {
     console.error(`Context error: ${error instanceof Error ? error.message : String(error)}`);
