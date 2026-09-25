@@ -24,13 +24,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI_DIR = path.resolve(__dirname, "..");
 const REPO_ROOT = path.resolve(CLI_DIR, "../..");
 
-const RELEASE_TYPES = new Set([
-  "patch",
-  "minor",
-  "major",
-  "beta",
-  "promote",
-]);
+const RELEASE_TYPES = new Set(["patch", "minor", "major", "beta", "promote"]);
 const EXPLICIT_VERSION =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.(0|[1-9]\d*))?$/;
 

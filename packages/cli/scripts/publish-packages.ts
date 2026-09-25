@@ -45,17 +45,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI_DIR = path.resolve(__dirname, "..");
 const REPO_ROOT = path.resolve(CLI_DIR, "../..");
 
-type PackageInfo = {
+interface PackageInfo {
   cliName: string;
   cliVersion: string;
   cliDir: string;
-};
+}
 
-type CommandOptions = {
+interface CommandOptions {
   cwd?: string;
   capture?: boolean;
   env?: NodeJS.ProcessEnv;
-};
+}
 
 type CommandRunner = (
   command: string,
@@ -63,7 +63,7 @@ type CommandRunner = (
   options?: CommandOptions,
 ) => string;
 
-type ReleasePackageArtifact = {
+interface ReleasePackageArtifact {
   key: string;
   name: string;
   version: string;
@@ -71,9 +71,9 @@ type ReleasePackageArtifact = {
   tarballPath: string;
   size?: number;
   sha256?: string;
-};
+}
 
-type PreparedReleaseArtifacts = {
+interface PreparedReleaseArtifacts {
   version: string;
   npmTag: string;
   releaseTag: string | null;
@@ -81,21 +81,21 @@ type PreparedReleaseArtifacts = {
   manifestSha256: string;
   manifestPath?: string;
   packages: ReleasePackageArtifact[];
-};
+}
 
-type PublishPlanEntry = {
+interface PublishPlanEntry {
   name: string;
   publish: boolean;
   alreadyOnNpm: boolean | null;
-};
+}
 
-type PublishPlan = {
+interface PublishPlan {
   version: string;
   tag: string;
   registryChecked: boolean;
   cli: PublishPlanEntry;
   [key: string]: unknown;
-};
+}
 
 type CandidateValidator = (input: {
   runner: CommandRunner;
@@ -129,7 +129,7 @@ type NpmVersionExists = (
 
 type ReleaseLogger = (message: string) => void;
 
-type CandidatePreparationOptions = {
+interface CandidatePreparationOptions {
   dryRun?: boolean;
   explicitTag?: string;
   explicitNpmTag?: string;
@@ -142,9 +142,9 @@ type CandidatePreparationOptions = {
   prepareArtifacts?: PrepareArtifacts;
   env?: NodeJS.ProcessEnv;
   log?: ReleaseLogger;
-};
+}
 
-type PreparedPublishOptions = {
+interface PreparedPublishOptions {
   dryRun?: boolean;
   explicitTag?: string;
   explicitNpmTag?: string;
@@ -157,7 +157,7 @@ type PreparedPublishOptions = {
   npmExists?: NpmVersionExists;
   env?: NodeJS.ProcessEnv;
   log?: ReleaseLogger;
-};
+}
 
 type PublishDryRunOptions = CandidatePreparationOptions &
   Pick<PreparedPublishOptions, "loadArtifacts" | "npmExists">;
@@ -460,10 +460,7 @@ export function runPreparedPublish({
     ? dryRunPlan(packageInfo, artifacts.npmTag)
     : {
         ...createPublishPlan({
-          versions: {
-            ...packageInfo,
-            expectedVersion: packageInfo.cliVersion,
-          },
+          versions: packageInfo,
           npmTag: artifacts.npmTag,
           exists: (name, version) => npmExists(name, version, { runner }),
         }),
@@ -489,7 +486,11 @@ export function runPreparedPublish({
     env.GITHUB_ACTIONS === "true" &&
     Boolean(env.ACTIONS_ID_TOKEN_REQUEST_URL) &&
     Boolean(env.ACTIONS_ID_TOKEN_REQUEST_TOKEN);
-  if (!dryRun && !hasGitHubOidc && orderedPlan.some((entry) => entry.item.publish)) {
+  if (
+    !dryRun &&
+    !hasGitHubOidc &&
+    orderedPlan.some((entry) => entry.item.publish)
+  ) {
     try {
       runner("npm", ["whoami"], { cwd: repoRoot, capture: true });
     } catch {

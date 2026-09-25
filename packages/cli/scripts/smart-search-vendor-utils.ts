@@ -14,12 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Static npm `files` entries for @blxzer/pactile (no vendor tree). */
-const cliPackFilesStatic = [
-  "dist",
-  "README.md",
-  "CHANGELOG.md",
-  "LICENSE",
-];
+const cliPackFilesStatic = ["dist", "README.md", "CHANGELOG.md", "LICENSE"];
 
 export function defaultPackageRoot() {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");

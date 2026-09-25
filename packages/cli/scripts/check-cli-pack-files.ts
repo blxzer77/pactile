@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 
-import { compareCliPackageFiles, defaultPackageRoot } from "./smart-search-vendor-utils.js";
+import {
+  compareCliPackageFiles,
+  defaultPackageRoot,
+} from "./smart-search-vendor-utils.js";
 
 const errors = compareCliPackageFiles(defaultPackageRoot());
 
 if (errors.length > 0) {
-  console.error("CLI package.json files drift from Smart Search vendor allowlist:");
+  console.error(
+    "CLI package.json files drift from Smart Search vendor allowlist:",
+  );
   for (const error of errors) {
     console.error(`  - ${error}`);
   }
@@ -15,4 +20,6 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log("ok CLI package.json files match Smart Search vendor pack allowlist.");
+console.log(
+  "ok CLI package.json files match Smart Search vendor pack allowlist.",
+);

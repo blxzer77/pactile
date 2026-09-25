@@ -84,7 +84,7 @@ function main() {
   if (process.env.SKIP_MANIFEST_CONTINUITY === "1") {
     console.error(
       `${YELLOW}⚠  SKIP_MANIFEST_CONTINUITY=1 set — bypassing manifest/npm continuity check.${RESET}\n` +
-      `${YELLOW}   Only use this for emergency re-rolls with explicit sign-off.${RESET}\n`,
+        `${YELLOW}   Only use this for emergency re-rolls with explicit sign-off.${RESET}\n`,
     );
     return;
   }
@@ -104,27 +104,27 @@ function main() {
     newGaps.forEach((v) => console.error(`  - ${v}.json`));
     console.error(
       `\n` +
-      `A version on npm without its local manifest breaks \`pactile update\`\n` +
-      `for users on adjacent versions. See .pactile/spec/cli/backend/migrations.md.\n` +
-      `\n` +
-      `Fix options:\n` +
-      `  1. Restore the manifest from git history\n` +
-      `       git log --all -- src/migrations/manifests/<version>.json\n` +
-      `       git checkout <commit-before-delete> -- src/migrations/manifests/<version>.json\n` +
-      `     and verify its content matches what was shipped in that npm tarball.\n` +
-      `  2. If the version should NEVER have been published (accidental release\n` +
-      `     that cannot be unpublished), deprecate it on npm AND accept the gap\n` +
-      `     by adding to KNOWN_GAPS — but think carefully: adjacent-version users\n` +
-      `     still get broken update chains.\n` +
-      `\n` +
-      `${DIM}Emergency bypass (NOT recommended): SKIP_MANIFEST_CONTINUITY=1 <command>${RESET}\n`,
+        `A version on npm without its local manifest breaks \`pactile update\`\n` +
+        `for users on adjacent versions. See .pactile/spec/cli/backend/migrations.md.\n` +
+        `\n` +
+        `Fix options:\n` +
+        `  1. Restore the manifest from git history\n` +
+        `       git log --all -- src/migrations/manifests/<version>.json\n` +
+        `       git checkout <commit-before-delete> -- src/migrations/manifests/<version>.json\n` +
+        `     and verify its content matches what was shipped in that npm tarball.\n` +
+        `  2. If the version should NEVER have been published (accidental release\n` +
+        `     that cannot be unpublished), deprecate it on npm AND accept the gap\n` +
+        `     by adding to KNOWN_GAPS — but think carefully: adjacent-version users\n` +
+        `     still get broken update chains.\n` +
+        `\n` +
+        `${DIM}Emergency bypass (NOT recommended): SKIP_MANIFEST_CONTINUITY=1 <command>${RESET}\n`,
     );
     process.exit(1);
   }
 
   console.log(
     `${GREEN}✓${RESET} Manifest continuity OK — ${localVersions.size} local, ` +
-    `${npmVersions.length} published (${KNOWN_GAPS.size} historical gaps whitelisted).`,
+      `${npmVersions.length} published (${KNOWN_GAPS.size} historical gaps whitelisted).`,
   );
 }
 

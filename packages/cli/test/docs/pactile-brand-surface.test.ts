@@ -64,7 +64,7 @@ function readJson<T>(filePath: string): T {
 function runChecker(root: string, extraArgs: string[] = []): CheckRun {
   const result = spawnSync(
     process.execPath,
-    [checkerPath, "--root", root, "--json", ...extraArgs],
+    ["--import", "tsx", checkerPath, "--root", root, "--json", ...extraArgs],
     { encoding: "utf8" },
   );
 
@@ -85,7 +85,7 @@ function runChecker(root: string, extraArgs: string[] = []): CheckRun {
 function captureSnapshot(root: string): BrandSnapshot {
   const result = spawnSync(
     process.execPath,
-    [checkerPath, "--root", root, "--print-snapshot"],
+    ["--import", "tsx", checkerPath, "--root", root, "--print-snapshot"],
     { encoding: "utf8" },
   );
   if (result.error !== undefined) {
