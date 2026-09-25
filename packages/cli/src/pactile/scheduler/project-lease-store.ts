@@ -116,7 +116,11 @@ function readLease(file: string): ProjectWriteLeaseRecordV1 {
   ) {
     throw new Error(`Invalid project write lease: ${file}`);
   }
-  return lease;
+  // Normalize legacy leases in memory so older casing/path forms cannot bypass
+  // conflicts with newly admitted writers. An empty legacy scope is unknown,
+  // so normalizeProjectWriteSet conservatively treats it as a project-wide
+  // write. Do not rewrite the persisted compatibility record.
+  return { ...lease, touches: normalizeProjectWriteSet(lease.touches) };
 }
 
 /** Reads both legacy Parent lease folders and the V2 project-level lease folder. Call under withProjectSchedulerMutex. */
@@ -169,6 +173,7 @@ export function normalizeProjectWriteSet(
   values: readonly string[] | null | undefined,
 ): string[] {
   if (!values?.length) return ["*"];
+  if (values.length === 1 && values[0] === "*") return ["*"];
   return [
     ...new Set(
       values.map((value) => {
@@ -210,8 +215,10 @@ export function projectWriteSetsConflict(
   left: readonly string[],
   right: readonly string[],
 ): boolean {
-  return left.some((a) =>
-    right.some(
+  const normalizedLeft = normalizeProjectWriteSet(left);
+  const normalizedRight = normalizeProjectWriteSet(right);
+  return normalizedLeft.some((a) =>
+    normalizedRight.some(
       (b) =>
         a === "*" ||
         b === "*" ||

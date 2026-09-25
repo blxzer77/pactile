@@ -11,6 +11,7 @@ import {
 } from "../../src/pactile/parallel/batch.js";
 import { PiTaskBridge, type PiRunRecord } from "../../src/pactile/pi/bridge.js";
 import { reserveParallelChild } from "../../src/pactile/parallel/policy.js";
+import { projectWriteSetsConflict } from "../../src/pactile/scheduler/project-lease-store.js";
 import { readTaskMap, writeTaskMap } from "../../src/pactile/task/task-map.js";
 import {
   prepareCodexRequest,
@@ -400,6 +401,94 @@ describe("scheduler-driven Parent dispatch", () => {
     } finally {
       release();
     }
+  });
+
+  it("normalizes durable legacy leases before cross-Parent conflict checks", () => {
+    expect(projectWriteSetsConflict([], ["src/Shared.ts"])).toBe(true);
+    const { root, parent } = fixture();
+    const tasks = path.join(root, ".pactile", "tasks");
+    const parentDir = path.join(tasks, parent);
+    const parentMap = readTaskMap(parentDir);
+    if (!parentMap.data) throw new Error("Missing Parent task map");
+    requiredAt(parentMap.data.children, 0).touches = ["SRC/Shared.ts"];
+    writeTaskMap(parentDir, parentMap.data, parentMap.body);
+
+    expect(
+      runTaskCli(["legacy-create", "Parent", "--slug", "other-parent"], root),
+    ).toBe(0);
+    const otherParent =
+      fs.readdirSync(tasks).find((name) => name.endsWith("-other-parent")) ??
+      "";
+    expect(otherParent).not.toBe("");
+    expect(
+      runTaskCli(
+        [
+          "legacy-create",
+          "other-child",
+          "--slug",
+          "other-child",
+          "--parent",
+          otherParent,
+        ],
+        root,
+      ),
+    ).toBe(0);
+    const otherChild =
+      fs.readdirSync(tasks).find((name) => name.endsWith("-other-child")) ?? "";
+    const otherChildDir = path.join(tasks, otherChild);
+    fs.writeFileSync(
+      path.join(otherChildDir, "design.md"),
+      "# Design\nCross-parent overlap.\n",
+    );
+    fs.writeFileSync(
+      path.join(otherChildDir, "implement.md"),
+      "execution_mode: worker\nisolation: main-worktree\nverification_profile: standard\nretrieval_profile: exact-only\noptional_capabilities: []\nquality_gates:\n  mode: profile\n",
+    );
+    expect(
+      runTaskCli(["start-execution", otherChild, "--approved"], root),
+    ).toBe(0);
+    const otherParentDir = path.join(tasks, otherParent);
+    const otherMap = readTaskMap(otherParentDir);
+    if (!otherMap.data) throw new Error("Missing other Parent task map");
+    requiredAt(otherMap.data.children, 0).touches = ["src/Shared.ts"];
+    writeTaskMap(otherParentDir, otherMap.data, otherMap.body);
+
+    const legacyActive = path.join(parentDir, "parallel", "active");
+    fs.mkdirSync(legacyActive, { recursive: true });
+    const legacyLease = path.join(legacyActive, "old-writer.json");
+    fs.writeFileSync(
+      legacyLease,
+      JSON.stringify({
+        id: "old-writer",
+        pid: process.pid,
+        durable: true,
+        child: "old-child",
+        touches:
+          process.platform === "win32" ? ["SRC/Shared.ts"] : ["src/Shared.ts"],
+      }),
+    );
+
+    // On Windows these spellings differ only by case; on case-sensitive
+    // filesystems the fixture uses the same spelling as the new writer.
+    expect(() => reserveParallelChild(root, otherChildDir)).toThrow(
+      "write-set conflict",
+    );
+
+    // An empty old scope carries no proof of disjointness and must conflict
+    // with every new writer instead of being treated as no writes.
+    fs.writeFileSync(
+      legacyLease,
+      JSON.stringify({
+        id: "old-writer",
+        pid: process.pid,
+        durable: true,
+        child: "old-child",
+        touches: [],
+      }),
+    );
+    expect(() => reserveParallelChild(root, otherChildDir)).toThrow(
+      "write-set conflict",
+    );
   });
 
   it("merges a V2 Run-only write set into active Parent Child lease conflicts", () => {

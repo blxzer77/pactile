@@ -30,9 +30,12 @@ Task Kernel records and do not need or create a Parent / Child map.
   gain is scheduled serially.
 - Run write-set snapshots, Run workspace write sets, and Child `touches` are
   conservatively unioned. An unknown write scope conflicts with every writer.
-  Concrete paths are project-relative, normalized to `/`, NFC, and
-  case-insensitive for conservative conflict detection; a parent path overlaps
-  each descendant.
+  Concrete paths are project-relative, normalized to `/` and NFC. On Windows,
+  case is folded for conflict checks to match the default case-insensitive
+  filesystem behavior; this may conservatively serialize paths inside a
+  case-sensitive Windows directory. Empty legacy write sets are treated as
+  unknown and conflict with every writer. A parent path overlaps each
+  descendant. NFKC is not applied, so compatibility characters remain distinct.
 - Overlapping writers are serial by default. Parallel overlap requires an
   exact Task pair, approver, authorization evidence reference, and non-empty
   integration plan. The decision and active leases retain these references.
