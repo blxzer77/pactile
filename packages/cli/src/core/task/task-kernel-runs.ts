@@ -16,6 +16,13 @@ import {
   requireArrayEntry,
 } from "./task-kernel-schema.js";
 import { assertHardDependenciesSatisfied, canonicalProjectRoot } from "./task-kernel-paths.js";
+import {
+  createTaskCandidateEntry,
+  isTaskRunPathInWriteSet,
+  observeTaskRunCandidate,
+  VERIFICATION_CANDIDATE_ENTRY_REF,
+} from "./task-candidate-observer.js";
+import { freezeTaskRunEvidenceV1 } from "./task-review-evidence.js";
 import type {
   RecordTaskRunResultRequest,
   ResumeTaskRunRequest,
@@ -88,7 +95,7 @@ export function recordTaskRunResult(request: RecordTaskRunResultRequest): TaskKe
     runId: request.runId, outcome: request.outcome, summary: request.summary ?? "",
     evidenceRefs: request.evidenceRefs ?? [], candidateEntries: request.candidateEntries ?? [], failure: request.failure ?? null, measurementRefs: request.measurementRefs ?? {},
   });
-  return mutateTaskKernel(root, request.taskDir, request.expectedRevision, actor, request.idempotencyKey, fingerprint, request.cwd, (current) => {
+  return mutateTaskKernel(root, request.taskDir, request.expectedRevision, actor, request.idempotencyKey, fingerprint, request.cwd, (current, taskDir) => {
     const index = current.runs.findIndex((run) => run.id === request.runId);
     if (index < 0) throw new KernelError("NOT_FOUND", `Run not found: ${request.runId}`);
     const prior = requireArrayEntry(current.runs[index], "Run");
@@ -102,8 +109,87 @@ export function recordTaskRunResult(request: RecordTaskRunResultRequest): TaskKe
     if (request.outcome === "completed") {
       if (request.failure) throw new KernelError("INVALID_REQUEST", "a completed Run cannot carry failure details");
       const summary = requireNonEmptyString(request.summary, "summary");
-      const candidateSnapshot = createTaskCandidateSnapshot(request.candidateEntries ?? []);
-      run = { ...prior, state: "completed", candidateSnapshot, result: { summary, evidenceRefs }, failure: null, completedAt: now, measurementRefs };
+      // P41 completion sealing: observe candidate files and evidence bytes here;
+      // keep Run workspace lifecycle changes in their separate P38 seam.
+      const observation = observeTaskRunCandidate({
+        run: prior,
+        ...(prior.workspace === null ? { repositoryRoot: root } : {}),
+      });
+      const observedEntry = createTaskCandidateEntry(observation);
+      const observedFiles = new Map(
+        observation.currentFiles
+          .filter(
+            (file) =>
+              isTaskRunPathInWriteSet(prior, file.path) &&
+              file.kind === "regular-file" &&
+              file.sha256 !== null,
+          )
+          .map((file) => [file.path, file]),
+      );
+      const suppliedRefs = new Set<string>();
+      for (const entry of request.candidateEntries ?? []) {
+        if (suppliedRefs.has(entry.ref)) {
+          throw new KernelError(
+            "INVALID_REQUEST",
+            `candidateEntries contains duplicate reference ${entry.ref}`,
+          );
+        }
+        suppliedRefs.add(entry.ref);
+        if (entry.ref === VERIFICATION_CANDIDATE_ENTRY_REF) {
+          if (entry.fingerprint !== observedEntry.fingerprint) {
+            throw new KernelError(
+              "CANDIDATE_MISMATCH",
+              "Caller-supplied Core observation entry does not match the actual Run candidate.",
+            );
+          }
+          continue;
+        }
+        const normalizedRef = entry.ref.replace(/\\/g, "/");
+        const file = observedFiles.get(normalizedRef);
+        if (
+          !isTaskRunPathInWriteSet(prior, normalizedRef) ||
+          file?.sha256 !== entry.fingerprint
+        ) {
+          throw new KernelError(
+            "CANDIDATE_MISMATCH",
+            `Caller-supplied candidate ${entry.ref} does not match a regular file in the Run write set.`,
+          );
+        }
+      }
+      const candidateEntries = [
+        ...[...observedFiles.values()].map((file) => ({
+          ref: file.path,
+          fingerprint: requireNonEmptyString(
+            file.sha256,
+            `candidate ${file.path} digest`,
+          ),
+        })),
+        observedEntry,
+      ];
+      const candidateSnapshot = createTaskCandidateSnapshot(candidateEntries);
+      const candidateRun: TaskRunV2 = {
+        ...prior,
+        state: "completed",
+        candidateSnapshot,
+        result: { summary, evidenceRefs },
+        failure: null,
+        completedAt: now,
+        measurementRefs,
+      };
+      const evidenceVerification = freezeTaskRunEvidenceV1({
+        root,
+        taskDir,
+        cwd: request.cwd,
+        run: candidateRun,
+      });
+      run = {
+        ...candidateRun,
+        result: {
+          summary,
+          evidenceRefs: evidenceVerification.items.map((item) => item.ref),
+          evidenceVerification,
+        },
+      };
       condition = "waiting";
     } else {
       if (!request.failure) throw new KernelError("INVALID_REQUEST", `${request.outcome} Run requires failure.category and failure.message`);

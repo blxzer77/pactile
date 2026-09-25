@@ -3,10 +3,7 @@
 //
 // Task API is intentionally independent from the channel API.
 
-export type {
-  PactileTaskRecord,
-  TaskRecordField,
-} from "./schema.js";
+export type { PactileTaskRecord, TaskRecordField } from "./schema.js";
 
 export {
   TASK_RECORD_FIELD_ORDER,
@@ -19,10 +16,7 @@ export type {
   WriteTaskRecordOptions,
 } from "./records.js";
 
-export {
-  loadTaskRecord,
-  writeTaskRecord,
-} from "./records.js";
+export { loadTaskRecord, writeTaskRecord } from "./records.js";
 
 export type { TaskDirParts } from "./paths.js";
 export { validateTaskDirName, isValidTaskDirName } from "./paths.js";
@@ -316,11 +310,17 @@ export type {
   TaskRunDurations,
   TaskRunMeasurementRefs,
   TaskRunResult,
+  TaskRunEvidenceSource,
+  TaskRunEvidenceItemV1,
+  TaskRunEvidenceVerificationV1,
   TaskRunFailure,
   TaskRunWorkspaceBinding,
   TaskRunHostBinding,
   TaskRunV2,
   TaskReviewDecision,
+  TaskReviewEvidenceSource,
+  TaskReviewEvidenceItemV1,
+  TaskReviewEvidenceVerificationV1,
   TaskReviewV2,
   TaskDeliveryEvidence,
   TaskClosureV2,
@@ -357,6 +357,8 @@ export {
   resumeTaskRun,
   recordTaskRunResult,
   recordTaskReview,
+  resolveTaskReviewEvidenceV1,
+  verifyTaskReviewEvidenceV1,
   checkTaskClose,
   closeTaskKernel,
   listTaskKernelSnapshots,

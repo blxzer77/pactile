@@ -35,7 +35,9 @@ enforce the delivery-level integration rules.
 performs a bounded, read-only Git/filesystem observation. It records HEAD and
 branch, separate staged/unstaged/untracked/conflict paths, Git diff/status
 digests, and SHA-256 digests of current bytes for changed paths inside the
-allowed write set. Out-of-scope paths are listed but their current bytes are
+allowed write set plus every exact file declared in the Run write set. This
+also binds unchanged deliverables at candidate freeze. Out-of-scope paths are
+listed but their current bytes are
 never read; a conflict, branch mismatch, or out-of-scope change makes the
 observation ineligible for a candidate. Symlinks are fingerprinted by their
 link-target text without reading through the link. The observer fails closed
@@ -56,11 +58,36 @@ and Git observation fingerprint. Re-observe before consuming it and use
 `assessVerificationReceiptFreshness`; a changed Run, candidate, checkout, Git
 state, or allowed current bytes makes the receipt stale.
 
-This package slice does not run commands, persist receipts, validate evidence
-references, inspect integration ancestry, or wire the Close gate. Receipt
-hashes detect accidental or later content changes; they are not signatures or
-proof against a caller that can fabricate both the P35 snapshot and receipt.
-Keep serialized receipts in trusted local task state because they include
-repository-relative changed paths. A later Close integration must re-read Git
-and file state itself and check integration/delivery facts at the level being
-claimed; caller-provided references alone are not acceptance evidence.
+The planner and receipt APIs do not run commands or persist receipts. The P35
+`run-result --outcome completed` CLI path adds the reserved observer entry only
+after a real bounded Git/filesystem observation succeeds; it rejects a caller
+attempt to write that reserved ref. Failed and blocked Run results do not
+produce candidate entries. A completed Run without that entry cannot be closed.
+
+Close re-observes the same Run workspace and requires exactly one matching
+observer entry, matching candidate fingerprint, and all current changes inside
+the frozen write set. It stores a separate
+`pactile-task-delivery-observer-v1` receipt with the candidate HEAD and current
+delivery-file SHA-256. `local-result` and `documentation` paths must be safe
+repository-relative files inside the Run write set, regular files, and either
+captured as changed candidate bytes or unchanged from the frozen Git HEAD.
+Symlinks, outside paths, stale candidates, and caller-only URLs fail closed.
+
+`pull-request` and `merged-result` also require a clean candidate worktree,
+delivery bytes present at candidate HEAD, and provider facts from the built-in
+read-only GitHub REST adapter (`gh api -X GET`). PR ownership must match the
+local GitHub `origin`; the provider head SHA must equal the candidate HEAD and
+draft/closed-unmerged states are rejected. `merged-result` additionally needs
+`--target-branch`, provider-confirmed merged state, the merge commit as an
+ancestor of the local target branch, and identical delivery-file bytes at that
+branch. Missing `gh` authentication/provider facts, unsupported providers,
+unavailable local merge objects, or unknown target branches fail closed. The
+adapter performs no fetch, checkout, ref update, or remote write; its command
+runner is replaceable only at the internal unit-test seam.
+
+Schema V2 readers continue to load older closures that predate the optional
+delivery verification receipt. Every new Close writes the receipt and replaces
+the caller's descriptive candidate observation with the Core re-observation;
+the caller's candidate ID/fingerprint remains only a selector that must match
+the actual Run snapshot. Serialized candidate receipts remain local task-state
+evidence, not signatures against a caller that can rewrite the Kernel itself.

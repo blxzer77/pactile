@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   createTaskCandidateEntry,
+  fingerprintCurrentRepositoryFile,
   GitCandidateObservationError,
   observeGitCandidate,
   observeTaskRunCandidate,
@@ -140,6 +141,7 @@ describe("read-only Git candidate observation", () => {
         reclamationState: "not-requested" as const,
       };
       const run: TaskRunObservationSource = {
+        id: "run-1",
         writeSetSnapshot: ["src/task.ts", "docs/"],
         workspace,
       };
@@ -188,6 +190,44 @@ describe("read-only Git candidate observation", () => {
         /workspace-mismatch/,
       );
     } finally {
+      removeTemporaryGitRepository(repository);
+    }
+  });
+
+  it("rejects symlink delivery paths instead of hashing the link target file", (context) => {
+    const repository = createTemporaryGitRepository();
+    const outside = path.join(
+      path.dirname(repository.root),
+      "pactile-verification-outside.txt",
+    );
+    const link = path.join(repository.root, "src", "outside-link.txt");
+    try {
+      fs.writeFileSync(outside, "outside bytes\n");
+      try {
+        fs.symlinkSync(outside, link, "file");
+      } catch (error) {
+        if (process.platform === "win32") {
+          context.skip(
+            `Windows does not permit creating the test symlink: ${String(error)}`,
+          );
+          return;
+        }
+        throw error;
+      }
+      expect(() =>
+        fingerprintCurrentRepositoryFile(
+          repository.root,
+          "src/outside-link.txt",
+        ),
+      ).toThrow(/regular file inside the repository/);
+      expect(() =>
+        fingerprintCurrentRepositoryFile(
+          repository.root,
+          "../pactile-verification-outside.txt",
+        ),
+      ).toThrow(/unsafe path segment/);
+    } finally {
+      fs.rmSync(outside, { force: true });
       removeTemporaryGitRepository(repository);
     }
   });

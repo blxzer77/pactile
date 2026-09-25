@@ -2,7 +2,9 @@ import { execFileSync, execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { addTaskDependency, applyKernelArchive, applyKernelPatch, applyKernelRecordGate, applyKernelStart, assertFullQualityForPhase, buildAcEvidenceLedger, checkTaskClose, closeTaskKernel, createTaskKernel, emptyTaskRecord, fingerprintTaskValue, isTaskDeliveryLevel, listTaskKernelSnapshots, parseAcceptanceItems, qualityFingerprint, readDependencyGraph, readKernel, readTaskKernel, readTopology, recordTaskReview, recordTaskRunResult, resolveRequiredControls, resumeTaskRun, startTaskRun, taskRecordSchema, unmetRequires, type PactileTaskRecord, type TaskCandidateObservation, type TaskDeliveryEvidence, type TaskKernelSnapshotV2, type TaskSnapshotEntry } from "../core/task/index.js";
+import { createTaskCandidateEntry, observeTaskRunCandidate, VERIFICATION_CANDIDATE_ENTRY_REF } from "../core/task/task-candidate-observer.js";
 import { addContextEntry, CONTEXT_FILES, readContextEntries, validateContextFile } from "../pactile/task/context.js";
+import * as piBridge from "../pactile/pi/bridge.js";
 import { approvedExecuteTask } from "../pactile/task/authorization.js";
 import { createTaskWithArtifacts } from "../pactile/task/creation.js";
 import { readPactileConfig } from "../pactile/task/config.js";
@@ -15,6 +17,22 @@ import { sameGitRoot } from "../utils/git-root.js";
 import { localDate } from "../utils/local-date.js";
 import { getAllTaskTemplates } from "../templates/pactile/index.js";
 import { learningScaffold, prepareArchiveEvidence } from "../pactile/task/scaffold.js";
+
+interface PiTaskRunEvidence {
+  taskId: string;
+  taskRunId: string;
+  evidenceRefs: string[];
+  executionMeasurementRef: string;
+  assurance: "manager-owned-child-exit";
+  outcome: "settled";
+}
+
+function readPiTaskRunEvidence(root: string, taskDir: string, taskRunId: string): PiTaskRunEvidence | null {
+  const reader = (piBridge as unknown as {
+    readPiTaskRunEvidence?: (root: string, taskDir: string, taskRunId: string) => PiTaskRunEvidence | null;
+  }).readPiTaskRunEvidence;
+  return typeof reader === "function" ? reader(root, taskDir, taskRunId) : null;
+}
 
 function option(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -273,23 +291,119 @@ function runResultTask(root: string, args: string[]): number {
   const runId = requireArgument(args[1], "run ID");
   const { dir, kernel } = taskV2(root, reference);
   const outcome = requireArgument(option(args, "--outcome"), "--outcome");
-  if (outcome !== "completed" && outcome !== "failed" && outcome !== "blocked") throw new Error("--outcome must be completed, failed, or blocked");
-  const failure = outcome === "completed" ? undefined : {
-    category: requireArgument(option(args, "--failure-category"), "--failure-category"),
-    message: requireArgument(option(args, "--failure-message"), "--failure-message"),
-    ...(option(args, "--failure-evidence") ? { evidenceRef: option(args, "--failure-evidence") } : {}),
-  };
+  if (outcome !== "completed" && outcome !== "failed" && outcome !== "blocked")
+    throw new Error("--outcome must be completed, failed, or blocked");
+  const failure =
+    outcome === "completed"
+      ? undefined
+      : {
+          category: requireArgument(
+            option(args, "--failure-category"),
+            "--failure-category",
+          ),
+          message: requireArgument(
+            option(args, "--failure-message"),
+            "--failure-message",
+          ),
+          ...(option(args, "--failure-evidence")
+            ? { evidenceRef: option(args, "--failure-evidence") }
+            : {}),
+        };
+  let candidateEntries: TaskSnapshotEntry[] = [];
+  let evidenceRefs = options(args, "--evidence");
+  let executionMeasurementRef = option(args, "--execution-measurement-ref");
+  if (outcome === "completed") {
+    const run = kernel.runs.find((item) => item.id === runId);
+    if (!run)
+      throw new Error(
+        `Run ${runId} does not exist on Task ${kernel.identity.taskId}`,
+      );
+    const candidateInputs = parseCandidateEntries(args);
+    if (
+      candidateInputs.some(
+        (entry) => entry.ref === VERIFICATION_CANDIDATE_ENTRY_REF,
+      )
+    ) {
+      throw new Error(
+        "--candidate cannot set the reserved P41 Git/file observation reference",
+      );
+    }
+    const piBound = run.host?.host === "pi";
+    let piEvidence: ReturnType<typeof readPiTaskRunEvidence> = null;
+    if (piBound) {
+      if (
+        run.host?.role !== "implement" ||
+        run.host.assuranceSource !== "manager-owned-child-exit"
+      ) {
+        throw new Error(
+          "Pi Run completion requires implement role and manager-owned-child-exit assurance",
+        );
+      }
+      piEvidence = readPiTaskRunEvidence(root, dir, runId);
+      if (!piEvidence) {
+        throw new Error(
+          "Pi Run has no valid settled host-stop and persisted result receipt; it cannot be recorded completed",
+        );
+      }
+      if (
+        piEvidence.taskRunId !== run.id ||
+        piEvidence.taskId !== run.taskId ||
+        piEvidence.outcome !== "settled" ||
+        piEvidence.assurance !== "manager-owned-child-exit"
+      ) {
+        throw new Error(
+          "Pi success evidence does not match the selected Task Run binding",
+        );
+      }
+      const suppliedMeasurement = executionMeasurementRef;
+      if (
+        suppliedMeasurement &&
+        suppliedMeasurement !== piEvidence.executionMeasurementRef
+      ) {
+        throw new Error(
+          "--execution-measurement-ref conflicts with the verified Pi Run receipt",
+        );
+      }
+      executionMeasurementRef = piEvidence.executionMeasurementRef;
+      evidenceRefs = [
+        ...new Set([...evidenceRefs, ...piEvidence.evidenceRefs]),
+      ];
+    }
+    const runObservation = observeTaskRunCandidate({
+      run,
+      ...(run.workspace === null ? { repositoryRoot: root } : {}),
+    });
+    candidateEntries = [
+      ...candidateInputs,
+      createTaskCandidateEntry(runObservation),
+    ];
+  }
   const result = recordTaskRunResult({
-    root, taskDir: dir, expectedRevision: kernel.revision, runId, outcome,
-    ...(option(args, "--summary") ? { summary: option(args, "--summary") } : {}),
-    evidenceRefs: options(args, "--evidence"), candidateEntries: parseCandidateEntries(args), failure,
+    root,
+    taskDir: dir,
+    expectedRevision: kernel.revision,
+    runId,
+    outcome,
+    ...(option(args, "--summary")
+      ? { summary: option(args, "--summary") }
+      : {}),
+    evidenceRefs,
+    candidateEntries,
+    failure,
     measurementRefs: {
-      ...(option(args, "--execution-measurement-ref") ? { execution: option(args, "--execution-measurement-ref") } : {}),
-      ...(option(args, "--waiting-measurement-ref") ? { waiting: option(args, "--waiting-measurement-ref") } : {}),
+      ...(executionMeasurementRef
+        ? { execution: executionMeasurementRef }
+        : {}),
+      ...(option(args, "--waiting-measurement-ref")
+        ? { waiting: option(args, "--waiting-measurement-ref") }
+        : {}),
     },
-    actor: actor(root, args), idempotencyKey: option(args, "--idempotency-key") ?? `run-result:${runId}`,
+    actor: actor(root, args),
+    idempotencyKey: option(args, "--idempotency-key") ?? `run-result:${runId}`,
   });
-  console.log(`Run ${runId}: ${outcome}\nTask phase: ${result.kernel.phase}\nKernel revision: ${result.kernel.revision}`);
+  console.log(
+    `Run ${runId}: ${outcome}\nTask phase: ${result.kernel.phase}\nKernel revision: ${result.kernel.revision}`,
+  );
   return 0;
 }
 
@@ -339,29 +453,83 @@ function closeTask(root: string, args: string[]): number {
   const reviewId = requireArgument(option(args, "--review"), "--review");
   const deliveryEvidence: TaskDeliveryEvidence = {
     level: option(args, "--delivery-level") as TaskDeliveryEvidence["level"],
-    reference: requireArgument(option(args, "--delivery-ref"), "--delivery-ref"),
-    summary: requireArgument(option(args, "--delivery-summary"), "--delivery-summary"),
+    reference: requireArgument(
+      option(args, "--delivery-ref"),
+      "--delivery-ref",
+    ),
+    summary: requireArgument(
+      option(args, "--delivery-summary"),
+      "--delivery-summary",
+    ),
+    ...(option(args, "--delivery-path")
+      ? { path: option(args, "--delivery-path") }
+      : {}),
+    ...(option(args, "--target-branch")
+      ? { targetBranch: option(args, "--target-branch") }
+      : {}),
   };
-  if (!isTaskDeliveryLevel(deliveryEvidence.level)) throw new Error("--delivery-level must be local-result, pull-request, merged-result, or documentation");
+  if (!isTaskDeliveryLevel(deliveryEvidence.level))
+    throw new Error(
+      "--delivery-level must be local-result, pull-request, merged-result, or documentation",
+    );
   const candidateObservation: TaskCandidateObservation = {
-    snapshotId: requireArgument(option(args, "--candidate-id"), "--candidate-id"),
-    fingerprint: requireArgument(option(args, "--candidate-fingerprint"), "--candidate-fingerprint"),
-    observedBy: requireArgument(option(args, "--candidate-observed-by"), "--candidate-observed-by"),
-    observedAt: option(args, "--candidate-observed-at") ?? new Date().toISOString(),
-    source: requireArgument(option(args, "--candidate-observation-source"), "--candidate-observation-source"),
-    evidenceRef: requireArgument(option(args, "--candidate-observation-ref"), "--candidate-observation-ref"),
+    snapshotId: requireArgument(
+      option(args, "--candidate-id"),
+      "--candidate-id",
+    ),
+    fingerprint: requireArgument(
+      option(args, "--candidate-fingerprint"),
+      "--candidate-fingerprint",
+    ),
+    observedBy: requireArgument(
+      option(args, "--candidate-observed-by"),
+      "--candidate-observed-by",
+    ),
+    observedAt:
+      option(args, "--candidate-observed-at") ?? new Date().toISOString(),
+    source: requireArgument(
+      option(args, "--candidate-observation-source"),
+      "--candidate-observation-source",
+    ),
+    evidenceRef: requireArgument(
+      option(args, "--candidate-observation-ref"),
+      "--candidate-observation-ref",
+    ),
   };
   if (args.includes("--check")) {
-    const errors = checkTaskClose({ root, taskDir: dir, expectedRevision: kernel.revision, runId, reviewId, candidateObservation, deliveryEvidence });
-    console.log(`Task Close check: ${errors.length ? "FAIL" : "PASS"}${errors.length ? `\n${errors.map((error) => `  - ${error}`).join("\n")}` : ""}`);
-    console.log("Candidate freshness: caller-supplied observation is matched to the frozen Run snapshot; Kernel does not recompute current Git or filesystem bytes.");
+    const errors = checkTaskClose({
+      root,
+      taskDir: dir,
+      expectedRevision: kernel.revision,
+      runId,
+      reviewId,
+      candidateObservation,
+      deliveryEvidence,
+    });
+    console.log(
+      `Task Close check: ${errors.length ? "FAIL" : "PASS"}${errors.length ? `\n${errors.map((error) => `  - ${error}`).join("\n")}` : ""}`,
+    );
+    console.log(
+      "Candidate freshness: Close re-observes current Git state and bounded allowed file bytes against the frozen candidate entry.",
+    );
     return errors.length ? 1 : 0;
   }
   const result = closeTaskKernel({
-    root, taskDir: dir, expectedRevision: kernel.revision, runId, reviewId, candidateObservation, deliveryEvidence,
-    actor: actor(root, args), idempotencyKey: option(args, "--idempotency-key") ?? `task-close:${kernel.identity.taskId}`,
+    root,
+    taskDir: dir,
+    expectedRevision: kernel.revision,
+    runId,
+    reviewId,
+    candidateObservation,
+    deliveryEvidence,
+    actor: actor(root, args),
+    idempotencyKey:
+      option(args, "--idempotency-key") ??
+      `task-close:${kernel.identity.taskId}`,
   });
-  console.log(`Task closed: ${result.kernel.identity.taskId}\nDelivery level: ${deliveryEvidence.level}\nCandidate freshness: caller-supplied observation recorded\nKernel revision: ${result.kernel.revision}`);
+  console.log(
+    `Task closed: ${result.kernel.identity.taskId}\nDelivery level: ${deliveryEvidence.level}\nCandidate freshness: current Git/files re-observed\nDelivery evidence: machine-observed\nKernel revision: ${result.kernel.revision}`,
+  );
   return 0;
 }
 

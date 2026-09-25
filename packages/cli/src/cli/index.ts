@@ -85,8 +85,7 @@ const program = new Command();
 
 function debugEnabled(): boolean {
   return Boolean(
-    process.env.DEBUG ??
-      readPactileEnvironment(PACTILE_ENVIRONMENT_KEYS.debug),
+    process.env.DEBUG ?? readPactileEnvironment(PACTILE_ENVIRONMENT_KEYS.debug),
   );
 }
 
@@ -96,9 +95,7 @@ function collectOption(value: string, previous: string[]): string[] {
 
 program
   .name("pactile")
-  .description(
-    "Evidence-backed governed capability workspace for Codex",
-  )
+  .description("Evidence-backed governed capability workspace for Codex")
   .version(VERSION, "-v, --version", "output the version number");
 
 program
@@ -213,10 +210,7 @@ program
     "--skip-readiness",
     "Skip Smart Search and selected capability readiness checks and report framework readiness as unverified",
   )
-  .option(
-    "--json",
-    "Emit one-line JSON rollout evidence (dry-run or apply)",
-  )
+  .option("--json", "Emit one-line JSON rollout evidence (dry-run or apply)")
   .option(
     "--skip-post-update-smoke",
     "Skip post-apply Node runtime smoke checks",
@@ -431,10 +425,7 @@ program
   .description(
     "List or switch the project's .pactile/workflow.md template (native, tdd, or marketplace)",
   )
-  .option(
-    "-t, --template <id>",
-    "Workflow template id (e.g., native, tdd)",
-  )
+  .option("-t, --template <id>", "Workflow template id (e.g., native, tdd)")
   .option(
     "-m, --marketplace <source>",
     "Custom marketplace source (e.g., gh:myorg/myrepo/marketplace)",
@@ -472,8 +463,13 @@ program
 
 program
   .command("context")
-  .description("Read Pactile task, package, and session context with the Node runtime")
-  .addHelpText("after", "\nModes: default, record, packages, phase, lite, session, retrieval-pack\nExamples:\n  pactile context --mode packages --json\n  pactile context --mode session --json\n  pactile context --mode phase --step 1\n  pactile context --mode retrieval-pack --input collected-evidence.json --max-items 8 --json\n")
+  .description(
+    "Read Pactile task, package, and session context with the Node runtime",
+  )
+  .addHelpText(
+    "after",
+    "\nModes: default, record, packages, phase, lite, session, retrieval-pack\nExamples:\n  pactile context --mode packages --json\n  pactile context --mode session --json\n  pactile context --mode phase --step 1\n  pactile context --mode retrieval-pack --input collected-evidence.json --max-items 8 --json\n",
+  )
   .allowUnknownOption()
   .allowExcessArguments()
   .argument("[arguments...]")
@@ -484,7 +480,10 @@ program
 program
   .command("session")
   .description("Record a Pactile journal session with the Node runtime")
-  .addHelpText("after", "\nOperations:\n  add --title <title> [--summary <text>] [--content-file <path>]\n  search --query <query> [--json]\n")
+  .addHelpText(
+    "after",
+    "\nOperations:\n  add --title <title> [--summary <text>] [--content-file <path>]\n  search --query <query> [--json]\n",
+  )
   .allowUnknownOption()
   .allowExcessArguments()
   .argument("[operation]")
@@ -496,7 +495,10 @@ program
 program
   .command("codex")
   .description("Bridge Pactile tasks to native Codex desktop tasks")
-  .addHelpText("after", "\n  prepare <task> --tool create|message|wait|read [options]\n  receipt <task> <request-id> --result-file <file>\n  status <task>\n")
+  .addHelpText(
+    "after",
+    "\n  prepare <task> --tool create|message|wait|read [options]\n  receipt <task> <request-id> --result-file <file>\n  status <task>\n",
+  )
   .allowUnknownOption()
   .allowExcessArguments()
   .argument("[operation]")
@@ -508,7 +510,10 @@ program
 program
   .command("pi")
   .description("Run an approved Pactile task through Pi native RPC")
-  .addHelpText("after", "\n  run <task> --role implement|check|research --prompt-file <file> [--prompt-file <file> ...] [--timeout-ms <ms>] [--resume]\n  status <task> | cancel <task>\n")
+  .addHelpText(
+    "after",
+    "\n  run <task> --role implement|check|research --prompt-file <file> [--prompt-file <file> ...] [--timeout-ms <ms>] [--resume]\n  status <task> | cancel <task>\n",
+  )
   .allowUnknownOption()
   .allowExcessArguments()
   .argument("[operation]")
@@ -520,7 +525,10 @@ program
 program
   .command("parallel")
   .description("Run approved Parent Child tasks with bounded Pi concurrency")
-  .addHelpText("after", "\n  run <parent> --manifest <file> | status <parent>\n")
+  .addHelpText(
+    "after",
+    "\n  run <parent> --manifest <file> | status <parent>\n",
+  )
   .allowUnknownOption()
   .allowExcessArguments()
   .argument("[operation]")
@@ -532,7 +540,10 @@ program
 program
   .command("task")
   .description("Manage Pactile tasks with the Node runtime")
-  .addHelpText("after", "\nCore operations:\n  create <title> --slug <slug> --deliverable <text> --delivery-level <level> --accept <criterion> [--depends-on <task-id>]\n  legacy-create <title> --slug <slug> [--rigor lite|full] [--parent <task>]\n  show <task> [--json] | dashboard | list | list-archive [YYYY-MM] | select <task> | selected [--json] | exit\n  run-start <task> --input-summary <text> --approved-by <actor> --authorization-scope <text> --authorization-evidence <ref> [--wait]\n  run-resume <task> <run-id> | run-result <task> <run-id> --outcome <completed|failed|blocked>\n  review <task> --run <run-id> --candidate-id <id> --candidate-fingerprint <sha256> --reviewer <actor> --decision <verdict> --evidence <ref> --criterion <id>=<ref>\n  close <task> --run <run-id> --review <review-id> --candidate-id <id> --candidate-fingerprint <sha256> --candidate-observed-by <actor> --candidate-observation-source <source> --candidate-observation-ref <ref> --delivery-level <level> --delivery-ref <ref> --delivery-summary <text> [--check]\n  start-execution <legacy-task> --check|--approved [--ignore-deps]\n  archive <legacy-task> [--check] [--archive-integrated-children]\n  prepare-archive-evidence <legacy-task> [--dry-run] | prepare-learning-scaffold <legacy-task> [--trigger <text>]\n  set-deps <legacy-task> [required-task-id...]\n  add-subtask <parent> <child> | remove-subtask <parent> <child>\n  prepare-child-worktree <parent> <child> --branch <branch> [--check]\n  set-child-state <parent> <child> <state> --evidence <ref>\n  integrate-child <parent> <child> <state> --evidence <ref> --ref <git-ref> [--execute-merge]\n  record-ac-evidence | record-independent-check | record-gate\n  add-context | list-context | validate | artifact-locale\n")
+  .addHelpText(
+    "after",
+    "\nCore operations:\n  create <title> --slug <slug> --deliverable <text> --delivery-level <level> --accept <criterion> [--depends-on <task-id>]\n  legacy-create <title> --slug <slug> [--rigor lite|full] [--parent <task>]\n  show <task> [--json] | dashboard | list | list-archive [YYYY-MM] | select <task> | selected [--json] | exit\n  run-start <task> --input-summary <text> --approved-by <actor> --authorization-scope <text> --authorization-evidence <ref> [--wait]\n  run-resume <task> <run-id> | run-result <task> <run-id> --outcome <completed|failed|blocked>\n  review <task> --run <run-id> --candidate-id <id> --candidate-fingerprint <sha256> --reviewer <actor> --decision <verdict> --evidence <ref> --criterion <id>=<ref>\n  close <task> --run <run-id> --review <review-id> --candidate-id <id> --candidate-fingerprint <sha256> --candidate-observed-by <actor> --candidate-observation-source <source> --candidate-observation-ref <ref> --delivery-level <level> --delivery-ref <ref> --delivery-summary <text> [--delivery-path <repo-path>] [--target-branch <branch>] [--check]\n  start-execution <legacy-task> --check|--approved [--ignore-deps]\n  archive <legacy-task> [--check] [--archive-integrated-children]\n  prepare-archive-evidence <legacy-task> [--dry-run] | prepare-learning-scaffold <legacy-task> [--trigger <text>]\n  set-deps <legacy-task> [required-task-id...]\n  add-subtask <parent> <child> | remove-subtask <parent> <child>\n  prepare-child-worktree <parent> <child> --branch <branch> [--check]\n  set-child-state <parent> <child> <state> --evidence <ref>\n  integrate-child <parent> <child> <state> --evidence <ref> --ref <git-ref> [--execute-merge]\n  record-ac-evidence | record-independent-check | record-gate\n  add-context | list-context | validate | artifact-locale\n",
+  )
   .allowUnknownOption()
   .allowExcessArguments()
   .argument("[operation]")
