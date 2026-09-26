@@ -50,7 +50,11 @@ import * as piBridge from "../pactile/pi/bridge.js";
 import { approvedExecuteTask } from "../pactile/task/authorization.js";
 import { createTaskWithArtifacts } from "../pactile/task/creation.js";
 import { readPactileConfig } from "../pactile/task/config.js";
-import { runTaskScheduleCli } from "./task-schedule.js";
+import {
+  runTaskScheduleCli,
+  runTaskScheduleDispatchCli,
+  type TaskScheduleDispatchCliOptionsV1,
+} from "./task-schedule.js";
 import {
   checkArchive,
   checkStartExecution,
@@ -111,10 +115,20 @@ interface PiTaskRunEvidence {
   outcome: "settled";
 }
 
-function readPiTaskRunEvidence(root: string, taskDir: string, taskRunId: string): PiTaskRunEvidence | null {
-  const reader = (piBridge as unknown as {
-    readPiTaskRunEvidence?: (root: string, taskDir: string, taskRunId: string) => PiTaskRunEvidence | null;
-  }).readPiTaskRunEvidence;
+function readPiTaskRunEvidence(
+  root: string,
+  taskDir: string,
+  taskRunId: string,
+): PiTaskRunEvidence | null {
+  const reader = (
+    piBridge as unknown as {
+      readPiTaskRunEvidence?: (
+        root: string,
+        taskDir: string,
+        taskRunId: string,
+      ) => PiTaskRunEvidence | null;
+    }
+  ).readPiTaskRunEvidence;
   return typeof reader === "function" ? reader(root, taskDir, taskRunId) : null;
 }
 
@@ -2895,4 +2909,28 @@ export function runTaskCli(argv: string[], root = process.cwd()): number {
     console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
   }
+}
+
+/** Promise-aware task entry for the existing CLI wrapper's async operations. */
+export async function runTaskCliAsync(
+  argv: string[],
+  root = process.cwd(),
+  scheduleDispatchOptions: TaskScheduleDispatchCliOptionsV1 = {},
+): Promise<number> {
+  const [command, operation, ...args] = argv;
+  if (command === "schedule" && operation === "dispatch") {
+    try {
+      return await runTaskScheduleDispatchCli(
+        args,
+        root,
+        scheduleDispatchOptions,
+      );
+    } catch (error) {
+      console.error(
+        `Error: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return 1;
+    }
+  }
+  return runTaskCli(argv, root);
 }
