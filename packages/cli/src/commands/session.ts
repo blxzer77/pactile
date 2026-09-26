@@ -86,6 +86,8 @@ function selectedRecord(root: string): Record<string, unknown> | null {
       deliveryLevel: read.kernel.definition.deliveryLevel,
       dependencies: read.kernel.definition.dependencies,
     };
+  if (!read.kernel.persisted)
+    throw new Error("selected-task-kernel-not-persisted");
 
   const taskFile = path.join(dir, "task.json");
   try {

@@ -8,6 +8,7 @@ import { runSessionCli } from "../../src/commands/session.js";
 import { runTaskCli } from "../../src/commands/task.js";
 import { buildLegacyTaskV2Import } from "../../src/core/task/legacy-task-v2-import.js";
 import { scanLegacyTaskMigration } from "../../src/core/task/legacy-task-migration.js";
+import { emptyTaskRecord } from "../../src/core/task/schema.js";
 import {
   legacyTaskMigrationOverlayPath,
 } from "../../src/core/task/legacy-task-migration-reader.js";
@@ -302,6 +303,73 @@ describe("session add with selected legacy Task migrations", () => {
         )
         .includes("Session 1: Confirmed legacy session"),
     ).toBe(true);
+  });
+
+  it("refuses a synthesized V1 result if kernel.json disappears after preflight", () => {
+    const root = makeRoot();
+    const taskDir = createNativeV2Task(root, "native-kernel-race-session");
+    const taskFile = path.join(taskDir, "task.json");
+    writeJson(
+      taskFile,
+      emptyTaskRecord({
+        id: "native-kernel-race-session",
+        name: "native-kernel-race-session",
+        title: "Stale task projection",
+        description: "A legacy-shaped task.json beside native V2 data.",
+        status: "planning",
+        creator: "session-test",
+        assignee: "session-test",
+        createdAt: "2026-09-25",
+      }),
+    );
+    selectTask(root, taskDir);
+    const kernelFile = path.join(taskDir, "kernel.json");
+    const movedKernelFile = `${kernelFile}.moved-during-read`;
+    const kernelBytes = fs.readFileSync(kernelFile);
+    const taskBytes = fs.readFileSync(taskFile);
+    const before = journalFiles(root);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const originalKernelStat = fs.lstatSync(kernelFile);
+    const normalizedKernelFile = path.resolve(kernelFile).toLowerCase();
+    let movedKernel = false;
+    const lstatSpy = vi.spyOn(fs, "lstatSync").mockImplementation((...args) => {
+      const requestedPath = String(args[0]);
+      if (path.resolve(requestedPath).toLowerCase() === normalizedKernelFile) {
+        if (!movedKernel) {
+          movedKernel = true;
+          fs.renameSync(kernelFile, movedKernelFile);
+          return originalKernelStat;
+        }
+        const missing = new Error(`kernel disappeared: ${kernelFile}`) as NodeJS.ErrnoException;
+        missing.code = "ENOENT";
+        throw missing;
+      }
+      return fs.statSync(requestedPath);
+    });
+
+    let exitCode = -1;
+    try {
+      exitCode = runSessionCli(
+        ["add", "--title", "Must not record synthesized V1"],
+        root,
+      );
+    } finally {
+      lstatSpy.mockRestore();
+    }
+
+    expect(movedKernel).toBe(true);
+    expect(exitCode).toBe(1);
+    expect(String(error.mock.calls.at(-1)?.[0])).toContain(
+      "selected-task-kernel-not-persisted",
+    );
+    expectJournalUnchanged(root, before);
+    expect(fs.existsSync(kernelFile)).toBe(false);
+    expect(fs.readFileSync(movedKernelFile).equals(kernelBytes)).toBe(true);
+    expect(fs.readFileSync(taskFile).equals(taskBytes)).toBe(true);
+    const fallback = readTaskKernel({ root, taskDir, cwd: root });
+    expect(fallback.kind).toBe("legacy-task-kernel-v1");
+    if (fallback.kind === "legacy-task-kernel-v1")
+      expect(fallback.kernel.persisted).toBe(false);
   });
 
   it("fails closed on a corrupt native V2 Kernel without creating any journal", () => {
