@@ -23,6 +23,7 @@ export {
   readTaskKernelScheduleReceiptV1,
   type PersistedTaskScheduleV1,
   type PersistedTaskKernelScheduleV1,
+  type ReadTaskKernelScheduleReceiptV1,
   type SchedulerTaskCostOverridesV1,
   type TaskMapScheduleOptionsV1,
   type JevParentScheduleOptionsV1,

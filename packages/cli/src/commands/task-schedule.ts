@@ -3,6 +3,7 @@ import { listTaskKernelSnapshots } from "../core/task/index.js";
 import {
   readTaskKernelScheduleReceiptV1,
   scheduleTaskKernelGraph,
+  type TaskKernelScheduleDecisionReceiptV1,
 } from "../pactile/scheduler/index.js";
 
 interface ListedTask {
@@ -11,6 +12,31 @@ interface ListedTask {
   phase: string;
   revision: number;
   taskPath: string;
+}
+
+function receiptDisplay(
+  receipt: TaskKernelScheduleDecisionReceiptV1,
+  integrity:
+    | "fingerprint-verified"
+    | "legacy-fingerprint-excludes-createdAt" = receipt.integrityVersion === 2
+    ? "fingerprint-verified"
+    : "legacy-fingerprint-excludes-createdAt",
+): {
+  integrity: "fingerprint-verified" | "legacy-fingerprint-excludes-createdAt";
+  receipt: Record<string, unknown>;
+  unverifiedCreatedAt?: string;
+} {
+  if (integrity === "fingerprint-verified")
+    return {
+      integrity: "fingerprint-verified",
+      receipt: { ...receipt },
+    };
+  const { createdAt, ...legacyReceipt } = receipt;
+  return {
+    integrity: "legacy-fingerprint-excludes-createdAt",
+    receipt: { ...legacyReceipt },
+    unverifiedCreatedAt: createdAt,
+  };
 }
 
 function activeV2Tasks(rootValue: string): ListedTask[] {
@@ -70,13 +96,18 @@ function scheduleTaskPlan(args: string[], root: string): number {
       "at least one V2 Task ID is required; list candidates with `pactile task schedule list`",
     );
   const result = scheduleTaskKernelGraph(root, candidateTaskIds);
+  const display = receiptDisplay(result.receipt);
   console.log(
     JSON.stringify(
       {
         receiptFile: result.receiptFile,
         receiptStatus: result.created ? "created" : "reused",
+        integrity: display.integrity,
+        ...(display.unverifiedCreatedAt
+          ? { unverifiedCreatedAt: display.unverifiedCreatedAt }
+          : {}),
         execution: "not-dispatched",
-        receipt: result.receipt,
+        receipt: display.receipt,
       },
       null,
       2,
@@ -91,7 +122,8 @@ function scheduleTaskShow(args: string[], root: string): number {
   const [fingerprint] = args;
   if (!fingerprint)
     throw new Error("task schedule show requires one receipt fingerprint");
-  const receipt = readTaskKernelScheduleReceiptV1(root, fingerprint);
+  const loaded = readTaskKernelScheduleReceiptV1(root, fingerprint);
+  const display = receiptDisplay(loaded.receipt, loaded.integrity);
   const receiptFile = path.posix.join(
     ".pactile",
     ".runtime",
@@ -103,10 +135,13 @@ function scheduleTaskShow(args: string[], root: string): number {
     JSON.stringify(
       {
         receiptFile,
-        integrity: "fingerprint-verified",
+        integrity: display.integrity,
+        ...(display.unverifiedCreatedAt
+          ? { unverifiedCreatedAt: display.unverifiedCreatedAt }
+          : {}),
         taskRevisionFreshness: "not-rechecked",
         execution: "not-dispatched",
-        receipt,
+        receipt: display.receipt,
       },
       null,
       2,

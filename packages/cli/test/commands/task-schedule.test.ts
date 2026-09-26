@@ -4,9 +4,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createTaskKernel,
+  fingerprintTaskValue,
   listTaskKernelSnapshots,
 } from "../../src/core/task/index.js";
 import { runTaskCli } from "../../src/commands/task.js";
+import { planTaskKernelGraphV1 } from "../../src/pactile/scheduler/index.js";
 
 const roots: string[] = [];
 
@@ -88,9 +90,12 @@ describe("V2 Task schedule CLI", () => {
     const planned = JSON.parse(String(log.mock.lastCall?.[0])) as {
       receiptFile: string;
       receiptStatus: string;
+      integrity: string;
       execution: string;
       receipt: {
         receiptFingerprint: string;
+        createdAt: string;
+        integrityVersion: number;
         candidateTaskIds: string[];
         taskKernelRevisions: Record<string, number>;
         request: { tasks: { taskId: string; dependsOn: string[] }[] };
@@ -98,9 +103,11 @@ describe("V2 Task schedule CLI", () => {
     };
     expect(planned).toMatchObject({
       receiptStatus: "created",
+      integrity: "fingerprint-verified",
       execution: "not-dispatched",
       receipt: {
         scope: "task-kernel-v2",
+        integrityVersion: 2,
         candidateTaskIds: ["schedule-candidate"],
         request: {
           tasks: [
@@ -124,6 +131,19 @@ describe("V2 Task schedule CLI", () => {
       ]),
     ).toEqual([...revisionsBefore.entries()]);
 
+    expect(runTaskCli(["schedule", "plan", "schedule-candidate"], root)).toBe(
+      0,
+    );
+    const replay = JSON.parse(String(log.mock.lastCall?.[0])) as {
+      receiptStatus: string;
+      receipt: { receiptFingerprint: string; createdAt: string };
+    };
+    expect(replay.receiptStatus).toBe("reused");
+    expect(replay.receipt.receiptFingerprint).toBe(
+      planned.receipt.receiptFingerprint,
+    );
+    expect(replay.receipt.createdAt).toBe(planned.receipt.createdAt);
+
     expect(
       runTaskCli(
         ["schedule", "show", planned.receipt.receiptFingerprint],
@@ -140,9 +160,9 @@ describe("V2 Task schedule CLI", () => {
 
     const receiptPath = path.resolve(root, planned.receiptFile);
     const tampered = JSON.parse(fs.readFileSync(receiptPath, "utf8")) as {
-      candidateTaskIds: string[];
+      createdAt: string;
     };
-    tampered.candidateTaskIds.push("tampered-task");
+    tampered.createdAt = "2000-01-01T00:00:00.000Z";
     fs.writeFileSync(
       receiptPath,
       `${JSON.stringify(tampered, null, 2)}\n`,
@@ -157,5 +177,60 @@ describe("V2 Task schedule CLI", () => {
     expect(String(error.mock.lastCall?.[0])).toContain(
       "fingerprint does not match",
     );
+  });
+
+  it("reuses a valid legacy receipt without presenting its unsigned createdAt as verified", () => {
+    const root = makeRoot();
+    createV2Task(root, "legacy-schedule-task");
+    const planned = planTaskKernelGraphV1(root, ["legacy-schedule-task"]);
+    const receiptBase = {
+      candidateTaskIds: planned.candidateTaskIds,
+      taskKernelRevisions: planned.taskKernelRevisions,
+      request: planned.request,
+      plan: planned.plan,
+      lifecycle: planned.lifecycle,
+    };
+    const fingerprint = fingerprintTaskValue(receiptBase);
+    const receipt = {
+      ...receiptBase,
+      schemaVersion: 1,
+      scope: "task-kernel-v2",
+      receiptFingerprint: fingerprint,
+      createdAt: "2000-01-01T00:00:00.000Z",
+    };
+    const receiptDir = path.join(
+      root,
+      ".pactile",
+      ".runtime",
+      "scheduler",
+      "receipts",
+    );
+    fs.mkdirSync(receiptDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(receiptDir, `${fingerprint}.json`),
+      `${JSON.stringify(receipt, null, 2)}\n`,
+      "utf8",
+    );
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    expect(runTaskCli(["schedule", "plan", "legacy-schedule-task"], root)).toBe(
+      0,
+    );
+    const replayed = JSON.parse(String(log.mock.lastCall?.[0]));
+    expect(replayed).toMatchObject({
+      receiptStatus: "reused",
+      integrity: "legacy-fingerprint-excludes-createdAt",
+      unverifiedCreatedAt: "2000-01-01T00:00:00.000Z",
+      receipt: { receiptFingerprint: fingerprint },
+    });
+    expect(replayed.receipt.createdAt).toBeUndefined();
+
+    expect(runTaskCli(["schedule", "show", fingerprint], root)).toBe(0);
+    const shown = JSON.parse(String(log.mock.lastCall?.[0]));
+    expect(shown).toMatchObject({
+      integrity: "legacy-fingerprint-excludes-createdAt",
+      unverifiedCreatedAt: "2000-01-01T00:00:00.000Z",
+    });
+    expect(shown.receipt.createdAt).toBeUndefined();
   });
 });
