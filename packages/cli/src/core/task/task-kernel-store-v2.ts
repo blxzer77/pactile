@@ -218,15 +218,38 @@ export function listTaskKernelSnapshots(root: string): { taskDir: string; kernel
   return output.sort((a, b) => a.taskDir.localeCompare(b.taskDir));
 }
 
-/** Refuse update retries when an active imported Task overlay has lost integrity. */
-export function assertLegacyTaskKernelMigrationOverlaysIntact(root: string): void {
+/** Refuse mutations when an active imported Task overlay has lost integrity. */
+export function assertLegacyTaskKernelMigrationOverlaysIntact(
+  root: string,
+  validatedView?: LegacyTaskMigrationView | null,
+): void {
   const canonicalRoot = canonicalProjectRoot(root);
-  const migrationView = readLegacyTaskMigrationView(canonicalRoot);
+  // A caller may pass a base view read and verified by the migration reader
+  // when the reconciliation pointer is absent but exact precommit recovery is
+  // otherwise allowed. Never make this checker reconstruct a missing view.
+  const migrationView = validatedView === undefined
+    ? readLegacyTaskMigrationView(canonicalRoot)
+    : validatedView;
   if (!migrationView) return;
   for (const taskDir of listLegacyTaskMigrationDirectories(canonicalRoot, migrationView)) {
     const record = readLegacyTaskImportRecord(canonicalRoot, taskDir, migrationView);
-    if (record?.status === "imported")
-      readTaskKernel({ root: canonicalRoot, taskDir });
+    if (record?.status !== "imported") continue;
+    const overlayBytes = readLegacyTaskKernelOverlay({
+      root: canonicalRoot,
+      taskDir,
+      record,
+      view: migrationView,
+    });
+    if (overlayBytes) continue;
+    const staged = readLegacyTaskMigrationFile(canonicalRoot, taskDir, "kernel.json", migrationView);
+    if (!staged) throw new KernelError("CORRUPT_STATE", "legacy-task-migration-kernel-missing");
+    let document: unknown;
+    try {
+      document = JSON.parse(staged.toString("utf8")) as unknown;
+    } catch {
+      throw new KernelError("CORRUPT_STATE", "legacy-task-migration-kernel-invalid");
+    }
+    parseTaskKernelSnapshotV2(document);
   }
 }
 

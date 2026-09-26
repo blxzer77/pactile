@@ -9,6 +9,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { readLegacyTaskReconciliationFiles, type LegacyTaskReconciliationAuthority } from "./legacy-task-reconciliation-reader.js";
+
 export const LEGACY_TASK_MIGRATION_STORE =
   ".pactile/runtime/legacy-task-migrations";
 
@@ -74,6 +76,12 @@ export interface LegacyTaskMigrationFile {
 
 export interface LegacyTaskMigrationView {
   readonly authority: LegacyTaskMigrationCommit;
+  /** Immutable files from the original P36 import generation. */
+  readonly baseFiles: ReadonlyMap<string, LegacyTaskMigrationFile>;
+  /** Explicitly reconciled Task files, kept under an independent pointer. */
+  readonly reconciliationAuthority: LegacyTaskReconciliationAuthority | null;
+  readonly reconciliationFiles: ReadonlyMap<string, LegacyTaskMigrationFile>;
+  /** Effective view: base files overlaid by the committed reconciliation pointer. */
   readonly files: ReadonlyMap<string, LegacyTaskMigrationFile>;
 }
 
@@ -390,8 +398,8 @@ function verifyGeneration(
   return files;
 }
 
-/** Return a fully verified active migration snapshot, or null before first import. */
-export function readLegacyTaskMigrationView(
+/** Read only the immutable initial import pointer for a controlled recovery path. */
+export function readLegacyTaskMigrationBaseView(
   projectRoot: string,
 ): LegacyTaskMigrationView | null {
   const root = path.resolve(projectRoot);
@@ -410,7 +418,35 @@ export function readLegacyTaskMigrationView(
     throw new Error("legacy-task-migration-authority-invalid");
   }
   verifySourceBackup(root, authority.sourceFingerprint);
-  return { authority, files: verifyGeneration(root, authority) };
+  const baseFiles = verifyGeneration(root, authority);
+  return {
+    authority,
+    baseFiles,
+    reconciliationAuthority: null,
+    reconciliationFiles: new Map(),
+    files: baseFiles,
+  };
+}
+
+/** Return a fully verified active migration snapshot, or null before first import. */
+export function readLegacyTaskMigrationView(
+  projectRoot: string,
+): LegacyTaskMigrationView | null {
+  const base = readLegacyTaskMigrationBaseView(projectRoot);
+  if (!base) return null;
+  const root = path.resolve(projectRoot);
+  const reconciliation = readLegacyTaskReconciliationFiles(
+    root,
+    base.authority,
+    base.baseFiles,
+  );
+  return {
+    authority: base.authority,
+    baseFiles: base.baseFiles,
+    reconciliationAuthority: reconciliation.authority,
+    reconciliationFiles: reconciliation.files,
+    files: new Map([...base.baseFiles, ...reconciliation.files]),
+  };
 }
 
 function taskRelativePath(projectRoot: string, taskDir: string): string | null {
