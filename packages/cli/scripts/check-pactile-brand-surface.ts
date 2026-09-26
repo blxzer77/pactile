@@ -56,7 +56,7 @@ const CANONICAL_POLICY_DIGESTS = {
   inventory: "1b80e5487f3409671babfd5bd44f8a53066cbafcb4ccee2f34317e2ced64a6aa",
   renameMap: "e7e3a0eeb7ba5c97b5ed614b13c8ac628e9e3781d57ec763be06f405bb1b91aa",
   documentationMap:
-    "53bf574062784a0381ce07735d306488f0c0dc0e91630c62a77c8abc011c20ae",
+    "30cf6326c9108804c77c6f8755110d5170a1b39d85a327852a4a7614e1d7422b",
 };
 const REQUIRED_TOKEN_IDS = [
   "legacy-product-name",
@@ -91,12 +91,14 @@ const REQUIRED_DOCUMENTATION_SOURCES = [
   "docs/pactile/compatibility-inputs.zh-CN.md",
   "docs/retrieval.md",
   "docs/retrieval.zh-CN.md",
+  "docs/run-worktree-lifecycle.md",
   "docs/skills.md",
   "docs/skills.zh-CN.md",
   "docs/spec-system.md",
   "docs/spec-system.zh-CN.md",
   "docs/subagents.md",
   "docs/subagents.zh-CN.md",
+  "docs/task-coordination.zh-CN.md",
   "docs/task-system.md",
   "docs/task-system.zh-CN.md",
   "docs/workflow.md",
@@ -130,6 +132,7 @@ const REQUIRED_DOCUMENTATION_SOURCES = [
   "docs/capabilities/subagents.md",
   "docs/capabilities/subagents.zh-CN.md",
   "docs/capabilities/structured-task-artifacts.zh-CN.md",
+  "docs/concepts/critical-path-scheduler.md",
   "docs/concepts/architecture.md",
   "docs/concepts/architecture.zh-CN.md",
   "docs/concepts/index.md",

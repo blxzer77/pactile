@@ -886,6 +886,15 @@
       "reason": "Canonical Chinese architecture concept page."
     },
     {
+      "path": "docs/concepts/critical-path-scheduler.md",
+      "classification": "live",
+      "language": "en",
+      "action": "merge",
+      "targetPage": "concepts.task-system",
+      "ownerLane": "batch-4-docs-entry-concepts",
+      "reason": "Fold the English critical-path scheduler design into the bilingual, host-neutral Task-system concept."
+    },
+    {
       "path": "docs/concepts/index.md",
       "classification": "live",
       "language": "en",
@@ -1615,6 +1624,15 @@
       "reason": "Rewrite retrieval around four intents, minimum host assurance, and Middleware Provider origin/readiness."
     },
     {
+      "path": "docs/run-worktree-lifecycle.md",
+      "classification": "live",
+      "language": "en",
+      "action": "merge",
+      "targetPage": "lifecycle.workflow",
+      "ownerLane": "batch-4-docs-lifecycle-support",
+      "reason": "Fold local Run worktree creation, integration, and recovery boundaries into the bilingual workflow lifecycle guide."
+    },
+    {
       "path": "docs/skills.md",
       "classification": "live",
       "language": "en",
@@ -1667,6 +1685,15 @@
       "targetPage": "capabilities.subagents",
       "ownerLane": "batch-4-docs-hosts-capabilities",
       "reason": "Separate shared orchestration from Cursor- and Codex-native dispatch details."
+    },
+    {
+      "path": "docs/task-coordination.zh-CN.md",
+      "classification": "live",
+      "language": "zh-CN",
+      "action": "merge",
+      "targetPage": "concepts.task-system",
+      "ownerLane": "batch-4-docs-entry-concepts",
+      "reason": "Fold the Chinese Task/Run coordination contract into the bilingual, host-neutral Task-system concept."
     },
     {
       "path": "docs/task-system.md",
