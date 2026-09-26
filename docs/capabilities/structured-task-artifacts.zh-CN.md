@@ -51,7 +51,7 @@ PRD、Design、Implement、Review 和 Verify 的生命周期事实由同一份�
 
 ## 投影和读取顺序
 
-人类 Markdown 为有事实或文档引用的阶段列出事实 ID 和文档状态，然后在单独的 Facts 区域完整展示每条事实一次。Agent 投影是紧凑索引：阶段只列事实 ID 与文档 ID，事实索引只出现一次，并带摘要、状态、来源、provenance 和 locator。文档索引不包含正文，也不在 Kernel 外持久化。PRD 的 Scope/范围/Risk/风险与 Design 的 Decision/决策/Rationale/理由/Risk/风险章节会在现有文档中生成细粒度标题 locator 和章节内容指纹；索引保留标题、来源与 ref，不复制作者叙述。章节 ID 在同一标题类别中稳定，正文变化时指纹变化。
+人类 Markdown 为有事实或文档引用的阶段列出事实 ID 和文档状态，然后在单独的 Facts 区域完整展示每条事实一次。Agent 投影是紧凑索引：阶段只列事实 ID 与文档 ID，事实索引只出现一次，并带摘要、状态、来源、provenance 和 locator。文档索引不包含正文，也不在 Kernel 外持久化。PRD 的 Scope/范围/Risk/风险与 Design 的 Decision/决策/Rationale/理由/Risk/风险章节会在现有文档中生成细粒度标题 locator 和章节内容指纹；索引保留标题、来源与 ref，不复制作者叙述。核心 PRD/Design 文档保留现有短 ID，例如 `section:prd:scope` 和 `section:design:decision`；过渡文档 ID 加入文档命名空间，例如 `section:prd:legacy-task-map:scope`。同一文档中重复的标题 locator 追加出现序号，例如 `heading:decision:2`。正文变化时指纹变化。
 
 Agent 先读取索引，根据当前决策选定事实 ID、逻辑事实 URI、文档 ID 或章节 ID，再按需读取 locator。文档 ID 在内容修改后保持稳定；sha256 内容指纹随文件内容变化。显式展开整份文档时使用 `--document <document-id>@<contentFingerprint>`，缺失文档可用 `@absent` 确认仍缺失。展开单个已索引章节时使用 `--section <section-id>@<contentFingerprint>`。CLI 会把调用方带回的指纹与当前内容比较，旧指纹会被拒绝并要求重新读取索引。文档正文不会从仅包含稳定 ID 的请求中展开。缺少的 `prd.md`、`design.md`、`implement.md`、`review.md`/`review/` 和 `verify.md` 会显示为 `absent`，不会因此生成空模板。旧任务的 `task-map.md` 和 `handoff.md` 只在文件存在时作为过渡文档引用加入索引，不覆盖或复制正文。
 

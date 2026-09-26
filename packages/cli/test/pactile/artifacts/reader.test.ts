@@ -466,15 +466,15 @@ describe("Task Kernel structured artifact reader", () => {
     expect(prd).toContain("- [ ] 待补充");
     fs.writeFileSync(
       prdPath,
-      prd.replace(
+      `${prd.replace(
         "- [ ] 待补充",
         "- [ ] The imported Task Kernel fact is selectable through its logical URI.",
-      ),
+      )}\n## 范围\n\nImported PRD scope.\n`,
       "utf8",
     );
     fs.writeFileSync(
       path.join(taskDir, "task-map.md"),
-      "# Task Map\n\n## Scope\n\nPreserve the imported parent relationship.\n",
+      "# Task Map\n\n## 范围\n\nImported task-map scope.\n",
       "utf8",
     );
     fs.writeFileSync(
@@ -515,6 +515,11 @@ describe("Task Kernel structured artifact reader", () => {
         id: string;
         status: string;
         contentFingerprint: string | null;
+        sections?: {
+          id: string;
+          contentFingerprint: string;
+          ref: { path: string; selector: string };
+        }[];
       }[];
       stages: { stage: string; documentIds?: string[] }[];
     };
@@ -546,6 +551,58 @@ describe("Task Kernel structured artifact reader", () => {
     expect(
       index.stages.find(({ stage }) => stage === "implement")?.documentIds,
     ).toContain("document:legacy-handoff");
+
+    const indexedPrd = must(
+      index.documents.find(({ id }) => id === "document:prd"),
+      "migrated PRD document index",
+    );
+    const indexedTaskMap = must(
+      index.documents.find(({ id }) => id === "document:legacy-task-map"),
+      "migrated task-map document index",
+    );
+    const prdScope = must(
+      indexedPrd.sections?.find(({ id }) => id === "section:prd:scope"),
+      "canonical PRD scope section",
+    );
+    const taskMapScope = must(
+      indexedTaskMap.sections?.find(
+        ({ id }) => id === "section:prd:legacy-task-map:scope",
+      ),
+      "namespaced legacy task-map scope section",
+    );
+    expect(prdScope.ref).toEqual({
+      path: "prd.md",
+      selector: "heading:scope",
+    });
+    expect(taskMapScope.ref).toEqual({
+      path: "task-map.md",
+      selector: "heading:scope",
+    });
+    expect(new Set([prdScope.id, taskMapScope.id]).size).toBe(2);
+    for (const [section, expected, excluded] of [
+      [prdScope, "Imported PRD scope.", "Imported task-map scope."],
+      [taskMapScope, "Imported task-map scope.", "Imported PRD scope."],
+    ] as const) {
+      expect(
+        runTaskCli(
+          [
+            "artifacts",
+            taskId,
+            "--agent",
+            "--section",
+            `${section.id}@${section.contentFingerprint}`,
+          ],
+          root,
+        ),
+      ).toBe(0);
+      const selectedSection = JSON.parse(String(log.mock.lastCall?.[0])) as {
+        selectedSections: { content: string }[];
+      };
+      expect(selectedSection.selectedSections[0]?.content).toContain(expected);
+      expect(selectedSection.selectedSections[0]?.content).not.toContain(
+        excluded,
+      );
+    }
 
     expect(
       runTaskCli(["artifacts", taskId, "--agent", "--fact", factUri], root),
@@ -622,7 +679,7 @@ describe("Task Kernel structured artifact reader", () => {
     const authoredDocs = new Map([
       [
         "design.md",
-        "# Design\n\n## Decision: stable stage IDs\n\nUse stable stage IDs and hash source files on demand.\n\n## Rationale\n\nDo not store a second copy of authored narrative.\n\n## Risks\n\nA changed locator could expose a stale decision.\n\n## 设计决策\n\nKeep the Kernel as the lifecycle authority.\n\n## 理由\n\nAvoid copying user-authored narrative.\n\n## 风险\n\nThe selected section fingerprint can become stale.\n",
+        "# Design\n\n## Decision: stable stage IDs\n\nUse stable stage IDs and hash source files on demand.\n\n## Rationale\n\nDo not store a second copy of authored narrative.\n\n## Risks\n\nA changed locator could expose a stale decision.\n\n## 设计决策\n\nKeep the Kernel as the lifecycle authority.\n\n## 理由\n\nAvoid copying user-authored narrative.\n\n## 风险\n\nThe selected section fingerprint can become stale.\n\n## 设计决策\n\nThe duplicate heading still has a unique occurrence locator.\n",
       ],
       [
         "implement.md",
@@ -943,6 +1000,7 @@ describe("Task Kernel structured artifact reader", () => {
       ["section:design:decision-2", "decision"],
       ["section:design:rationale-2", "rationale"],
       ["section:design:risk-2", "risk"],
+      ["section:design:decision-3", "decision"],
     ]);
     const prdDocument = must(
       documents.find(({ id }) => id === "document:prd"),
@@ -952,6 +1010,20 @@ describe("Task Kernel structured artifact reader", () => {
       ["section:prd:scope", "scope"],
       ["section:prd:risk", "risk"],
     ]);
+    const designDecisionLocators = designDocument.sections
+      ?.filter(({ kind }) => kind === "decision")
+      .map(({ id, ref }) => [id, `${ref.path}#${ref.selector}`]);
+    expect(designDecisionLocators).toEqual([
+      [
+        "section:design:decision",
+        "design.md#heading:decision-stable-stage-ids",
+      ],
+      ["section:design:decision-2", "design.md#heading:decision"],
+      ["section:design:decision-3", "design.md#heading:decision:2"],
+    ]);
+    expect(
+      new Set(designDecisionLocators?.map(([, locator]) => locator)).size,
+    ).toBe(3);
     expect(
       documents.every(({ contentFingerprint }) =>
         /^sha256:[a-f0-9]{64}$/u.test(contentFingerprint ?? ""),

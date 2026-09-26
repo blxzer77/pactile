@@ -374,9 +374,14 @@ function indexedSections(
   const contents = new Map<string, string>();
   const counts = new Map<TaskArtifactDocumentSectionKindV1, number>();
   const source = documentSource(taskId, spec);
+  const documentNamespace =
+    spec.id === `document:${spec.stage}`
+      ? ""
+      : `${spec.id.slice("document:".length)}:`;
   for (const file of files) {
     const lines = file.bytes.toString("utf8").split(/\r?\n/u);
     const boundaries: { index: number; level: number; title: string }[] = [];
+    const selectorCounts = new Map<string, number>();
     let fence: string | null = null;
     for (const [index, line] of lines.entries()) {
       const fenceMatch = line.match(/^\s*(`{3,}|~{3,})/u);
@@ -405,13 +410,19 @@ function indexedSections(
         .join("\n");
       const occurrence = (counts.get(heading.kind) ?? 0) + 1;
       counts.set(heading.kind, occurrence);
-      const id = `section:${spec.stage}:${heading.kind}${occurrence > 1 ? `-${occurrence}` : ""}`;
-      const selector = `heading:${
+      const id = `section:${spec.stage}:${documentNamespace}${heading.kind}${occurrence > 1 ? `-${occurrence}` : ""}`;
+      const selectorBase = `heading:${
         heading.title
           .toLowerCase()
           .replace(/[^a-z0-9]+/gu, "-")
           .replace(/^-|-$/gu, "") || heading.kind
       }`;
+      const selectorOccurrence = (selectorCounts.get(selectorBase) ?? 0) + 1;
+      selectorCounts.set(selectorBase, selectorOccurrence);
+      const selector =
+        selectorOccurrence === 1
+          ? selectorBase
+          : `${selectorBase}:${selectorOccurrence}`;
       const reference: TaskArtifactDocumentSectionReferenceV1 = {
         id,
         kind: heading.kind,
