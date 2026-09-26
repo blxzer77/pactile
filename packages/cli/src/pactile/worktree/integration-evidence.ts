@@ -179,7 +179,7 @@ export type WorktreeCleanupResult =
         reviewBeforeExecution: string[];
       };
     }
-  | { state: "retained" | "partial-removal" | "recovery-required"; binding: RunWorkspaceBinding; path: string; reason: string };
+  | { state: "retained" | "partial-removal" | "recovery-required"; binding: RunWorkspaceBinding | null; path: string | null; reason: string };
 
 export function planRunWorktreeCleanup(input: {
   repoRoot: string;
