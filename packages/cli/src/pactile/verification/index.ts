@@ -4,6 +4,25 @@ export {
 } from "./planner.js";
 export type { CreateVerificationPlanInput } from "./planner.js";
 export {
+  JEV_VERIFICATION_ADVICE_SOURCE_V1,
+  JevVerificationAdviceError,
+  adviseVerificationPlanWithJevV1,
+  finalizeJevVerificationAdviceV1,
+  verifyJevVerificationAdviceReceiptV1,
+} from "./jev-advice.js";
+export type {
+  AdviseVerificationPlanWithJevInputV1,
+  JevVerificationAdviceAdoptionV1,
+  JevVerificationAdviceCandidateV1,
+  JevVerificationAdviceOptionsV1,
+  JevVerificationAdviceReasonV1,
+  JevVerificationAdviceReceiptV1,
+  JevVerificationAdviceRequestSnapshotV1,
+  JevVerificationAdviceResultV1,
+  JevVerificationAdviceStatusV1,
+  JevVerificationAdviceTransportV1,
+} from "./jev-advice.js";
+export {
   BEHAVIOR_CHECK_MODES,
   VERIFICATION_RISKS,
   VERIFICATION_SCOPES,
