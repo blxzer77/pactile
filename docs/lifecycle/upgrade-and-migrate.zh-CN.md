@@ -16,6 +16,46 @@
 
 `pactile rollout --project <path> --dry-run --json` 可汇总显式列出的项目 preview；不要把它当成隐式全局扫描。
 
+<a id="p36-held-task-reconciliation"></a>
+## P36 导入后的 held Task 核对与 reconciliation
+
+旧版 Task 的 P36 导入由项目 `update` 执行。先查看计划，再应用更新；交互终端可在审阅后确认 `pactile update`，下面的 `--skip-all` 示例适用于已确认并希望保留所有本地 managed 文件改动的非交互更新：
+
+```bash
+pactile update --dry-run --json
+pactile update --skip-all --json
+pactile task list
+```
+
+`pactile task list` 会把尚未解决的导入项列为 `needs definition` 或 `needs dependency coordination`，并标注 `not runnable`。只对这些 held Task 补充缺失定义或映射依赖。先用 `--check` 查看单个 Task 的 reconciliation 计划：
+
+```bash
+pactile legacy-task reconcile .pactile/tasks/09-26-v050-migration-sample \
+  --idempotency-key p36-migration-definition-2026-09-26 \
+  --activation-at 2026-09-26T12:00:00.000Z \
+  --deliverable "An explicitly defined migrated Task" \
+  --delivery-level local-result \
+  --accept "AC-1=The original Task source remains available" \
+  --accept "AC-2=The V2 Task begins without inferred lifecycle history" \
+  --check
+```
+
+根据源记录与项目证据填写定义。`needs-coordination` Task 还要为每条待处理引用显式提供 `--resolve-dependency "<legacy-reference>=<existing-task-id>"`；在 dry-run 和批准执行时传入相同映射。确认计划后，使用同一组参数和稳定的幂等键，把末尾 `--check` 换成 `--approved`：
+
+```bash
+pactile legacy-task reconcile .pactile/tasks/09-26-v050-migration-sample \
+  --idempotency-key p36-migration-definition-2026-09-26 \
+  --activation-at 2026-09-26T12:00:00.000Z \
+  --deliverable "An explicitly defined migrated Task" \
+  --delivery-level local-result \
+  --accept "AC-1=The original Task source remains available" \
+  --accept "AC-2=The V2 Task begins without inferred lifecycle history" \
+  --approved
+pactile task artifacts 09-26-v050-migration-sample --agent
+```
+
+`--check` 返回 dry-run 且不写入、不激活 Task；`--approved` 只激活这一个 held Task。reconciliation 使用新的 migration generation，保留原始 `task.json` 与作者文档字节，不从旧状态推断 V2 Run、Review 或 Close。已激活的 Task 只接受相同幂等键与请求的重试；不同请求不能重新定义它。若源文件在导入后变化，命令会拒绝 reconciliation；先检查 `pactile task list` 和源状态，再决定是否重试。结构化文档读取方式见[结构化 Task 工件](../capabilities/structured-task-artifacts.zh-CN.md)。
+
 ## 已有安装迁到 Node 入口（v0.6.0）
 
 安装 v0.6.0 CLI 后，在每个已安装项目的根目录执行：
