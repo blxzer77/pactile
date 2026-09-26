@@ -149,27 +149,44 @@ export function createNodeOnlyInstallEnvironment(root, userConfig) {
   };
 }
 
-export function resolveNpmCliPath(): string {
-  const nodeHome = path.dirname(process.execPath);
+export function resolveNpmCliPath({
+  executablePath = process.execPath,
+  platform = process.platform,
+  isFile = (candidate: string) => {
+    try {
+      return fs.statSync(candidate).isFile();
+    } catch {
+      return false;
+    }
+  },
+}: {
+  executablePath?: string;
+  platform?: NodeJS.Platform;
+  isFile?: (candidate: string) => boolean;
+} = {}): string {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const nodeHome = pathApi.dirname(executablePath);
+  const nodePrefix = pathApi.resolve(nodeHome, "..");
   const candidates = [
-    path.join(nodeHome, "node_modules", "npm", "bin", "npm-cli.js"),
-    process.env.npm_execpath,
-    process.env.NPM_EXEC_PATH,
+    // Windows Node distributions bundle npm beside node.exe.
+    pathApi.join(nodeHome, "node_modules", "npm", "bin", "npm-cli.js"),
+    // setup-node, nvm, official Unix archives, and Homebrew use the Node prefix.
+    pathApi.join(nodePrefix, "lib", "node_modules", "npm", "bin", "npm-cli.js"),
+    // Debian and Ubuntu can install npm under /usr/share/nodejs.
+    pathApi.join(nodePrefix, "share", "nodejs", "npm", "bin", "npm-cli.js"),
   ];
   const candidate = candidates.find(
     (value): value is string =>
-      typeof value === "string" &&
-      path.isAbsolute(value) &&
-      path.basename(value).toLowerCase() === "npm-cli.js" &&
-      fs.existsSync(value) &&
-      fs.statSync(value).isFile(),
+      pathApi.isAbsolute(value) &&
+      pathApi.basename(value).toLowerCase() === "npm-cli.js" &&
+      isFile(value),
   );
   if (!candidate) {
     throw new Error(
-      `Could not find an absolute npm-cli.js for Node at ${process.execPath}.`,
+      `Could not find npm-cli.js in the supported layouts for Node at ${executablePath}.`,
     );
   }
-  return path.resolve(candidate);
+  return pathApi.resolve(candidate);
 }
 
 function findGitExecutable(environmentPath = process.env.PATH ?? "") {

@@ -173,6 +173,76 @@ describe("single-package release policy", () => {
     expect(args).toContain("install");
     expect(args).not.toContain("--ignore-scripts");
   });
+
+  it("resolves only bounded Windows and Linux npm CLI layouts", () => {
+    const windowsNode = "C:\\hostedtoolcache\\windows\\node\\22\\x64\\node.exe";
+    const windowsNpm = "C:\\hostedtoolcache\\windows\\node\\22\\x64\\node_modules\\npm\\bin\\npm-cli.js";
+    const windowsProbe: string[] = [];
+    expect(
+      resolveNpmCliPath({
+        executablePath: windowsNode,
+        platform: "win32",
+        isFile: (candidate) => {
+          windowsProbe.push(candidate);
+          return candidate === windowsNpm;
+        },
+      }),
+    ).toBe(windowsNpm);
+    expect(windowsProbe).toEqual([windowsNpm]);
+
+    const linuxNode = "/opt/hostedtoolcache/node/22/x64/bin/node";
+    const linuxNpm = "/opt/hostedtoolcache/node/22/x64/lib/node_modules/npm/bin/npm-cli.js";
+    const linuxProbe: string[] = [];
+    expect(
+      resolveNpmCliPath({
+        executablePath: linuxNode,
+        platform: "linux",
+        isFile: (candidate) => {
+          linuxProbe.push(candidate);
+          return candidate === linuxNpm;
+        },
+      }),
+    ).toBe(linuxNpm);
+    expect(linuxProbe).toEqual([
+      "/opt/hostedtoolcache/node/22/x64/bin/node_modules/npm/bin/npm-cli.js",
+      linuxNpm,
+    ]);
+
+    const debianNpm = "/usr/share/nodejs/npm/bin/npm-cli.js";
+    const debianProbe: string[] = [];
+    expect(
+      resolveNpmCliPath({
+        executablePath: "/usr/bin/node",
+        platform: "linux",
+        isFile: (candidate) => {
+          debianProbe.push(candidate);
+          return candidate === debianNpm;
+        },
+      }),
+    ).toBe(debianNpm);
+    expect(debianProbe).toEqual([
+      "/usr/bin/node_modules/npm/bin/npm-cli.js",
+      "/usr/lib/node_modules/npm/bin/npm-cli.js",
+      debianNpm,
+    ]);
+  });
+
+  it("does not select an npm script outside the supported layouts", () => {
+    const probed: string[] = [];
+    const arbitrary = "/tmp/arbitrary/npm-cli.js";
+    expect(() =>
+      resolveNpmCliPath({
+        executablePath: "/usr/bin/node",
+        platform: "linux",
+        isFile: (candidate) => {
+          probed.push(candidate);
+          return candidate === arbitrary;
+        },
+      }),
+    ).toThrow(/supported layouts/);
+    expect(probed.every((candidate) => path.basename(candidate) === "npm-cli.js")).toBe(true);
+    expect(probed).not.toContain(arbitrary);
+  });
 });
 
 describe("sealed artifact and credential boundary", () => {
