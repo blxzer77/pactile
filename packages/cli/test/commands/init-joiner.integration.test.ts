@@ -97,6 +97,39 @@ describe("init() joiner onboarding", () => {
     );
   }
 
+  function simulateConflictingJoinerIntent() {
+    simulateExistingCheckout();
+    const developerFile = path.join(tmpDir, PATHS.DEVELOPER_FILE);
+    const developerContent =
+      "name=alice\ninitialized_at=2026-09-26T00:00:00.000Z\n";
+    const marker = path.join(
+      tmpDir,
+      PATHS.TASKS,
+      ".pending-00-join-bob",
+    );
+    const markerContent =
+      'Task creation was interrupted; retry pactile init.\njoiner:v1:"bob"\n';
+    const userFile = path.join(
+      tmpDir,
+      PATHS.WORKSPACE,
+      "alice",
+      "keep.md",
+    );
+    const userContent = "Preserve Alice's local workspace.\n";
+    fs.writeFileSync(developerFile, developerContent, "utf8");
+    fs.writeFileSync(marker, markerContent, "utf8");
+    fs.mkdirSync(path.dirname(userFile), { recursive: true });
+    fs.writeFileSync(userFile, userContent, "utf8");
+    return {
+      developerFile,
+      developerContent,
+      marker,
+      markerContent,
+      userFile,
+      userContent,
+    };
+  }
+
   it("#1 empty cwd + init → creator bootstrap task created", async () => {
     await init({ yes: true, user: "alice" });
 
@@ -501,6 +534,50 @@ describe("init() joiner onboarding", () => {
     expect(fs.existsSync(path.join(tmpDir, PATHS.TASKS, "00-join-eve"))).toBe(
       false,
     );
+  });
+
+  it("fails closed when --user conflicts with persisted identity and pending marker", async () => {
+    const state = simulateConflictingJoinerIntent();
+
+    await init({ yes: true, user: "bob" });
+
+    expect(fs.readFileSync(state.developerFile, "utf8")).toBe(
+      state.developerContent,
+    );
+    expect(fs.readFileSync(state.marker, "utf8")).toBe(state.markerContent);
+    expect(fs.readFileSync(state.userFile, "utf8")).toBe(state.userContent);
+    expect(
+      fs.existsSync(path.join(tmpDir, PATHS.TASKS, "00-join-bob")),
+    ).toBe(false);
+    expect(fs.readdirSync(path.join(tmpDir, PATHS.TASKS)).sort()).toEqual([
+      ".pending-00-join-bob",
+      "archive",
+    ]);
+  });
+
+  it("fails closed when Git identity conflicts with persisted identity and pending marker", async () => {
+    const state = simulateConflictingJoinerIntent();
+    fs.mkdirSync(path.join(tmpDir, ".git"));
+    vi.mocked(execSync).mockImplementation(((command: string) => {
+      if (command === "git config user.name") return "bob\n";
+      const py = process.platform === "win32" ? "python" : "python3";
+      return command === py + " --version" ? "Python 3.11.12" : "";
+    }) as typeof execSync);
+
+    await init({ yes: true });
+
+    expect(fs.readFileSync(state.developerFile, "utf8")).toBe(
+      state.developerContent,
+    );
+    expect(fs.readFileSync(state.marker, "utf8")).toBe(state.markerContent);
+    expect(fs.readFileSync(state.userFile, "utf8")).toBe(state.userContent);
+    expect(
+      fs.existsSync(path.join(tmpDir, PATHS.TASKS, "00-join-bob")),
+    ).toBe(false);
+    expect(fs.readdirSync(path.join(tmpDir, PATHS.TASKS)).sort()).toEqual([
+      ".pending-00-join-bob",
+      "archive",
+    ]);
   });
 
   it("#5a developer name with spaces → filesystem-safe slug", async () => {

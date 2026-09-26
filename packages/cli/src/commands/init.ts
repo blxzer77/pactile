@@ -275,19 +275,37 @@ function hasInitTaskMarker(cwd: string, taskName: string): boolean {
   return readInitTaskMarker(cwd, taskName) !== null;
 }
 
-function readPendingJoinerDeveloperName(cwd: string): string | null {
+interface PendingJoinerMarker {
+  taskName: string;
+  developerName: string | null;
+  valid: boolean;
+}
+
+function readPendingJoinerMarkers(cwd: string): PendingJoinerMarker[] {
   try {
     const tasksRoot = assertSafeInitTaskPaths(cwd);
-    if (!pathExists(tasksRoot)) return null;
-    const candidates = fs
+    if (!pathExists(tasksRoot)) return [];
+    const taskNames = fs
       .readdirSync(tasksRoot)
       .filter((entry) => entry.startsWith(".pending-00-join-"))
       .map((entry) => entry.slice(".pending-".length));
-    if (candidates.length !== 1) return null;
-    return readInitTaskMarker(cwd, candidates[0])?.developerName ?? null;
+    return taskNames.map((taskName) => {
+      const marker = readInitTaskMarker(cwd, taskName);
+      return {
+        taskName,
+        developerName: marker?.developerName ?? null,
+        valid: marker !== null,
+      };
+    });
   } catch {
-    return null;
+    return [];
   }
+}
+
+function readPendingJoinerDeveloperName(cwd: string): string | null {
+  const markers = readPendingJoinerMarkers(cwd);
+  if (markers.length !== 1) return null;
+  return markers[0].developerName;
 }
 
 function clearInitTaskMarker(cwd: string, taskName: string): void {
@@ -1404,16 +1422,61 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
-  // A joiner intent is durable before identity is written. If this process is
-  // restarted without an explicit name or git user.name, recover the identity
-  // from .developer or the matching, versioned marker payload.
+  // A joiner intent is durable before identity is written. Resolve any
+  // existing identity before dispatch so an unrelated request or marker cannot
+  // publish a Task under a second developer name.
+  let persistedDeveloper: string | null = null;
+  try {
+    persistedDeveloper = readDeveloper(cwd);
+  } catch {
+    // Keep init best-effort when a user-owned identity file is unreadable.
+  }
+  const pendingJoinerMarkers = readPendingJoinerMarkers(cwd);
+  const validPendingJoinerMarkers = pendingJoinerMarkers.filter(
+    (marker) => marker.valid,
+  );
+  const hasPersistedDeveloperFile = pathExists(
+    path.join(cwd, PATHS.DEVELOPER_FILE),
+  );
+  let requestedDeveloper: string | null = null;
+  const trimmedDeveloperName = developerName?.trim();
+  if (trimmedDeveloperName) requestedDeveloper = trimmedDeveloperName;
+  const markerConflictsWithIdentity = (
+    marker: PendingJoinerMarker,
+    identity: string,
+  ): boolean =>
+    marker.developerName !== null
+      ? marker.developerName !== identity
+      : marker.taskName !== `00-join-${slugifyDeveloperName(identity)}`;
+  const conflictsWithPersistedDeveloper =
+    persistedDeveloper !== null &&
+    ((requestedDeveloper !== null &&
+      requestedDeveloper !== persistedDeveloper) ||
+      validPendingJoinerMarkers.some(
+        (marker) => markerConflictsWithIdentity(marker, persistedDeveloper),
+      ));
+  const conflictingRequestAndMarker =
+    requestedDeveloper !== null &&
+    validPendingJoinerMarkers.some((marker) =>
+      markerConflictsWithIdentity(marker, requestedDeveloper),
+    );
+  const cannotValidatePersistedDeveloper =
+    hasPersistedDeveloperFile &&
+    persistedDeveloper === null &&
+    (requestedDeveloper !== null || validPendingJoinerMarkers.length > 0);
+  if (
+    conflictsWithPersistedDeveloper ||
+    conflictingRequestAndMarker ||
+    cannotValidatePersistedDeveloper
+  ) {
+    console.warn(
+      chalk.yellow(
+        "⚠ Init stopped: the requested identity, pending joiner marker, and existing .developer identity cannot be reconciled. Preserve existing files and resolve the identity before retrying.",
+      ),
+    );
+    return;
+  }
   if (!options.user) {
-    let persistedDeveloper: string | null = null;
-    try {
-      persistedDeveloper = readDeveloper(cwd);
-    } catch {
-      // Keep init best-effort when a user-owned identity file is unreadable.
-    }
     if (
       persistedDeveloper &&
       hasInitTaskMarker(
