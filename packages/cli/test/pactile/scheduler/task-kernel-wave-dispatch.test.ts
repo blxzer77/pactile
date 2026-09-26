@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -30,6 +31,7 @@ import {
   compareTaskKernelWaveDispatchV1,
   planParentTaskScheduleV1,
   scheduleTaskKernelGraph,
+  type TaskKernelWaveComparisonConditionsV1,
   type TaskKernelWaveScenarioMeasurementV1,
 } from "../../../src/pactile/scheduler/index.js";
 import {
@@ -47,6 +49,23 @@ const FAKE_PI_WAVE_PROVIDER = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../../.tmp/p31-script-build/fixtures/fake-pi-wave-provider.js",
 );
+const REPOSITORY_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../../../",
+);
+const RECORD_P37_MEASUREMENT = "PACTILE_RECORD_P37_V2_MEASUREMENT";
+const MEASUREMENT_OUTPUT_ENV = "PACTILE_P37_MEASUREMENT_OUTPUT";
+const FIXTURE_GIT_DATE = "2026-09-26T00:00:00+00:00";
+
+function measurementReportFile(): string {
+  const requestedOutput = process.env[MEASUREMENT_OUTPUT_ENV];
+  return requestedOutput
+    ? path.resolve(requestedOutput)
+    : path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../../evidence/p37-v2-paired-fake-pi.json",
+      );
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -65,6 +84,11 @@ function git(root: string, ...args: string[]): string {
     cwd: root,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      GIT_AUTHOR_DATE: FIXTURE_GIT_DATE,
+      GIT_COMMITTER_DATE: FIXTURE_GIT_DATE,
+    },
   }).trim();
 }
 
@@ -315,6 +339,169 @@ function fakePiLaunch(args: string[]) {
   return { command: process.execPath, args };
 }
 
+function sha256(value: string | Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function sha256Json(value: unknown): string {
+  return sha256(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function sanitizedEvidenceValue(value: unknown, root: string): unknown {
+  if (typeof value === "string") {
+    return [
+      [root, "<scenario-root>"],
+      [root.replaceAll("\\", "/"), "<scenario-root>"],
+      [REPOSITORY_ROOT, "<repository-root>"],
+      [REPOSITORY_ROOT.replaceAll("\\", "/"), "<repository-root>"],
+    ].reduce((sanitized, [source, replacement]) =>
+      sanitized.replaceAll(source, replacement), value);
+  }
+  if (Array.isArray(value))
+    return value.map((item) => sanitizedEvidenceValue(item, root));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      sanitizedEvidenceValue(item, root),
+    ]),
+  );
+}
+
+function checkedProjectPath(root: string, ref: string): string {
+  const absolutePath = path.resolve(root, ref);
+  const relativePath = path.relative(root, absolutePath);
+  if (
+    !relativePath ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  )
+    throw new Error(`Measurement evidence path escapes its scenario root: ${ref}`);
+  return absolutePath;
+}
+
+function readJsonEvidence(
+  root: string,
+  ref: string,
+): {
+  path: string;
+  rawSha256: string;
+  contentSha256: string;
+  content: unknown;
+} {
+  const absolutePath = checkedProjectPath(root, ref);
+  const raw = fs.readFileSync(absolutePath, "utf8");
+  const content = sanitizedEvidenceValue(JSON.parse(raw) as unknown, root);
+  return {
+    path: path.relative(root, absolutePath).replaceAll("\\", "/"),
+    rawSha256: sha256(raw),
+    contentSha256: sha256Json(content),
+    content,
+  };
+}
+
+function readTextEvidence(
+  root: string,
+  ref: string,
+): {
+  path: string;
+  rawSha256: string;
+  contentSha256: string;
+  content: string;
+} {
+  const absolutePath = checkedProjectPath(root, ref);
+  const raw = fs.readFileSync(absolutePath, "utf8");
+  const content = sanitizedEvidenceValue(raw, root);
+  if (typeof content !== "string")
+    throw new Error(`Text evidence could not be normalized: ${ref}`);
+  return {
+    path: path.relative(root, absolutePath).replaceAll("\\", "/"),
+    rawSha256: sha256(raw),
+    contentSha256: sha256(content),
+    content,
+  };
+}
+
+function writePairedMeasurementReport(
+  serialControl: PairedScenarioEvidenceV1,
+  scheduledWaves: PairedScenarioEvidenceV1,
+  comparison: ReturnType<typeof compareTaskKernelWaveDispatchV1>,
+): { path: string; sha256: string } {
+  const reportFile = measurementReportFile();
+  if (fs.existsSync(reportFile))
+    throw new Error(
+      `Refusing to overwrite frozen P37 measurement evidence: ${reportFile}`,
+    );
+  const sourceStatus = git(
+    REPOSITORY_ROOT,
+    "status",
+    "--porcelain",
+    "--untracked-files=all",
+  );
+  if (sourceStatus)
+    throw new Error(
+      "P37 measurement can be recorded only from a clean source worktree",
+    );
+  const reportBody = {
+    schemaVersion: 1,
+    evidenceClass: "controlled-fake-pi-simulation",
+    providerAcceptance: "not-claimed",
+    generatedAt: new Date().toISOString(),
+    sourceCode: {
+      commitSha: git(REPOSITORY_ROOT, "rev-parse", "HEAD"),
+      treeSha: git(REPOSITORY_ROOT, "rev-parse", "HEAD^{tree}"),
+      branch: git(REPOSITORY_ROOT, "branch", "--show-current"),
+      worktreeCleanBeforeReport: true,
+      command:
+        'pnpm --filter @blxzer/pactile exec vitest run test/pactile/scheduler/task-kernel-wave-dispatch.test.ts -t "compares measured serial control"',
+    },
+    pairing: {
+      conditions: comparison.conditions,
+      bothScenarioConditionsMatch:
+        JSON.stringify(serialControl.conditions) ===
+        JSON.stringify(scheduledWaves.conditions),
+      worktreeBaseCommitSha: serialControl.baseCommitSha,
+      runInputsSha256: serialControl.conditions.runInputsSha256,
+      promptsSha256: serialControl.conditions.promptsSha256,
+      providerConfigSha256: serialControl.conditions.providerConfigSha256,
+    },
+    scenarios: { serialControl, scheduledWaves },
+    comparison,
+    comparisonSha256: sha256Json(comparison),
+  };
+  if (
+    !reportBody.pairing.bothScenarioConditionsMatch ||
+    serialControl.baseCommitSha !== scheduledWaves.baseCommitSha
+  )
+    throw new Error("P37 paired evidence has mismatched control conditions");
+  const reportSha256 = sha256Json(reportBody);
+  const serializedReport = `${JSON.stringify(
+    { ...reportBody, reportSha256 },
+    null,
+    2,
+  )}\n`;
+  fs.mkdirSync(path.dirname(reportFile), { recursive: true });
+  fs.writeFileSync(reportFile, serializedReport, {
+    encoding: "utf8",
+    flag: "wx",
+  });
+  const readBack = JSON.parse(
+    fs.readFileSync(reportFile, "utf8"),
+  ) as typeof reportBody & { reportSha256: string };
+  const { reportSha256: readBackSha256, ...readBackBody } = readBack;
+  if (
+    readBackSha256 !== reportSha256 ||
+    sha256Json(readBackBody) !== reportSha256 ||
+    readBack.comparisonSha256 !== sha256Json(readBack.comparison)
+  )
+    throw new Error("Persisted P37 measurement report failed SHA-256 read-back");
+  process.stdout.write(
+    `[P37 paired fake-Pi evidence] ${reportFile} sha256=${sha256(serializedReport)} comparisonSha256=${readBack.comparisonSha256}\n`,
+  );
+  return { path: reportFile, sha256: sha256(serializedReport) };
+}
+
 const MEASURED_TASK_IDS = ["p37-bench-a", "p37-bench-b"] as const;
 const MEASURED_PARENT_ID = "p37-bench-parent";
 
@@ -485,9 +672,63 @@ async function finishMeasuredTask(
   );
 }
 
+interface PairedScenarioEvidenceV1 {
+  mode: "serial-control" | "scheduled-waves";
+  scenarioRoot: "ephemeral-system-temp";
+  baseCommitSha: string;
+  conditions: TaskKernelWaveComparisonConditionsV1;
+  startedAt: string;
+  completedAt: string;
+  endToEndElapsedMs: number;
+  providerConfig: Record<string, unknown>;
+  runInputs: {
+    taskId: string;
+    runId: string;
+    input: unknown;
+    inputSha256: string;
+    writeSetSnapshot: string[];
+    authorization: unknown;
+  }[];
+  prompts: {
+    taskId: string;
+    runId: string;
+    prompt: string;
+    promptSha256: string;
+    timeoutMs: number;
+  }[];
+  worktrees: {
+    taskId: string;
+    branch: string;
+    projectRelativePath: string;
+    recordedBaseSha: string;
+    actualHeadSha: string;
+    statusAfterCandidateCreation: string;
+    candidateOutputSha256: string;
+    candidateOutputText: string;
+  }[];
+  scheduleReceipt: ReturnType<typeof readJsonEvidence>;
+  dispatchResult: { sha256: string; content: unknown };
+  taskArtifacts: {
+    taskId: string;
+    runId: string;
+    kernel: ReturnType<typeof readJsonEvidence>;
+    admissionReceipt: ReturnType<typeof readJsonEvidence>;
+    piLatest: ReturnType<typeof readJsonEvidence>;
+    hostStopProof: ReturnType<typeof readJsonEvidence>;
+    fakeProviderStartMarker: ReturnType<typeof readTextEvidence>;
+  }[];
+  parentTaskMap: ReturnType<typeof readTextEvidence>;
+  observedLifecycleCosts: TaskKernelWaveScenarioMeasurementV1["lifecycleCosts"];
+}
+
+interface PairedScenarioRunV1 {
+  measurement: TaskKernelWaveScenarioMeasurementV1;
+  evidence: PairedScenarioEvidenceV1;
+}
+
 async function runPairedMeasurementScenario(
   serialControl: boolean,
-): Promise<TaskKernelWaveScenarioMeasurementV1> {
+): Promise<PairedScenarioRunV1> {
   const root = makeGitRoot();
   const tasks = MEASURED_TASK_IDS.map((taskId) =>
     makeTask(root, taskId, {
@@ -495,7 +736,10 @@ async function runPairedMeasurementScenario(
     }),
   );
   const parentDir = makeMeasurementParent(root);
-  for (const task of tasks) attachManagedWorktree(root, task);
+  const worktreePaths = new Map(
+    tasks.map((task) => [task.taskId, attachManagedWorktree(root, task)]),
+  );
+  const baseCommitSha = git(root, "rev-parse", "HEAD");
 
   const costs = Object.fromEntries(
     tasks.map(({ taskId }) => [
@@ -510,17 +754,52 @@ async function runPairedMeasurementScenario(
       },
     ]),
   );
+  const startedAt = new Date().toISOString();
   const endToEndStartedAt = performance.now();
   const schedule = scheduleTaskKernelGraph(
     root,
     tasks.map(({ taskId }) => taskId),
     { estimatedCosts: costs },
   );
+  const providerSourceRef = "packages/cli/scripts/fixtures/fake-pi-wave-provider.ts";
+  const actualProviderArguments = fakePiScript(root);
+  const providerRuntimeRef = path
+    .relative(REPOSITORY_ROOT, FAKE_PI_WAVE_PROVIDER)
+    .replaceAll("\\", "/");
+  const providerConfig = {
+    provider: "fake-pi-wave-provider-simulation-only",
+    command: path.basename(process.execPath),
+    commandResolution: "Node process.execPath",
+    runtimeVersion: process.version,
+    runnerLabel: "fake-pi-wave-provider-simulation-only",
+    timeoutMs: 10_000,
+    sourceFixture: providerSourceRef,
+    sourceFixtureSha256: sha256(
+      fs.readFileSync(path.resolve(REPOSITORY_ROOT, providerSourceRef)),
+    ),
+    runtimeArtifact: providerRuntimeRef,
+    runtimeArtifactSha256: sha256(fs.readFileSync(FAKE_PI_WAVE_PROVIDER)),
+    arguments: actualProviderArguments.map((argument) =>
+      argument
+        .replaceAll(root, "<scenario-root>")
+        .replaceAll(root.replaceAll("\\", "/"), "<scenario-root>")
+        .replaceAll(REPOSITORY_ROOT, "<repository-root>")
+        .replaceAll(
+          REPOSITORY_ROOT.replaceAll("\\", "/"),
+          "<repository-root>",
+        ),
+    ),
+    providerResponseDelayMs: 30,
+    wrapperDelaysMs: { beforeTaskLookup: 40, beforeProviderRpc: 120 },
+  };
+  const providerConfigSha256 = sha256Json(providerConfig);
   const piRunner = createPiTaskKernelWaveRunnerV1(
     root,
-    fakePiLaunch(fakePiScript(root)),
+    fakePiLaunch(actualProviderArguments),
   );
+  const observedRequests: TaskKernelWaveRunRequestV1[] = [];
   const runner = async (request: TaskKernelWaveRunRequestV1) => {
+    observedRequests.push(request);
     await new Promise((resolve) => setTimeout(resolve, 40));
     const task = tasks.find(({ taskId }) => taskId === request.taskId);
     if (!task)
@@ -559,10 +838,165 @@ async function runPairedMeasurementScenario(
       };
     }),
   };
-  return {
+  const completedAt = new Date().toISOString();
+  const endToEndElapsedMs = Math.round(
+    performance.now() - endToEndStartedAt,
+  );
+  const inputWorktreeRecords = tasks.map((task) => {
+    const kernelRef = `.pactile/tasks/${task.taskId}/kernel.json`;
+    const kernelPath = path.join(task.taskDir, "kernel.json");
+    const kernelRaw = fs.readFileSync(kernelPath, "utf8");
+    const kernelRead = readTaskKernel({ root, taskDir: task.taskDir, cwd: root });
+    if (kernelRead.kind !== "task-kernel-v2")
+      throw new Error(`Task Kernel is missing for ${task.taskId}`);
+    const run = kernelRead.kernel.runs.find(({ id }) => id === task.runId);
+    if (!run || !run.workspace)
+      throw new Error(`Run workspace is missing for ${task.taskId}`);
+    const worktreePath = worktreePaths.get(task.taskId);
+    if (!worktreePath)
+      throw new Error(`Worktree path is missing for ${task.taskId}`);
+    const actualHeadSha = git(worktreePath, "rev-parse", "HEAD");
+    if (run.workspace.baseSha !== baseCommitSha || actualHeadSha !== baseCommitSha)
+      throw new Error(`Task ${task.taskId} did not use the paired base commit`);
+    const outputPath = path.join(worktreePath, `src/${task.taskId}.ts`);
+    const rawStatus = git(worktreePath, "status", "--short");
+    const statusAfterCandidateCreation = rawStatus
+      .replaceAll(worktreePath, "<task-worktree>")
+      .replaceAll(worktreePath.replaceAll("\\", "/"), "<task-worktree>");
+    return {
+      runInput: {
+        taskId: task.taskId,
+        input: run.input,
+        writeSetSnapshot: run.writeSetSnapshot,
+        authorization: run.authorization,
+      },
+      runInputEvidence: {
+        taskId: task.taskId,
+        runId: run.id,
+        input: sanitizedEvidenceValue(run.input, root),
+        inputSha256: sha256Json(run.input),
+        writeSetSnapshot: run.writeSetSnapshot,
+        authorization: run.authorization,
+      },
+      worktreeEvidence: {
+        taskId: task.taskId,
+        branch: run.workspace.branch,
+        projectRelativePath: path
+          .relative(root, worktreePath)
+          .replaceAll("\\", "/"),
+        recordedBaseSha: run.workspace.baseSha,
+        actualHeadSha,
+      statusAfterCandidateCreation,
+      candidateOutputSha256: sha256(fs.readFileSync(outputPath)),
+      candidateOutputText: fs.readFileSync(outputPath, "utf8"),
+      },
+      kernelEvidence: {
+        path: kernelRef,
+        rawSha256: sha256(kernelRaw),
+        contentSha256: sha256Json(
+          sanitizedEvidenceValue(JSON.parse(kernelRaw) as unknown, root),
+        ),
+        content: sanitizedEvidenceValue(
+          JSON.parse(kernelRaw) as unknown,
+          root,
+        ),
+      },
+    };
+  });
+  const orderedInputs = inputWorktreeRecords
+    .map(({ runInput }) => runInput)
+    .sort((left, right) => left.taskId.localeCompare(right.taskId));
+  const prompts = observedRequests
+    .map(({ taskId, runId, prompt, timeoutMs }) => ({
+      taskId,
+      runId,
+      prompt,
+      promptSha256: sha256(prompt),
+      timeoutMs,
+    }))
+    .sort((left, right) => left.taskId.localeCompare(right.taskId));
+  if (prompts.length !== tasks.length)
+    throw new Error("The fake Pi runner did not observe every scheduled prompt");
+  const conditions: TaskKernelWaveComparisonConditionsV1 = {
+    worktreeBaseCommitSha: baseCommitSha,
+    runInputsSha256: sha256Json(
+      orderedInputs,
+    ),
+    promptsSha256: sha256Json(
+      prompts.map(({ taskId, prompt, timeoutMs }) => ({
+        taskId,
+        prompt,
+        timeoutMs,
+      })),
+    ),
+    providerConfigSha256,
+  };
+  const scheduleReceiptRef = `.pactile/.runtime/scheduler/receipts/${schedule.receipt.receiptFingerprint}.json`;
+  const taskArtifacts = dispatch.tasks.map((dispatchTask) => {
+    const task = tasks.find(({ taskId }) => taskId === dispatchTask.taskId);
+    if (!task || !dispatchTask.runId || !dispatchTask.admissionReceiptFingerprint)
+      throw new Error(`Dispatch evidence is incomplete for ${dispatchTask.taskId}`);
+    if (!dispatchTask.evidenceRef)
+      throw new Error(`Host stop evidence is missing for ${dispatchTask.taskId}`);
+    const stopProofRef = path
+      .relative(root, path.resolve(task.taskDir, dispatchTask.evidenceRef))
+      .replaceAll("\\", "/");
+    return {
+      taskId: task.taskId,
+      runId: dispatchTask.runId,
+      kernel: readJsonEvidence(root, `.pactile/tasks/${task.taskId}/kernel.json`),
+      admissionReceipt: readJsonEvidence(
+        root,
+        `.pactile/.runtime/scheduler/admissions/${dispatchTask.admissionReceiptFingerprint}.json`,
+      ),
+      piLatest: readJsonEvidence(
+        root,
+        `.pactile/tasks/${task.taskId}/pi-bridge/latest.json`,
+      ),
+      hostStopProof: readJsonEvidence(root, stopProofRef),
+      fakeProviderStartMarker: readTextEvidence(
+        root,
+        `provider-starts/${task.taskId}.started`,
+      ),
+    };
+  });
+  const measurement: TaskKernelWaveScenarioMeasurementV1 = {
     dispatch,
-    endToEndElapsedMs: Math.round(performance.now() - endToEndStartedAt),
+    endToEndElapsedMs,
+    conditions,
     lifecycleCosts,
+  };
+  return {
+    measurement,
+    evidence: {
+      mode: serialControl ? "serial-control" : "scheduled-waves",
+      scenarioRoot: "ephemeral-system-temp",
+      baseCommitSha,
+      conditions,
+      startedAt,
+      completedAt,
+      endToEndElapsedMs,
+      providerConfig,
+      runInputs: inputWorktreeRecords.map(
+        ({ runInputEvidence }) => runInputEvidence,
+      ),
+      prompts,
+      worktrees: inputWorktreeRecords.map(
+        ({ worktreeEvidence }) => worktreeEvidence,
+      ),
+      scheduleReceipt: readJsonEvidence(root, scheduleReceiptRef),
+      dispatchResult: {
+        sourceObjectSha256: sha256Json(dispatch),
+        content: sanitizedEvidenceValue(dispatch, root),
+        contentSha256: sha256Json(sanitizedEvidenceValue(dispatch, root)),
+      },
+      taskArtifacts,
+      parentTaskMap: readTextEvidence(
+        root,
+        `.pactile/tasks/${MEASURED_PARENT_ID}/task-map.md`,
+      ),
+      observedLifecycleCosts: lifecycleCosts,
+    },
   };
 }
 
@@ -688,8 +1122,8 @@ describe("Task Kernel V2 writer-wave dispatch", () => {
     const scheduledWaves = await runPairedMeasurementScenario(false);
 
     const comparison = compareTaskKernelWaveDispatchV1(
-      serialControl,
-      scheduledWaves,
+      serialControl.measurement,
+      scheduledWaves.measurement,
     );
 
     expect(comparison).toMatchObject({
@@ -711,9 +1145,9 @@ describe("Task Kernel V2 writer-wave dispatch", () => {
       },
     });
     expect(comparison.measured.serialControlDispatchMs).toBeGreaterThan(
-      comparison.measured.scheduledWavesDispatchMs,
+      0,
     );
-    expect(comparison.measured.dispatchSavingsMs).toBeGreaterThan(0);
+    expect(Number.isFinite(comparison.measured.dispatchSavingsMs)).toBe(true);
     expect(Number.isFinite(comparison.measured.endToEndSavingsMs)).toBe(true);
     expect(Number.isFinite(comparison.measured.endToEndSavingsRatio)).toBe(
       true,
@@ -735,6 +1169,29 @@ describe("Task Kernel V2 writer-wave dispatch", () => {
         expect(scenario[field].evidenceRefs.length).toBeGreaterThan(0);
       }
     }
+    expect(comparison.conditions.fingerprint).toMatch(/^[a-f0-9]{64}$/u);
+    expect(comparison.conditions).toMatchObject(
+      serialControl.evidence.conditions,
+    );
+    expect(() =>
+      compareTaskKernelWaveDispatchV1(
+        serialControl.measurement,
+        {
+          ...scheduledWaves.measurement,
+          conditions: {
+            ...scheduledWaves.measurement.conditions,
+            providerConfigSha256: "f".repeat(64),
+          },
+        },
+      ),
+    ).toThrow(/Paired scenarios differ in worktree base, Run inputs, prompts, or provider configuration/u);
+
+    if (process.env[RECORD_P37_MEASUREMENT] === "1")
+      writePairedMeasurementReport(
+        serialControl.evidence,
+        scheduledWaves.evidence,
+        comparison,
+      );
   }, 120_000);
 
   it("rechecks the complete receipt before any provider starts when a Task revision goes stale", async () => {

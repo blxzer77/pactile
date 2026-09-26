@@ -155,7 +155,15 @@ export interface TaskKernelWaveScenarioMeasurementV1 {
   dispatch: TaskKernelWaveDispatchResultV1;
   /** Wall clock from planning through provider stop, Review, rework and integration observation. */
   endToEndElapsedMs: number;
+  conditions: TaskKernelWaveComparisonConditionsV1;
   lifecycleCosts: TaskKernelWaveObservedCostLedgerV1;
+}
+
+export interface TaskKernelWaveComparisonConditionsV1 {
+  worktreeBaseCommitSha: string;
+  runInputsSha256: string;
+  promptsSha256: string;
+  providerConfigSha256: string;
 }
 
 export interface TaskKernelWaveDispatchCostTotalV1 {
@@ -175,6 +183,9 @@ export interface TaskKernelWaveDispatchComparisonV1 {
     plannedWavesMs: number;
     estimatedSavingsMs: number;
     taskCostTotals: SchedulerCostVectorV1;
+  };
+  conditions: TaskKernelWaveComparisonConditionsV1 & {
+    fingerprint: string;
   };
   measured: {
     serialControlDispatchMs: number;
@@ -395,6 +406,26 @@ function measuredScenarioLedger(
   };
 }
 
+function validateComparisonConditions(
+  conditions: TaskKernelWaveComparisonConditionsV1,
+  label: string,
+): void {
+  if (
+    !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(
+      conditions.worktreeBaseCommitSha,
+    )
+  )
+    throw new Error(`${label} worktree base must be a full Git commit SHA`);
+  for (const field of [
+    "runInputsSha256",
+    "promptsSha256",
+    "providerConfigSha256",
+  ] as const) {
+    if (!/^[a-f0-9]{64}$/u.test(conditions[field]))
+      throw new Error(`${label} ${field} must be a SHA-256 digest`);
+  }
+}
+
 function summarizeObservedCosts(
   ledger: TaskKernelWaveObservedCostLedgerV1,
   candidateTaskIds: readonly string[],
@@ -498,6 +529,23 @@ export function compareTaskKernelWaveDispatchV1(
         `${label} end-to-end time cannot be shorter than dispatch time`,
       );
   }
+  validateComparisonConditions(serialControl.conditions, "serial-control");
+  validateComparisonConditions(scheduledWaves.conditions, "scheduled-waves");
+  const mismatchedConditions = (
+    [
+      "worktreeBaseCommitSha",
+      "runInputsSha256",
+      "promptsSha256",
+      "providerConfigSha256",
+    ] as const
+  ).filter(
+    (field) =>
+      serialControl.conditions[field] !== scheduledWaves.conditions[field],
+  );
+  if (mismatchedConditions.length)
+    throw new Error(
+      `Paired scenarios differ in worktree base, Run inputs, prompts, or provider configuration: ${mismatchedConditions.map((field) => `${field} serial=${serialControl.conditions[field]} scheduled=${scheduledWaves.conditions[field]}`).join(", ")}`,
+    );
   const serialShape = dispatchWorkloadShape(serialControl.dispatch);
   const waveShape = dispatchWorkloadShape(scheduledWaves.dispatch);
   if (!stableEqual(serialShape, waveShape))
@@ -593,6 +641,10 @@ export function compareTaskKernelWaveDispatchV1(
       plannedWavesMs,
       estimatedSavingsMs: serialEquivalentMs - plannedWavesMs,
       taskCostTotals: estimates,
+    },
+    conditions: {
+      ...serialControl.conditions,
+      fingerprint: fingerprintTaskValue(serialControl.conditions),
     },
     measured: {
       serialControlDispatchMs,

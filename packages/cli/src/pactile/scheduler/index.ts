@@ -76,6 +76,7 @@ export {
   type TaskKernelWaveDispatchTaskResultV1,
   type TaskKernelWaveDispatchComparisonV1,
   type TaskKernelWaveDispatchCostTotalV1,
+  type TaskKernelWaveComparisonConditionsV1,
   type TaskKernelWaveIntegrationPlanV1,
   type TaskKernelWaveIntegrationTaskV1,
   type TaskKernelWaveIntegrationWaveV1,

@@ -262,7 +262,11 @@ fingerprinted plan, and retain the same write set. The project lease joins the
 Run write set and optional workspace write set and reserves it across both V2
 and legacy Parent lease folders. Every colliding active writer is checked;
 each one must have an exact pair authorization in the same schedule receipt,
-including approver, evidence reference, and integration plan.
+including approver, evidence reference, named integration owner, and integration
+plan. A historically fingerprint-valid receipt without an owner remains readable
+as history, but cannot authorize a new overlapping V2 admission or direct Parent
+lease; V2 admission reports
+`project-write-set-conflict-integration-owner-missing` for this rejection.
 
 An adapter should acquire with its stable owner identity before native create
 (native session/thread/process identifiers may initially be null), then call
@@ -333,11 +337,13 @@ evidence references retained alongside each snapshot.
 
 `compareTaskKernelWaveDispatchV1` accepts a paired serial-control and scheduled
 wave result for the same Task/worktree workload. It rejects mismatched task
-sets, dependencies, write sets, estimates, conflict authorizations, or wave
-placement; both provider dispatches and every scheduled Run must be complete.
-Set `serialControl: true` only for the control measurement. It runs eligible
-Tasks sequentially inside each already-planned wave. Normal dispatch has no
-numeric concurrency cap and continues to execute each planned wave together.
+sets, dependencies, write sets, estimates, conflict authorizations, wave
+placement, worktree base commit, Run input/write-set/authorization digest,
+actual prompt digest, or provider configuration digest. Both provider dispatches
+and every scheduled Run must be complete. Set `serialControl: true` only for
+the control measurement. It runs eligible Tasks sequentially inside each
+already-planned wave. Normal dispatch has no numeric concurrency cap and
+continues to execute each planned wave together.
 
 The comparison keeps three evidence classes separate:
 
@@ -358,3 +364,33 @@ The paired test uses the checked-in fake Pi RPC process and simulated Review /
 Parent lifecycle events. Its provider label and test report explicitly say
 simulation; it is a reproducible scheduler comparison, not a real Pi-provider
 speedup, production measurement, or provider-acceptance result.
+
+The local report at
+`packages/cli/test/evidence/p37-v2-paired-fake-pi.json` retains both scenarios'
+Run inputs, prompts, provider fixture hashes, identical worktree base SHAs,
+schedule and admission receipts, dispatch-to-Run IDs, Kernel / Pi stop proof /
+provider-start evidence, Parent task-map ledger, observed cost values, and the
+comparison with SHA-256 checksums. Wall-clock end-to-end measurements cover
+planning through fake-Pi stop and the same simulated Review / rework / integration
+steps in both scenarios. Lifecycle values come from the fixture's recorded
+Kernel and Parent events; they are observed ledger values for this controlled
+simulation, not claims about a live project's duration. Negative dispatch or
+end-to-end savings are retained as measured.
+
+To repeat the controlled sample from a clean source worktree without overwriting
+the checked-in report, choose a new output path:
+
+```powershell
+$env:PACTILE_RECORD_P37_V2_MEASUREMENT = "1"
+$env:PACTILE_P37_MEASUREMENT_OUTPUT = "$env:TEMP\p37-v2-paired-fake-pi-rerun.json"
+pnpm --filter @blxzer/pactile exec vitest run test/pactile/scheduler/task-kernel-wave-dispatch.test.ts -t "compares measured serial control"
+Remove-Item Env:PACTILE_RECORD_P37_V2_MEASUREMENT
+Remove-Item Env:PACTILE_P37_MEASUREMENT_OUTPUT
+```
+
+The writer refuses to overwrite an existing report and requires a clean source
+worktree so it can bind the result to a source commit and tree. The emitted
+report checksum covers the serialized JSON, while `reportSha256` in the file
+covers the report body without that field; `comparisonSha256` covers the
+comparison object. The runner compares same-workload measurements and does not
+assert that V2 waves must be faster.

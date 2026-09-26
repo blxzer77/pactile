@@ -21,6 +21,7 @@ import {
   assertTaskKernelRunDispatchPreSpawnV1,
   bindTaskKernelRunDispatchOwnerV1,
   releaseTaskKernelRunDispatchV1,
+  readTaskKernelScheduleReceiptV1,
   validateTaskKernelRunDispatchStopProofV1,
   scheduleTaskKernelGraph,
   type TaskKernelRunDispatchOwnerV1,
@@ -426,6 +427,68 @@ function admit(
   });
 }
 
+function withoutRecordKeys(
+  value: Record<string, unknown>,
+  omitted: readonly string[],
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !omitted.includes(key)),
+  );
+}
+
+function writeLegacyScheduleReceiptWithoutIntegrationOwner(
+  root: string,
+  fingerprint: string,
+): string {
+  const folder = path.join(
+    root,
+    ".pactile",
+    ".runtime",
+    "scheduler",
+    "receipts",
+  );
+  const originalFile = path.join(folder, `${fingerprint}.json`);
+  const receipt = JSON.parse(
+    fs.readFileSync(originalFile, "utf8"),
+  ) as Record<string, unknown>;
+  const request = receipt.request as {
+    conflictParallelizations?: Record<string, unknown>[];
+  };
+  request.conflictParallelizations = (
+    request.conflictParallelizations ?? []
+  ).map((authorization) =>
+    withoutRecordKeys(authorization, ["integrationOwner"]),
+  );
+  const plan = receipt.plan as {
+    waves: { conflictAuthorizations: Record<string, unknown>[] }[];
+  };
+  for (const wave of plan.waves)
+    wave.conflictAuthorizations = wave.conflictAuthorizations.map(
+      (authorization) =>
+        withoutRecordKeys(authorization, ["integrationOwner"]),
+    );
+
+  const receiptBase = withoutRecordKeys(receipt, [
+    "schemaVersion",
+    "scope",
+    "receiptFingerprint",
+    "createdAt",
+    "integrityVersion",
+    "scheduleKey",
+  ]);
+  receipt.scheduleKey = fingerprintTaskValue(receiptBase);
+  const envelope = withoutRecordKeys(receipt, ["receiptFingerprint"]);
+  const legacyFingerprint = fingerprintTaskValue(envelope);
+  receipt.receiptFingerprint = legacyFingerprint;
+  fs.writeFileSync(
+    path.join(folder, `${legacyFingerprint}.json`),
+    `${JSON.stringify(receipt, null, 2)}\n`,
+    { flag: "wx" },
+  );
+  fs.rmSync(originalFile, { force: true });
+  return legacyFingerprint;
+}
+
 describe("Task Kernel V2 Run dispatch admission", () => {
   it("validates the active pre-spawn lease against its admission write set", () => {
     const root = makeRoot();
@@ -828,6 +891,59 @@ describe("Task Kernel V2 Run dispatch admission", () => {
       ),
     );
     expect(permits.every((result) => result.permitted)).toBe(true);
+  });
+
+  it("rejects direct V2 lease admission for a fingerprint-valid same-wave overlap without an integration owner", () => {
+    const root = makeRoot();
+    const firstTaskId = "v2-old-owner-a";
+    const secondTaskId = "v2-old-owner-b";
+    const first = createTask(root, firstTaskId, {
+      writeSet: ["src/shared.ts"],
+      host: true,
+    });
+    const second = createTask(root, secondTaskId, {
+      writeSet: ["src/shared.ts"],
+      host: true,
+    });
+    const schedule = scheduleTaskKernelGraph(
+      root,
+      [firstTaskId, secondTaskId],
+      {
+        conflictParallelizations: [
+          {
+            taskIds: [firstTaskId, secondTaskId],
+            approvedBy: "approver",
+            authorizationRef: "approval://old-owner-pair",
+            integrationOwner: "parent-integrator",
+            integrationPlan: "Review and integrate the shared writer pair.",
+          },
+        ],
+      },
+    );
+    expect(schedule.receipt.plan.waves[0]?.taskIds).toHaveLength(2);
+    const legacyFingerprint = writeLegacyScheduleReceiptWithoutIntegrationOwner(
+      root,
+      schedule.receipt.receiptFingerprint,
+    );
+    expect(
+      readTaskKernelScheduleReceiptV1(root, legacyFingerprint).integrity,
+    ).toBe("fingerprint-verified");
+
+    const firstPermit = admit(root, legacyFingerprint, firstTaskId, first.runId);
+    expect(firstPermit.permitted).toBe(true);
+    const blocked = admit(
+      root,
+      legacyFingerprint,
+      secondTaskId,
+      second.runId,
+    );
+    expect(blocked).toMatchObject({
+      permitted: false,
+      receipt: {
+        reasonCodes: ["project-write-set-conflict-integration-owner-missing"],
+        conflictingLeaseIds: [firstPermit.permitted ? firstPermit.leaseId : ""],
+      },
+    });
   });
 
   it("checks every active overlap and rejects the unapproved conflict even when another pair is authorized", () => {
