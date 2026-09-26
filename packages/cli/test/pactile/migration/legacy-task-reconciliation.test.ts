@@ -414,6 +414,62 @@ describe("P36 explicit legacy Task reconciliation", () => {
     expect(fs.readFileSync(path.join(recRoot, "journals", journalName))).toEqual(stagedJournal);
   });
 
+  it("rechecks existing imported overlays inside the authority CAS after staging", async () => {
+    const root = makeRoot();
+    const activeDir = addLegacyTask(root, { id: "already-active", directory: "01-active" });
+    const heldDir = addLegacyTask(root, {
+      id: "held-definition",
+      directory: "02-held",
+      deliverable: "TBD",
+    });
+    await importRoot(root);
+    const active = readTaskKernel({ root, taskDir: activeDir, cwd: root });
+    if (active.kind !== "task-kernel-v2") throw new Error("expected imported active Kernel");
+    startTaskRun({
+      root,
+      taskDir: activeDir,
+      expectedRevision: active.kernel.revision,
+      actor: "runner",
+      idempotencyKey: "create-run-before-commit-boundary",
+      input: { summary: "Preserve the imported Task overlay", references: [] },
+      authorization: { approvedBy: "approver", approvedAt: "2026-09-26T11:00:00.000Z", scope: "one task", evidenceRef: "approval.json" },
+    });
+    const overlayPath = path.join(root, ".pactile", "runtime", "legacy-task-migrations", "overrides", "01-active", "kernel.json");
+    const heldSourceBytes = fs.readFileSync(path.join(heldDir, "task.json"));
+    const request = {
+      projectRoot: root,
+      plan: scanLegacyTaskMigration({ projectRoot: root }),
+      input: {
+        taskPath: "02-held",
+        idempotencyKey: "define-held-after-overlay-drift",
+        activationAt: "2026-09-26T11:30:00.000Z",
+        definition: { deliverable: "A defined result" },
+      },
+    };
+
+    const result = await runLegacyTaskReconciliation(request, {
+      approved: true,
+      onPhase(phase) {
+        if (phase !== "generation-staged") return;
+        const current = fs.readFileSync(overlayPath);
+        const tampered = Buffer.from(current);
+        tampered[0] = tampered[0] === 0x7b ? 0x20 : 0x7b;
+        fs.writeFileSync(overlayPath, tampered);
+      },
+    });
+
+    const recRoot = path.join(root, ".pactile", "runtime", "legacy-task-migrations", "reconciliations");
+    const journalName = fs.readdirSync(path.join(recRoot, "journals"))[0];
+    if (!journalName) throw new Error("expected a staged reconciliation journal");
+    const journal = JSON.parse(fs.readFileSync(path.join(recRoot, "journals", journalName), "utf8")) as { state: string };
+    expect(result).toMatchObject({ status: "blocked", wrote: true, visible: false });
+    expect(result.reason).toContain("overlay hash-mismatch");
+    expect(fs.existsSync(path.join(recRoot, "authority.json"))).toBe(false);
+    expect(journal.state).toBe("staged");
+    expect(() => readTaskKernel({ root, taskDir: heldDir, cwd: root })).toThrow(/authority-missing-with-residual-state/);
+    expect(fs.readFileSync(path.join(heldDir, "task.json"))).toEqual(heldSourceBytes);
+  });
+
   it("fails closed if a committed reconciliation authority disappears", async () => {
     const { root, taskDir } = fixtureRoot();
     await importRoot(root);

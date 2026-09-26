@@ -547,7 +547,8 @@ export async function runLegacyTaskReconciliation(
     if (options.cancelled || options.approved !== true)
       return { status: "cancelled", taskPath, requestFingerprint: fingerprint, wrote: false, visible: false };
 
-    assertLegacyTaskKernelMigrationOverlaysIntact(root, orphanRecovery ? baseView : undefined);
+    const overlayCheckView = currentView ?? baseView;
+    assertLegacyTaskKernelMigrationOverlaysIntact(root, overlayCheckView);
     const occurred = occurredAt;
     stageGeneration(root, authority, baseView.baseFiles, stagedFiles, occurred, occurred);
     wrote = true;
@@ -571,6 +572,9 @@ export async function runLegacyTaskReconciliation(
         finalScan.sourceFingerprint !== baseView.authority.sourceFingerprint
       ) throw new Error("legacy-task-reconciliation-source-drift");
       verifyLegacyTaskReconciliationGeneration(root, authority, baseView.baseFiles);
+      // Recheck every previously active imported overlay after staging and
+      // under the authority CAS lock, immediately before making this generation visible.
+      assertLegacyTaskKernelMigrationOverlaysIntact(root, overlayCheckView);
       setJournalState(root, authority, "committing", occurred);
       atomicReplace(root, pointerPath, jsonBytes(authority));
       visible = true;
