@@ -109,6 +109,54 @@ export interface LegacyTaskMigrationView {
   readonly files: ReadonlyMap<string, LegacyTaskMigrationFile>;
 }
 
+const validatedMigrationViews = new WeakMap<object, string>();
+
+function migrationViewFingerprint(view: LegacyTaskMigrationView): string {
+  const hash = createHash("sha256");
+  hash.update(JSON.stringify(view.authority), "utf8");
+  hash.update("\0", "utf8");
+  hash.update(JSON.stringify(view.reconciliationAuthority), "utf8");
+  for (const [name, files] of [
+    ["base", view.baseFiles],
+    ["reconciliation", view.reconciliationFiles],
+    ["effective", view.files],
+  ] as const) {
+    hash.update(name, "utf8");
+    hash.update("\0", "utf8");
+    for (const [key, file] of [...files.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+      hash.update(key, "utf8");
+      hash.update("\0", "utf8");
+      hash.update(file.path, "utf8");
+      hash.update("\0", "utf8");
+      hash.update(file.fingerprint, "utf8");
+      hash.update("\0", "utf8");
+      hash.update(digest(file.bytes), "utf8");
+      hash.update("\0", "utf8");
+    }
+  }
+  return hash.digest("hex");
+}
+
+function registerValidatedMigrationView(view: LegacyTaskMigrationView): LegacyTaskMigrationView {
+  validatedMigrationViews.set(view, migrationViewFingerprint(view));
+  return view;
+}
+
+/** Internal consumers may reuse only a reader-produced, unmodified snapshot. */
+export function assertValidatedLegacyTaskMigrationView(
+  view: LegacyTaskMigrationView,
+): void {
+  const expected = view && typeof view === "object" ? validatedMigrationViews.get(view) : undefined;
+  let actual: string | undefined;
+  try {
+    if (expected !== undefined) actual = migrationViewFingerprint(view);
+  } catch {
+    actual = undefined;
+  }
+  if (expected === undefined || expected !== actual)
+    throw new Error("legacy-task-migration-view-unvalidated");
+}
+
 interface GenerationManifest {
   schemaVersion: 1;
   kind: "legacy-task-staged-generation";
@@ -456,13 +504,13 @@ export function readLegacyTaskMigrationBaseView(
   }
   verifySourceBackup(root, authority.sourceFingerprint);
   const baseFiles = verifyGeneration(root, authority);
-  return {
+  return registerValidatedMigrationView({
     authority,
     baseFiles,
     reconciliationAuthority: null,
     reconciliationFiles: new Map(),
     files: baseFiles,
-  };
+  });
 }
 
 /** Return a fully verified active migration snapshot, or null before first import. */
@@ -477,13 +525,13 @@ export function readLegacyTaskMigrationView(
     base.authority,
     base.baseFiles,
   );
-  return {
+  return registerValidatedMigrationView({
     authority: base.authority,
     baseFiles: base.baseFiles,
     reconciliationAuthority: reconciliation.authority,
     reconciliationFiles: reconciliation.files,
     files: new Map([...base.baseFiles, ...reconciliation.files]),
-  };
+  });
 }
 
 function taskRelativePath(

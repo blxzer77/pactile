@@ -20,9 +20,17 @@ import {
   type LegacyTaskReconciliationAuthority,
 } from "../../core/task/legacy-task-reconciliation-reader.js";
 import { readTaskKernel } from "../../core/task/task-kernel.js";
-import { assertNoDependencyCycle, assertUniqueTaskId, resolveTaskDirectoryById } from "../../core/task/task-kernel-paths.js";
+import {
+  assertNoDependencyCycleWithValidatedMigrationView,
+  assertUniqueTaskIdWithValidatedMigrationView,
+  resolveTaskDirectoryByIdWithValidatedMigrationView,
+} from "../../core/task/task-kernel-paths.js";
 import { parseTaskKernelSnapshotV2 } from "../../core/task/task-kernel-schema.js";
-import { assertLegacyTaskKernelMigrationOverlaysIntact } from "../../core/task/task-kernel-store-v2.js";
+import {
+  assertLegacyTaskKernelMigrationOverlaysIntact,
+  assertLegacyTaskKernelMigrationOverlaysIntactWithValidatedMigrationView,
+  readTaskKernelWithValidatedMigrationView,
+} from "../../core/task/task-kernel-store-v2.js";
 import { assertCanonicalWriteTarget } from "../runtime/paths.js";
 import {
   atomicReplace,
@@ -388,7 +396,7 @@ function assertReconciliationTaskIdAvailable(
   targetTaskPath: string,
   sourceTaskPath: string,
   files: readonly { readonly path: string; readonly bytes: Uint8Array }[],
-  validatedView: LegacyTaskMigrationView | null,
+  validatedView: LegacyTaskMigrationView,
 ): ReturnType<typeof parseTaskKernelSnapshotV2> {
   const kernelFile = files.find((file) => file.path === `${targetTaskPath}/kernel.json`);
   if (!kernelFile) throw new Error("legacy-task-reconciliation-kernel-missing");
@@ -398,7 +406,7 @@ function assertReconciliationTaskIdAvailable(
   } catch {
     throw new Error("legacy-task-reconciliation-kernel-invalid");
   }
-  assertUniqueTaskId(root, kernel.identity.taskId, path.join(root, ...sourceTaskPath.split("/")), validatedView);
+  assertUniqueTaskIdWithValidatedMigrationView(root, kernel.identity.taskId, path.join(root, ...sourceTaskPath.split("/")), validatedView);
   return kernel;
 }
 
@@ -411,10 +419,10 @@ function assertReconciliationDependencyGraphAcyclic(
   root: string,
   sourceTaskPath: string,
   kernel: ReturnType<typeof parseTaskKernelSnapshotV2>,
-  validatedView: LegacyTaskMigrationView | null,
+  validatedView: LegacyTaskMigrationView,
 ): string {
   try {
-    return assertNoDependencyCycle(
+    return assertNoDependencyCycleWithValidatedMigrationView(
       root,
       kernel.identity.taskId,
       kernel.definition.dependencies,
@@ -647,9 +655,9 @@ export async function runLegacyTaskReconciliation(
       const legacyTargets = currentScan.tasks.filter((task) => !task.archivedByPath && task.legacyTaskId.value === resolution.taskId);
       if (legacyTargets.length) continue;
       const validatedView = currentView ?? baseView;
-      const dependencyDir = resolveTaskDirectoryById(root, resolution.taskId, validatedView);
+      const dependencyDir = resolveTaskDirectoryByIdWithValidatedMigrationView(root, resolution.taskId, validatedView);
       if (!dependencyDir) throw new Error(`legacy-task-reconciliation-dependency-target-not-unique:${resolution.taskId}`);
-      const dependency = readTaskKernel({ root, taskDir: dependencyDir, cwd: root, validatedView });
+      const dependency = readTaskKernelWithValidatedMigrationView({ root, taskDir: dependencyDir, cwd: root }, validatedView);
       if (dependency.kind !== "task-kernel-v2")
         throw new Error(`legacy-task-reconciliation-dependency-target-not-v2:${resolution.taskId}`);
       externalDependencyIds.add(resolution.taskId);
@@ -710,7 +718,7 @@ export async function runLegacyTaskReconciliation(
     }
 
     const overlayCheckView = currentView ?? baseView;
-    assertLegacyTaskKernelMigrationOverlaysIntact(root, overlayCheckView);
+    assertLegacyTaskKernelMigrationOverlaysIntactWithValidatedMigrationView(root, overlayCheckView);
     if (options.dryRun) return { status: "dry-run", taskPath, requestFingerprint: fingerprint, wrote: false, visible: false };
     if (options.cancelled || options.approved !== true)
       return { status: "cancelled", taskPath, requestFingerprint: fingerprint, wrote: false, visible: false };
@@ -739,7 +747,7 @@ export async function runLegacyTaskReconciliation(
       verifyLegacyTaskReconciliationGeneration(root, authority, baseView.baseFiles);
       // Recheck every previously active imported overlay after staging and
       // under the authority CAS lock, immediately before making this generation visible.
-      assertLegacyTaskKernelMigrationOverlaysIntact(root, overlayCheckView);
+      assertLegacyTaskKernelMigrationOverlaysIntactWithValidatedMigrationView(root, overlayCheckView);
       if (requiresSeparateTarget) {
         assertRestoreTargetAvailable(root, taskPath, sourceTaskPath, baseView, currentView);
       }

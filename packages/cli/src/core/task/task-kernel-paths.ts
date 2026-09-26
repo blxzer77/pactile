@@ -8,28 +8,53 @@ import { parseTaskKernelSnapshotV2 } from "./task-kernel-schema.js";
 import {
   listLegacyTaskMigrationDirectories,
   listSupersededLegacyTaskSourceDirectories,
+  assertValidatedLegacyTaskMigrationView,
   readLegacyTaskImportRecord,
   readLegacyTaskMigrationView,
   type LegacyTaskMigrationView,
 } from "./legacy-task-migration-reader.js";
-import { readTaskKernel } from "./task-kernel-store-v2.js";
+import { readTaskKernelWithValidatedMigrationView } from "./task-kernel-store-v2.js";
 import { TASK_KERNEL_SCHEMA_VERSION } from "./task-kernel-types.js";
 
 export function assertUniqueTaskId(
   root: string,
   taskId: string,
   ignoredDir: string,
-  validatedView?: LegacyTaskMigrationView | null,
 ): void {
-  const match = findTaskById(root, taskId, ignoredDir, validatedView);
+  const canonicalRoot = canonicalProjectRoot(root);
+  const match = findTaskById(canonicalRoot, taskId, ignoredDir, readMigrationView(canonicalRoot));
+  if (match && path.resolve(match.taskDir) !== path.resolve(ignoredDir)) throw new KernelError("INVALID_REQUEST", `Task ID already exists: ${taskId}`);
+}
+
+/** Internal reconciliation seam for a reader-validated migration snapshot. */
+export function assertUniqueTaskIdWithValidatedMigrationView(
+  root: string,
+  taskId: string,
+  ignoredDir: string,
+  migrationView: LegacyTaskMigrationView,
+): void {
+  assertValidatedView(migrationView);
+  const match = findTaskById(root, taskId, ignoredDir, migrationView);
+  if (match && path.resolve(match.taskDir) !== path.resolve(ignoredDir)) throw new KernelError("INVALID_REQUEST", `Task ID already exists: ${taskId}`);
+}
+
+/** Internal batch target probe; the batch validates its own staged authority separately. */
+export function assertUniqueTaskIdForLegacyBatchTarget(
+  root: string,
+  taskId: string,
+  ignoredDir: string,
+): void {
+  const canonicalRoot = canonicalProjectRoot(root);
+  const match = findTaskById(canonicalRoot, taskId, ignoredDir, null);
   if (match && path.resolve(match.taskDir) !== path.resolve(ignoredDir)) throw new KernelError("INVALID_REQUEST", `Task ID already exists: ${taskId}`);
 }
 
 export function assertDependenciesResolvable(root: string, taskId: string, dependencies: readonly string[], ignoredDir?: string): void {
   const canonicalRoot = canonicalProjectRoot(root);
+  const migrationView = readMigrationView(canonicalRoot);
   for (const dependency of dependencies) {
     if (dependency === taskId) throw new KernelError("INVALID_REQUEST", "a Task cannot depend on itself");
-    if (!findTaskById(canonicalRoot, dependency, ignoredDir)) throw new KernelError("DEPENDENCY_UNSATISFIED", `hard dependency not found: ${dependency}`);
+    if (!findTaskById(canonicalRoot, dependency, ignoredDir, migrationView)) throw new KernelError("DEPENDENCY_UNSATISFIED", `hard dependency not found: ${dependency}`);
   }
 }
 
@@ -38,9 +63,31 @@ export function assertNoDependencyCycle(
   taskId: string,
   dependencies: readonly string[],
   ignoredDir: string,
-  validatedView?: LegacyTaskMigrationView | null,
 ): string {
   const canonicalRoot = canonicalProjectRoot(root);
+  const migrationView = readMigrationView(canonicalRoot);
+  return assertNoDependencyCycleUsingView(canonicalRoot, taskId, dependencies, ignoredDir, migrationView);
+}
+
+/** Internal reconciliation seam for a reader-validated migration snapshot. */
+export function assertNoDependencyCycleWithValidatedMigrationView(
+  root: string,
+  taskId: string,
+  dependencies: readonly string[],
+  ignoredDir: string,
+  migrationView: LegacyTaskMigrationView,
+): string {
+  assertValidatedView(migrationView);
+  return assertNoDependencyCycleUsingView(root, taskId, dependencies, ignoredDir, migrationView);
+}
+
+function assertNoDependencyCycleUsingView(
+  canonicalRoot: string,
+  taskId: string,
+  dependencies: readonly string[],
+  ignoredDir: string,
+  migrationView: LegacyTaskMigrationView | null,
+): string {
   const visiting = new Set<string>();
   const visited = new Set<string>();
   const graph = new Map<string, { readonly taskDir: string | null; readonly dependencies: readonly string[] }>();
@@ -48,7 +95,7 @@ export function assertNoDependencyCycle(
     if (currentId === taskId) throw new KernelError("INVALID_REQUEST", `hard dependency cycle reaches ${taskId}`);
     if (visited.has(currentId) || visiting.has(currentId)) return;
     visiting.add(currentId);
-    const located = findTaskById(canonicalRoot, currentId, ignoredDir, validatedView);
+    const located = findTaskById(canonicalRoot, currentId, ignoredDir, migrationView);
     graph.set(currentId, {
       taskDir: located ? path.resolve(located.taskDir) : null,
       dependencies: located ? [...new Set(located.dependencies)].sort() : [],
@@ -69,8 +116,9 @@ export function assertNoDependencyCycle(
 
 export function assertHardDependenciesSatisfied(root: string, dependencies: readonly string[], ignoredDir?: string): void {
   const canonicalRoot = canonicalProjectRoot(root);
+  const migrationView = readMigrationView(canonicalRoot);
   const unmet = dependencies.filter((id) => {
-    const task = findTaskById(canonicalRoot, id, ignoredDir);
+    const task = findTaskById(canonicalRoot, id, ignoredDir, migrationView);
     return task?.phase !== "close" || task.outcome !== "completed";
   });
   if (unmet.length) throw new KernelError("DEPENDENCY_UNSATISFIED", `hard dependencies must be closed successfully: ${unmet.join(", ")}`);
@@ -80,9 +128,20 @@ export function assertHardDependenciesSatisfied(root: string, dependencies: read
 export function resolveTaskDirectoryById(
   root: string,
   taskId: string,
-  validatedView?: LegacyTaskMigrationView | null,
 ): string | null {
-  const located = findTaskById(root, requireNonEmptyString(taskId, "taskId"), undefined, validatedView);
+  const canonicalRoot = canonicalProjectRoot(root);
+  const located = findTaskById(canonicalRoot, requireNonEmptyString(taskId, "taskId"), undefined, readMigrationView(canonicalRoot));
+  return located?.taskDir ?? null;
+}
+
+/** Internal reconciliation seam for a reader-validated migration snapshot. */
+export function resolveTaskDirectoryByIdWithValidatedMigrationView(
+  root: string,
+  taskId: string,
+  migrationView: LegacyTaskMigrationView,
+): string | null {
+  assertValidatedView(migrationView);
+  const located = findTaskById(root, requireNonEmptyString(taskId, "taskId"), undefined, migrationView);
   return located?.taskDir ?? null;
 }
 
@@ -97,18 +156,10 @@ interface LocatedTask {
 function findTaskById(
   root: string,
   taskId: string,
-  ignoredDir?: string,
-  validatedView?: LegacyTaskMigrationView | null,
+  ignoredDir: string | undefined,
+  migrationView: LegacyTaskMigrationView | null,
 ): LocatedTask | null {
   const canonicalRoot = canonicalProjectRoot(root);
-  let migrationView: ReturnType<typeof readLegacyTaskMigrationView>;
-  try {
-    migrationView = validatedView === undefined
-      ? readLegacyTaskMigrationView(canonicalRoot)
-      : validatedView;
-  } catch (error) {
-    throw new KernelError("CORRUPT_STATE", error instanceof Error ? error.message : String(error));
-  }
   const supersededSources = new Set(listSupersededLegacyTaskSourceDirectories(canonicalRoot, migrationView));
   const matches = enumerateTaskDirs(canonicalRoot, migrationView).flatMap((taskDir) => {
     if (ignoredDir && path.resolve(taskDir) === path.resolve(ignoredDir)) return [];
@@ -126,7 +177,8 @@ function findTaskById(
         }];
       }
       try {
-        const read = readTaskKernel({ root: canonicalRoot, taskDir, validatedView: migrationView });
+        if (!migrationView) throw new KernelError("CORRUPT_STATE", "legacy-task-migration-view-missing");
+        const read = readTaskKernelWithValidatedMigrationView({ root: canonicalRoot, taskDir }, migrationView);
         if (read.kind === "task-kernel-v2" && read.kernel.identity.taskId === taskId) {
           return [{ taskDir, taskId, phase: read.kernel.phase, outcome: read.kernel.outcome, dependencies: read.kernel.definition.dependencies }];
         }
@@ -203,6 +255,22 @@ export function canonicalProjectRoot(root: string, cwd?: string): string {
     throw new KernelError("INVALID_REQUEST", "project root must be a directory");
   }
   return canonicalRoot;
+}
+
+function readMigrationView(root: string): LegacyTaskMigrationView | null {
+  try {
+    return readLegacyTaskMigrationView(root);
+  } catch (error) {
+    throw new KernelError("CORRUPT_STATE", error instanceof Error ? error.message : String(error));
+  }
+}
+
+function assertValidatedView(migrationView: LegacyTaskMigrationView): void {
+  try {
+    assertValidatedLegacyTaskMigrationView(migrationView);
+  } catch (error) {
+    throw new KernelError("CORRUPT_STATE", error instanceof Error ? error.message : String(error));
+  }
 }
 
 function canonicalizePath(candidate: string): string {

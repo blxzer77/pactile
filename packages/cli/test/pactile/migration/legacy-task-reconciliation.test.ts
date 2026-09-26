@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runLegacyTaskCli } from "../../../src/commands/legacy-task.js";
+import { readTaskKernel as readTaskKernelFromPublicTaskIndex } from "../../../src/core/task/index.js";
 import { buildLegacyTaskV2Import } from "../../../src/core/task/legacy-task-v2-import.js";
 import { scanLegacyTaskMigration } from "../../../src/core/task/legacy-task-migration.js";
 import {
@@ -23,9 +24,15 @@ import {
   startTaskRun,
 } from "../../../src/core/task/task-kernel.js";
 import { fingerprintTaskValue } from "../../../src/core/task/task-kernel-schema.js";
-import { appendMutation } from "../../../src/core/task/task-kernel-store-v2.js";
+import {
+  appendMutation,
+  readTaskKernelWithValidatedMigrationView as readTaskKernelUsingValidatedView,
+} from "../../../src/core/task/task-kernel-store-v2.js";
 import { planTaskKernelGraphV1 } from "../../../src/pactile/scheduler/index.js";
-import { resolveTaskDirectoryById } from "../../../src/core/task/task-kernel-paths.js";
+import {
+  resolveTaskDirectoryById,
+  resolveTaskDirectoryByIdWithValidatedMigrationView as resolveTaskDirectoryUsingValidatedView,
+} from "../../../src/core/task/task-kernel-paths.js";
 import { runLegacyTaskBatch } from "../../../src/pactile/migration/legacy-task-batch.js";
 import { runLegacyTaskReconciliation } from "../../../src/pactile/migration/legacy-task-reconciliation.js";
 
@@ -720,6 +727,27 @@ describe("P36 explicit legacy Task reconciliation", () => {
       definition: { dependencies: string[] };
     };
     expect(liveKernel.definition.dependencies).toEqual(["cas-cycle-c"]);
+
+    for (const validatedView of [null, { files: new Map(), baseFiles: new Map() }]) {
+      expect(() => Reflect.apply(readTaskKernelFromPublicTaskIndex, undefined, [{
+        root,
+        taskDir: existingTaskDir,
+        cwd: root,
+        validatedView,
+      }])).toThrow(/authority-missing-with-residual-state/);
+      expect(() => Reflect.apply(resolveTaskDirectoryById, undefined, [root, "cas-cycle-a", validatedView]))
+        .toThrow(/authority-missing-with-residual-state/);
+    }
+    const forgedView = { files: new Map(), baseFiles: new Map() };
+    expect(() => Reflect.apply(readTaskKernelUsingValidatedView, undefined, [
+      { root, taskDir: existingTaskDir, cwd: root },
+      forgedView,
+    ])).toThrow(/legacy-task-migration-view-unvalidated/);
+    expect(() => Reflect.apply(resolveTaskDirectoryUsingValidatedView, undefined, [
+      root,
+      "cas-cycle-a",
+      forgedView,
+    ])).toThrow(/legacy-task-migration-view-unvalidated/);
 
     const retry = await runLegacyTaskReconciliation(request, { approved: true });
     expect(retry).toMatchObject({ status: "completed", resumed: true, wrote: true, visible: true });

@@ -5,7 +5,7 @@ import {
   scanLegacyTaskMigration,
   type LegacyTaskMigrationPlan,
 } from "../../core/task/legacy-task-migration.js";
-import { assertUniqueTaskId } from "../../core/task/task-kernel-paths.js";
+import { assertUniqueTaskIdForLegacyBatchTarget } from "../../core/task/task-kernel-paths.js";
 import { parseTaskKernelSnapshotV2 } from "../../core/task/task-kernel-schema.js";
 import { assertLegacyTaskMigrationAuthorityOrCleanStore } from "../../core/task/legacy-task-migration-reader.js";
 import {
@@ -71,7 +71,7 @@ export function legacyTaskBatchTaskIdConflict(
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
-      assertUniqueTaskId(root, kernel.taskId, kernel.taskDir, null);
+      assertUniqueTaskIdForLegacyBatchTarget(root, kernel.taskId, kernel.taskDir);
     }
     return null;
   } catch (error) {
