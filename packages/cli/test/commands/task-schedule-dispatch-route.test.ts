@@ -2,10 +2,12 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTaskKernel, startTaskRun } from "../../src/core/task/index.js";
 import { runTaskCli } from "../../src/commands/task.js";
 import { runTaskCliWithWorkspaceReclaim } from "../../src/commands/task-worktree-close.js";
+import { createPiTaskKernelWaveRunnerV1 } from "../../src/commands/task-schedule.js";
 import type {
   TaskKernelWaveRunRequestV1,
   TaskKernelWaveRunResultV1,
@@ -13,6 +15,10 @@ import type {
 import { createTaskRunWorktree } from "../../src/pactile/worktree/index.js";
 
 const roots: string[] = [];
+const FAKE_PI_WAVE_PROVIDER = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../.tmp/p31-script-build/fixtures/fake-pi-wave-provider.js",
+);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -157,31 +163,33 @@ describe("task schedule async CLI route", () => {
     const requests: TaskKernelWaveRunRequestV1[] = [];
     let active = 0;
     let peakActive = 0;
+    const piRunner = createPiTaskKernelWaveRunnerV1(root, {
+      command: process.execPath,
+      args: [
+        FAKE_PI_WAVE_PROVIDER,
+        "--started-directory",
+        path.join(root, "route-provider-starts"),
+        "--barrier-size",
+        "2",
+      ],
+    });
     const runner = vi.fn(
-      async (
-        request: TaskKernelWaveRunRequestV1,
-      ): Promise<TaskKernelWaveRunResultV1> => {
+      async (request: TaskKernelWaveRunRequestV1): Promise<TaskKernelWaveRunResultV1> => {
         requests.push(request);
         active += 1;
         peakActive = Math.max(peakActive, active);
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        active -= 1;
-        return {
-          outcome: "settled",
-          scheduleReceiptFingerprint: request.scheduleReceiptFingerprint,
-          admissionReceiptFingerprint: "a".repeat(64),
-          hostStopVerified: true,
-          leaseReleased: true,
-          evidenceRef: `fake-pi-provider-test-only:${request.taskId}`,
-          reason: null,
-        };
+        try {
+          return await piRunner(request);
+        } finally {
+          active -= 1;
+        }
       },
     );
 
     const exitCode = await runTaskCliWithWorkspaceReclaim(
       ["schedule", "dispatch", fingerprint, "--timeout-ms", "5000"],
       root,
-      { runner, runnerLabel: "fake-pi-provider-test-only" },
+      { runner, runnerLabel: "fake-pi-rpc-provider-test-only" },
     );
 
     expect(exitCode).toBe(0);
@@ -201,7 +209,7 @@ describe("task schedule async CLI route", () => {
     expect(output).toHaveLength(1);
     expect(JSON.parse(output[0] as string)).toMatchObject({
       status: "provider-runs-complete",
-      runnerLabel: "fake-pi-provider-test-only",
+      runnerLabel: "fake-pi-rpc-provider-test-only",
       scheduleReceiptFingerprint: fingerprint,
       kernelRunSettlement: "not-performed",
       integrationPlan: {

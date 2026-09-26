@@ -98,6 +98,17 @@ export interface PiV2SettlementResult {
   reasonCode: string | null;
 }
 
+export interface PiV2RunSettlementVerificationV1 {
+  verified: boolean;
+  outcome: string | null;
+  scheduleReceiptFingerprint: string | null;
+  admissionReceiptFingerprint: string | null;
+  hostStopVerified: boolean;
+  leaseReleased: boolean;
+  evidenceRef: string | null;
+  reasonCode: string | null;
+}
+
 function taskRelativeRef(root: string, taskDir: string, ref: string): string {
   const relative = path.relative(root, path.resolve(taskDir, ref));
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
@@ -812,5 +823,241 @@ export function readPiHostStopReceipt(
     return null;
   } catch {
     return null;
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function readSafeProjectFile(
+  root: string,
+  relativeRef: string,
+): { file: string; bytes: Buffer } | null {
+  if (
+    !relativeRef ||
+    path.isAbsolute(relativeRef) ||
+    relativeRef.split(/[\\/]/u).includes("..")
+  )
+    return null;
+  const file = path.resolve(root, relativeRef);
+  const relative = path.relative(root, file);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative))
+    return null;
+  try {
+    const realRoot = fs.realpathSync(root);
+    let cursor = realRoot;
+    for (const segment of relative.split(path.sep)) {
+      cursor = path.join(cursor, segment);
+      if (fs.lstatSync(cursor).isSymbolicLink()) return null;
+    }
+    const info = fs.lstatSync(file);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > 8 * 1024 * 1024)
+      return null;
+    const realFile = fs.realpathSync(file);
+    const realRelative = path.relative(realRoot, realFile);
+    if (
+      !realRelative ||
+      realRelative.startsWith("..") ||
+      path.isAbsolute(realRelative)
+    )
+      return null;
+    return { file, bytes: fs.readFileSync(realFile) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Independently verifies the persisted Pi Host stop proof and released Kernel
+ * admission lease after an injected runner returns. Runner booleans and refs
+ * alone never establish writer settlement.
+ */
+export function verifyPiV2RunSettlementV1(
+  rootValue: string,
+  taskReference: string,
+  taskRunId: string,
+  expectedScheduleReceiptFingerprint: string,
+): PiV2RunSettlementVerificationV1 {
+  const root = path.resolve(rootValue);
+  const invalid = (
+    reasonCode: string,
+    values: Partial<PiV2RunSettlementVerificationV1> = {},
+  ): PiV2RunSettlementVerificationV1 => ({
+    verified: false,
+    outcome: null,
+    scheduleReceiptFingerprint: null,
+    admissionReceiptFingerprint: null,
+    hostStopVerified: false,
+    leaseReleased: false,
+    evidenceRef: null,
+    reasonCode,
+    ...values,
+  });
+  if (!/^[a-f0-9]{64}$/u.test(expectedScheduleReceiptFingerprint))
+    return invalid("expected-schedule-receipt-fingerprint-invalid");
+  try {
+    const taskDir = resolveTaskDir(root, taskReference);
+    const read = readTaskKernel({ root, taskDir, cwd: root });
+    if (read.kind !== "task-kernel-v2")
+      return invalid("task-kernel-v2-required");
+    const run = read.kernel.runs.find((candidate) => candidate.id === taskRunId);
+    if (
+      run?.taskId !== read.kernel.identity.taskId ||
+      run.host?.host !== "pi" ||
+      run.host.role !== "implement" ||
+      run.host.assuranceSource !== "manager-owned-child-exit"
+    )
+      return invalid("kernel-pi-host-settlement-missing");
+
+    const runRefs = run.host.resultRefs.filter(
+      (ref) => ref.startsWith("pi-bridge/runs/") && !ref.includes(".."),
+    );
+    for (const runRef of runRefs) {
+      const safeRun = readSafeTaskFile(taskDir, runRef);
+      if (!safeRun) continue;
+      const runRecord = asRecord(
+        JSON.parse(safeRun.bytes.toString("utf8")),
+      );
+      if (
+        runRecord?.task_id !== read.kernel.identity.taskId ||
+        runRecord.task_run_id !== run.id ||
+        runRecord.task_host_id !== "pi" ||
+        runRecord.role !== "implement" ||
+        runRecord.run_id !== path.basename(runRef, ".json") ||
+        runRecord.outcome === "running" ||
+        runRecord.schedule_receipt_fingerprint !==
+          expectedScheduleReceiptFingerprint
+      )
+        continue;
+      const admissionFingerprint = runRecord.admission_receipt_fingerprint;
+      const leaseId = runRecord.dispatch_lease_id;
+      const evidenceRef = runRecord.dispatch_stop_proof_ref;
+      const outcome = runRecord.outcome;
+      if (
+        typeof admissionFingerprint !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(admissionFingerprint) ||
+        typeof leaseId !== "string" ||
+        !leaseId.trim() ||
+        typeof evidenceRef !== "string" ||
+        !evidenceRef.trim() ||
+        typeof outcome !== "string" ||
+        runRecord.dispatch_lease_released !== true
+      )
+        continue;
+
+      const admissionRef = path.posix.join(
+        ".pactile",
+        ".runtime",
+        "scheduler",
+        "admissions",
+        `${admissionFingerprint}.json`,
+      );
+      const safeAdmission = readSafeProjectFile(root, admissionRef);
+      if (!safeAdmission) continue;
+      const admission = asRecord(
+        JSON.parse(safeAdmission.bytes.toString("utf8")),
+      );
+      if (!admission) continue;
+      const {
+        schemaVersion,
+        scope,
+        receiptFingerprint,
+        createdAt: _createdAt,
+        ...admissionBase
+      } = admission;
+      const request = asRecord(admission.request);
+      if (
+        schemaVersion !== 1 ||
+        scope !== "task-kernel-v2-run-admission" ||
+        receiptFingerprint !== admissionFingerprint ||
+        fingerprintTaskValue(admissionBase) !== admissionFingerprint ||
+        admission.decision !== "permitted" ||
+        admission.leaseId !== leaseId ||
+        request?.scheduleReceiptFingerprint !==
+          expectedScheduleReceiptFingerprint ||
+        request.taskId !== read.kernel.identity.taskId ||
+        request.runId !== run.id
+      )
+        continue;
+
+      const hostStop = readPiHostStopReceipt(root, taskReference, taskRunId);
+      const safeProof = readSafeTaskFile(taskDir, evidenceRef);
+      if (!hostStop || !safeProof) continue;
+      const proof = asRecord(JSON.parse(safeProof.bytes.toString("utf8")));
+      if (!proof) continue;
+      const { proof_fingerprint: proofFingerprint, ...proofBase } = proof;
+      if (
+        typeof proofFingerprint !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(proofFingerprint) ||
+        fingerprintTaskValue(proofBase) !== proofFingerprint ||
+        path.basename(safeProof.file) !== `${proofFingerprint}.json` ||
+        proof.lease_id !== leaseId ||
+        proof.task_id !== read.kernel.identity.taskId ||
+        proof.run_id !== run.id ||
+        proof.schedule_receipt_fingerprint !==
+          expectedScheduleReceiptFingerprint ||
+        proof.admission_receipt_fingerprint !== admissionFingerprint ||
+        hostStop.piRunId !== runRecord.run_id ||
+        hostStop.terminal !== (outcome === "cancelled" ? "cancelled" : "exited")
+      )
+        continue;
+
+      const historyRef = path.posix.join(
+        ".pactile",
+        ".runtime",
+        "scheduler",
+        "lease-history",
+        `${leaseId}.json`,
+      );
+      const activeRef = path.posix.join(
+        ".pactile",
+        ".runtime",
+        "scheduler",
+        "active",
+        `${leaseId}.json`,
+      );
+      const safeHistory = readSafeProjectFile(root, historyRef);
+      if (!safeHistory || fs.existsSync(path.resolve(root, activeRef)))
+        continue;
+      const history = asRecord(
+        JSON.parse(safeHistory.bytes.toString("utf8")),
+      );
+      if (
+        history?.id !== leaseId ||
+        history.owner_kind !== "task-kernel-v2-run" ||
+        history.status !== "released" ||
+        history.task_id !== read.kernel.identity.taskId ||
+        history.run_id !== run.id ||
+        history.schedule_receipt_fingerprint !==
+          expectedScheduleReceiptFingerprint ||
+        history.admission_receipt_fingerprint !== admissionFingerprint ||
+        history.stop_receipt_ref !==
+          path.relative(root, safeProof.file).replaceAll("\\", "/") ||
+        history.stop_proof_fingerprint !== proofFingerprint ||
+        history.release_disposition !== "native-terminal"
+      )
+        continue;
+
+      return {
+        verified: true,
+        outcome,
+        scheduleReceiptFingerprint: expectedScheduleReceiptFingerprint,
+        admissionReceiptFingerprint: admissionFingerprint,
+        hostStopVerified: hostStop.processExit.terminationVerified === true,
+        leaseReleased: true,
+        evidenceRef,
+        reasonCode: null,
+      };
+    }
+    return invalid("persisted-host-stop-or-lease-release-proof-invalid");
+  } catch (error) {
+    return invalid(
+      error instanceof Error
+        ? `settlement-evidence-read-failed:${error.message}`
+        : "settlement-evidence-read-failed",
+    );
   }
 }

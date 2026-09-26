@@ -33,6 +33,17 @@ export async function runTaskCliWithWorkspaceReclaim(
     const taskReference = argv[1];
     const runId = option(argv, "--run");
     if (!taskReference || !runId) return closeCode;
+
+    const cwdTaskDir = resolveTaskDir(cwd, taskReference);
+    const cwdRead = readTaskKernel({
+      root: cwd,
+      taskDir: cwdTaskDir,
+      cwd,
+    });
+    if (cwdRead.kind !== "task-kernel-v2") return closeCode;
+    const cwdRun = cwdRead.kernel.runs.find((item) => item.id === runId);
+    if (!cwdRun?.workspace?.manager) return closeCode;
+
     const repoRoot = repositoryRoot(cwd);
     const taskDir = resolveTaskDir(repoRoot, taskReference);
     const read = readTaskKernel({ root: repoRoot, taskDir, cwd: repoRoot });

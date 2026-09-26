@@ -2,9 +2,13 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  closeTaskKernel,
   createTaskKernel,
+  recordTaskReview,
+  recordTaskRunResult,
   readTaskKernel,
   resumeTaskRun,
   startTaskRun,
@@ -22,6 +26,10 @@ import { createPiTaskKernelWaveRunnerV1 } from "../../../src/commands/task-sched
 import { PiRpcClient } from "../../../src/pactile/pi/rpc.js";
 
 const roots: string[] = [];
+const FAKE_PI_WAVE_PROVIDER = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../.tmp/p31-script-build/fixtures/fake-pi-wave-provider.js",
+);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -119,6 +127,91 @@ function attachManagedWorktree(root: string, task: TaskFixture): string {
   }).binding.canonicalPath;
 }
 
+function closePrerequisite(root: string, taskId: string): TaskFixture {
+  const task = makeTask(root, taskId, { start: false });
+  const started = startTaskRun({
+    root,
+    taskDir: task.taskDir,
+    expectedRevision: 1,
+    actor: "test-worker",
+    idempotencyKey: `start:${taskId}`,
+    input: { summary: "Complete the prerequisite", references: [] },
+    authorization: {
+      approvedBy: "test-approver",
+      approvedAt: "2026-09-26T00:00:00.000Z",
+      scope: "declared prerequisite",
+      evidenceRef: `approval:${taskId}`,
+    },
+    writeSetSnapshot: [`src/${taskId}.ts`],
+  });
+  const runId = started.kernel.runs.at(-1)?.id;
+  if (!runId) throw new Error("Prerequisite Run is missing");
+  fs.writeFileSync(
+    path.join(root, "src", `${taskId}.ts`),
+    "export const prerequisite = true;\n",
+  );
+  fs.writeFileSync(path.join(task.taskDir, "result.txt"), "closed prerequisite\n");
+  const completed = recordTaskRunResult({
+    root,
+    taskDir: task.taskDir,
+    expectedRevision: started.kernel.revision,
+    runId,
+    outcome: "completed",
+    summary: "Prerequisite result is complete",
+    evidenceRefs: ["result.txt"],
+    actor: "test-worker",
+    idempotencyKey: `result:${taskId}`,
+  });
+  const candidate = completed.kernel.runs.at(-1)?.candidateSnapshot;
+  if (!candidate) throw new Error("Prerequisite candidate is missing");
+  fs.writeFileSync(path.join(task.taskDir, "review.json"), "{}\n");
+  const reviewed = recordTaskReview({
+    root,
+    taskDir: task.taskDir,
+    expectedRevision: completed.kernel.revision,
+    runId,
+    candidateSnapshotId: candidate.id,
+    candidateFingerprint: candidate.fingerprint,
+    reviewer: "test-reviewer",
+    decision: "pass",
+    evidenceRefs: ["review.json"],
+    acceptanceEvidence: { "AC-1": [`src/${taskId}.ts`] },
+    actor: "test-reviewer",
+    idempotencyKey: `review:${taskId}`,
+  });
+  const review = reviewed.kernel.reviews.at(-1);
+  if (!review) throw new Error("Prerequisite passing review is missing");
+  closeTaskKernel({
+    root,
+    taskDir: task.taskDir,
+    expectedRevision: reviewed.kernel.revision,
+    runId,
+    reviewId: review.id,
+    candidateObservation: {
+      snapshotId: candidate.id,
+      fingerprint: candidate.fingerprint,
+      observedBy: "test-closer",
+      observedAt: "2026-09-26T00:05:00.000Z",
+      source: "caller-attested",
+      evidenceRef: `candidate:${taskId}`,
+    },
+    deliveryEvidence: {
+      level: "local-result",
+      reference: `src/${taskId}.ts`,
+      summary: "The accepted prerequisite result is present",
+    },
+    actor: "test-closer",
+    idempotencyKey: `close:${taskId}`,
+  });
+  return { ...task, runId };
+}
+
+function archiveTask(root: string, task: TaskFixture): void {
+  const archiveDir = path.join(root, ".pactile", "tasks", "archive", "2026-09");
+  fs.mkdirSync(archiveDir, { recursive: true });
+  fs.renameSync(task.taskDir, path.join(archiveDir, task.taskId));
+}
+
 function estimatedCosts(taskIds: readonly string[]) {
   return Object.fromEntries(
     taskIds.map((taskId) => [
@@ -159,65 +252,23 @@ function fakePiScript(
     hangTaskIds?: string[];
     startedDirectory?: string;
   } = {},
-): string {
-  const script = path.join(root, "fake-pi-v2-wave-provider.mjs");
-  const config = JSON.stringify({
-    barrierSize: options.barrierSize ?? 0,
-    failTaskIds: options.failTaskIds ?? [],
-    hangTaskIds: options.hangTaskIds ?? [],
-    startedDirectory:
-      options.startedDirectory ?? path.join(root, "provider-starts"),
-  });
-  fs.writeFileSync(
-    script,
-    `import fs from 'node:fs';
-import path from 'node:path';
-const config = ${config};
-const taskDir = path.dirname(path.dirname(process.env.PI_CODING_AGENT_SESSION_DIR));
-const taskId = path.basename(taskDir);
-const session = path.join(process.env.PI_CODING_AGENT_SESSION_DIR, 'session.jsonl');
-fs.mkdirSync(path.dirname(session), { recursive: true });
-fs.writeFileSync(session, 'fake session\\n');
-let buffer = '';
-const emit = value => process.stdout.write(JSON.stringify(value) + '\\n');
-process.stdin.on('data', chunk => {
-  buffer += chunk.toString();
-  let at;
-  while ((at = buffer.indexOf('\\n')) >= 0) {
-    const line = buffer.slice(0, at); buffer = buffer.slice(at + 1);
-    if (!line) continue;
-    const request = JSON.parse(line);
-    const reply = data => emit({ id: request.id, type: 'response', command: request.type, success: true, ...data });
-    if (request.type === 'get_state') reply({ data: { isStreaming: false, sessionId: 'fake-session-' + taskId, sessionFile: session } });
-    else if (request.type === 'prompt') {
-      reply();
-      emit({ type: 'agent_start' });
-      if (config.hangTaskIds.includes(taskId)) {
-        fs.mkdirSync(config.startedDirectory, { recursive: true });
-        fs.writeFileSync(path.join(config.startedDirectory, taskId + '.started'), 'started');
-        continue;
-      }
-      const finish = () => emit({ type: 'agent_end', messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Fake Pi provider fixture result for ' + taskId }], stopReason: config.failTaskIds.includes(taskId) ? 'error' : 'stop' }] });
-      if (config.barrierSize > 0) {
-        fs.mkdirSync(config.startedDirectory, { recursive: true });
-        fs.writeFileSync(path.join(config.startedDirectory, taskId + '.started'), 'started');
-        const wait = setInterval(() => {
-          const started = fs.readdirSync(config.startedDirectory).filter(name => name.endsWith('.started'));
-          if (started.length >= config.barrierSize) { clearInterval(wait); finish(); }
-        }, 5);
-      } else setTimeout(finish, 30);
-    } else if (request.type === 'abort') reply();
-  }
-});
-process.stdin.on('end', () => process.exit(0));
-`,
-    "utf8",
-  );
-  return script;
+): string[] {
+  const args = [
+    FAKE_PI_WAVE_PROVIDER,
+    "--started-directory",
+    options.startedDirectory ?? path.join(root, "provider-starts"),
+    "--barrier-size",
+    String(options.barrierSize ?? 0),
+  ];
+  for (const taskId of options.failTaskIds ?? [])
+    args.push("--fail-task-id", taskId);
+  for (const taskId of options.hangTaskIds ?? [])
+    args.push("--hang-task-id", taskId);
+  return args;
 }
 
-function fakePiLaunch(script: string) {
-  return { command: process.execPath, args: [script] };
+function fakePiLaunch(args: string[]) {
+  return { command: process.execPath, args };
 }
 
 describe("Task Kernel V2 writer-wave dispatch", () => {
@@ -400,6 +451,52 @@ describe("Task Kernel V2 writer-wave dispatch", () => {
     expect(runner).not.toHaveBeenCalled();
   });
 
+  it("dispatches after resolving a successfully closed dependency from the Task archive", async () => {
+    const root = makeGitRoot();
+    const prerequisite = closePrerequisite(root, "wave-archived-prerequisite");
+    archiveTask(root, prerequisite);
+    const dependent = makeTask(root, "wave-archived-dependent", {
+      dependencies: [prerequisite.taskId],
+      writeSet: ["src/dependent.ts"],
+    });
+    attachManagedWorktree(root, dependent);
+    const schedule = scheduleTaskKernelGraph(root, [dependent.taskId]);
+    const runner = vi.fn(
+      createPiTaskKernelWaveRunnerV1(root, fakePiLaunch(fakePiScript(root))),
+    );
+
+    const result = await dispatchTaskKernelWaveV1(
+      root,
+      schedule.receipt.receiptFingerprint,
+      { timeoutMs: 10_000, runnerLabel: "fake-pi-rpc-provider-test-only", runner },
+    );
+
+    expect(schedule.receipt.plan.decisions).toContainEqual(
+      expect.objectContaining({ taskId: dependent.taskId, action: "scheduled" }),
+    );
+    expect(result.status).toBe("provider-runs-complete");
+    expect(result.tasks).toContainEqual(
+      expect.objectContaining({ taskId: dependent.taskId, status: "provider-runs-settled" }),
+    );
+    expect(runner).toHaveBeenCalledTimes(1);
+  }, 30_000);
+
+  it("rejects an archived dependency that is not closed successfully before dispatch", () => {
+    const root = makeGitRoot();
+    const prerequisite = makeTask(root, "wave-archived-open-prerequisite", {
+      start: false,
+    });
+    const dependent = makeTask(root, "wave-archived-open-dependent", {
+      dependencies: [prerequisite.taskId],
+      start: false,
+    });
+    archiveTask(root, prerequisite);
+
+    expect(() => scheduleTaskKernelGraph(root, [dependent.taskId])).toThrow(
+      /Archived hard Task dependency is not closed with completed outcome/u,
+    );
+  });
+
   it("keeps predicted overlapping write sets in separate serial waves by default", async () => {
     const root = makeGitRoot();
     const first = makeTask(root, "wave-overlap-a", {
@@ -418,12 +515,19 @@ describe("Task Kernel V2 writer-wave dispatch", () => {
     expect(schedule.receipt.plan.waves).toHaveLength(2);
     const activeCounts: number[] = [];
     let active = 0;
+    const piRunner = createPiTaskKernelWaveRunnerV1(
+      root,
+      fakePiLaunch(fakePiScript(root)),
+    );
     const runner = vi.fn(async (request: TaskKernelWaveRunRequestV1) => {
       active += 1;
       activeCounts.push(active);
-      await new Promise((resolve) => setTimeout(resolve, 25));
-      active -= 1;
-      return testProviderResult(request);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return await piRunner(request);
+      } finally {
+        active -= 1;
+      }
     });
 
     const result = await dispatchTaskKernelWaveV1(
@@ -478,12 +582,19 @@ describe("Task Kernel V2 writer-wave dispatch", () => {
     );
     let active = 0;
     let peak = 0;
+    const piRunner = createPiTaskKernelWaveRunnerV1(
+      root,
+      fakePiLaunch(fakePiScript(root)),
+    );
     const runner = vi.fn(async (request: TaskKernelWaveRunRequestV1) => {
       active += 1;
       peak = Math.max(peak, active);
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      active -= 1;
-      return testProviderResult(request);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return await piRunner(request);
+      } finally {
+        active -= 1;
+      }
     });
 
     const result = await dispatchTaskKernelWaveV1(
@@ -610,6 +721,46 @@ describe("Task Kernel V2 writer-wave dispatch", () => {
       }),
     );
   }, 30_000);
+
+  it("rejects a runner's forged settled booleans without persisted admission, Host stop, and lease evidence", async () => {
+    const root = makeGitRoot();
+    const task = makeTask(root, "wave-untrusted-runner");
+    attachManagedWorktree(root, task);
+    const schedule = scheduleTaskKernelGraph(root, [task.taskId]);
+    const runner = vi.fn(async (request: TaskKernelWaveRunRequestV1) => ({
+      outcome: "settled" as const,
+      scheduleReceiptFingerprint: request.scheduleReceiptFingerprint,
+      admissionReceiptFingerprint: "a".repeat(64),
+      hostStopVerified: true,
+      leaseReleased: true,
+      evidenceRef: null,
+      reason: null,
+    }));
+
+    const result = await dispatchTaskKernelWaveV1(
+      root,
+      schedule.receipt.receiptFingerprint,
+      { timeoutMs: 5_000, runnerLabel: "untrusted-runner-test-only", runner },
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.tasks).toContainEqual(
+      expect.objectContaining({
+        taskId: task.taskId,
+        status: "host-stop-unverified",
+        outcome: "failed",
+        admissionReceiptFingerprint: null,
+        hostStopVerified: false,
+        leaseReleased: false,
+        evidenceRef: null,
+      }),
+    );
+    expect(runner).toHaveBeenCalledTimes(1);
+    const read = readTaskKernel({ root, taskDir: task.taskDir, cwd: root });
+    if (read.kind !== "task-kernel-v2")
+      throw new Error("Expected Task Kernel V2");
+    expect(read.kernel.runs.at(-1)?.host).toBeNull();
+  });
 
   it("cancels fake-Pi dispatch only after observing and recording the child process exit", async () => {
     const root = makeGitRoot();

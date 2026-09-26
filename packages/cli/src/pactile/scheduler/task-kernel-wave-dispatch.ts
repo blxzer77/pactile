@@ -6,6 +6,7 @@ import {
   readTaskKernel,
   type TaskRunV2,
 } from "../../core/task/index.js";
+import { resolveTaskDirectoryById } from "../../core/task/task-kernel-paths.js";
 import { resolveTaskDir } from "../task/session.js";
 import { inspectRunWorktree } from "../worktree/manager.js";
 import { projectWriteSetsConflict } from "./project-lease-store.js";
@@ -381,7 +382,11 @@ function hardDependenciesClosed(root: string, task: PreparedTask): string[] {
   const blockers: string[] = [];
   for (const dependencyId of task.dependsOn) {
     try {
-      const dependencyDir = resolveTaskDir(root, dependencyId);
+      const dependencyDir = resolveTaskDirectoryById(root, dependencyId);
+      if (!dependencyDir) {
+        blockers.push("hard-dependency-missing-or-invalid:" + dependencyId);
+        continue;
+      }
       const read = readTaskKernel({ root, taskDir: dependencyDir, cwd: root });
       if (read.kind !== "task-kernel-v2") {
         blockers.push("hard-dependency-not-v2-closed:" + dependencyId);
@@ -553,13 +558,36 @@ function taskResult(
 function statusFor(
   result: TaskKernelWaveRunResultV1,
   expectedFingerprint: string,
+  verified: {
+    verified: boolean;
+    outcome: string | null;
+    scheduleReceiptFingerprint: string | null;
+    admissionReceiptFingerprint: string | null;
+    hostStopVerified: boolean;
+    leaseReleased: boolean;
+    evidenceRef: string | null;
+    reasonCode: string | null;
+  },
 ): TaskKernelWaveDispatchTaskResultV1["status"] {
   if (result.scheduleReceiptFingerprint !== expectedFingerprint)
     return "schedule-receipt-mismatch";
-  if (!result.hostStopVerified || !result.leaseReleased)
+  if (
+    !verified.verified ||
+    verified.scheduleReceiptFingerprint !== expectedFingerprint ||
+    !verified.hostStopVerified ||
+    !verified.leaseReleased ||
+    result.hostStopVerified !== true ||
+    result.leaseReleased !== true ||
+    !result.admissionReceiptFingerprint ||
+    result.admissionReceiptFingerprint !==
+      verified.admissionReceiptFingerprint ||
+    !result.evidenceRef ||
+    result.evidenceRef !== verified.evidenceRef ||
+    result.outcome !== verified.outcome
+  )
     return "host-stop-unverified";
-  if (result.outcome === "settled") return "provider-runs-settled";
-  if (result.outcome === "cancelled") return "cancelled";
+  if (verified.outcome === "settled") return "provider-runs-settled";
+  if (verified.outcome === "cancelled") return "cancelled";
   return "provider-run-failed";
 }
 
@@ -835,14 +863,52 @@ export async function dispatchTaskKernelWaveV1(
         stopLaterWaves = true;
         continue;
       }
-      const status = statusFor(item.result, fingerprint);
+      const verified = item.task.runId
+        ? await import("../pi/v2-dispatch.js").then(({ verifyPiV2RunSettlementV1 }) =>
+            verifyPiV2RunSettlementV1(
+              root,
+              item.task.taskId,
+              item.task.runId as string,
+              fingerprint,
+            ),
+          )
+        : null;
+      const status = verified
+        ? statusFor(item.result, fingerprint, verified)
+        : "host-stop-unverified";
+      const verifiedResult: TaskKernelWaveRunResultV1 = {
+        outcome:
+          verified &&
+          [
+            "settled",
+            "needs_review",
+            "failed",
+            "cancelled",
+            "timed_out",
+            "interrupted",
+          ].includes(verified.outcome ?? "")
+            ? (verified.outcome as TaskKernelWaveRunOutcomeV1)
+            : "failed",
+        scheduleReceiptFingerprint:
+          verified?.scheduleReceiptFingerprint ?? null,
+        admissionReceiptFingerprint:
+          verified?.admissionReceiptFingerprint ?? null,
+        hostStopVerified: verified?.hostStopVerified ?? false,
+        leaseReleased: verified?.leaseReleased ?? false,
+        evidenceRef: verified?.evidenceRef ?? null,
+        reason:
+          verified?.reasonCode ??
+          (status === "host-stop-unverified"
+            ? "runner-result-not-corroborated-by-persisted-kernel-host-stop-and-lease-evidence"
+            : item.result.reason),
+      };
       tasks.push({
         ...taskResult(
           item.task,
           wave.sequence,
           status,
-          item.result.reason,
-          item.result,
+          verifiedResult.reason,
+          verifiedResult,
         ),
         elapsedMs: item.elapsedMs,
       });

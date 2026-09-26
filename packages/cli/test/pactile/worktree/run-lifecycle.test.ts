@@ -201,6 +201,104 @@ function hasRegisteredWorktree(root: string, target: string): boolean {
 }
 
 describe("managed Run worktree reclamation", () => {
+  it("closes a valid non-Git Task without reporting a false cleanup failure", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), fixturePrefix));
+    roots.push(root);
+    fs.mkdirSync(path.join(root, "src"), { recursive: true });
+    const taskId = "close-non-git";
+    const taskDir = path.join(root, ".pactile", "tasks", taskId);
+    const created = createTaskKernel({
+      root,
+      taskDir,
+      actor: "author",
+      idempotencyKey: `create:${taskId}`,
+      definition: {
+        taskId,
+        title: "Close a non-Git Task",
+        description: "",
+        deliverable: "a reviewed result",
+        deliveryLevel: "local-result",
+        acceptanceCriteria: [{ id: "AC-1", description: "Result is present" }],
+        dependencies: [],
+      },
+    });
+    const started = startTaskRun({
+      root,
+      taskDir,
+      expectedRevision: created.kernel.revision,
+      actor: runActor,
+      idempotencyKey: `start:${taskId}`,
+      input: { summary: "Implement the non-Git fixture", references: [] },
+      authorization: {
+        approvedBy: approver,
+        approvedAt: "2026-09-26T00:00:00.000Z",
+        scope: "local result",
+        evidenceRef: "approval:non-git",
+      },
+      writeSetSnapshot: ["src/"],
+    });
+    const runId = started.kernel.runs.at(-1)?.id;
+    if (!runId) throw new Error("Non-Git Task Run is missing");
+    const resultBytes = Buffer.from("non-Git result\n");
+    fs.writeFileSync(path.join(root, "src", "result.txt"), resultBytes);
+    fs.writeFileSync(path.join(taskDir, "run-result.json"), "{}\n");
+    const completed = recordTaskRunResult({
+      root,
+      taskDir,
+      expectedRevision: started.kernel.revision,
+      runId,
+      outcome: "completed",
+      summary: "Result is ready for review",
+      candidateEntries: [{
+        ref: "src/result.txt",
+        fingerprint: createHash("sha256").update(resultBytes).digest("hex"),
+      }],
+      evidenceRefs: ["run-result.json"],
+      actor: runActor,
+      idempotencyKey: `run-result:${taskId}`,
+    });
+    const candidate = completed.kernel.runs.at(-1)?.candidateSnapshot;
+    if (!candidate) throw new Error("Non-Git Task candidate is missing");
+    fs.writeFileSync(path.join(taskDir, "review.json"), "{}\n");
+    const reviewed = recordTaskReview({
+      root,
+      taskDir,
+      expectedRevision: completed.kernel.revision,
+      runId,
+      candidateSnapshotId: candidate.id,
+      candidateFingerprint: candidate.fingerprint,
+      reviewer,
+      decision: "pass",
+      evidenceRefs: ["review.json"],
+      acceptanceEvidence: { "AC-1": ["src/result.txt"] },
+      actor: reviewer,
+      idempotencyKey: `review:${taskId}`,
+    });
+    const review = reviewed.kernel.reviews.at(-1);
+    if (!review) throw new Error("Non-Git Task passing review is missing");
+    const args = [
+      "close", taskId,
+      "--run", runId,
+      "--review", review.id,
+      "--candidate-id", candidate.id,
+      "--candidate-fingerprint", candidate.fingerprint,
+      "--candidate-observed-by", closer,
+      "--candidate-observed-at", "2026-09-26T00:02:00.000Z",
+      "--candidate-observation-source", "test-observer",
+      "--candidate-observation-ref", `candidate:${taskId}`,
+      "--delivery-level", "local-result",
+      "--delivery-ref", "src/result.txt",
+      "--delivery-summary", "The reviewed result is present",
+      "--idempotency-key", `task-close:${taskId}`,
+    ];
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runTaskCliWithWorkspaceReclaim(args, root)).toBe(0);
+
+    expect(error).not.toHaveBeenCalled();
+    expect(readKernel(root, taskDir).phase).toBe("close");
+  });
+
   it("adopts only a clean registered checkout after explicit approval and binds its owner to the Task Run", () => {
     const { root, baseSha } = fixture();
     const taskId = "cleanup-adopted";
