@@ -64,6 +64,7 @@ describe("release promotion scripts", () => {
     expect(conformanceJob).toContain(
       "Test Node-only and package release contracts",
     );
+    expect(conformanceJob).toContain("if: ${{ matrix.node != '20.0.0' }}");
     expect(conformanceJob).toContain("vitest run --maxWorkers=2");
     expect(conformanceJob).toContain("test/release-guard.test.ts");
     expect(conformanceJob).toContain("test/assert-no-python-on-path.test.ts");

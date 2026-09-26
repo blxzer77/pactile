@@ -124,7 +124,9 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # Vite 7 requires >=20.19; Node 20.0.0 uses the compiled package acceptance below.
       - name: Test Node-only and package release contracts
+        if: ${{ matrix.node != '20.0.0' }}
         run: >-
           pnpm --filter @blxzer/pactile exec vitest run --maxWorkers=2
           test/release-guard.test.ts
