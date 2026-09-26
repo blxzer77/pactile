@@ -42,6 +42,7 @@ export {
   bindTaskKernelRunDispatchOwnerV1,
   acquireTaskKernelRunDispatchV1,
   assertTaskKernelRunDispatchLeaseV1,
+  assertTaskKernelRunDispatchPreSpawnV1,
   releaseTaskKernelRunDispatchV1,
   validateTaskKernelRunDispatchStopProofV1,
   type TaskKernelRunDispatchRequestV1,
@@ -56,5 +57,7 @@ export {
   type TaskKernelRunDispatchRejectionV1,
   type TaskKernelRunDispatchResultV1,
   type TaskKernelRunDispatchLeaseAssertionV1,
+  type TaskKernelRunDispatchPreSpawnAssertionV1,
+  type TaskKernelRunDispatchPreSpawnAssertionRequestV1,
   type TaskKernelRunDispatchReleaseResultV1,
 } from "./task-kernel-admission.js";

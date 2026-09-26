@@ -12,7 +12,7 @@ import {
 } from "../../core/task/index.js";
 import {
   acquireTaskKernelRunDispatchV1,
-  assertTaskKernelRunDispatchLeaseV1,
+  assertTaskKernelRunDispatchPreSpawnV1,
   bindTaskKernelRunDispatchOwnerV1,
   releaseTaskKernelRunDispatchV1,
   scheduleTaskKernelGraph,
@@ -211,17 +211,28 @@ export function recheckPiV2RunDispatchBeforeSpawn(
     throw new Error("Pi V2 Task schedule changed after dispatch admission");
   }
 
-  const lease = assertTaskKernelRunDispatchLeaseV1(dispatch.root, {
+  const lease = assertTaskKernelRunDispatchPreSpawnV1(dispatch.root, {
     leaseId: dispatch.leaseId,
     taskId: dispatch.taskId,
     runId: dispatch.runId,
+    scheduleReceiptFingerprint: dispatch.scheduleReceiptFingerprint,
+    owner: {
+      host: "pi",
+      role: "implement",
+      sessionId: null,
+      threadId: null,
+      hostId: null,
+      startRequestId: null,
+      processId: null,
+    },
   });
-  // Before Pi starts, the admission owner is intentionally only a placeholder.
-  // P37 reports that expected state as a host-binding mismatch after it has
-  // verified the active lease, schedule, Run, dependencies, and reserved write set.
-  if (lease.asserted || lease.reasonCode !== "task-run-host-binding-mismatch") {
+  if (
+    !lease.asserted ||
+    lease.hostBound !== false ||
+    lease.scheduleReceiptFingerprint !== dispatch.scheduleReceiptFingerprint
+  ) {
     throw new Error(
-      `Pi V2 dispatch lease is not active and dispatchable (${lease.reasonCode ?? "unexpected host binding"})`,
+      `Pi V2 dispatch lease is not active and dispatchable (${lease.reasonCode ?? "invalid pre-spawn assertion"})`,
     );
   }
   return currentWorkdir;

@@ -410,6 +410,77 @@ describe("Pi V2 dispatch admission and host stop", () => {
     }
   });
 
+  it("does not spawn when active lease touches no longer match the admitted Run write set", async () => {
+    const root = makeRoot();
+    const task = createTask(root, "lease-write-set-drift", { writeSet: ["src/declared.ts"] });
+    if (!task.runId) throw new Error("V2 Run is missing");
+    attachManagedWorktree(root, task);
+    const marker = path.join(root, "must-not-start.txt");
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+    const sessionDir = path.join(task.taskDir, "pi-bridge", "sessions");
+    const mkdir = fs.mkdirSync;
+    let tamperedLeasePath: string | null = null;
+    const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation((...args) => {
+      const result = mkdir(...args);
+      if (path.resolve(String(args[0])) === sessionDir) {
+        const latest = JSON.parse(
+          fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+        ) as { dispatch_lease_id?: unknown };
+        if (typeof latest.dispatch_lease_id !== "string") {
+          throw new Error("Pi V2 admission lease was not recorded before client startup");
+        }
+        tamperedLeasePath = path.join(
+          root,
+          ".pactile",
+          ".runtime",
+          "scheduler",
+          "active",
+          `${latest.dispatch_lease_id}.json`,
+        );
+        const lease = JSON.parse(fs.readFileSync(tamperedLeasePath, "utf8")) as {
+          touches: string[];
+        };
+        lease.touches = ["unrelated"];
+        fs.writeFileSync(tamperedLeasePath, `${JSON.stringify(lease, null, 2)}\n`);
+      }
+      return result;
+    });
+    try {
+      const record = await bridge.run({
+        root,
+        task: task.taskId,
+        runId: task.runId,
+        role: "implement",
+        prompt: "Do not start after the lease write set was tampered with.",
+        timeoutMs: 5_000,
+      });
+      expect(record.outcome).toBe("failed");
+      expect(record.reason).toMatch(/dispatch-lease-write-set-mismatch/u);
+      expect(record.dispatch_lease_released).toBe(false);
+      expect(record.process_stop_receipt).toBeNull();
+      expect(fs.existsSync(marker)).toBe(false);
+      expect(tamperedLeasePath).not.toBeNull();
+      expect(fs.existsSync(tamperedLeasePath as string)).toBe(true);
+      expect(JSON.parse(fs.readFileSync(tamperedLeasePath as string, "utf8"))).toMatchObject({
+        status: "active",
+        touches: ["unrelated"],
+      });
+
+      const kernel = readTaskKernel({ root, taskDir: task.taskDir, cwd: root });
+      if (kernel.kind !== "task-kernel-v2") throw new Error("V2 Kernel is missing");
+      expect(kernel.kernel.runs.at(-1)).toMatchObject({
+        id: task.runId,
+        state: "running",
+        candidateSnapshot: null,
+        result: null,
+        host: null,
+      });
+    } finally {
+      mkdirSpy.mockRestore();
+      await bridge.close();
+    }
+  });
+
   it("does not start Pi without a latest Run, even when a hard dependency is open", async () => {
     const root = makeRoot();
     createTask(root, "open-dependency", { start: false });

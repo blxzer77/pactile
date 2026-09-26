@@ -87,6 +87,20 @@ export interface TaskKernelRunDispatchLeaseAssertionV1 {
   writeSet: string[] | null;
 }
 
+export interface TaskKernelRunDispatchPreSpawnAssertionRequestV1 {
+  leaseId: string;
+  taskId: string;
+  runId: string;
+  scheduleReceiptFingerprint: string;
+  owner: TaskKernelRunDispatchOwnerV1;
+}
+
+export interface TaskKernelRunDispatchPreSpawnAssertionV1
+  extends TaskKernelRunDispatchLeaseAssertionV1 {
+  /** False only when every dispatch gate passed and the Run is still unbound. */
+  hostBound: false | null;
+}
+
 export interface TaskKernelRunDispatchReleaseResultV1 {
   released: boolean;
   reasonCode: string | null;
@@ -1698,6 +1712,24 @@ function writeSetCoveredByLease(
   );
 }
 
+function sameProjectWriteSet(left: unknown, right: unknown): boolean {
+  if (
+    !Array.isArray(left) ||
+    !Array.isArray(right) ||
+    !left.every((value) => typeof value === "string") ||
+    !right.every((value) => typeof value === "string")
+  )
+    return false;
+  try {
+    return (
+      JSON.stringify(normalizeProjectWriteSet(left)) ===
+      JSON.stringify(normalizeProjectWriteSet(right))
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Revalidates an active lease for a follow-up send or wait operation. */
 export function assertTaskKernelRunDispatchLeaseV1(
   rootValue: string,
@@ -1707,6 +1739,39 @@ export function assertTaskKernelRunDispatchLeaseV1(
     runId: string;
     allowSettled?: boolean;
   },
+): TaskKernelRunDispatchLeaseAssertionV1 {
+  return assertTaskKernelRunDispatchLeaseInternal(rootValue, request, null);
+}
+
+/**
+ * Revalidates a writer lease immediately before first spawn, while requiring
+ * the Kernel Run to remain unbound until native process identity exists.
+ */
+export function assertTaskKernelRunDispatchPreSpawnV1(
+  rootValue: string,
+  request: TaskKernelRunDispatchPreSpawnAssertionRequestV1,
+): TaskKernelRunDispatchPreSpawnAssertionV1 {
+  const result = assertTaskKernelRunDispatchLeaseInternal(
+    rootValue,
+    {
+      leaseId: request.leaseId,
+      taskId: request.taskId,
+      runId: request.runId,
+    },
+    request,
+  );
+  return { ...result, hostBound: result.asserted ? false : null };
+}
+
+function assertTaskKernelRunDispatchLeaseInternal(
+  rootValue: string,
+  request: {
+    leaseId: string;
+    taskId: string;
+    runId: string;
+    allowSettled?: boolean;
+  },
+  preSpawn: TaskKernelRunDispatchPreSpawnAssertionRequestV1 | null,
 ): TaskKernelRunDispatchLeaseAssertionV1 {
   const root = path.resolve(rootValue);
   return withProjectSchedulerMutex(root, () => {
@@ -1724,6 +1789,7 @@ export function assertTaskKernelRunDispatchLeaseV1(
     const leaseFile = projectActiveLeasePath(root, request.leaseId);
     if (!fs.existsSync(leaseFile)) return empty("dispatch-lease-not-active");
     let lease: DispatchLease;
+    let admission: TaskKernelRunDispatchDecisionReceiptV1;
     try {
       lease = JSON.parse(fs.readFileSync(leaseFile, "utf8")) as DispatchLease;
       if (
@@ -1736,7 +1802,7 @@ export function assertTaskKernelRunDispatchLeaseV1(
         !validOwner(lease.admission_owner)
       )
         return empty("dispatch-lease-identity-mismatch");
-      const admission = readAdmissionReceipt(
+      admission = readAdmissionReceipt(
         root,
         lease.admission_receipt_fingerprint,
       );
@@ -1749,8 +1815,23 @@ export function assertTaskKernelRunDispatchLeaseV1(
         !sameOwner(admission.owner, lease.admission_owner)
       )
         return empty("dispatch-lease-receipt-mismatch");
+      if (!sameProjectWriteSet(admission.writeSet, lease.touches))
+        return empty("dispatch-lease-write-set-mismatch");
     } catch {
       return empty("dispatch-lease-record-invalid");
+    }
+    if (preSpawn) {
+      const expectedOwner = normalizeOwner(preSpawn.owner);
+      if (
+        preSpawn.scheduleReceiptFingerprint !== lease.schedule_receipt_fingerprint
+      )
+        return empty("schedule-receipt-fingerprint-mismatch");
+      if (
+        !expectedOwner ||
+        !sameOwner(expectedOwner, lease.admission_owner) ||
+        !sameOwner(expectedOwner, lease.dispatch_owner)
+      )
+        return empty("dispatch-lease-owner-mismatch");
     }
     let schedule: TaskKernelScheduleDecisionReceiptV1;
     try {
@@ -1839,15 +1920,35 @@ export function assertTaskKernelRunDispatchLeaseV1(
         writeSet: lease.touches,
       };
     }
-    const ownerBindingReason = verifyOwnerBinding(
-      root,
-      lease,
-      inspected.checked.kernel,
-      inspected.checked.run,
-    );
-    if (ownerBindingReason) return empty(ownerBindingReason);
     if (!writeSetCoveredByLease(inspected.checked.writeSet, lease.touches))
       return empty("task-run-write-set-expanded");
+    if (!sameProjectWriteSet(admission.writeSet, lease.touches))
+      return empty("dispatch-lease-write-set-mismatch");
+    if (preSpawn) {
+      if (inspected.checked.run.host)
+        return empty("task-run-host-already-bound");
+      if (
+        lease.owner_binding_receipt_fingerprint ||
+        !sameOwner(lease.admission_owner, lease.dispatch_owner)
+      )
+        return empty("owner-binding-receipt-required");
+      const ownerBindingReason = verifyOwnerBinding(
+        root,
+        lease,
+        inspected.checked.kernel,
+        inspected.checked.run,
+      );
+      if (ownerBindingReason && ownerBindingReason !== "task-run-host-binding-mismatch")
+        return empty(ownerBindingReason);
+    } else {
+      const ownerBindingReason = verifyOwnerBinding(
+        root,
+        lease,
+        inspected.checked.kernel,
+        inspected.checked.run,
+      );
+      if (ownerBindingReason) return empty(ownerBindingReason);
+    }
     return {
       asserted: true,
       reasonCode: null,
