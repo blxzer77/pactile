@@ -18,9 +18,10 @@ import {
 } from "../utils/file-writer.js";
 import {
   writeWaveCConfirmed,
+  createTaskKernel,
+  readTaskKernel,
+  type TaskDefinitionV2,
 } from "../core/task/index.js";
-import { createTaskWithArtifacts } from "../pactile/task/creation.js";
-import { emptyTaskJson, type TaskJson } from "../utils/task-json.js";
 import { initializeDeveloper, readDeveloper } from "../utils/developer.js";
 import {
   detectProjectType,
@@ -110,46 +111,197 @@ export function slugifyDeveloperName(name: string): string {
 }
 
 /**
- * Publish a complete Planning task skeleton (kernel.json + task.json + prd.md).
- *
- * A complete existing task is kept. A partial one is reported for recovery,
- * never silently treated as a successful init.
+ * Task Kernel IDs are lowercase ASCII slugs, while legacy task directory names
+ * intentionally preserve Unicode developer names. Encode non-ASCII code points
+ * so both identities remain deterministic without changing an existing path.
  */
-function writeTaskSkeleton(
+function taskKernelIdForDirectoryName(taskName: string): string {
+  let encoded = "";
+  for (const character of taskName.toLowerCase()) {
+    if (/[a-z0-9]/u.test(character) || character === "-") {
+      encoded += character;
+    } else {
+      encoded += `-u${character.codePointAt(0)?.toString(16) ?? "0"}-`;
+    }
+  }
+  return encoded.replace(/-+/gu, "-").replace(/^-|-$/gu, "") || "task";
+}
+
+type InitTaskDefinition = Omit<TaskDefinitionV2, "createdAt" | "createdBy">;
+
+const INIT_TASK_MARKER_TEXT =
+  "Task creation was interrupted; retry pactile init.\n";
+
+function pathExists(pathname: string): boolean {
+  return fs.lstatSync(pathname, { throwIfNoEntry: false }) !== undefined;
+}
+
+function clearInitTaskMarker(marker: string): void {
+  try {
+    if (fs.readFileSync(marker, "utf8") === INIT_TASK_MARKER_TEXT) {
+      fs.unlinkSync(marker);
+    }
+  } catch {
+    // A missing, unreadable, or user-owned marker is left untouched.
+  }
+}
+
+function recordInitTaskFailure(marker: string): void {
+  try {
+    fs.mkdirSync(path.dirname(marker), { recursive: true });
+    fs.writeFileSync(marker, INIT_TASK_MARKER_TEXT, {
+      encoding: "utf8",
+      flag: "wx",
+    });
+  } catch {
+    // Keep a pre-existing marker (including user data) untouched.
+  }
+}
+
+function isCompleteExistingInitTask(
   cwd: string,
   taskName: string,
-  taskJson: TaskJson,
-  prdContent: string,
+  taskId: string,
 ): boolean {
-  const marker = path.join(cwd, PATHS.TASKS, `.pending-${taskName}`);
+  const taskDir = path.join(cwd, PATHS.TASKS, taskName);
   try {
-    createTaskWithArtifacts({
-      root: cwd,
-      dirName: taskName,
-      record: { ...taskJson, status: "planning" },
-      artifacts: new Map([[FILE_NAMES.PRD, prdContent]]),
-      actor: "pactile init",
-      idempotencyKey: `init:${taskName}`,
-      evidence: "pactile init planning skeleton",
-      ifExists: "keep-complete",
-    });
-    if (fs.existsSync(marker)) fs.unlinkSync(marker);
-    return true;
+    const entry = fs.lstatSync(taskDir);
+    if (!entry.isDirectory() || entry.isSymbolicLink()) return false;
+    const prd = fs.readFileSync(path.join(taskDir, FILE_NAMES.PRD), "utf8");
+    if (!prd.trim()) return false;
+
+    const read = readTaskKernel({ root: cwd, taskDir, cwd });
+    if (read.kind === "task-kernel-v2") {
+      return (
+        read.kernel.identity.taskId === taskId &&
+        read.kernel.definition.taskId === taskId
+      );
+    }
+
+    // Keep complete historical V1 tasks in place for the explicit migration
+    // flow. A task.json without a persisted, matching Kernel is not complete.
+    const taskJson = JSON.parse(
+      fs.readFileSync(path.join(taskDir, FILE_NAMES.TASK_JSON), "utf8"),
+    ) as Record<string, unknown>;
+    const legacyKernel = read.kernel.kernel;
+    const projection = legacyKernel.projection;
+    return (
+      read.kernel.persisted &&
+      legacyKernel.identity.taskId === taskName &&
+      projection !== null &&
+      taskJson.id === taskName &&
+      taskJson.status === projection.status &&
+      projection.record.id === taskName &&
+      projection.record.status === projection.status
+    );
   } catch {
-    try {
-      fs.mkdirSync(path.dirname(marker), { recursive: true });
-      fs.writeFileSync(marker, "Task creation was interrupted; retry pactile init.\n", { encoding: "utf8", flag: "w" });
-    } catch { /* A read-only task directory will still be reported as failed. */ }
     return false;
   }
 }
 
+function removeInitTaskStaging(stagingRoot: string, stagingDir: string): void {
+  const relative = path.relative(stagingRoot, path.resolve(stagingDir));
+  if (
+    !relative ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative) ||
+    fs.lstatSync(stagingDir).isSymbolicLink()
+  ) {
+    throw new Error("Unsafe init Task staging cleanup target");
+  }
+  fs.rmSync(stagingDir, { recursive: true, force: true });
+}
+
 /**
- * Compute the bootstrap checklist items (previously stored as structured
- * `subtasks: [{name, status}]` in task.json). Per task 04-21-task-schema-unify
- * (D1), these live as markdown `- [ ]` items in prd.md instead, so task.json
- * stays canonical with `subtasks: string[]` (child task dir names).
+ * Publish a complete V2 Define Task (kernel.json + prd.md).
+ *
+ * A complete existing task is kept. A partial one is reported for recovery,
+ * never silently treated as a successful init. Historical V1 records are
+ * preserved for the explicit migration flow and are never rewritten here.
  */
+function writeTaskSkeleton(
+  cwd: string,
+  taskName: string,
+  definition: InitTaskDefinition,
+  actor: string,
+  prdContent: string,
+): boolean {
+  const marker = path.join(cwd, PATHS.TASKS, `.pending-${taskName}`);
+  const tasksRoot = path.join(cwd, PATHS.TASKS);
+  const stagingRoot = path.join(tasksRoot, ".creating");
+  let stagingDir: string | null = null;
+  let committed = false;
+  try {
+    if (pathExists(path.join(tasksRoot, taskName))) {
+      if (!isCompleteExistingInitTask(cwd, taskName, definition.taskId)) {
+        throw new Error(`Task already exists or needs recovery: ${taskName}`);
+      }
+      clearInitTaskMarker(marker);
+      return true;
+    }
+
+    fs.mkdirSync(stagingRoot, { recursive: true });
+    if (fs.lstatSync(stagingRoot).isSymbolicLink()) {
+      throw new Error("Init Task staging directory must not be a symlink");
+    }
+    stagingDir = fs.mkdtempSync(path.join(stagingRoot, `${taskName}-`));
+    fs.writeFileSync(path.join(stagingDir, FILE_NAMES.PRD), prdContent, {
+      encoding: "utf8",
+      flag: "wx",
+    });
+    const created = createTaskKernel({
+      root: cwd,
+      taskDir: stagingDir,
+      definition,
+      actor,
+      idempotencyKey: `init-v2:${definition.taskId}`,
+      cwd,
+    });
+    if (
+      created.kernel.phase !== "define" ||
+      created.kernel.runs.length !== 0 ||
+      created.kernel.reviews.length !== 0 ||
+      created.kernel.closure !== null
+    ) {
+      throw new Error("Init Task did not produce the expected V2 Define state");
+    }
+    const verified = readTaskKernel({ root: cwd, taskDir: stagingDir, cwd });
+    if (
+      verified.kind !== "task-kernel-v2" ||
+      verified.kernel.identity.taskId !== definition.taskId ||
+      verified.kernel.definition.deliveryLevel !== definition.deliveryLevel ||
+      verified.kernel.definition.dependencies.length !== 0 ||
+      verified.kernel.phase !== "define" ||
+      verified.kernel.runs.length !== 0 ||
+      verified.kernel.reviews.length !== 0 ||
+      verified.kernel.closure !== null
+    ) {
+      throw new Error("Init Task failed V2 Kernel read-back validation");
+    }
+
+    const taskDir = path.join(tasksRoot, taskName);
+    if (pathExists(taskDir))
+      throw new Error(`Task already exists: ${taskName}`);
+    fs.renameSync(stagingDir, taskDir);
+    stagingDir = null;
+    committed = true;
+    clearInitTaskMarker(marker);
+    return true;
+  } catch {
+    recordInitTaskFailure(marker);
+    return false;
+  } finally {
+    if (!committed && stagingDir && pathExists(stagingDir)) {
+      removeInitTaskStaging(stagingRoot, stagingDir);
+    }
+    if (pathExists(stagingRoot) && fs.readdirSync(stagingRoot).length === 0) {
+      fs.rmdirSync(stagingRoot);
+    }
+  }
+}
+
+/** Build the human-readable checklist mirrored by the bootstrap Task's AC. */
 function getBootstrapChecklistItems(
   projectType: ProjectType,
   packages?: DetectedPackage[],
@@ -187,7 +339,7 @@ function renderCapabilityReadinessSection(
     .join("\n");
 
   return `
-## Capability readiness (required before archive)
+## Capability readiness (record before Review and Close)
 
 Init selected optional project capabilities for this repo. Treat them as
 \`pending\` until you verify they work in this checkout.
@@ -201,7 +353,7 @@ ${checklist}
   watcher auto-syncs later edits; you do not need to re-run full indexing for
   every code change.
 - If a capability cannot be made ready, record the failure and fallback path in
-  \`verify.md\` before archiving bootstrap.
+  this Task's evidence before independent Review and Close.
 - Validation entrypoint: \`pactile capability-smoke --write-status\`
 
 ---
@@ -233,21 +385,21 @@ function getBootstrapPrdContent(
   const checklistMarkdown = checklistItems
     .map((item) => `- [ ] ${item}`)
     .join("\n");
+  const acceptanceMarkdown = getBootstrapTaskDefinition(
+    projectType,
+    selectedCapabilities,
+    packages,
+  )
+    .acceptanceCriteria.map(
+      (criterion) => `- [ ] ${criterion.id}: ${criterion.description}`,
+    )
+    .join("\n");
 
   const header = `# Bootstrap Task: Fill Project Development Guidelines
 
-**This task starts in Planning. Start execution only after explicit approval.**
+**Task state: V2 Define. No Run exists, and init does not authorize execution.**
 
-The developer just ran \`pactile init\` on this project for the first time.
-\`.pactile/\` now exists with empty spec scaffolding, and this bootstrap task
-exists under \`.pactile/tasks/\`. When they want to work on it, they should start
-this task from a session that provides Pactile session identity.
-
-**Your job**: help them populate \`.pactile/spec/\` with the team's real
-coding conventions. Every future AI session — this project's
-\`pactile-implement\` and \`pactile-check\` sub-agents — auto-loads spec files
-listed in per-task jsonl manifests. Empty spec = sub-agents write generic
-code. Real spec = sub-agents match the team's actual patterns.
+pactile init created this V2 Task as a proposal to document the project's actual conventions. Its kernel.json records Task state; this prd.md is the human-readable plan. Before starting any Run or making project changes, obtain the user's ordinary, explicit approval for that work.\n\n**Deliverable**: useful, evidence-based project guidance in .pactile/spec/. Read the current workflow and the project itself. Do not assume that a named sub-agent, Cursor hook, or automatic prompt injection is installed or active; verify actual host behavior before making such a claim. Contributors can consult relevant spec files directly when working on this project.
 
 Don't dump instructions. Open with a short greeting, figure out if the repo
 has any existing convention docs (AGENTS.md, .cursorrules, CONTRIBUTING.md, etc.), and drive
@@ -258,6 +410,10 @@ the rest conversationally.
 ## Status (update the checkboxes as you complete each item)
 
 ${checklistMarkdown}
+
+## Acceptance criteria
+
+${acceptanceMarkdown}
 
 ---
 
@@ -328,50 +484,22 @@ Scan real code to discover patterns. Before writing each spec file:
 ### Step 3: Document reality, not ideals
 
 **Critical**: write what the code *actually does*, not what it should do.
-Sub-agents match the spec, so aspirational patterns that don't exist in the
-codebase will cause sub-agents to write code that looks out of place.
+Separate verified patterns from open questions so the documentation does not
+present aspirational conventions as current behavior.
 
 If the team has known tech debt, document the current state — improvement
 is a separate conversation, not a bootstrap concern.
 
 ---
 
-## Quick explainer of the runtime (share when they ask "why do we need spec at all")
-
-- Every AI coding task spawns two sub-agents: \`pactile-implement\` (writes
-  code) and \`pactile-check\` (verifies quality).
-- Each task has \`implement.jsonl\` / \`check.jsonl\` manifests listing which
-  spec files to load.
-- The platform hook auto-injects those spec files + the task's \`prd.md\`
-  into every sub-agent prompt, so the sub-agent codes/reviews per team
-  conventions without anyone pasting them manually.
-- Source of truth: \`.pactile/spec/\`. That's why filling it well now pays
-  off forever.
-
----
-
-## Completion
-
-When the developer confirms the checklist items above are done with real
-examples (not placeholders), guide them to run:
-
-\`\`\`bash
-pactile task archive 00-bootstrap-guidelines --check
-pactile task archive 00-bootstrap-guidelines
-\`\`\`
-
-After archive, every new developer who joins this project will get a
-\`00-join-<slug>\` onboarding task instead of this bootstrap task.
+## How this fits the Task workflow\n\n- A V2 Task Kernel records the definition, hard dependencies, Runs, candidate snapshots, independent Reviews, and Close evidence. .pactile/workflow.md is a human overview; the Kernel is lifecycle authority.\n- This generated Task has no Run. A Run may begin only after the user approves the specific work through the ordinary approval flow.\n- A completed Run produces a candidate that must receive an independent Review bound to that exact candidate. Close uses the latest passing Review and evidence for every acceptance criterion, with documentation delivery evidence for this Task.\n- Scheduler suggestions do not grant approval or bypass Kernel gates. Use the current V2 Task commands and pactile task --help for their arguments.\n\n---\n
+## Completion\n\nWhen the checklist items are complete, record evidence for every acceptance criterion, including references to the documented files and real examples. Ask the user before creating a Run. Then follow the V2 lifecycle: approved Run, candidate-bound independent Review, and Close with matching documentation delivery evidence. Init, a scheduler plan, or this PRD is not execution approval.
 
 ---
 
 ## Suggested opening line
 
-"Welcome to Pactile! Your init just set me up to help you fill the project
-spec — a one-time setup so every future AI session follows the team's
-conventions instead of writing generic code. Before we start, do you have
-any existing convention docs (AGENTS.md, .cursorrules, CONTRIBUTING.md,
-etc.) I can pull from, or should I scan the codebase from scratch?"
+"Welcome to Pactile! Init created a proposal to document this project's conventions. Do you have existing convention docs (AGENTS.md, CONTRIBUTING.md, or similar) I should compare with the code, or should I begin by inspecting the repository?"
 `;
 
   let content = header;
@@ -403,32 +531,49 @@ etc.) I can pull from, or should I scan the codebase from scratch?"
   return content;
 }
 
-function getBootstrapTaskJson(
-  developer: string,
+function getBootstrapTaskDefinition(
   projectType: ProjectType,
+  selectedCapabilities: readonly ProjectCapabilityId[],
   packages?: DetectedPackage[],
-): TaskJson {
-  const today = new Date().toISOString().split("T")[0];
+): InitTaskDefinition {
   const relatedFiles = getBootstrapRelatedFiles(projectType, packages);
-
-  // Canonical 24-field shape via emptyTaskJson factory.
-  // Checklist items (previously stored as structured `subtasks`) are now
-  // rendered as `- [ ]` items in prd.md; task.json.subtasks is always
-  // string[] (child task dir names) per the canonical schema.
-  return emptyTaskJson({
-    id: BOOTSTRAP_TASK_NAME,
-    name: BOOTSTRAP_TASK_NAME,
-    title: "Bootstrap Guidelines",
-    description: "Fill in project development guidelines for AI agents",
-    status: "planning",
-    dev_type: "docs",
-    priority: "P1",
-    creator: developer,
-    assignee: developer,
-    createdAt: today,
-    relatedFiles,
-    notes: `First-time setup task created by pactile init (${projectType} project)`,
-  });
+  const checklistItems = getBootstrapChecklistItems(projectType, packages);
+  const acceptanceCriteria: InitTaskDefinition["acceptanceCriteria"] = [
+    {
+      id: "AC-1",
+      description:
+        "Complete the project-specific checklist (" +
+        checklistItems.join("; ") +
+        ") and update the relevant spec files: " +
+        relatedFiles.join(", ") +
+        ".",
+    },
+    {
+      id: "AC-2",
+      description:
+        "For each documented convention, cite at least two real repository examples or source documents; mark unsupported claims as open questions instead of presenting them as facts.",
+    },
+  ];
+  if (selectedCapabilities.length > 0) {
+    acceptanceCriteria.push({
+      id: "AC-3",
+      description:
+        "Record each selected capability as ready, pending, or failed using observable verification evidence; do not report a capability as ready without that evidence.",
+    });
+  }
+  return {
+    taskId: BOOTSTRAP_TASK_NAME,
+    title: "Populate project development guidelines",
+    description:
+      "Document verified project conventions in the Pactile specification files.",
+    deliverable:
+      "Evidence-based project guidance in " +
+      relatedFiles.join(", ") +
+      " with acceptance evidence recorded for this Task.",
+    deliveryLevel: "documentation",
+    acceptanceCriteria,
+    dependencies: [],
+  };
 }
 
 /**
@@ -441,41 +586,68 @@ function createBootstrapTask(
   selectedCapabilities: readonly ProjectCapabilityId[],
   packages?: DetectedPackage[],
 ): boolean {
-  const taskJson = getBootstrapTaskJson(developer, projectType, packages);
+  const definition = getBootstrapTaskDefinition(
+    projectType,
+    selectedCapabilities,
+    packages,
+  );
   const prdContent = getBootstrapPrdContent(
     projectType,
     selectedCapabilities,
     packages,
   );
-  return writeTaskSkeleton(cwd, BOOTSTRAP_TASK_NAME, taskJson, prdContent);
+  return writeTaskSkeleton(
+    cwd,
+    BOOTSTRAP_TASK_NAME,
+    definition,
+    "pactile init (" + developer + ")",
+    prdContent,
+  );
 }
 
 // =============================================================================
 // Joiner Onboarding Task Creation
 // =============================================================================
 
-/**
- * task.json factory for joiner onboarding. Mirrors the bootstrap factory but
- * uses dev_type "docs", higher priority "P1", and the developer-specific task
- * name (so multiple joiners in the same checkout don't collide).
- */
-function getJoinerTaskJson(developer: string, taskName: string): TaskJson {
-  const today = new Date().toISOString().split("T")[0];
-  return emptyTaskJson({
-    id: taskName,
-    name: taskName,
-    title: `Joining: Onboard to this Pactile project (${developer})`,
+/** Create the V2 documentation Task used for a new project joiner. */
+function getJoinerTaskDefinition(
+  developer: string,
+  taskId: string,
+  taskName: string,
+  selectedCapabilities: readonly ProjectCapabilityId[],
+): InitTaskDefinition {
+  const acceptanceCriteria: InitTaskDefinition["acceptanceCriteria"] = [
+    {
+      id: "AC-1",
+      description:
+        "Create onboarding-notes.md in the Task directory with references to this project's actual workflow and specification files, and explain that the Kernel controls lifecycle state.",
+    },
+    {
+      id: "AC-2",
+      description:
+        "Record the active V2 Task IDs found or explicitly state that none are listed; do not infer V2 assignment from legacy task fields.",
+    },
+  ];
+  if (selectedCapabilities.length > 0) {
+    acceptanceCriteria.push({
+      id: "AC-3",
+      description:
+        "Record each selected capability as ready, pending, or failed with observable verification evidence, or state that verification was not performed.",
+    });
+  }
+  return {
+    taskId,
+    title: "Onboard developer to this Pactile project: " + developer,
     description:
-      "Onboard a new developer to an existing Pactile project: learn the workflow, conventions, and find assigned work",
-    status: "planning",
-    dev_type: "docs",
-    priority: "P1",
-    creator: developer,
-    assignee: developer,
-    createdAt: today,
-    notes:
-      "Generated by pactile init for a new developer joining an existing Pactile project",
-  });
+      "Prepare a concise onboarding note based on the actual project workflow, conventions, and visible V2 Tasks.",
+    deliverable:
+      "A project-specific onboarding note at .pactile/tasks/" +
+      taskName +
+      "/onboarding-notes.md with evidence for each acceptance criterion.",
+    deliveryLevel: "documentation",
+    acceptanceCriteria,
+    dependencies: [],
+  };
 }
 
 /**
@@ -484,127 +656,101 @@ function getJoinerTaskJson(developer: string, taskName: string): TaskJson {
  */
 function getJoinerPrdContent(
   developer: string,
+  taskName: string,
+  taskId: string,
   selectedCapabilities: readonly ProjectCapabilityId[],
 ): string {
-  const slug = slugifyDeveloperName(developer);
   const selectedCapabilityChecklist = selectedCapabilities
     .map((id) => {
       const capability = getProjectCapability(id);
-      return `- \`${capability.id}\` — re-check readiness in this clone before claiming it is available.`;
+      return (
+        "- " +
+        capability.id +
+        " — re-check readiness in this clone before claiming it is available."
+      );
     })
     .join("\n");
-  let capabilitySection = "";
-  if (selectedCapabilities.length > 0) {
-    capabilitySection = `
-### 5. Re-verify selected project capabilities
+  const capabilitySection =
+    selectedCapabilities.length > 0
+      ? [
+          "### Selected project capabilities",
+          "",
+          "Re-check each selected capability in this clone before relying on it:",
+          "",
+          selectedCapabilityChecklist,
+          "",
+          "If verification is incomplete, record it as pending or failed with the fallback path.",
+        ].join("\n")
+      : "";
+  const acceptanceCriteriaMarkdown = getJoinerTaskDefinition(
+    developer,
+    taskId,
+    taskName,
+    selectedCapabilities,
+  )
+    .acceptanceCriteria.map(
+      (criterion) => "- [ ] " + criterion.id + ": " + criterion.description,
+    )
+    .join("\n");
 
-This repo has capability selections recorded in \`.pactile/capabilities.json\`.
-Before they rely on MCP-backed behavior, remind them to check the selected set:
-
-${selectedCapabilityChecklist}
-
-- If a capability is not \`ready\`, have them re-run the local verification path
-  instead of assuming the previous machine's setup carries over.
-
----
-`;
-  }
-  return `# Joiner Onboarding Task
-
-**This task starts in Planning. Start execution only after explicit approval.**
-
-\`${developer}\` just ran \`pactile init\` on a fresh clone, saw "Developer
-initialized", and will now start asking you questions in chat. This joiner task
-exists under \`.pactile/tasks/\`; when they want to work on it, they should
-select it from a session that provides Pactile session identity.
-
-Your job is to orient them to Pactile. Don't dump all of this at them — open
-with a short greeting, ask where they want to start, and fill in the rest as
-they engage.
-
----
-
-## Topics to cover (adapt order to their questions)
-
-### 1. What Pactile is + the workflow
-
-Pactile is a governed capability workspace for Codex that keeps AI
-agents consistent with project-specific conventions instead of writing generic
-code every session.
-
-- **Human lifecycle**: Open → Define → Approve → Execute → Verify →
-  (Integrate? when parent-child) → Close. Kernel writes that state.
-  \`.pactile/workflow.md\` is a human overview, **not runtime SSOT**.
-- **Task files** live under \`.pactile/tasks/\`. \`status\` is a projection, not
-  the only truth.
-- **Codex session**: read the Task record, project instructions, and current
-  Evidence before resuming. The Task record remains durable authority.
-
-### 2. Runtime mechanics (explain when they ask "how does it know what to do")
-
-- **Context**: load Kernel / Dashboard and the selected Task's \`prd.md\`
-  plus recent activity. Do not treat a generated phase index as runtime
-  authority.
-- **Coordination**: \`pactile codex\` records native desktop task requests and
-  receipts; the App task invokes its native tools. \`pactile pi\` dispatches
-  approved Execute work through Pi RPC.
-
-File layout (mention when they ask "where does what live"):
-- \`.pactile/.runtime/sessions/<session>.json\` — live-session selected-task state, gitignored
-- \`.pactile/tasks/<task>/{implement,check}.jsonl\` — per-task context manifests
-- \`.pactile/spec/\` — project-wide conventions (source of truth)
-- \`.pactile/workspace/${developer}/journal-*.md\` — their session log,
-  rotated at ~2000 lines
-
-### 3. This project's actual conventions
-
-- Summarize \`.pactile/spec/\` for them — what coding conventions this
-  specific team enforces.
-- Point at the last 5 entries in \`.pactile/tasks/archive/\` as a rhythm
-  example of how people actually work here. **If archive is empty** (the
-  project just started), skip this — don't invent examples.
-- Not your job in this onboarding to teach them the business code itself —
-  the README and their teammates handle that.
-
-### 4. Their assigned work
-
-- Check if \`.pactile/workspace/${developer}/\` already exists — if yes, it's
-  their journal from another machine and worth mentioning.
-- Run \`pactile task list --assignee "${developer}"\` to
-  show tasks assigned to them. (Quote the name if it contains spaces.)
-- Remind them to inspect assigned Tasks at the start of each session.
-
----
-
-${capabilitySection}
-
-## Optional: walk through a small task end-to-end
-
-If they want to practice before touching real work, offer to pick a tiny
-P3 task or a typo fix and run the full cycle together: define → approve →
-execute → verify → close.
-
----
-
-## Completion
-
-When they feel oriented (or after you've covered the four topics with
-reasonable back-and-forth), guide them to run:
-
-\`\`\`bash
-pactile task archive 00-join-${slug} --check
-pactile task archive 00-join-${slug}
-\`\`\`
-
----
-
-## Suggested opening line
-
-"Welcome! Your \`pactile init\` set me up to onboard you to this project. I
-can walk you through the workflow, show you the runtime mechanics under the
-hood, summarize the team's spec, or jump to what you're already curious about
-— which would you prefer?"
-`;
+  return [
+    "# Joiner Onboarding Task",
+    "",
+    "Task ID: " +
+      taskId +
+      ". State: V2 Define. No Run exists, and init does not authorize execution.",
+    "",
+    "pactile init created this V2 Task for " +
+      developer +
+      " as an onboarding proposal. The Kernel in .pactile/tasks/" +
+      taskName +
+      "/kernel.json records its definition and lifecycle. This PRD is the human-readable plan.",
+    "Before starting a Run or changing project files, obtain the user's ordinary, explicit approval for that work.",
+    "",
+    "Your deliverable is a concise onboarding note at .pactile/tasks/" +
+      taskName +
+      "/onboarding-notes.md. Use project evidence, and mark unavailable information as unknown rather than guessing.",
+    "",
+    "## Onboarding topics",
+    "",
+    "### 1. Current Task workflow",
+    "",
+    "- Read .pactile/workflow.md as a human overview. The V2 Task Kernel is lifecycle authority.",
+    "- Explain the Task definition, hard dependencies, and why a Run needs ordinary user approval.",
+    "- Explain that a Task can have multiple Runs and that an independent Review binds to the exact candidate from one Run.",
+    "- Explain that Close uses the latest passing Review, evidence for every acceptance criterion, and the delivery evidence level in the Task definition.",
+    "- Use pactile task --help for the current command arguments. Do not assume a host spawned a named agent or ran a hook without an observable receipt.",
+    "",
+    "### 2. This project's actual conventions",
+    "",
+    "- Read .pactile/spec/ and cite the relevant files in onboarding-notes.md.",
+    "- Compare the written guidance with real repository files; mark unresolved questions explicitly.",
+    "- Do not treat old archive directories or generated phase hints as V2 lifecycle authority.",
+    "",
+    "### 3. Visible V2 Tasks and next steps",
+    "",
+    "- Run pactile task schedule list to inspect visible V2 scheduling candidates. Record their Task IDs, or state that none were listed.",
+    "- Ask the user which approved work they want to pursue. The V2 Task definition has no assignee field, so do not infer assignment from legacy task.json data.",
+    "- If the user wants a practice task, agree on its definition and acceptance criteria first, then follow the ordinary approval, Run, independent Review, and Close gates.",
+    "",
+    capabilitySection,
+    "",
+    "## Acceptance criteria",
+    "",
+    acceptanceCriteriaMarkdown,
+    "",
+    "## Acceptance evidence",
+    "",
+    "In onboarding-notes.md include links or repository-relative paths to the workflow and spec files reviewed, the V2 Task IDs found (or none), and capability verification status when applicable.",
+    "",
+    "Before completion, check every acceptance criterion in the Task definition. Ask the user before any Run, record a candidate-bound independent Review, then Close with documentation delivery evidence that points to onboarding-notes.md. Do not move the task directory as a substitute for Close.",
+    "",
+    "## Suggested opening",
+    "",
+    "Welcome, " +
+      developer +
+      ". I can start by explaining the current Task workflow, reviewing the project conventions, or checking which V2 Tasks are visible. Which is most useful?",
+  ].join("\n");
 }
 
 /**
@@ -618,12 +764,27 @@ function createJoinerOnboardingTask(
 ): boolean {
   const slug = slugifyDeveloperName(developer);
   const taskName = `00-join-${slug}`;
-  const taskJson = getJoinerTaskJson(developer, taskName);
+  const taskId = taskKernelIdForDirectoryName(taskName);
+  const selectedCapabilities = loadProjectCapabilities(cwd);
+  const definition = getJoinerTaskDefinition(
+    developer,
+    taskId,
+    taskName,
+    selectedCapabilities,
+  );
   const prdContent = getJoinerPrdContent(
     developer,
-    loadProjectCapabilities(cwd),
+    taskName,
+    taskId,
+    selectedCapabilities,
   );
-  return writeTaskSkeleton(cwd, taskName, taskJson, prdContent);
+  return writeTaskSkeleton(
+    cwd,
+    taskName,
+    definition,
+    `pactile init (${developer})`,
+    prdContent,
+  );
 }
 
 /**

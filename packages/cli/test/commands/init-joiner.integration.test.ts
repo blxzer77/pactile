@@ -34,8 +34,12 @@ vi.mock("node:child_process", () => ({
 // === Imports ===
 
 import { init } from "../../src/commands/init.js";
+import { readTaskKernel } from "../../src/core/task/index.js";
+import { scheduleTaskKernelGraph } from "../../src/pactile/scheduler/index.js";
 import { DIR_NAMES, FILE_NAMES, PATHS } from "../../src/constants/paths.js";
 import { execSync } from "node:child_process";
+import { createTaskWithArtifacts } from "../../src/pactile/task/creation.js";
+import { emptyTaskJson } from "../../src/utils/task-json.js";
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 const noop = () => {};
@@ -102,10 +106,120 @@ describe("init() joiner onboarding", () => {
       "00-bootstrap-guidelines",
     );
     expect(fs.existsSync(bootstrap)).toBe(true);
+    const bootstrapKernel = readTaskKernel({
+      root: tmpDir,
+      taskDir: bootstrap,
+      cwd: tmpDir,
+    });
+    expect(bootstrapKernel.kind).toBe("task-kernel-v2");
+    if (bootstrapKernel.kind === "task-kernel-v2") {
+      expect(bootstrapKernel.kernel.phase).toBe("define");
+      expect(bootstrapKernel.kernel.definition.deliveryLevel).toBe(
+        "documentation",
+      );
+      expect(
+        bootstrapKernel.kernel.definition.acceptanceCriteria.length,
+      ).toBeGreaterThan(0);
+      expect(bootstrapKernel.kernel.definition.dependencies).toEqual([]);
+      expect(bootstrapKernel.kernel.runs).toEqual([]);
+      expect(bootstrapKernel.kernel.reviews).toEqual([]);
+      expect(bootstrapKernel.kernel.closure).toBeNull();
+    }
+    expect(fs.existsSync(path.join(bootstrap, FILE_NAMES.TASK_JSON))).toBe(
+      false,
+    );
 
     // No joiner task present
     const joiner = path.join(tmpDir, PATHS.TASKS, "00-join-alice");
     expect(fs.existsSync(joiner)).toBe(false);
+  });
+
+  it("keeps V2 bootstrap bytes and user files on repeated recovery init", async () => {
+    await init({ yes: true, user: "alice" });
+    const taskDir = path.join(tmpDir, PATHS.TASKS, "00-bootstrap-guidelines");
+    const kernelPath = path.join(taskDir, "kernel.json");
+    const prdPath = path.join(taskDir, FILE_NAMES.PRD);
+    const userFile = path.join(taskDir, "human-note.md");
+    fs.writeFileSync(userFile, "Keep this note.\n", "utf8");
+    const kernelBefore = fs.readFileSync(kernelPath);
+    const prdBefore = fs.readFileSync(prdPath);
+    const marker = path.join(
+      tmpDir,
+      PATHS.TASKS,
+      ".pending-00-bootstrap-guidelines",
+    );
+    fs.writeFileSync(
+      marker,
+      "Task creation was interrupted; retry pactile init.\n",
+      "utf8",
+    );
+
+    await init({ yes: true, user: "alice", force: true });
+
+    expect(fs.readFileSync(kernelPath)).toEqual(kernelBefore);
+    expect(fs.readFileSync(prdPath)).toEqual(prdBefore);
+    expect(fs.readFileSync(userFile, "utf8")).toBe("Keep this note.\n");
+    expect(fs.existsSync(marker)).toBe(false);
+    const kernel = readTaskKernel({ root: tmpDir, taskDir, cwd: tmpDir });
+    expect(kernel.kind).toBe("task-kernel-v2");
+    if (kernel.kind === "task-kernel-v2")
+      expect(kernel.kernel.runs).toEqual([]);
+  });
+
+  it("leaves an existing complete V1 bootstrap untouched for the migration flow", async () => {
+    simulateExistingCheckout();
+    const taskId = "00-bootstrap-guidelines";
+    const taskDir = path.join(tmpDir, PATHS.TASKS, taskId);
+    createTaskWithArtifacts({
+      root: tmpDir,
+      dirName: taskId,
+      record: emptyTaskJson({
+        id: taskId,
+        name: taskId,
+        title: "Historical Bootstrap",
+        status: "planning",
+        dev_type: "docs",
+        priority: "P1",
+        creator: "legacy",
+        assignee: "legacy",
+      }),
+      artifacts: new Map([
+        [FILE_NAMES.PRD, "Historical 0.5.x bootstrap task.\n"],
+      ]),
+      actor: "legacy init",
+      idempotencyKey: "legacy-bootstrap",
+      evidence: "historical init task",
+      ifExists: "error",
+    });
+    const before = new Map(
+      ["kernel.json", FILE_NAMES.TASK_JSON, FILE_NAMES.PRD].map((name) => [
+        name,
+        fs.readFileSync(path.join(taskDir, name)),
+      ]),
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, PATHS.TASKS, ".pending-00-bootstrap-guidelines"),
+      "Task creation was interrupted; retry pactile init.\n",
+      "utf8",
+    );
+
+    await init({ yes: true, user: "alice", force: true });
+
+    for (const [name, bytes] of before) {
+      expect(fs.readFileSync(path.join(taskDir, name))).toEqual(bytes);
+    }
+    const legacy = readTaskKernel({ root: tmpDir, taskDir, cwd: tmpDir });
+    expect(legacy.kind).toBe("legacy-task-kernel-v1");
+    if (legacy.kind === "legacy-task-kernel-v1")
+      expect(legacy.kernel.persisted).toBe(true);
+    expect(fs.existsSync(path.join(taskDir, "onboarding-notes.md"))).toBe(
+      false,
+    );
+    expect(
+      fs.existsSync(
+        path.join(tmpDir, PATHS.TASKS, ".pending-00-bootstrap-guidelines"),
+      ),
+    ).toBe(false);
   });
 
   it("retries bootstrap after a failed PRD write without publishing a partial task", async () => {
@@ -120,8 +234,19 @@ describe("init() joiner onboarding", () => {
     expect(fs.existsSync(bootstrap)).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, PATHS.TASKS, ".pending-00-bootstrap-guidelines"))).toBe(true);
     await init({ yes: true, user: "alice" });
-    expect(fs.readFileSync(path.join(bootstrap, FILE_NAMES.PRD), "utf8")).toContain("Bootstrap");
-    expect(JSON.parse(fs.readFileSync(path.join(bootstrap, FILE_NAMES.TASK_JSON), "utf8"))).toMatchObject({ status: "planning" });
+    expect(
+      fs.readFileSync(path.join(bootstrap, FILE_NAMES.PRD), "utf8"),
+    ).toContain("Bootstrap");
+    const kernel = readTaskKernel({
+      root: tmpDir,
+      taskDir: bootstrap,
+      cwd: tmpDir,
+    });
+    expect(kernel.kind).toBe("task-kernel-v2");
+    if (kernel.kind === "task-kernel-v2") {
+      expect(kernel.kernel.phase).toBe("define");
+      expect(kernel.kernel.runs).toEqual([]);
+    }
   });
 
   it("#2 existing .pactile/ + no .developer → joiner onboarding task created", async () => {
@@ -132,39 +257,50 @@ describe("init() joiner onboarding", () => {
     const joiner = path.join(tmpDir, PATHS.TASKS, "00-join-bob");
     expect(fs.existsSync(joiner)).toBe(true);
 
-    const taskJson = JSON.parse(
-      fs.readFileSync(path.join(joiner, FILE_NAMES.TASK_JSON), "utf-8"),
+    const kernel = readTaskKernel({
+      root: tmpDir,
+      taskDir: joiner,
+      cwd: tmpDir,
+    });
+    expect(kernel.kind).toBe("task-kernel-v2");
+    if (kernel.kind !== "task-kernel-v2")
+      throw new Error("expected V2 joiner Task");
+    expect(kernel.kernel.identity.taskId).toBe("00-join-bob");
+    expect(kernel.kernel.phase).toBe("define");
+    expect(kernel.kernel.definition.title).toContain("bob");
+    expect(kernel.kernel.definition.deliveryLevel).toBe("documentation");
+    expect(kernel.kernel.definition.dependencies).toEqual([]);
+    expect(kernel.kernel.definition.acceptanceCriteria.length).toBeGreaterThan(
+      0,
     );
-    expect(taskJson.id).toBe("00-join-bob");
-    expect(taskJson.name).toBe("00-join-bob");
-    expect(taskJson.status).toBe("planning");
-    expect(taskJson.dev_type).toBe("docs");
-    expect(taskJson.priority).toBe("P1");
-    expect(taskJson.creator).toBe("bob");
-    expect(taskJson.assignee).toBe("bob");
-    expect(taskJson.title).toContain("bob");
+    expect(kernel.kernel.runs).toEqual([]);
+    expect(kernel.kernel.reviews).toEqual([]);
+    expect(kernel.kernel.closure).toBeNull();
+    expect(fs.existsSync(path.join(joiner, FILE_NAMES.TASK_JSON))).toBe(false);
 
     const prd = fs.readFileSync(path.join(joiner, FILE_NAMES.PRD), "utf-8");
-    // PRD is AI-facing instructions for a Planning task.
-    // Mentions the developer in context + user-facing elements the AI should
-    // reference.
+    // PRD is the human-readable plan for the new V2 Define Task.
     expect(prd).toContain("bob");
-    expect(prd).toContain("This task starts in Planning");
+    expect(prd).toContain("V2 Define");
+    expect(prd).toContain("No Run exists");
     expect(prd).toContain("workflow.md");
     expect(prd).toContain(".pactile/spec/");
     expect(prd).toContain("00-join-bob");
-    expect(prd).toContain("pactile task list");
-    expect(prd).toContain("pactile task archive");
-    expect(prd).toContain("not runtime SSOT");
+    expect(prd).toContain("pactile task schedule list");
+    expect(prd).toContain("candidate-bound independent Review");
     expect(prd).not.toContain("/cstl:continue");
     expect(prd).not.toContain("/cstl:finish-work");
     expect(prd).not.toContain("/cstl:start");
     expect(prd).not.toMatch(/loads the Phase Index/i);
-    // Fallback text for empty archive
-    expect(prd).toContain("archive is empty");
-    expect(prd).toContain('pactile task list --assignee "bob"');
-    expect(prd).not.toContain("pactile task finish");
-    expect(prd).toContain("pactile task archive 00-join-bob");
+    expect(prd).not.toMatch(/pactile task (?:start-execution|archive)/i);
+    expect(prd).not.toContain("pactile-implement");
+    expect(prd).not.toContain("pactile-check");
+    expect(prd).not.toContain("auto-inject");
+    expect(prd).not.toContain("Integrate?");
+    expect(prd).toContain("onboarding-notes.md");
+    expect(prd).toContain(
+      "Do not move the task directory as a substitute for Close",
+    );
 
     // init creates the joiner task but does not set repo-global current-task state.
     expect(fs.existsSync(path.join(tmpDir, PATHS.CURRENT_TASK_FILE))).toBe(
@@ -230,7 +366,7 @@ describe("init() joiner onboarding", () => {
     ).toBe(false);
   });
 
-  it("#4 after joiner archive but .developer remains → no new task on re-init", async () => {
+  it("#4 after the joiner directory is removed but .developer remains → no new task on re-init", async () => {
     simulateExistingCheckout();
 
     await init({ yes: true, user: "dave", force: true });
@@ -238,7 +374,7 @@ describe("init() joiner onboarding", () => {
     expect(fs.existsSync(joinerPath)).toBe(true);
 
     // Manually create the .developer file that init_developer.py would have
-    // written (it's mocked in this test), then archive the joiner task.
+    // written (it's mocked in this test), then remove the task directory.
     fs.writeFileSync(
       path.join(tmpDir, PATHS.DEVELOPER_FILE),
       "dave\n",
@@ -260,11 +396,17 @@ describe("init() joiner onboarding", () => {
     const joiner = path.join(tmpDir, PATHS.TASKS, "00-join-tao-su");
     expect(fs.existsSync(joiner)).toBe(true);
 
-    const taskJson = JSON.parse(
-      fs.readFileSync(path.join(joiner, FILE_NAMES.TASK_JSON), "utf-8"),
-    );
-    expect(taskJson.creator).toBe("Tao Su");
-    expect(taskJson.title).toContain("Tao Su");
+    const kernel = readTaskKernel({
+      root: tmpDir,
+      taskDir: joiner,
+      cwd: tmpDir,
+    });
+    expect(kernel.kind).toBe("task-kernel-v2");
+    if (kernel.kind === "task-kernel-v2") {
+      expect(kernel.kernel.definition.createdBy).toContain("Tao Su");
+      expect(kernel.kernel.definition.title).toContain("Tao Su");
+      expect(kernel.kernel.identity.taskId).toBe("00-join-tao-su");
+    }
   });
 
   it("#5b developer name with '/' → slug strips separator", async () => {
@@ -289,36 +431,53 @@ describe("init() joiner onboarding", () => {
     expect(entries).toHaveLength(1);
 
     const joiner = path.join(tmpDir, PATHS.TASKS, entries[0]);
-    const taskJson = JSON.parse(
-      fs.readFileSync(path.join(joiner, FILE_NAMES.TASK_JSON), "utf-8"),
-    );
-    expect(taskJson.creator).toBe("田中 太郎");
+    const kernel = readTaskKernel({
+      root: tmpDir,
+      taskDir: joiner,
+      cwd: tmpDir,
+    });
+    expect(kernel.kind).toBe("task-kernel-v2");
+    if (kernel.kind === "task-kernel-v2") {
+      expect(kernel.kernel.definition.createdBy).toContain("田中 太郎");
+      expect(kernel.kernel.identity.taskId).toMatch(
+        /^00-join-u[0-9a-f]+-u[0-9a-f]+/u,
+      );
+      const planned = scheduleTaskKernelGraph(tmpDir, [
+        kernel.kernel.identity.taskId,
+      ]);
+      expect(planned.receipt.scope).toBe("task-kernel-v2");
+      expect(planned.receipt.candidateTaskIds).toEqual([
+        kernel.kernel.identity.taskId,
+      ]);
+      const afterPlan = readTaskKernel({
+        root: tmpDir,
+        taskDir: joiner,
+        cwd: tmpDir,
+      });
+      expect(afterPlan.kind).toBe("task-kernel-v2");
+      if (afterPlan.kind === "task-kernel-v2")
+        expect(afterPlan.kernel.runs).toEqual([]);
+    }
   });
 
   it("#6 joiner creation failure surfaces as warning, init does not crash", async () => {
     // Simulate "fresh clone" state, then set up conditions that make
-    // writeTaskSkeleton's mkdirSync fail: writeFileSync for task.json can be
-    // thwarted by making .pactile/tasks read-only right before dispatch,
-    // but that's fragile cross-platform. A simpler approach: spy on
-    // fs.writeFileSync to throw for the joiner's task.json path, forcing
-    // writeTaskSkeleton's catch block to return false, which in turn triggers
-    // the console.warn in the init dispatch.
+    // The PRD write occurs only in the private staging directory. Throwing
+    // there must leave no published partial task and keep a recovery marker.
     simulateExistingCheckout();
 
     const originalWriteFileSync = fs.writeFileSync;
-    const writeSpy = vi
-      .spyOn(fs, "writeFileSync")
-      .mockImplementation(((
-        filePath: fs.PathOrFileDescriptor,
-        data: string | NodeJS.ArrayBufferView,
-        options?: fs.WriteFileOptions,
-      ) => {
-        const pathStr = String(filePath);
-        if (pathStr.includes("00-join-eve") && pathStr.endsWith("task.json")) {
-          throw new Error("simulated write failure");
-        }
-        return originalWriteFileSync(filePath, data, options);
-      }) as typeof fs.writeFileSync);
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(((
+      filePath: fs.PathOrFileDescriptor,
+      data: string | NodeJS.ArrayBufferView,
+      options?: fs.WriteFileOptions,
+    ) => {
+      const pathStr = String(filePath);
+      if (pathStr.includes("00-join-eve") && pathStr.endsWith("prd.md")) {
+        throw new Error("simulated PRD failure");
+      }
+      return originalWriteFileSync(filePath, data, options);
+    }) as typeof fs.writeFileSync);
 
     const warnSpy = vi.spyOn(console, "warn");
 
@@ -339,9 +498,23 @@ describe("init() joiner onboarding", () => {
     writeSpy.mockRestore();
     const joiner = path.join(tmpDir, PATHS.TASKS, "00-join-eve");
     expect(fs.existsSync(joiner)).toBe(false);
+    expect(
+      fs.existsSync(path.join(tmpDir, PATHS.TASKS, ".pending-00-join-eve")),
+    ).toBe(true);
     await init({ yes: true, user: "eve", force: true });
-    expect(JSON.parse(fs.readFileSync(path.join(joiner, FILE_NAMES.TASK_JSON), "utf8"))).toMatchObject({ status: "planning" });
-    expect(fs.readFileSync(path.join(joiner, FILE_NAMES.PRD), "utf8")).toContain("Joiner Onboarding Task");
+    const kernel = readTaskKernel({
+      root: tmpDir,
+      taskDir: joiner,
+      cwd: tmpDir,
+    });
+    expect(kernel.kind).toBe("task-kernel-v2");
+    if (kernel.kind === "task-kernel-v2") {
+      expect(kernel.kernel.phase).toBe("define");
+      expect(kernel.kernel.runs).toEqual([]);
+    }
+    expect(
+      fs.readFileSync(path.join(joiner, FILE_NAMES.PRD), "utf8"),
+    ).toContain("Joiner Onboarding Task");
   });
 
   // Tests #7/#8 cover the handleReinit path — the default flow when .pactile/
@@ -358,11 +531,16 @@ describe("init() joiner onboarding", () => {
     const joiner = path.join(tmpDir, PATHS.TASKS, "00-join-frank");
     expect(fs.existsSync(joiner)).toBe(true);
 
-    const taskJson = JSON.parse(
-      fs.readFileSync(path.join(joiner, FILE_NAMES.TASK_JSON), "utf-8"),
-    );
-    expect(taskJson.creator).toBe("frank");
-    expect(taskJson.status).toBe("planning");
+    const kernel = readTaskKernel({
+      root: tmpDir,
+      taskDir: joiner,
+      cwd: tmpDir,
+    });
+    expect(kernel.kind).toBe("task-kernel-v2");
+    if (kernel.kind === "task-kernel-v2") {
+      expect(kernel.kernel.definition.createdBy).toContain("frank");
+      expect(kernel.kernel.phase).toBe("define");
+    }
 
     expect(fs.existsSync(path.join(tmpDir, PATHS.CURRENT_TASK_FILE))).toBe(
       false,
