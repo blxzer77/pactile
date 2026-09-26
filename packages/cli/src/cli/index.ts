@@ -25,6 +25,7 @@ import { runTaskCliWithWorkspaceReclaim } from "../commands/task-worktree-close.
 import { runWorktreeCommand } from "../commands/worktree.js";
 import { runPiCli } from "../commands/pi.js";
 import { runParallelCli } from "../commands/parallel.js";
+import { runLegacyTaskCli } from "../commands/legacy-task.js";
 import { runCodexCli } from "../commands/codex.js";
 import { runContextCliAsync } from "../commands/context.js";
 import { runTileSelectionCli } from "../commands/tile-selection.js";
@@ -45,30 +46,34 @@ export { VERSION, PACKAGE_NAME };
 /**
  * Check if a Pactile update is available (compare project and CLI versions).
  */
-function checkForUpdates(cwd: string): void {
+function checkForUpdates(cwd: string, writeToStderr = false): void {
   const versionFile = workflowPath(cwd, ".version");
   if (!versionFile || !fs.existsSync(versionFile)) return;
 
   const projectVersion = fs.readFileSync(versionFile, "utf-8").trim();
   const cliVersion = VERSION;
   const comparison = compareVersions(cliVersion, projectVersion);
+  const writeNotice = (message: string): void => {
+    if (writeToStderr) console.error(message);
+    else console.log(message);
+  };
 
   if (comparison > 0) {
     // CLI is newer than project - update available
-    console.log(
+    writeNotice(
       chalk.yellow(
         `\n⚠️  Pactile update available: ${projectVersion} → ${cliVersion}`,
       ),
     );
-    console.log(chalk.gray(`   Run: pactile update\n`));
+    writeNotice(chalk.gray(`   Run: pactile update\n`));
   } else if (comparison < 0) {
     // CLI is older than project - CLI needs updating
-    console.log(
+    writeNotice(
       chalk.yellow(
         `\n⚠️  Your CLI (${cliVersion}) is older than project (${projectVersion})`,
       ),
     );
-    console.log(chalk.gray(`   Run: pactile upgrade\n`));
+    writeNotice(chalk.gray(`   Run: pactile upgrade\n`));
   }
 }
 
@@ -79,8 +84,12 @@ const cwd = process.cwd();
 const argvRest = process.argv.slice(2);
 const isStdioMcp = argvRest.includes("mcp");
 const isKernelJson = argvRest[0] === "kernel";
+const isMachineReadableLegacyTask =
+  argvRest[0] === "legacy-task" &&
+  (argvRest[1] === "reconcile" ||
+    (argvRest[1] === "history" && argvRest.includes("--json")));
 if (isWorkflowInitialized(cwd) && !isStdioMcp && !isKernelJson) {
-  checkForUpdates(cwd);
+  checkForUpdates(cwd, isMachineReadableLegacyTask);
 }
 
 const program = new Command();
@@ -551,6 +560,23 @@ program
   .argument("[arguments...]")
   .action(async () => {
     process.exitCode = await runParallelCli(process.argv.slice(3));
+  });
+
+program
+  .command("legacy-task")
+  .description(
+    "Read archived legacy Task history or explicitly reconcile one held Task",
+  )
+  .addHelpText(
+    "after",
+    "\n  history <archive-relative-path> [--json]\n  reconcile <task-path> --idempotency-key <key> --activation-at <ISO-time> [definition fields] [--resolve-dependency <raw-ref>=<task-id>] [--approved|--check]\n",
+  )
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[operation]")
+  .argument("[arguments...]")
+  .action(async () => {
+    process.exitCode = await runLegacyTaskCli(process.argv.slice(3));
   });
 
 program
