@@ -357,8 +357,14 @@ export function reconcileRunWorktree(input: {
     binding,
     knownOwners: input.knownOwners,
   });
-  if (inspection.issues.some((issue) => issue !== "unintegrated") || !inspection.headSha || inspection.dirty) {
-    throw new WorktreeManagerError("post-create-verification-failed", `Persisted Run checkout is not safe to reconcile (${inspection.state})`, canonicalPath);
+  if (inspection.issues.some((issue) => issue !== "unintegrated")
+    || inspection.headSha?.toLowerCase() !== baseSha.toLowerCase()
+    || inspection.dirty) {
+    throw new WorktreeManagerError(
+      "post-create-verification-failed",
+      `Persisted Run checkout is not safe to reconcile at its frozen base (${inspection.state})`,
+      canonicalPath,
+    );
   }
   return binding;
 }

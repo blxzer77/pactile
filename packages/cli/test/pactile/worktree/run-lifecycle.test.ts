@@ -465,6 +465,67 @@ describe("managed Run worktree reclamation", () => {
     expect(hasRegisteredWorktree(root, preservedPath)).toBe(true);
   });
 
+  it("refuses same-Run reconciliation after a clean in-scope commit advanced beyond the frozen base", async () => {
+    const { root, baseSha } = fixture();
+    const task = startActiveTaskRun(root, "claim-reconcile-head-drift");
+    const originalBind = taskKernelApi.bindTaskRunWorkspace;
+    vi.spyOn(taskKernelApi, "bindTaskRunWorkspace").mockImplementationOnce(() => {
+      throw new Error("simulated Kernel bind failure");
+    });
+
+    let createError: unknown;
+    try {
+      createTaskRunWorktree({
+        repoRoot: root, taskDir: task.taskDir, runId: task.runId,
+        branch: "feat/claim-reconcile-head-drift", baseRef: baseSha,
+        actor: runActor, idempotencyKey: "claim-reconcile-head-drift:create",
+      });
+    } catch (caught) { createError = caught; }
+    expect(createError).toMatchObject({ code: "workspace-kernel-bind-failed" });
+
+    const preservedPath = path.join(root, ".pactile", "worktrees", task.runId);
+    const commonDir = path.resolve(root, git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"));
+    const registry = path.join(commonDir, "pactile-run-workspaces-v1");
+    const managerFilesBeforeDrift = snapshotFiles(registry);
+    const ownerBeforeDrift = readAllManagerProvenance(repoIdentity(root));
+    expect(ownerBeforeDrift).toHaveLength(1);
+    expect(ownerBeforeDrift[0]).toMatchObject({ ownerRunId: task.runId, baseSha });
+    expect(readKernel(root, task.taskDir).runs.at(-1)?.workspace).toBeNull();
+
+    const inScopeChange = path.join(preservedPath, "src", "post-bind-failure.ts");
+    fs.writeFileSync(inScopeChange, "export const postBindFailure = true;\n");
+    git(preservedPath, "add", "--", "src/post-bind-failure.ts");
+    git(preservedPath, "commit", "-q", "-m", "commit after failed Run bind");
+    const advancedHead = git(preservedPath, "rev-parse", "HEAD");
+    expect(advancedHead).not.toBe(baseSha);
+    expect(git(preservedPath, "status", "--porcelain")).toBe("");
+    expect(git(preservedPath, "diff", "--name-only", `${baseSha}...HEAD`)).toBe("src/post-bind-failure.ts");
+    const checkoutFilesBeforeReconcile = snapshotFiles(preservedPath);
+    const registrationsBeforeReconcile = git(root, "worktree", "list", "--porcelain");
+
+    vi.spyOn(taskKernelApi, "bindTaskRunWorkspace").mockImplementation(originalBind);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(await runWorktreeCommand(["reconcile", "claim-reconcile-head-drift", task.runId], root)).toBe(1);
+    expect(error).toHaveBeenCalledOnce();
+    expect(String(error.mock.lastCall?.[0])).toContain("at its frozen base");
+
+    const refused = readKernel(root, task.taskDir);
+    expect(refused.runs.at(-1)?.workspace).toBeNull();
+    const refusal = refused.events
+      .filter((event) => event.type === "run.workspace-claim-refused" && event.entityId === task.runId)
+      .at(-1);
+    expect(refusal).toBeDefined();
+    expect(refused.audit.find((entry) => entry.idempotencyKey === refusal?.idempotencyKey)?.evidence)
+      .toContain("Workspace reconcile claim refused [post-create-verification-failed]:");
+    expect(readAllManagerProvenance(repoIdentity(root))).toEqual(ownerBeforeDrift);
+    expect(snapshotFiles(registry)).toEqual(managerFilesBeforeDrift);
+    expect(snapshotFiles(preservedPath)).toEqual(checkoutFilesBeforeReconcile);
+    expect(git(preservedPath, "rev-parse", "HEAD")).toBe(advancedHead);
+    expect(git(preservedPath, "status", "--porcelain")).toBe("");
+    expect(git(root, "worktree", "list", "--porcelain")).toBe(registrationsBeforeReconcile);
+    expect(hasRegisteredWorktree(root, preservedPath)).toBe(true);
+  });
+
   it("keeps unsafe adoption classified separately from ownership conflicts", () => {
     const { root, baseSha } = fixture();
     const task = startActiveTaskRun(root, "claim-adopt-unsafe");
