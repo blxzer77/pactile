@@ -60,6 +60,8 @@ export interface RetrievalJevPlanningOptionsV1 {
 export interface PlanRetrievalWithJevInputV1 {
   readonly request: BuildRetrievalRequestV3Input;
   readonly context?: RetrievalPlanningContextV3;
+  /** Session may choose an exact-only default before any Jev suggestion. */
+  readonly defaultToExactForUnspecifiedIntents?: boolean;
   /** Omit to keep the synchronous deterministic V3 plan only. */
   readonly jev?: RetrievalJevPlanningOptionsV1;
 }
@@ -91,7 +93,12 @@ function answerIncludes(
 export async function planRetrievalWithJevV1(
   input: PlanRetrievalWithJevInputV1,
 ): Promise<RetrievalJevPlanResultV1> {
-  const request = buildRetrievalRequestV3(input.request);
+  const request = buildRetrievalRequestV3(
+    input.defaultToExactForUnspecifiedIntents === true &&
+      input.request.intents === undefined
+      ? { ...input.request, intents: ["exact"] }
+      : input.request,
+  );
   const deterministicPlan = createRetrievalPlanV3(request, input.context);
   if (
     input.jev === undefined ||

@@ -17,6 +17,7 @@ import {
 } from "../pactile/task/session.js";
 import { compileSessionPackWithJevV1 } from "../pactile/task/session-jev.js";
 import { compileSessionPack } from "../pactile/task/session-pack.js";
+import { compileSessionRetrievalPlanWithJevV1 } from "../pactile/task/session-retrieval-jev.js";
 import { readDeveloper } from "../utils/developer.js";
 import { readWorkflowPhase } from "../pactile/task/workflow-phase.js";
 import { buildRetrievalPack } from "../pactile/retrieval/pack.js";
@@ -689,10 +690,9 @@ export async function runContextCliAsync(
   if (mode !== "session") return runContextCli(args, root);
   try {
     const json = args.includes("--json") || args.includes("-j");
-    const pack = await compileSessionPackWithJevV1(
-      root,
-      process.env.PACTILE_SESSION_FACT_GAP === "1",
-    );
+    const factGap = process.env.PACTILE_SESSION_FACT_GAP === "1";
+    const sessionPack = await compileSessionPackWithJevV1(root, factGap);
+    const pack = await compileSessionRetrievalPlanWithJevV1(root, sessionPack);
     console.log(JSON.stringify(pack, null, json ? 2 : undefined));
     return 0;
   } catch (error) {

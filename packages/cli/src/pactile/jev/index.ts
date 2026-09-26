@@ -24,3 +24,5 @@ export type {
   JevTransportResultV1,
 } from "./transport.js";
 export type { JevScheduleAdviceOptionsV1 } from "./scheduler-advice.js";
+export { resolveJevProjectEgressPolicyV1 } from "./project-policy.js";
+export type { JevProjectEgressPolicyV1 } from "./project-policy.js";
