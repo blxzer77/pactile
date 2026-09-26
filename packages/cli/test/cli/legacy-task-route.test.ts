@@ -31,6 +31,10 @@ function makeRoot(): string {
   return root;
 }
 
+function markLegacyProjectVersion(root: string): void {
+  fs.writeFileSync(path.join(root, ".pactile", ".version"), "0.5.0\n", "utf8");
+}
+
 function snapshotTree(root: string): string[] {
   const files: string[] = [];
   const visit = (directory: string): void => {
@@ -84,6 +88,7 @@ describe("legacy-task CLI route", () => {
   it("routes history through the CLI and leaves archived fixture bytes unchanged", () => {
     const root = makeRoot();
     fs.cpSync(HISTORY_FIXTURE, root, { recursive: true });
+    markLegacyProjectVersion(root);
     const before = snapshotTree(root);
 
     const result = runCli(root, [
@@ -94,6 +99,7 @@ describe("legacy-task CLI route", () => {
     ]);
 
     expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toContain("Pactile update available: 0.5.0");
     const report = parseJsonOutput(result.stdout);
     expect(report).toMatchObject({
       status: "archived-historical-only",
@@ -106,11 +112,22 @@ describe("legacy-task CLI route", () => {
       ),
     ).toBe(true);
     expect(snapshotTree(root)).toEqual(before);
+
+    const humanResult = runCli(root, [
+      "legacy-task",
+      "history",
+      "archive/2026-08/08-20-closed-lite",
+    ]);
+    expect(humanResult.status, humanResult.stderr).toBe(0);
+    expect(humanResult.stdout).toContain("Pactile update available: 0.5.0");
+    expect(humanResult.stdout).toContain("Archived legacy Task:");
+    expect(snapshotTree(root)).toEqual(before);
   });
 
   it("routes reconcile check and approved modes, and rejects invalid options without writes", async () => {
     const root = makeRoot();
     fs.cpSync(RECONCILE_FIXTURE, root, { recursive: true });
+    markLegacyProjectVersion(root);
     const plan = scanLegacyTaskMigration({ projectRoot: root });
     const imported = buildLegacyTaskV2Import(plan);
     const importResult = await runLegacyTaskBatch(
@@ -145,6 +162,7 @@ describe("legacy-task CLI route", () => {
     const beforeCheck = snapshotTree(root);
     const checked = runCli(root, [...baseArgs, "--check"]);
     expect(checked.status, checked.stderr).toBe(0);
+    expect(checked.stderr).toContain("Pactile update available: 0.5.0");
     expect(parseJsonOutput(checked.stdout)).toMatchObject({
       status: "dry-run",
       wrote: false,
@@ -154,6 +172,7 @@ describe("legacy-task CLI route", () => {
 
     const approved = runCli(root, [...baseArgs, "--approved"]);
     expect(approved.status, approved.stderr).toBe(0);
+    expect(approved.stderr).toContain("Pactile update available: 0.5.0");
     expect(parseJsonOutput(approved.stdout)).toMatchObject({
       status: "completed",
       visible: true,

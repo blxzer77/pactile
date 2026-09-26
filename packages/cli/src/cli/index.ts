@@ -46,30 +46,34 @@ export { VERSION, PACKAGE_NAME };
 /**
  * Check if a Pactile update is available (compare project and CLI versions).
  */
-function checkForUpdates(cwd: string): void {
+function checkForUpdates(cwd: string, writeToStderr = false): void {
   const versionFile = workflowPath(cwd, ".version");
   if (!versionFile || !fs.existsSync(versionFile)) return;
 
   const projectVersion = fs.readFileSync(versionFile, "utf-8").trim();
   const cliVersion = VERSION;
   const comparison = compareVersions(cliVersion, projectVersion);
+  const writeNotice = (message: string): void => {
+    if (writeToStderr) console.error(message);
+    else console.log(message);
+  };
 
   if (comparison > 0) {
     // CLI is newer than project - update available
-    console.log(
+    writeNotice(
       chalk.yellow(
         `\n⚠️  Pactile update available: ${projectVersion} → ${cliVersion}`,
       ),
     );
-    console.log(chalk.gray(`   Run: pactile update\n`));
+    writeNotice(chalk.gray(`   Run: pactile update\n`));
   } else if (comparison < 0) {
     // CLI is older than project - CLI needs updating
-    console.log(
+    writeNotice(
       chalk.yellow(
         `\n⚠️  Your CLI (${cliVersion}) is older than project (${projectVersion})`,
       ),
     );
-    console.log(chalk.gray(`   Run: pactile upgrade\n`));
+    writeNotice(chalk.gray(`   Run: pactile upgrade\n`));
   }
 }
 
@@ -80,8 +84,12 @@ const cwd = process.cwd();
 const argvRest = process.argv.slice(2);
 const isStdioMcp = argvRest.includes("mcp");
 const isKernelJson = argvRest[0] === "kernel";
+const isMachineReadableLegacyTask =
+  argvRest[0] === "legacy-task" &&
+  (argvRest[1] === "reconcile" ||
+    (argvRest[1] === "history" && argvRest.includes("--json")));
 if (isWorkflowInitialized(cwd) && !isStdioMcp && !isKernelJson) {
-  checkForUpdates(cwd);
+  checkForUpdates(cwd, isMachineReadableLegacyTask);
 }
 
 const program = new Command();
