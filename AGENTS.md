@@ -109,11 +109,14 @@ floor without a separate runtime loader or additional bootstrap dependency.
 
 ## Release conformance probe
 
-The sealed-install Python PATH check is maintained in
+The sealed-install Python and Pi PATH check is maintained in
 `packages/cli/scripts/assert-no-python-on-path.ts`. It is included in
 `tsconfig.scripts.json` and compiled with the release-conformance runner; do not
-replace it with inline `node -e` JavaScript. The check runs against the same
-restricted PATH and environment used for the default npm lifecycle install.
+replace it with inline `node -e` JavaScript. The default npm lifecycle install
+uses an absolute `npm-cli.js` path and exposes Node from a private PATH directory
+that contains only `node.exe` on Windows (or `node` on other platforms), along
+with operating-system support paths. The check runs against that same restricted
+PATH and environment.
 
 Simulated Pi and Jev providers and the trace-store concurrency child are
 maintained as TypeScript under `packages/cli/scripts/fixtures/`. They are covered

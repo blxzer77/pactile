@@ -4,31 +4,14 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { assertNoPythonOrPiOnPath } from "./assert-no-python-on-path.js";
 
 const [installed, root, gitExecutable] = process.argv.slice(2);
 if (!installed || !root || !gitExecutable)
   throw new Error(
     "Usage: node node-only-acceptance.js <installed-package> <workspace> <git-executable>",
   );
-const pythonPathNames = [
-  "python",
-  "python.exe",
-  "python3",
-  "python3.exe",
-  "py",
-  "py.exe",
-  "pi",
-  "pi.cmd",
-];
-const assertNoPythonOnPath = (pathValue: string): void => {
-  for (const folder of pathValue.split(path.delimiter)) {
-    for (const name of pythonPathNames) {
-      if (folder && fs.existsSync(path.join(folder, name)))
-        throw new Error(`Node-only PATH contains ${name}`);
-    }
-  }
-};
-assertNoPythonOnPath(process.env.PATH ?? "");
+assertNoPythonOrPiOnPath({ env: process.env });
 if (!path.isAbsolute(gitExecutable) || !fs.existsSync(gitExecutable))
   throw new Error("V2 Pi acceptance requires the verified Git executable path");
 const originalPath = process.env.PATH ?? "";
@@ -46,7 +29,7 @@ if (process.platform === "win32") {
     fs.symlinkSync("/bin/sh", path.join(gitBin, "sh"));
   bridgePath = [originalPath, gitBin].join(path.delimiter);
 }
-assertNoPythonOnPath(bridgePath);
+assertNoPythonOrPiOnPath({ env: { PATH: bridgePath } });
 process.env.PATH = bridgePath;
 execFileSync("git", ["--version"], { encoding: "utf8" });
 fs.mkdirSync(root, { recursive: true });

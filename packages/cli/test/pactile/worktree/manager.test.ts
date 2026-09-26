@@ -135,51 +135,27 @@ function ownerProvenance(input: {
 function spawnOwnershipClaim(input: {
   cliRoot: string; root: string; runId: string; canonicalPath: string; branch: string; baseSha: string; barrierDir: string;
 }) {
-  const source = `
-    import fs from "node:fs";
-    import path from "node:path";
-    import { execFileSync } from "node:child_process";
-    import { pathToFileURL } from "node:url";
-    const [cliRoot, root, runId, canonicalPath, branch, baseSha, barrierDir] = process.argv.slice(1);
-    const { repoIdentity } = await import(pathToFileURL(path.join(cliRoot, "src/pactile/worktree/git-probe.ts")).href);
-    const { persistManagerProvenance, provenanceFor } = await import(pathToFileURL(path.join(cliRoot, "src/pactile/worktree/manager-provenance.ts")).href);
-    const identity = repoIdentity(root);
-    const registry = path.join(identity.commonDir, "pactile-run-workspaces-v1");
-    const originalOpenSync = fs.openSync.bind(fs);
-    let pausedAtOwnerRecord = false;
-    fs.openSync = (file, flags, ...options) => {
-      const requested = typeof file === "string" ? file : String(file);
-      if (!pausedAtOwnerRecord && flags === "wx" && path.dirname(requested) === registry) {
-        pausedAtOwnerRecord = true;
-        fs.writeFileSync(path.join(barrierDir, runId + ".ready"), "after-precheck");
-        const waitCell = new Int32Array(new SharedArrayBuffer(4));
-        const deadline = Date.now() + 15000;
-        while (!fs.existsSync(path.join(barrierDir, "go"))) {
-          if (Date.now() > deadline) throw new Error("claim barrier timed out");
-          Atomics.wait(waitCell, 0, 0, 10);
-        }
-      }
-      return originalOpenSync(file, flags, ...options);
-    };
-    const gitDir = execFileSync("git", ["rev-parse", "--absolute-git-dir"], { cwd: canonicalPath, encoding: "utf8" }).trim();
-    const provenance = provenanceFor({ identity, gitDir, source: "adopted", adoption: { approvedBy: "test", approvedAt: "now", evidenceRef: "test:race" },
-      binding: { ownerRunId: runId, canonicalPath, branch, baseSha, writeSet: ["src"], integrationState: "not-integrated", reclamationState: "not-requested" } });
-    try {
-      persistManagerProvenance(identity, provenance);
-      console.log("CLAIMED:" + runId);
-    } catch (error) {
-      const code = error && typeof error === "object" ? error.code : undefined;
-      if (code === "owner-conflict" || code === "manager-provenance-invalid") {
-        console.log("REJECTED:" + runId + ":" + code);
-      } else {
-        console.error(error);
-        process.exitCode = 1;
-      }
-    }
-  `;
-  const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", source, "--",
-    input.cliRoot, input.root, input.runId, input.canonicalPath, input.branch, input.baseSha, input.barrierDir,
-  ], { cwd: input.cliRoot, stdio: ["ignore", "pipe", "pipe"] });
+  const fixture = path.join(
+    input.cliRoot,
+    ".tmp",
+    "p31-script-build",
+    "fixtures",
+    "worktree-owner-claim.js",
+  );
+  const child = spawn(
+    process.execPath,
+    [
+      fixture,
+      input.cliRoot,
+      input.root,
+      input.runId,
+      input.canonicalPath,
+      input.branch,
+      input.baseSha,
+      input.barrierDir,
+    ],
+    { cwd: input.cliRoot, stdio: ["ignore", "pipe", "pipe"] },
+  );
   let stdout = "";
   let stderr = "";
   child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
@@ -210,6 +186,7 @@ describe("Run worktree manager", () => {
     const barrierDir = path.join(root, ".ownership-race-barrier");
     fs.mkdirSync(barrierDir);
     const cliRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+    expect(fs.existsSync(path.join(cliRoot, ".tmp/p31-script-build/fixtures/worktree-owner-claim.js"))).toBe(true);
     const runIds = ["run-race-a", "run-race-b"];
     const children = runIds.map((runId) => spawnOwnershipClaim({
       cliRoot, root, runId, canonicalPath, branch: "feat/shared-checkout", baseSha, barrierDir,

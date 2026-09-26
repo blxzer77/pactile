@@ -55,8 +55,9 @@ pnpm --filter @blxzer/pactile exec tsx scripts/check-pactile-brand-surface.ts --
 node packages/cli/.tmp/p31-script-build/release-conformance.js
 ```
 
-一致性检查从一开始就在仅含 Node、没有 Python 或 Pi 可执行文件的 PATH 中，
-使用 npm 默认生命周期脚本安装封装包，
+一致性检查使用 npm 默认生命周期脚本安装封装包。PATH 中的 Node 来自仅含
+Node 可执行文件（Windows 为 `node.exe`）的私有目录（另含操作系统支持目录），npm 通过绝对路径调用
+`npm-cli.js`；安装前会检查 PATH 中没有 Python 或 Pi 可执行文件，
 覆盖全新 init、V2 Task 创建/启动/读回、两个相互独立 V2 Task 的同波次调度与模拟 Pi
 派发、update 预览/应用后再次创建/启动/调度/模拟 Pi 派发 V2 Task，以及 legacy Codex
 bridge 的 prepare/receipt 流程。它不覆盖 Task 归档，也不覆盖独立的 legacy
