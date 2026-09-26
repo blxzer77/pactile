@@ -44,6 +44,15 @@ describe("structured task artifacts help and guide", () => {
 
     expect(guide).toContain("## 轻量 Task");
     expect(guide).toContain("## 重型 Task");
+    expect(guide).toContain('TASK_DIR="<path-printed-by-task-create>"');
+    expect(guide).not.toContain(
+      'TASK_DIR=".pactile/tasks/<path-printed-by-task-create>"',
+    );
+    expect(guide).toContain("获授权的记录者");
+    expect(guide).toContain("实际独立 reviewer");
+    expect(guide).not.toMatch(/Requester approved/iu);
+    expect(guide).not.toMatch(/Independent review:\s*PASS/iu);
+    expect(guide).not.toMatch(/Observed:\s*/u);
     expect(guide).toContain("section:design:decision");
     expect(guide).toContain("section:prd:legacy-task-map:scope");
     expect(guide).toContain("--actor implementer");

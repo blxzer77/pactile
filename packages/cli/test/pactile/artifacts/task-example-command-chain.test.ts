@@ -43,7 +43,7 @@ afterEach(() => {
 });
 
 describe("structured artifact Task walkthrough", () => {
-  it("runs a temporary Task through explicit implementer and independent reviewer actors", () => {
+  it("runs the PASS command path with synthetic approval and review fixtures", () => {
     const root = makeRoot();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const error = vi
@@ -77,9 +77,10 @@ describe("structured artifact Task walkthrough", () => {
     const candidateContents = "reviewed result\n";
     const evidenceContents = "AC-1 passed\n";
     fs.mkdirSync(path.join(taskDir, "evidence"), { recursive: true });
+    // Exercise the acceptance path with synthetic files, not real approval.
     fs.writeFileSync(
-      path.join(taskDir, "evidence", "approval.md"),
-      "Requester approved the declared walkthrough result.\n",
+      path.join(taskDir, "evidence", "synthetic-approval-fixture.md"),
+      "Synthetic test fixture only; no requester approval occurred.\n",
     );
     fs.mkdirSync(path.join(root, "tests"), { recursive: true });
     fs.writeFileSync(path.join(root, "tests", "result.txt"), "baseline test\n");
@@ -100,7 +101,7 @@ describe("structured artifact Task walkthrough", () => {
           "--authorization-scope",
           "the walkthrough result",
           "--authorization-evidence",
-          "evidence/approval.md",
+          "evidence/synthetic-approval-fixture.md",
           "--write-set",
           "result.txt",
           "--write-set",
@@ -115,8 +116,8 @@ describe("structured artifact Task walkthrough", () => {
     fs.writeFileSync(path.join(root, "tests", "result.txt"), evidenceContents);
     fs.mkdirSync(path.join(taskDir, "review"), { recursive: true });
     fs.writeFileSync(
-      path.join(taskDir, "review", "artifact-walkthrough.md"),
-      "Independent review: PASS.\n",
+      path.join(taskDir, "review", "synthetic-review-fixture.md"),
+      "Synthetic test fixture only; no independent review occurred.\n",
     );
 
     const runResult = runTaskCli(
@@ -184,7 +185,7 @@ describe("structured artifact Task walkthrough", () => {
           "--decision",
           "pass",
           "--evidence",
-          "review/artifact-walkthrough.md",
+          "review/synthetic-review-fixture.md",
           "--criterion",
           "AC-1=tests/result.txt",
         ],

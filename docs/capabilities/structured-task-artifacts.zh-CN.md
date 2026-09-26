@@ -87,22 +87,16 @@ pactile task create "Preserve the configured timeout fallback" --slug timeout-fa
 pactile task artifacts timeout-fallback --agent --stage prd
 ```
 
-`task create` 会输出 TaskDir 相对路径。将路径填入 `$TASK_DIR`，在 TaskDir 中创建真实授权和 Review 记录：
+`task create` 会输出完整 TaskDir 相对路径（例如 `.pactile/tasks/09-26-timeout-fallback`）。将输出的原路径填入 `$TASK_DIR`；不要再给它加 `.pactile/tasks/` 前缀。先取得实际批准，再由获授权的记录者把真实批准内容保存到 `evidence/timeout-approval.md`，并在 `run-start` 前确认该文件存在。示例中的 Review 文件只会在 Run 完成后由实际独立 reviewer 根据检查结果写入；不要预填评审结论：
 
 ```bash
-TASK_DIR=".pactile/tasks/<path-printed-by-task-create>"
+TASK_DIR="<path-printed-by-task-create>"
 mkdir -p "$TASK_DIR/evidence" "$TASK_DIR/review"
-cat > "$TASK_DIR/evidence/timeout-approval.md" <<'EOF'
-Requester approved the declared timeout fallback fix.
-EOF
-cat > "$TASK_DIR/review/timeout-fallback.md" <<'EOF'
-Independent review: PASS. The reviewed result meets AC-1.
-EOF
 ```
 
 PRD 中的验收项和硬依赖分别成为 `requirement` 与 `constraint` facts。这个例子在 `design.md` 写下真实取舍：`## Decision` 下说明“只有显式覆盖值才替换项目超时设置”；`## Rationale` 下说明“缺少覆盖值时继续使用已批准的默认值”。文档索引给出 `section:design:decision` 的来源、路径和 fingerprint；Agent 展开该段时读取作者原文，不会把它改写为另一个 Kernel fact。复制索引中的 fingerprint 后，可用 `pactile task artifacts timeout-fallback --agent --stage design --section "section:design:decision@<current-section-fingerprint>"` 只展开这项取舍。不需要设计时就不创建 `design.md`。索引只显示缺失文档的 `absent` 状态，不会生成空的 Design、Implement、Review 或 Verify 模板。此例假设硬依赖已经 Close；依赖未满足时 Run 会被阻断。
 
-执行前取得明确批准。Run 结果、独立 Review 与逐项验收证据随后进入 Kernel：
+Run 前必须先取得明确批准，并由获授权的记录者将实际决定、范围和来源写入 `evidence/timeout-approval.md`；`--approved-by` 等参数只是调用方声明，不能代替审批。Run 完成后，独立 reviewer 检查实际结果并把真实 Review 依据写入 `$TASK_DIR/review/timeout-fallback.md`，之后才读取 Review 文档或提交 Review。下面展示的是 reviewer 实际结论为 pass 时的命令；若检查结果不是 pass，应记录真实结论，不要照抄此成功路径。Run 结果、独立 Review 与逐项验收证据随后进入 Kernel：
 
 P41 的 Run 完成会读取观察范围内的真实文件。`run-start` 用 `--write-set <path>` 声明允许修改的文件；这些路径可以是 Run 中新增的文件，但必须在 `run-result` 前生成或存在，届时观察器才会读取实际内容。`--candidate <path>=<sha256>` 必须指向写入范围内当前存在的普通文件，并提供该文件字节的实际 SHA-256。Run 的 `--evidence` 引用必须能解析到写入范围中的冻结候选文件，或 Task 目录下的实际证据文件；CLI 会读取并冻结其字节摘要。Review 证据也必须解析到真实文件。下面的哈希占位符需换成当前文件的 64 位小写十六进制 SHA-256。
 
@@ -180,17 +174,15 @@ The Kernel owns lifecycle state, while document fingerprints pin the requested p
 An inserted same-kind heading can change later occurrence-based section IDs.
 ~~~
 
-作者只建立实际需要的 `prd.md`、`design.md`、`implement.md`；Review 与 Verify 有内容时再写入。先读完整 Agent 索引，再按需取 Run 或文档正文。`run-start` 前先声明示例中的源码、文档与测试证据路径；它们可以在 Run 中生成，但要在 `run-result` 前存在，届时提供各文件当前字节的 SHA-256。Task create 输出 TaskDir 路径；在 `run-start` 前将实际授权记录保存在该目录，并在 Run 完成后、Review 前将 Review 与 AC-2/AC-3 的真实检查结果写入 TaskDir。
+作者只建立实际需要的 `prd.md`、`design.md`、`implement.md`；Review 与 Verify 有内容时再写入。先读完整 Agent 索引，再按需取 Run 或文档正文。`run-start` 前先声明示例中的源码、文档与测试证据路径；这些文件可以在 Run 中生成，但要在 `run-result` 前存在，届时提供各文件当前字节的 SHA-256。Task create 输出完整 TaskDir 相对路径，将原路径填入 `$TASK_DIR`。实际批准发生后，由获授权的记录者把真实决定和范围写入 TaskDir 的 `evidence/legacy-doc-read-approval.md`，并在 `run-start` 前确认文件存在。Run 完成后，独立 reviewer 检查实际结果，再把真实 Review 结论以及 AC-2/AC-3 检查记录分别写入 TaskDir 的 `review/legacy-doc-read-review.md`、`review/stale-fingerprint-rejected.md` 和 `review/source-preservation-check.md`；只在确实完成这些检查后才使用对应证据路径。示例中的 Review verdict 命令仅适用于实际结论为 pass 的情况。
 
 ```bash
-TASK_DIR=".pactile/tasks/<path-printed-by-task-create>"
+TASK_DIR="<path-printed-by-task-create>"
 mkdir -p "$TASK_DIR/evidence"
-cat > "$TASK_DIR/evidence/legacy-doc-read-approval.md" <<'EOF'
-Requester approved read-only indexing of the declared Task artifacts.
-EOF
 ```
 
 ```bash
+TASK_DIR="<path-printed-by-task-create>"
 pactile task run-start legacy-doc-read \
   --actor implementer \
   --input-summary "Implement the three approved acceptance criteria" \
@@ -210,16 +202,6 @@ pactile task run-result legacy-doc-read <run-id> --outcome completed \
   --evidence evidence/p36-overlay-read.txt
 pactile task artifacts legacy-doc-read --agent --stage implement
 pactile task artifacts legacy-doc-read --agent --stage implement --fact <candidate-fact-id>
-mkdir -p "$TASK_DIR/review"
-cat > "$TASK_DIR/review/legacy-doc-read-review.md" <<'EOF'
-Independent review: PASS. The three declared criteria were checked.
-EOF
-cat > "$TASK_DIR/review/stale-fingerprint-rejected.md" <<'EOF'
-Observed: the reader rejected a stale section fingerprint.
-EOF
-cat > "$TASK_DIR/review/source-preservation-check.md" <<'EOF'
-Observed: task.json and authored source documents remained unchanged.
-EOF
 pactile task artifacts legacy-doc-read --agent --stage review
 pactile task artifacts legacy-doc-read --agent --stage review \
   --document "document:review@<current-review-fingerprint>"
