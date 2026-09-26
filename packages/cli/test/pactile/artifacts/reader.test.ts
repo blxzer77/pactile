@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runTaskCli } from "../../../src/commands/task.js";
@@ -12,6 +14,11 @@ import {
   startTaskRun,
   type TaskKernelSnapshotV2,
 } from "../../../src/core/task/index.js";
+import { buildLegacyTaskV2Import } from "../../../src/core/task/legacy-task-v2-import.js";
+import { scanLegacyTaskMigration } from "../../../src/core/task/legacy-task-migration.js";
+import { legacyTaskMigrationOverlayPath } from "../../../src/core/task/legacy-task-migration-reader.js";
+import { runLegacyTaskBatch } from "../../../src/pactile/migration/legacy-task-batch.js";
+import { compileSessionPack } from "../../../src/pactile/task/session-pack.js";
 import {
   projectTaskArtifactsForHumanV1,
   projectTaskArtifactsForAgentV1,
@@ -21,6 +28,15 @@ import {
 } from "../../../src/pactile/artifacts/index.js";
 
 const roots: string[] = [];
+const TAGGED_V050_FIXTURE_ROOT = fileURLToPath(
+  new URL("../../fixtures/legacy-v050-task-source/input", import.meta.url),
+);
+const TAGGED_V050_PROVENANCE = fileURLToPath(
+  new URL(
+    "../../fixtures/legacy-v050-task-source/provenance.json",
+    import.meta.url,
+  ),
+);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -228,6 +244,24 @@ describe("Task Kernel structured artifact reader", () => {
         description: "The selected behavior remains available",
       },
     });
+    expect(
+      runTaskCli(
+        [
+          "artifacts",
+          "small-fix",
+          "--stage",
+          "prd",
+          "--fact",
+          `${requirement.ref.uri}#${requirement.ref.selector}`,
+        ],
+        root,
+      ),
+    ).toBe(0);
+    expect(
+      JSON.parse(String(log.mock.lastCall?.[0])).selectedSources[0],
+    ).toMatchObject({
+      factId: requirement.id,
+    });
 
     let kernel = readKernel(root, taskDir);
     const started = startTaskRun({
@@ -375,6 +409,232 @@ describe("Task Kernel structured artifact reader", () => {
     expect(fs.readdirSync(taskDir).sort()).toEqual(["kernel.json", "prd.md"]);
   });
 
+  it("resolves tagged v0.5 migration facts and transitional docs through the Kernel overlay", async () => {
+    const provenance = JSON.parse(
+      fs.readFileSync(TAGGED_V050_PROVENANCE, "utf8"),
+    ) as {
+      provenance: { ref: string; commit: string };
+      files: { path: string; sha256: string }[];
+    };
+    expect(provenance.provenance).toMatchObject({
+      ref: "pactile-v0.5.0",
+      commit: "ad98139610b71822c23293894aabb3e99d149bdd",
+    });
+    for (const file of provenance.files) {
+      const bytes = fs.readFileSync(
+        path.join(TAGGED_V050_FIXTURE_ROOT, ...file.path.split("/")),
+      );
+      expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+        file.sha256,
+      );
+    }
+
+    const root = makeRoot();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    fs.cpSync(TAGGED_V050_FIXTURE_ROOT, root, { recursive: true });
+    const taskDir = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      "09-26-v050-migration-sample",
+    );
+    const taskId = "v050-migration-sample";
+
+    // This derived fixture resolves the tagged writer's required V2 definition
+    // fields in the temporary input only; the release sample itself is hashed
+    // above and its TaskDir Kernel remains the original V1 file.
+    const taskPath = path.join(taskDir, "task.json");
+    const legacyTask = JSON.parse(fs.readFileSync(taskPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    legacyTask.deliverable = "A structured fact view resolved by stable URI";
+    legacyTask.deliveryLevel = "local-result";
+    legacyTask.createdAt = "2026-09-26T00:00:00.000Z";
+    fs.writeFileSync(
+      taskPath,
+      `${JSON.stringify(legacyTask, null, 2)}\n`,
+      "utf8",
+    );
+    const prdPath = path.join(taskDir, "prd.md");
+    const prd = fs
+      .readFileSync(prdPath, "utf8")
+      .replace("## 验收标准", "## Acceptance Criteria");
+    expect(prd).toContain("- [ ] 待补充");
+    fs.writeFileSync(
+      prdPath,
+      `${prd.replace(
+        "- [ ] 待补充",
+        "- [ ] The imported Task Kernel fact is selectable through its logical URI.",
+      )}\n## 范围\n\nImported PRD scope.\n`,
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(taskDir, "task-map.md"),
+      "# Task Map\n\n## 范围\n\nImported task-map scope.\n",
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(taskDir, "handoff.md"),
+      "# Handoff\n\nThe legacy handoff remains readable during transition.\n",
+      "utf8",
+    );
+
+    const plan = scanLegacyTaskMigration({ projectRoot: root });
+    const imported = buildLegacyTaskV2Import(plan);
+    expect(imported).toMatchObject({ imported: 1, needsDefinition: 0 });
+    const result = await runLegacyTaskBatch(
+      { projectRoot: root, plan, targets: imported.targets },
+      { approved: true },
+    );
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed")
+      throw new Error("tagged fixture did not import");
+
+    const legacyKernel = JSON.parse(
+      fs.readFileSync(path.join(taskDir, "kernel.json"), "utf8"),
+    ) as { schemaVersion: number };
+    expect(legacyKernel.schemaVersion).toBe(1);
+    expect(readKernel(root, taskDir).schemaVersion).toBe(2);
+    const overlayDir = legacyTaskMigrationOverlayPath(root, taskDir);
+    expect(overlayDir).toBeTruthy();
+
+    expect(
+      runTaskCli(["artifacts", taskId, "--agent"], root),
+      String(error.mock.lastCall?.[0]),
+    ).toBe(0);
+    const index = JSON.parse(String(log.mock.lastCall?.[0])) as {
+      facts: {
+        id: string;
+        ref: { uri: string; selector: string };
+      }[];
+      documents: {
+        id: string;
+        status: string;
+        contentFingerprint: string | null;
+        sections?: {
+          id: string;
+          contentFingerprint: string;
+          ref: { path: string; selector: string };
+        }[];
+      }[];
+      stages: { stage: string; documentIds?: string[] }[];
+    };
+    const definitionFact = must(
+      index.facts.find(({ id }) => id === "context:task"),
+      "migrated task-definition fact",
+    );
+    const factUri = `${definitionFact.ref.uri}#${definitionFact.ref.selector}`;
+    expect(definitionFact.ref).toEqual({
+      uri: "artifact://tasks/v050-migration-sample/kernel",
+      selector: "/definition",
+    });
+    expect(JSON.stringify(index)).not.toContain("kernel.json");
+    expect(index.documents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "document:legacy-task-map",
+          status: "present",
+        }),
+        expect.objectContaining({
+          id: "document:legacy-handoff",
+          status: "present",
+        }),
+      ]),
+    );
+    expect(
+      index.stages.find(({ stage }) => stage === "prd")?.documentIds,
+    ).toContain("document:legacy-task-map");
+    expect(
+      index.stages.find(({ stage }) => stage === "implement")?.documentIds,
+    ).toContain("document:legacy-handoff");
+
+    const indexedPrd = must(
+      index.documents.find(({ id }) => id === "document:prd"),
+      "migrated PRD document index",
+    );
+    const indexedTaskMap = must(
+      index.documents.find(({ id }) => id === "document:legacy-task-map"),
+      "migrated task-map document index",
+    );
+    const prdScope = must(
+      indexedPrd.sections?.find(({ id }) => id === "section:prd:scope"),
+      "canonical PRD scope section",
+    );
+    const taskMapScope = must(
+      indexedTaskMap.sections?.find(
+        ({ id }) => id === "section:prd:legacy-task-map:scope",
+      ),
+      "namespaced legacy task-map scope section",
+    );
+    expect(prdScope.ref).toEqual({
+      path: "prd.md",
+      selector: "heading:scope",
+    });
+    expect(taskMapScope.ref).toEqual({
+      path: "task-map.md",
+      selector: "heading:scope",
+    });
+    expect(new Set([prdScope.id, taskMapScope.id]).size).toBe(2);
+    for (const [section, expected, excluded] of [
+      [prdScope, "Imported PRD scope.", "Imported task-map scope."],
+      [taskMapScope, "Imported task-map scope.", "Imported PRD scope."],
+    ] as const) {
+      expect(
+        runTaskCli(
+          [
+            "artifacts",
+            taskId,
+            "--agent",
+            "--section",
+            `${section.id}@${section.contentFingerprint}`,
+          ],
+          root,
+        ),
+      ).toBe(0);
+      const selectedSection = JSON.parse(String(log.mock.lastCall?.[0])) as {
+        selectedSections: { content: string }[];
+      };
+      expect(selectedSection.selectedSections[0]?.content).toContain(expected);
+      expect(selectedSection.selectedSections[0]?.content).not.toContain(
+        excluded,
+      );
+    }
+
+    expect(
+      runTaskCli(["artifacts", taskId, "--agent", "--fact", factUri], root),
+    ).toBe(0);
+    const selected = JSON.parse(String(log.mock.lastCall?.[0])) as {
+      selectedSources: { factId: string; value: { taskId: string } }[];
+    };
+    expect(selected.selectedSources[0]).toMatchObject({
+      factId: "context:task",
+      value: { taskId },
+    });
+
+    vi.stubEnv("PACTILE_CONTEXT_ID", "p42_migration_overlay_session_pack");
+    expect(runTaskCli(["select", taskId], root)).toBe(0);
+    const pack = compileSessionPack(root) as {
+      layers: {
+        n: number;
+        items?: { reference?: string; path?: string; role?: string }[];
+      }[];
+    };
+    const kernelDefinition = pack.layers
+      .find(({ n }) => n === 3)
+      ?.items?.find(({ role }) => role === "definition");
+    expect(kernelDefinition).toEqual({
+      reference: factUri,
+      role: "definition",
+      freshness: undefined,
+      excerpt: expect.any(String),
+    });
+    expect(kernelDefinition).not.toHaveProperty("path");
+  });
+
   it("indexes authored Design, Implement, Review, and Verify sources without copying their narrative", () => {
     const root = makeRoot();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -411,10 +671,15 @@ describe("Task Kernel structured artifact reader", () => {
       "created heavy Task directory",
     );
     const taskDir = path.join(root, ".pactile", "tasks", taskDirName);
+    fs.appendFileSync(
+      path.join(taskDir, "prd.md"),
+      "\n## 范围\n\nKeep the output focused on the selected artifact facts.\n\n## 风险\n\nA stale document index could direct the reader to old prose.\n",
+      "utf8",
+    );
     const authoredDocs = new Map([
       [
         "design.md",
-        "# Design\n\n## Decision\n\nUse stable stage IDs and hash source files on demand.\n\n## Trade-off\n\nDo not store a second copy of authored narrative.\n",
+        "# Design\n\n## Decision: stable stage IDs\n\nUse stable stage IDs and hash source files on demand.\n\n## Rationale\n\nDo not store a second copy of authored narrative.\n\n## Risks\n\nA changed locator could expose a stale decision.\n\n## 设计决策\n\nKeep the Kernel as the lifecycle authority.\n\n## 理由\n\nAvoid copying user-authored narrative.\n\n## 风险\n\nThe selected section fingerprint can become stale.\n\n## 设计决策\n\nThe duplicate heading still has a unique occurrence locator.\n",
       ],
       [
         "implement.md",
@@ -527,6 +792,73 @@ describe("Task Kernel structured artifact reader", () => {
         references: ["prd.md", "design.md", "implement.md"],
       },
     });
+    const terminalEvent = must(
+      kernel.events.find(
+        (event) => event.entityId === runId && event.type === "run.completed",
+      ),
+      "Run terminal event",
+    );
+    const hostChangedKernel = structuredClone(kernel);
+    hostChangedKernel.events.push({
+      ...terminalEvent,
+      id: "evt-later-host-binding",
+      revision: terminalEvent.revision + 1,
+      at: "2099-01-01T00:00:00.000Z",
+      actor: "host-operator",
+      idempotencyKey: "host-binding-after-result",
+      type: "run.host-bound",
+      requestFingerprint: "f".repeat(64),
+    });
+    const hostStableEnvelope = projectTaskKernelArtifactsV1(hostChangedKernel);
+    const hostStableRun = must(
+      hostStableEnvelope.facts.find(({ id }) => id === runFact.id),
+      "Run fact with later host event",
+    );
+    const hostStableEvidence = must(
+      hostStableEnvelope.facts.find(
+        (fact) =>
+          fact.kind === "evidence" &&
+          fact.ref.selector === "/runs/0/result/evidenceRefs/0",
+      ),
+      "Run evidence with later host event",
+    );
+    expect(hostStableRun.provenance).toMatchObject({
+      recordedAt: terminalEvent.at,
+      actor: terminalEvent.actor,
+    });
+    expect(hostStableEvidence.provenance).toMatchObject({
+      recordedAt: terminalEvent.at,
+      actor: terminalEvent.actor,
+    });
+    for (const [state, expectedStatus] of [
+      ["failed", "rejected"],
+      ["blocked", "blocked"],
+      ["cancelled", "rejected"],
+    ] as const) {
+      const terminalVariant = structuredClone(kernel);
+      const run = must(
+        terminalVariant.runs.find(({ id }) => id === runId),
+        `${state} Run`,
+      );
+      run.state = state;
+      run.failure =
+        state === "failed" || state === "blocked"
+          ? {
+              category: "simulated",
+              message: "terminal result",
+              evidenceRef: null,
+            }
+          : null;
+      const terminalFact = must(
+        projectTaskKernelArtifactsV1(terminalVariant).facts.find(
+          ({ id }) => id === runFact.id,
+        ),
+        `${state} Run fact`,
+      );
+      expect(terminalFact.status).toBe(expectedStatus);
+      expect(terminalFact.summary).not.toContain("Completed:");
+      expect(terminalFact.summary).toContain(`Run ${state}`);
+    }
     const verifyEvidenceFacts = envelope.facts.filter(
       (fact) =>
         fact.kind === "evidence" &&
@@ -561,7 +893,10 @@ describe("Task Kernel structured artifact reader", () => {
     );
     expect(reviewFact).toMatchObject({
       status: "rejected",
-      ref: { path: "kernel.json", selector: "/reviews/0" },
+      ref: {
+        uri: "artifact://tasks/heavy-feature/kernel",
+        selector: "/reviews/0",
+      },
     });
     expect(envelope.stageRefs.review).toContain(reviewFact.id);
     const selectedReviewDecision = readSelectedTaskArtifactSourcesV1(
@@ -654,6 +989,41 @@ describe("Task Kernel structured artifact reader", () => {
         selector: "markdown-files",
       },
     });
+    const designDocument = must(
+      documents.find(({ id }) => id === "document:design"),
+      "Design document reference",
+    );
+    expect(designDocument.sections?.map(({ id, kind }) => [id, kind])).toEqual([
+      ["section:design:decision", "decision"],
+      ["section:design:rationale", "rationale"],
+      ["section:design:risk", "risk"],
+      ["section:design:decision-2", "decision"],
+      ["section:design:rationale-2", "rationale"],
+      ["section:design:risk-2", "risk"],
+      ["section:design:decision-3", "decision"],
+    ]);
+    const prdDocument = must(
+      documents.find(({ id }) => id === "document:prd"),
+      "PRD document reference",
+    );
+    expect(prdDocument.sections?.map(({ id, kind }) => [id, kind])).toEqual([
+      ["section:prd:scope", "scope"],
+      ["section:prd:risk", "risk"],
+    ]);
+    const designDecisionLocators = designDocument.sections
+      ?.filter(({ kind }) => kind === "decision")
+      .map(({ id, ref }) => [id, `${ref.path}#${ref.selector}`]);
+    expect(designDecisionLocators).toEqual([
+      [
+        "section:design:decision",
+        "design.md#heading:decision-stable-stage-ids",
+      ],
+      ["section:design:decision-2", "design.md#heading:decision"],
+      ["section:design:decision-3", "design.md#heading:decision:2"],
+    ]);
+    expect(
+      new Set(designDecisionLocators?.map(([, locator]) => locator)).size,
+    ).toBe(3);
     expect(
       documents.every(({ contentFingerprint }) =>
         /^sha256:[a-f0-9]{64}$/u.test(contentFingerprint ?? ""),
@@ -663,6 +1033,8 @@ describe("Task Kernel structured artifact reader", () => {
     const human = projectTaskArtifactsForHumanV1(envelope, { documents });
     const agent = projectTaskArtifactsForAgentV1(envelope, { documents });
     expect(human).toContain("document:design");
+    expect(human).toContain("section:design:decision");
+    expect(human).toContain("section:prd:risk");
     expect(human).toContain("review/decision.md#markdown-files");
     expect(human).not.toContain(
       "Use stable stage IDs and hash source files on demand.",
@@ -673,6 +1045,7 @@ describe("Task Kernel structured artifact reader", () => {
     expect(JSON.stringify(agent)).not.toContain(
       "Use stable stage IDs and hash source files on demand.",
     );
+    expect(JSON.stringify(agent)).toContain("section:design:rationale");
 
     expect(
       runTaskCli(
@@ -686,6 +1059,7 @@ describe("Task Kernel structured artifact reader", () => {
         id: string;
         status: string;
         contentFingerprint: string | null;
+        sections?: { id: string; kind: string; contentFingerprint: string }[];
       }[];
     };
     expect(designOnly.stages).toEqual([
@@ -694,6 +1068,33 @@ describe("Task Kernel structured artifact reader", () => {
     expect(designOnly.documents.map(({ id }) => id)).toEqual([
       "document:design",
     ]);
+    const indexedDecision = must(
+      designOnly.documents[0]?.sections?.find(
+        ({ id }) => id === "section:design:decision",
+      ),
+      "Design decision section from CLI index",
+    );
+    const decisionSelection = `${indexedDecision.id}@${indexedDecision.contentFingerprint}`;
+    expect(
+      runTaskCli(
+        [
+          "artifacts",
+          "heavy-feature",
+          "--agent",
+          "--section",
+          decisionSelection,
+        ],
+        root,
+      ),
+    ).toBe(0);
+    const selectedDecision = JSON.parse(String(log.mock.lastCall?.[0])) as {
+      selectedSections: { section: { id: string }; content: string }[];
+    };
+    expect(selectedDecision.selectedSections[0]).toMatchObject({
+      section: { id: "section:design:decision" },
+      content:
+        "## Decision: stable stage IDs\n\nUse stable stage IDs and hash source files on demand.\n",
+    });
 
     const designBeforeRead = fs.readFileSync(
       path.join(taskDir, "design.md"),
@@ -740,7 +1141,7 @@ describe("Task Kernel structured artifact reader", () => {
 
     fs.writeFileSync(
       path.join(taskDir, "design.md"),
-      `${designBeforeRead}\n## Follow-up\n\nThe authored rationale remains editable.\n`,
+      `${designBeforeRead.replace("Use stable stage IDs and hash source files on demand.", "Keep stable stage IDs and hash source files on demand.")}\n## Follow-up\n\nThe authored rationale remains editable.\n`,
       "utf8",
     );
     expect(
@@ -756,6 +1157,19 @@ describe("Task Kernel structured artifact reader", () => {
       ),
     ).toBe(1);
     expect(String(error.mock.lastCall?.[0])).toContain("stale");
+    expect(
+      runTaskCli(
+        [
+          "artifacts",
+          "heavy-feature",
+          "--agent",
+          "--section",
+          decisionSelection,
+        ],
+        root,
+      ),
+    ).toBe(1);
+    expect(String(error.mock.lastCall?.[0])).toContain("section is stale");
 
     expect(
       runTaskCli(
@@ -768,6 +1182,7 @@ describe("Task Kernel structured artifact reader", () => {
         id: string;
         status: string;
         contentFingerprint: string | null;
+        sections?: { id: string; kind: string; contentFingerprint: string }[];
       }[];
     };
     const refreshedDesign = must(
@@ -780,6 +1195,35 @@ describe("Task Kernel structured artifact reader", () => {
     );
     expect(refreshedDesign.id).toBe(designReference.id);
     expect(refreshedFingerprint).not.toBe(designFingerprint);
+    const refreshedDecision = must(
+      refreshedDesign.sections?.find(
+        ({ id }) => id === "section:design:decision",
+      ),
+      "refreshed Design decision section",
+    );
+    expect(refreshedDecision.contentFingerprint).not.toBe(
+      indexedDecision.contentFingerprint,
+    );
+    expect(
+      runTaskCli(
+        [
+          "artifacts",
+          "heavy-feature",
+          "--agent",
+          "--section",
+          `${refreshedDecision.id}@${refreshedDecision.contentFingerprint}`,
+        ],
+        root,
+      ),
+    ).toBe(0);
+    const refreshedDecisionRead = JSON.parse(
+      String(log.mock.lastCall?.[0]),
+    ) as {
+      selectedSections: { content: string }[];
+    };
+    expect(refreshedDecisionRead.selectedSections[0]?.content).toContain(
+      "Keep stable stage IDs and hash source files on demand.",
+    );
     expect(
       runTaskCli(
         [

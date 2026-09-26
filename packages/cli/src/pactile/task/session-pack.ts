@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { KernelError, readTaskKernel, type KernelPhase } from "../../core/task/index.js";
 import { readLegacyTaskImportRecord } from "../../core/task/legacy-task-migration-reader.js";
+import { projectTaskKernelArtifactsV1 } from "../artifacts/index.js";
 import { prepareSelectedTaskAgentTileSelection } from "../registry.js";
 import { resolveSelectedTask, resolveTaskDir } from "./session.js";
 
@@ -29,7 +30,7 @@ const NEXT: Record<KernelPhase, string> = {
   close: "Write Outcome + learning disposition. Git commit is not Close.",
 };
 
-interface PackItem { id: string; kind: "contract" | "artifact"; text: string; estimatedTokens: number; path?: string; role?: string; freshness?: string }
+interface PackItem { id: string; kind: "contract" | "artifact"; text: string; estimatedTokens: number; path?: string; reference?: string; role?: string; freshness?: string }
 const estimatedTokens = (text: string): number => Math.max(40, Math.floor(text.length / 4) + 20);
 function readJson(file: string): Record<string, unknown> {
   try { const data: unknown = JSON.parse(fs.readFileSync(file, "utf8")); return data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {}; }
@@ -143,7 +144,8 @@ export function compileSessionPack(root: string, factGap = false): Record<string
     const definition = v2.definition;
     const text = [`Task: ${definition.title} (${definition.taskId})`, `Deliverable: ${definition.deliverable}`, `Delivery level: ${definition.deliveryLevel}`,
       `Dependencies: ${definition.dependencies.join(", ") || "none"}`, "Acceptance criteria:", ...definition.acceptanceCriteria.map((criterion) => `- ${criterion.id}: ${criterion.description}`)].join("\n");
-    candidates.push({ id: "kernel-definition", kind: "artifact", path: path.relative(root, path.join(dir, "kernel.json")).replaceAll("\\", "/"), role: "definition", text, estimatedTokens: estimatedTokens(text) });
+    const definitionFact = projectTaskKernelArtifactsV1(v2).facts.find((fact) => fact.id === "context:task");
+    if (definitionFact) candidates.push({ id: "kernel-definition", kind: "artifact", reference: `${definitionFact.ref.uri}#${definitionFact.ref.selector}`, role: "definition", text, estimatedTokens: estimatedTokens(text) });
   }
   if (dir && selectedLegacy) for (const [name, role] of PHASE_ARTIFACTS[phase]) {
     const file = path.join(dir, name);
@@ -244,7 +246,7 @@ export function compileSessionPack(root: string, factGap = false): Record<string
     layers: [
       { n: 1, name: "resident-min", text: layer1 },
       { n: 2, name: "activated-contracts", moduleIds: contracts.map((item) => item.id), text: contracts.map((item) => `### \`${item.id}\`\n${item.text}`).join("\n\n") },
-      { n: 3, name: "artifact-snippets", items: artifacts.map((item) => ({ path: item.path, role: item.role, freshness: item.freshness, excerpt: item.text })), text: artifacts.map((item) => `${item.path}\n${item.text}`).join("\n\n") },
+      { n: 3, name: "artifact-snippets", items: artifacts.map((item) => ({ ...(item.path ? { path: item.path } : {}), ...(item.reference ? { reference: item.reference } : {}), role: item.role, freshness: item.freshness, excerpt: item.text })), text: artifacts.map((item) => `${item.reference ?? item.path ?? item.id}\n${item.text}`).join("\n\n") },
       { n: 4, name: "retrieval-pointer", present: factGap, intents: factGap ? ["exact", "semantic", "structural", "external"] : [], text: layer4 },
       { n: 5, name: "deep-diagnosis", present: stuck, moduleIds: stuck ? ["debug-recovery"] : [], text: layer5 },
     ],
