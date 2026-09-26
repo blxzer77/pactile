@@ -106,3 +106,11 @@ executable avoids adding another TypeScript loader to the lint startup path.
 Keep product and maintenance behavior out of this file. Revisit the exception
 when ESLint can load a TypeScript flat configuration on the supported Node 20
 floor without a separate runtime loader or additional bootstrap dependency.
+
+## Release conformance probe
+
+The sealed-install Python PATH check is maintained in
+`packages/cli/scripts/assert-no-python-on-path.ts`. It is included in
+`tsconfig.scripts.json` and compiled with the release-conformance runner; do not
+replace it with inline `node -e` JavaScript. The check runs against the same
+restricted PATH and environment used for the default npm lifecycle install.

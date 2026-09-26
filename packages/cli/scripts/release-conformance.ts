@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createCommandRunner } from "./release-guard.js";
+import { assertNoPythonOnPath } from "./assert-no-python-on-path.js";
 import {
   inspectReleaseTarball,
   prepareReleaseArtifacts,
@@ -161,20 +162,6 @@ export function buildSealedTarballInstallArgs({
   ];
 }
 
-function assertNoPythonOnPath({ runner, cwd, env }) {
-  const probe = [
-    "const { spawnSync } = require('node:child_process');",
-    "for (const command of ['python', 'python.exe', 'python3', 'python3.exe', 'py', 'py.exe']) {",
-    "  const result = spawnSync(command, ['--version'], { stdio: 'ignore', windowsHide: true });",
-    "  if (result.error?.code !== 'ENOENT') {",
-    "    console.error(`Python command is available on the conformance PATH: ${command}`);",
-    "    process.exitCode = 1;",
-    "  }",
-    "}",
-  ].join("\n");
-  runner(process.execPath, ["-e", probe], { cwd, capture: true, env });
-}
-
 export async function verifyReleaseConformance({
   runner = createCommandRunner(),
   packageInfo = readPackageInfo(),
@@ -290,7 +277,7 @@ export async function verifyReleaseConformance({
         );
       }
       installScriptsEnabled = true;
-      assertNoPythonOnPath({ runner, cwd: prefix, env });
+      assertNoPythonOnPath({ cwd: prefix, env });
       noPythonOnInstallPath = true;
       runner(
         "npm",
