@@ -87,6 +87,30 @@ function recordWorkspaceClaimRefusal(
   throw unrecorded();
 }
 
+function bindWorkspaceAtLatestRevision(
+  input: CreateTaskRunWorktreeInput | AdoptTaskRunWorktreeInput,
+  binding: RunWorkspaceBinding,
+): TaskKernelMutationResult {
+  const maxAttempts = 3;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const latest = readStoredTaskRun(input.repoRoot, input.taskDir, input.runId);
+    try {
+      return bindTaskRunWorkspace({
+        root: input.repoRoot,
+        taskDir: input.taskDir,
+        expectedRevision: latest.kernel.revision,
+        runId: input.runId,
+        workspace: binding,
+        actor: input.actor,
+        idempotencyKey: input.idempotencyKey,
+      });
+    } catch (error) {
+      if (!isRevisionConflict(error) || attempt === maxAttempts - 1) throw error;
+    }
+  }
+  throw new WorktreeManagerError("workspace-kernel-bind-failed", "Task Kernel revision kept changing while binding the workspace; the checkout is preserved for reconciliation");
+}
+
 export interface CreateTaskRunWorktreeInput {
   repoRoot: string;
   taskDir: string;
@@ -120,15 +144,7 @@ export function createTaskRunWorktree(input: CreateTaskRunWorktreeInput): {
     throw error;
   }
   try {
-    const mutation = bindTaskRunWorkspace({
-      root: input.repoRoot,
-      taskDir: input.taskDir,
-      expectedRevision: stored.kernel.revision,
-      runId: input.runId,
-      workspace: binding,
-      actor: input.actor,
-      idempotencyKey: input.idempotencyKey,
-    });
+    const mutation = bindWorkspaceAtLatestRevision(input, binding);
     return { binding, mutation };
   } catch {
     throw new WorktreeManagerError("workspace-kernel-bind-failed", "The created checkout is preserved, but its Task Kernel bind failed; do not dispatch work until it is reconciled", binding.canonicalPath);
@@ -173,15 +189,7 @@ export function adoptTaskRunWorktree(input: AdoptTaskRunWorktreeInput): {
     throw error;
   }
   try {
-    const mutation = bindTaskRunWorkspace({
-      root: input.repoRoot,
-      taskDir: input.taskDir,
-      expectedRevision: stored.kernel.revision,
-      runId: input.runId,
-      workspace: binding,
-      actor: input.actor,
-      idempotencyKey: input.idempotencyKey,
-    });
+    const mutation = bindWorkspaceAtLatestRevision(input, binding);
     return { binding, mutation };
   } catch {
     throw new WorktreeManagerError("workspace-kernel-bind-failed", "The adopted checkout is preserved, but its Task Kernel bind failed; do not dispatch work until it is reconciled", binding.canonicalPath);
