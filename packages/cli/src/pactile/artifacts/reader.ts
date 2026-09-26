@@ -8,6 +8,9 @@ import type {
   TaskArtifactStageV1,
 } from "./types.js";
 
+const DELIVERY_VERIFICATION_FACT_ID = "evidence:delivery-verification";
+const DELIVERY_VERIFICATION_SELECTOR = "/closure/deliveryVerification";
+
 export interface TaskArtifactSourceDetailV1 {
   readonly factId: string;
   readonly source: TaskArtifactFactV1["source"];
@@ -587,8 +590,10 @@ export function projectTaskKernelArtifactsV1(
         kind: "evidence",
         status: "accepted",
         title: "Closed candidate observation",
-        summary:
-          "Candidate snapshot was observed at close; the Kernel records the observation as caller-attested.",
+        summary: oneLine(
+          `Candidate snapshot observed at Close by ${kernel.closure.candidateObservation.observedBy} from ${kernel.closure.candidateObservation.source}.`,
+          280,
+        ),
         source: {
           kind: "artifact",
           ref: artifactRef(taskId, "closure", "candidate-observation"),
@@ -648,6 +653,36 @@ export function projectTaskKernelArtifactsV1(
       },
       "verify",
     );
+    const deliveryVerification = kernel.closure.deliveryVerification;
+    if (deliveryVerification) {
+      add(
+        {
+          id: DELIVERY_VERIFICATION_FACT_ID,
+          kind: "evidence",
+          status: "verified",
+          title: "Close delivery verification",
+          summary: oneLine(
+            `Core verified ${deliveryVerification.level} delivery at ${deliveryVerification.path}.`,
+            280,
+          ),
+          source: {
+            kind: "artifact",
+            ref: artifactRef(taskId, "closure", "delivery-verification"),
+          },
+          provenance: {
+            recordedAt: timestamp(
+              deliveryVerification.observedAt,
+              "deliveryVerification.observedAt",
+            ),
+            actor: oneLine(deliveryVerification.source, 120),
+            method: "verified",
+            basedOn: ["evidence:candidate-observation", "evidence:delivery"],
+          },
+          ref: kernelLocator(taskId, DELIVERY_VERIFICATION_SELECTOR),
+        },
+        "verify",
+      );
+    }
   }
 
   const stageRefs = Object.fromEntries(
@@ -694,6 +729,20 @@ export function readSelectedTaskArtifactSourcesV1(
     seen.add(id);
     const fact = facts.get(id);
     if (!fact) throw new Error(`Unknown task artifact fact ID: ${id}`);
+    if (id === DELIVERY_VERIFICATION_FACT_ID) {
+      const expectedUri = kernelLocator(
+        kernel.identity.taskId,
+        DELIVERY_VERIFICATION_SELECTOR,
+      ).uri;
+      if (
+        fact.ref.uri !== expectedUri ||
+        fact.ref.selector !== DELIVERY_VERIFICATION_SELECTOR
+      ) {
+        throw new Error(
+          `Task artifact fact '${id}' has a stale or invalid Close verification locator`,
+        );
+      }
+    }
     return [
       {
         factId: id,
