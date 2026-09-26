@@ -1,8 +1,11 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { KernelPhase } from "../../core/task/index.js";
 import {
   projectTaskKernelLifecycle,
   readTaskKernel,
 } from "../../core/task/index.js";
+import { readLegacyTaskImportRecord } from "../../core/task/legacy-task-migration-reader.js";
 import {
   createJevDecisionFacadeV1,
   type JevEgressAuthorizationV1,
@@ -95,35 +98,35 @@ function captureStamp(
 ): SessionStampV1 | null {
   const lifecycle = expectedLifecycle(pack);
   if (!lifecycle) return null;
-  try {
-    const selection = resolveSelectedTask(root);
-    if (!selection.taskPath || selection.stale) return null;
-    const taskDir = resolveTaskDir(root, selection.taskPath);
-    const read = readTaskKernel({ root, taskDir, cwd: root });
-    if (read.kind === "task-kernel-v2") {
-      const projected = projectTaskKernelLifecycle(read.kernel);
-      return {
-        taskPath: selection.taskPath,
-        contextKey: selection.contextKey,
-        taskId: projected.taskId,
-        revision: projected.revision,
-        phase: projected.phase,
-        activeRunId: projected.gateSnapshot.runStart.activeRunId,
-        approvalRunId: projected.approvalSnapshot.runId,
-      };
-    }
+  const selection = resolveSelectedTask(root);
+  if (!selection.taskPath || selection.stale) return null;
+  const taskDir = resolveTaskDir(root, selection.taskPath);
+  if (
+    !fs.existsSync(path.join(taskDir, "kernel.json")) &&
+    !readLegacyTaskImportRecord(root, taskDir)
+  ) return null;
+  const read = readTaskKernel({ root, taskDir, cwd: root });
+  if (read.kind === "task-kernel-v2") {
+    const projected = projectTaskKernelLifecycle(read.kernel);
     return {
       taskPath: selection.taskPath,
       contextKey: selection.contextKey,
-      taskId: lifecycle.taskId,
-      revision: lifecycle.revision,
-      phase: lifecycle.phase,
-      activeRunId: null,
-      approvalRunId: null,
+      taskId: projected.taskId,
+      revision: projected.revision,
+      phase: projected.phase,
+      activeRunId: projected.gateSnapshot.runStart.activeRunId,
+      approvalRunId: projected.approvalSnapshot.runId,
     };
-  } catch {
-    return null;
   }
+  return {
+    taskPath: selection.taskPath,
+    contextKey: selection.contextKey,
+    taskId: lifecycle.taskId,
+    revision: lifecycle.revision,
+    phase: lifecycle.phase,
+    activeRunId: null,
+    approvalRunId: null,
+  };
 }
 
 function sameStamp(

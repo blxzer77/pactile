@@ -48,9 +48,11 @@ V2 Run 可以通过 `--run-id <Task Run ID>` 关联 create、message 和 wait �
 ```text
 pactile codex prepare <sender-task> --tool message --thread-id <receiver-thread> --to-task <receiver-task> --to-run-id <receiver-run> --prompt-file message.md
 pactile codex receipt <sender-task> <request-id> --result-file message-result.json --evidence-level desktop-native
-pactile codex block <receiver-task> --message-id <request-id> --blocked-by-task <sender-task> --reason "等待输入"
-pactile codex unblock <receiver-task> <block-id> --resolution-message-id <request-id> --unblocked-by-task <sender-task> --reason "已收到并核对输入"
+pactile codex block <receiver-task> --message-id <request-id> --blocked-by-task <sender-task> --reason "Waiting for input"
+pactile codex unblock <receiver-task> <block-id> --resolution-message-id <request-id> --unblocked-by-task <sender-task> --reason "Input received and checked"
 ```
+
+示例中的 `Waiting for input` 表示“等待输入”，`Input received and checked` 表示“已收到并核对输入”；实际 reason 可按场景用中文填写。
 
 跨 Task 消息正文上限为 4096 UTF-8 字节。默认是纯协调消息：允许目标 Task 正在 waiting/blocked 时接收，但不会改 Run、解除阻塞或授予写权限，提示会要求收件方保留阻塞状态。当前切片因尚未接入 P37 admission、lease、Resume 和 block 校验，对 Task Kernel v2 Execute create 与 `--resume-execute` 一律 fail closed。完成这些 gate 接线后，写入派发仍须先由 Kernel 明确 Resume 并通过 P37 admission；发送回执本身不授予派发许可。只有非 stale 的成功发送回执可用于创建与消息关联的 block；消息关联的 unblock 要求成功的 `desktop-native` resolution 证据，模拟发送不能解除阻塞。“sent”只表示 Host 接受发送请求，不表示收件方已读。每次解除都会留下独立日志事件。用户也可在给出原因后手动解除。
 
