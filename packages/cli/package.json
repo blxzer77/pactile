@@ -32,6 +32,11 @@
       "import": "./dist/pactile/scheduler/index.js",
       "default": "./dist/pactile/scheduler/index.js"
     },
+    "./worktree": {
+      "types": "./dist/pactile/worktree/index.d.ts",
+      "import": "./dist/pactile/worktree/index.js",
+      "default": "./dist/pactile/worktree/index.js"
+    },
     "./core/compat": {
       "types": "./dist/core/compat/index.d.ts",
       "import": "./dist/core/compat/index.js",

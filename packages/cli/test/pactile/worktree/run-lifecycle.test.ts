@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as taskKernelApi from "../../../src/core/task/task-kernel.js";
 import {
   acquireTaskRunWorkspaceCleanupLease,
   appendTaskRunHostSettlementRefs,
@@ -17,6 +18,8 @@ import {
 } from "../../../src/core/task/index.js";
 import { TASK_RUN_WORKSPACE_CLEANUP_RISK_DISCLOSURE } from "../../../src/core/task/task-kernel-types.js";
 import { adoptTaskRunWorktree, createTaskRunWorktree, integrateTaskRunWorktree, reclaimRunWorktree } from "../../../src/pactile/worktree/index.js";
+import { runTaskCliWithWorkspaceReclaim } from "../../../src/commands/task-worktree-close.js";
+import { runWorktreeCli } from "../../../src/commands/worktree.js";
 import * as gitRemoval from "../../../src/pactile/worktree/git-removal.js";
 
 const { readPiHostStopReceiptMock } = vi.hoisted(() => ({ readPiHostStopReceiptMock: vi.fn() }));
@@ -73,7 +76,7 @@ function readKernel(root: string, taskDir: string) {
   return read.kernel;
 }
 
-function prepareIntegratedRun(input: { root: string; baseSha: string; taskId: string; close: boolean }) {
+function prepareIntegratedRun(input: { root: string; baseSha: string; taskId: string; close: boolean; integrate?: boolean }) {
   const { root, baseSha, taskId } = input;
   const taskDir = path.join(root, ".pactile", "tasks", taskId);
   const created = createTaskKernel({
@@ -132,7 +135,9 @@ function prepareIntegratedRun(input: { root: string; baseSha: string; taskId: st
   });
   const candidate = completed.kernel.runs.at(-1)?.candidateSnapshot;
   if (!candidate) throw new Error("Completed Run candidate is missing");
-  integrateTaskRunWorktree({ repoRoot: root, taskDir, runId, targetRef: "main", actor: runActor, idempotencyKey: `integrate:${taskId}` });
+  if (input.integrate !== false) {
+    integrateTaskRunWorktree({ repoRoot: root, taskDir, runId, targetRef: "main", actor: runActor, idempotencyKey: `integrate:${taskId}` });
+  }
   kernel = readKernel(root, taskDir);
   recordTaskReview({
     root, taskDir, expectedRevision: kernel.revision, runId, candidateSnapshotId: candidate.id,
@@ -160,6 +165,28 @@ function prepareIntegratedRun(input: { root: string; baseSha: string; taskId: st
     cancellationRequestId: null, evidenceRef, recordedAt: "2026-09-26T00:00:30.000Z",
   });
   return { root, taskDir, taskId, runId, workspace, piRunId, receiptFile };
+}
+
+function closeArgs(prepared: ReturnType<typeof prepareIntegratedRun>): string[] {
+  const kernel = readKernel(prepared.root, prepared.taskDir);
+  const run = kernel.runs.find((item) => item.id === prepared.runId);
+  const review = kernel.reviews.at(-1);
+  if (!run?.candidateSnapshot || !review) throw new Error("Close needs a candidate and passing review");
+  return [
+    "close", prepared.taskId,
+    "--run", prepared.runId,
+    "--review", review.id,
+    "--candidate-id", run.candidateSnapshot.id,
+    "--candidate-fingerprint", run.candidateSnapshot.fingerprint,
+    "--candidate-observed-by", closer,
+    "--candidate-observed-at", "2026-09-26T00:02:00.000Z",
+    "--candidate-observation-source", "test-observer",
+    "--candidate-observation-ref", `candidate:${prepared.taskId}`,
+    "--delivery-level", "local-result",
+    "--delivery-ref", "src/feature.ts",
+    "--delivery-summary", "The reviewed result is present",
+    "--idempotency-key", `task-close:${prepared.taskId}`,
+  ];
 }
 
 function hasRegisteredWorktree(root: string, target: string): boolean {
@@ -240,6 +267,34 @@ describe("managed Run worktree reclamation", () => {
     expect(fs.existsSync(prepared.workspace.canonicalPath)).toBe(false);
   });
 
+  it("retains a closed Run checkout when durable registry history contains a second owner", async () => {
+    const { root, baseSha } = fixture();
+    const prepared = prepareIntegratedRun({ root, baseSha, taskId: "cleanup-duplicate-owner", close: true });
+    const commonDir = path.resolve(root, git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"));
+    const registry = path.join(commonDir, "pactile-run-workspaces-v1");
+    const primaryPath = path.join(registry, `${prepared.runId}.json`);
+    const duplicate = JSON.parse(fs.readFileSync(primaryPath, "utf8")) as Record<string, unknown>;
+    duplicate.ownerRunId = "legacy-duplicate-owner";
+    duplicate.credentialId = "legacy-duplicate-credential";
+    delete duplicate.ownershipProtocol;
+    fs.writeFileSync(path.join(registry, "legacy-duplicate-owner.json"), `${JSON.stringify(duplicate, null, 2)}\n`);
+    const removal = vi.spyOn(gitRemoval, "removeManagedGitWorktree");
+
+    const result = await reclaimRunWorktree({
+      repoRoot: root, taskDir: prepared.taskDir, runId: prepared.runId,
+      actor: closer, idempotencyKey: "cleanup-duplicate-owner:reclaim",
+    });
+
+    expect(result.state).not.toBe("reclaimed");
+    expect(result.reason).toMatch(/multiple Run owners|provenance/i);
+    expect(removal).not.toHaveBeenCalled();
+    expect(fs.existsSync(prepared.workspace.canonicalPath)).toBe(true);
+    expect(hasRegisteredWorktree(root, prepared.workspace.canonicalPath)).toBe(true);
+    const kernel = readKernel(root, prepared.taskDir);
+    expect(kernel.runs.find((item) => item.id === prepared.runId)?.workspace?.cleanupLease?.state).toBe("recovery-required");
+    expect(kernel.events.some((event) => event.type === "run.workspace-recovery-required" && event.entityId === prepared.runId)).toBe(true);
+  });
+
   it("retains a Run before Close without invoking Git removal", async () => {
     const { root, baseSha } = fixture();
     const prepared = prepareIntegratedRun({ root, baseSha, taskId: "cleanup-open", close: false });
@@ -254,6 +309,174 @@ describe("managed Run worktree reclamation", () => {
     expect(removal).not.toHaveBeenCalled();
     expect(fs.existsSync(prepared.workspace.canonicalPath)).toBe(true);
     expect(hasRegisteredWorktree(root, prepared.workspace.canonicalPath)).toBe(true);
+    const kernel = readKernel(root, prepared.taskDir);
+    const refusal = kernel.events.find((event) => event.type === "run.workspace-cleanup-refused");
+    expect(refusal).toMatchObject({ type: "run.workspace-cleanup-refused", entityId: prepared.runId });
+    expect(kernel.audit.find((entry) => entry.idempotencyKey === refusal?.idempotencyKey)?.evidence)
+      .toContain("Workspace cleanup refused:");
+  });
+
+  it("keeps the deletion gate closed when refusal-event persistence fails", async () => {
+    const { root, baseSha } = fixture();
+    const prepared = prepareIntegratedRun({ root, baseSha, taskId: "cleanup-refusal-write-fails", close: false });
+    vi.spyOn(taskKernelApi, "recordTaskRunWorkspaceCleanupRefusal").mockImplementation(() => {
+      throw new Error("simulated Kernel write failure");
+    });
+    const removal = vi.spyOn(gitRemoval, "removeManagedGitWorktree");
+
+    const result = await reclaimRunWorktree({
+      repoRoot: root, taskDir: prepared.taskDir, runId: prepared.runId,
+      actor: closer, idempotencyKey: "cleanup-refusal-write-fails:reclaim",
+    });
+
+    expect(result.state).toBe("retained");
+    expect(result.reason).toContain("refusal event could not be persisted");
+    expect(removal).not.toHaveBeenCalled();
+    expect(fs.existsSync(prepared.workspace.canonicalPath)).toBe(true);
+  });
+
+  it("automatically reclaims an integrated Run workspace after the public Task Close command succeeds", async () => {
+    const { root, baseSha } = fixture();
+    const prepared = prepareIntegratedRun({ root, baseSha, taskId: "cleanup-cli", close: false, integrate: false });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runWorktreeCli(["integrate", prepared.taskId, prepared.runId, "--target", "main"], root)).toBe(0);
+    expect(String(log.mock.lastCall?.[0])).toContain("contentFingerprint");
+    const remove = vi.spyOn(gitRemoval, "removeManagedGitWorktree");
+    const args = closeArgs(prepared);
+    const closeCode = await runTaskCliWithWorkspaceReclaim(args, root);
+    expect(await runTaskCliWithWorkspaceReclaim(args, root)).toBe(0);
+
+    expect(closeCode).toBe(0);
+    expect(log.mock.calls.map(([line]) => String(line)).join("\n")).toContain('"state": "reclaimed"');
+    expect(error).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(prepared.workspace.canonicalPath)).toBe(false);
+    expect(hasRegisteredWorktree(root, prepared.workspace.canonicalPath)).toBe(false);
+    expect(readKernel(root, prepared.taskDir).runs.at(-1)?.workspace?.cleanupLease?.state).toBe("reclaimed");
+  });
+
+  it("returns success for Close but emits a retained status and refusal event when the writer stop receipt is absent", async () => {
+    const { root, baseSha } = fixture();
+    const prepared = prepareIntegratedRun({ root, baseSha, taskId: "cleanup-no-host-stop", close: false });
+    readPiHostStopReceiptMock.mockResolvedValue(null);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const removal = vi.spyOn(gitRemoval, "removeManagedGitWorktree");
+
+    expect(await runTaskCliWithWorkspaceReclaim(closeArgs(prepared), root)).toBe(0);
+
+    const status = JSON.parse(String(error.mock.lastCall?.[0])) as { state: string; reason: string };
+    expect(status).toMatchObject({ state: "retained" });
+    expect(status.reason).toContain("persisted process exit receipt");
+    expect(removal).not.toHaveBeenCalled();
+    expect(fs.existsSync(prepared.workspace.canonicalPath)).toBe(true);
+    expect(hasRegisteredWorktree(root, prepared.workspace.canonicalPath)).toBe(true);
+    const kernel = readKernel(root, prepared.taskDir);
+    expect(kernel.events.some((event) => event.type === "run.workspace-cleanup-refused" && event.entityId === prepared.runId)).toBe(true);
+  });
+
+  it("retains the checkout after a verified cancelled writer exit", async () => {
+    const { root, baseSha } = fixture();
+    const prepared = prepareIntegratedRun({ root, baseSha, taskId: "cleanup-cancelled", close: true });
+    readPiHostStopReceiptMock.mockResolvedValue({
+      schemaVersion: 1, source: "pactile-pi-rpc", assurance: "manager-owned-child-exit",
+      taskId: prepared.taskId, taskRunId: prepared.runId, piRunId: prepared.piRunId,
+      role: "implement", sessionId: `session-${prepared.taskId}`, processId: 31415,
+      startRequestId: `pi-start:${prepared.taskId}`, settleReceiptId: `pi-settle:${prepared.taskId}`,
+      terminal: "cancelled", exitCode: null, signalCode: "SIGTERM",
+      cancellationRequestId: `cancel-request:${prepared.taskId}`,
+      evidenceRef: `${prepared.receiptFile}#process_stop_receipt`, recordedAt: "2026-09-26T00:00:30.000Z",
+    });
+    const removal = vi.spyOn(gitRemoval, "removeManagedGitWorktree");
+
+    const result = await reclaimRunWorktree({
+      repoRoot: root, taskDir: prepared.taskDir, runId: prepared.runId,
+      actor: closer, idempotencyKey: "cleanup-cancelled:reclaim",
+    });
+
+    expect(result.state).toBe("retained");
+    expect(result.reason).toContain("Cancelled Runs are retained");
+    expect(removal).not.toHaveBeenCalled();
+    expect(fs.existsSync(prepared.workspace.canonicalPath)).toBe(true);
+    expect(hasRegisteredWorktree(root, prepared.workspace.canonicalPath)).toBe(true);
+  });
+
+  it("retains user-written worktree changes and does not call Git removal", async () => {
+    const { root, baseSha } = fixture();
+    const prepared = prepareIntegratedRun({ root, baseSha, taskId: "cleanup-user-edit", close: true });
+    const featurePath = path.join(prepared.workspace.canonicalPath, "src", "feature.ts");
+    fs.writeFileSync(featurePath, "export const userEdit = true;\n");
+    const removal = vi.spyOn(gitRemoval, "removeManagedGitWorktree");
+
+    const result = await reclaimRunWorktree({
+      repoRoot: root, taskDir: prepared.taskDir, runId: prepared.runId,
+      actor: closer, idempotencyKey: "cleanup-user-edit:reclaim",
+    });
+
+    expect(result.state).toBe("recovery-required");
+    expect(result.reason).toMatch(/dirty|changed|modified/i);
+    expect(removal).not.toHaveBeenCalled();
+    expect(fs.readFileSync(featurePath, "utf8")).toContain("userEdit");
+    expect(hasRegisteredWorktree(root, prepared.workspace.canonicalPath)).toBe(true);
+  });
+
+  it("fails closed when the recorded Run path is replaced by a junction to another checkout", async (context) => {
+    const { root, baseSha } = fixture();
+    const prepared = prepareIntegratedRun({ root, baseSha, taskId: "cleanup-path-swap", close: true });
+    const outside = path.join(root, "outside-checkout");
+    git(root, "worktree", "add", "--no-track", "-b", "feat/path-swap-outside", outside, baseSha);
+    git(root, "worktree", "remove", prepared.workspace.canonicalPath);
+    try {
+      fs.symlinkSync(outside, prepared.workspace.canonicalPath, "junction");
+    } catch {
+      context.skip("The host does not allow creating a directory junction in this test environment");
+    }
+    const removal = vi.spyOn(gitRemoval, "removeManagedGitWorktree");
+
+    const result = await reclaimRunWorktree({
+      repoRoot: root, taskDir: prepared.taskDir, runId: prepared.runId,
+      actor: closer, idempotencyKey: "cleanup-path-swap:reclaim",
+    });
+
+    expect(["retained", "recovery-required"]).toContain(result.state);
+    expect(result.reason).toMatch(/symlink|path|registration|worktree/i);
+    expect(removal).not.toHaveBeenCalled();
+    expect(fs.existsSync(outside)).toBe(true);
+    expect(hasRegisteredWorktree(root, outside)).toBe(true);
+    expect(fs.lstatSync(prepared.workspace.canonicalPath).isSymbolicLink()).toBe(true);
+    expect(readKernel(root, prepared.taskDir).events.some(
+      (event) => event.type === "run.workspace-cleanup-refused" && event.entityId === prepared.runId,
+    )).toBe(true);
+  });
+
+  it("exposes create and inspect through the public Run worktree CLI using actual Git registrations", async () => {
+    const { root } = fixture();
+    const taskId = "worktree-cli-entry";
+    const taskDir = path.join(root, ".pactile", "tasks", taskId);
+    const created = createTaskKernel({
+      root, taskDir, actor: "author", idempotencyKey: `create:${taskId}`,
+      definition: {
+        taskId, title: "Public worktree CLI", description: "", deliverable: "managed checkout",
+        deliveryLevel: "local-result", acceptanceCriteria: [{ id: "AC-1", description: "Checkout is registered" }], dependencies: [],
+      },
+    });
+    const started = startTaskRun({
+      root, taskDir, expectedRevision: created.kernel.revision, actor: runActor, idempotencyKey: `start:${taskId}`,
+      input: { summary: "Prepare an isolated checkout", references: [] },
+      authorization: { approvedBy: approver, approvedAt: "2026-09-26T00:00:00.000Z", scope: "src", evidenceRef: "approval:cli" },
+      writeSetSnapshot: ["src"],
+    });
+    const runId = started.kernel.runs.at(-1)?.id;
+    if (!runId) throw new Error("Started Run is missing");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    expect(await runWorktreeCli(["create", taskId, runId], root)).toBe(0);
+    const createReceipt = JSON.parse(String(log.mock.lastCall?.[0])) as { canonicalPath: string; credentialId: string };
+    expect(createReceipt.credentialId).toBeTruthy();
+    expect(hasRegisteredWorktree(root, createReceipt.canonicalPath)).toBe(true);
+    expect(await runWorktreeCli(["inspect", taskId, runId], root)).toBe(0);
+    expect(String(log.mock.lastCall?.[0])).toContain('"state": "unintegrated"');
   });
 
   it("rechecks ignored user data immediately before invoking Git and preserves it", async () => {

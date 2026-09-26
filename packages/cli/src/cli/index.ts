@@ -21,7 +21,8 @@ import {
 import { isWorkflowInitialized, workflowPath } from "../utils/workflow-dir.js";
 import { PACKAGE_NAME, VERSION } from "../constants/version.js";
 import { runKernelJsonCli } from "../core/task/index.js";
-import { runTaskCli } from "../commands/task.js";
+import { runTaskCliWithWorkspaceReclaim } from "../commands/task-worktree-close.js";
+import { runWorktreeCommand } from "../commands/worktree.js";
 import { runPiCli } from "../commands/pi.js";
 import { runParallelCli } from "../commands/parallel.js";
 import { runCodexCli } from "../commands/codex.js";
@@ -563,8 +564,20 @@ program
   .allowExcessArguments()
   .argument("[operation]")
   .argument("[arguments...]")
-  .action(() => {
-    process.exitCode = runTaskCli(process.argv.slice(3));
+  .action(async () => {
+    process.exitCode = await runTaskCliWithWorkspaceReclaim(process.argv.slice(3));
+  });
+
+program
+  .command("worktree")
+  .description("Manage the current Pactile Run's Git worktree")
+  .addHelpText("after", "\n  create <task> <run-id> [--branch <branch>] [--base-ref <ref>]\n  adopt <task> <run-id> --path <registered-checkout> --branch <branch> --base-sha <sha> --approved-by <name> --approval-evidence <ref>\n  inspect <task> <run-id> | integrate <task> <run-id> --target <local-branch> | reclaim <task> <run-id>\n")
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[operation]")
+  .argument("[arguments...]")
+  .action(async () => {
+    process.exitCode = await runWorktreeCommand(process.argv.slice(3));
   });
 
 program
@@ -589,4 +602,4 @@ program
     }
   });
 
-program.parse();
+await program.parseAsync();
