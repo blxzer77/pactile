@@ -144,6 +144,10 @@ function createRoot(policy: typeof APPROVED_POLICY | typeof DENIED_POLICY): {
   return { root, ...task };
 }
 
+function writeProjectConfig(root: string, content: string): void {
+  fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), content);
+}
+
 function createPreload(): string {
   if (!fs.existsSync(FAKE_JEV_PRELOAD))
     throw new Error("Compiled TypeScript fake Jev preload is missing; run pnpm test.");
@@ -405,6 +409,84 @@ describe("Pactile session Jev route", () => {
     expect(result.stdout).not.toContain(API_KEY);
   });
 
+  it("allows configured project egress when the active Run grant also permits it", () => {
+    const { root } = createRoot(APPROVED_POLICY);
+    writeProjectConfig(root, "jev:\n  egress: allow\n");
+    const result = runCliProcess(root, {
+      apiKey: API_KEY,
+      preload: createPreload(),
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const pack = parseOutput(result.stdout);
+    expect(pack.tileSelection).toMatchObject({
+      status: "offered",
+      jevAdvice: {
+        status: "answered",
+        outboundAttempted: true,
+        attempts: 1,
+        fallback: null,
+      },
+    });
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(root, "fake-jev-capture.json"), "utf8"),
+      ),
+    ).toMatchObject({ callCount: 1 });
+    expect(result.stdout).not.toContain(API_KEY);
+  });
+
+  it("blocks Jev before fetch when project policy denies egress despite an allowing active Run grant", () => {
+    const { root } = createRoot(APPROVED_POLICY);
+    writeProjectConfig(root, "jev:\n  egress: deny\n");
+    const deterministic = prepareSelectedTaskAgentTileSelection(root);
+    if (!deterministic.success)
+      throw new Error("Expected the authorized deterministic session offer");
+
+    const result = runCliProcess(root, {
+      apiKey: API_KEY,
+      preload: createPreload(),
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(path.join(root, "fake-jev-capture.json"))).toBe(false);
+    const pack = parseOutput(result.stdout);
+    expect(pack.tileSelection).toMatchObject({
+      status: "offered",
+      offer: { fingerprint: deterministic.data.offer.fingerprint },
+      jevAdvice: {
+        status: "fallback",
+        outboundAttempted: false,
+        attempts: 0,
+        fallback: { reasonCode: "egress-denied" },
+      },
+    });
+    expect(result.stdout).not.toContain(API_KEY);
+  });
+
+  it("fails closed before fetch when project Jev egress policy is malformed", () => {
+    const { root } = createRoot(APPROVED_POLICY);
+    writeProjectConfig(root, "jev:\n  egress: maybe\n");
+
+    const result = runCliProcess(root, {
+      apiKey: API_KEY,
+      preload: createPreload(),
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(path.join(root, "fake-jev-capture.json"))).toBe(false);
+    expect(parseOutput(result.stdout).tileSelection).toMatchObject({
+      status: "offered",
+      jevAdvice: {
+        status: "fallback",
+        outboundAttempted: false,
+        attempts: 0,
+        fallback: { reasonCode: "configuration-invalid" },
+      },
+    });
+    expect(result.stdout).not.toContain(API_KEY);
+  });
+
   it("honors the explicit Jev kill switch even when the key and active grant exist", () => {
     const { root } = createRoot(APPROVED_POLICY);
     const result = runCliProcess(root, {
@@ -426,8 +508,9 @@ describe("Pactile session Jev route", () => {
     expect(result.stdout).not.toContain(API_KEY);
   });
 
-  it("does not send a configured key when the selected Task egress policy denies Jev", () => {
+  it("does not widen a denied Task Run grant with project allow", () => {
     const { root } = createRoot(DENIED_POLICY);
+    writeProjectConfig(root, "jev:\n  egress: allow\n");
     const result = runCliProcess(root, {
       apiKey: API_KEY,
       preload: createPreload(),

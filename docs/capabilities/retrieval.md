@@ -61,6 +61,8 @@ entries, or config read and parse uncertainty fail closed to the deterministic
 exact plan. The key stays in the process environment and is never written to
 the Session receipt.
 
-This project switch governs Jev retrieval planning. Tile-selection Session
-advice continues to use its existing Task Run grant until that path adopts the
-shared project policy.
+This project switch governs Jev retrieval planning and selected-Task Tile
+Session advice. For Tile advice, project denial or invalid configuration blocks
+Jev before HTTP even when a historical active Run grant allowed egress. Project
+allow is only an additional gate: the current active Run grant must still
+independently permit the destination and other Jev policy requirements.

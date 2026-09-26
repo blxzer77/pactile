@@ -70,6 +70,7 @@ import {
   type TileSelectionJevAdviceV1,
   type TileSelectionJevOptionsV1,
 } from "./tiles/jev-selection.js";
+import { resolveJevProjectEgressPolicyV1 } from "./jev/project-policy.js";
 import type { TileDiagnostic } from "./tiles/loader.js";
 import {
   replayTileSelectionSnapshot,
@@ -795,7 +796,12 @@ export async function prepareSelectedTaskAgentTileSelectionWithJevV1(
     catalog: surface.data.catalog,
     request: effective.data,
     facts: surface.data.facts,
-    jev,
+    jev: jev
+      ? {
+          ...jev,
+          projectEgressPolicy: resolveJevProjectEgressPolicyV1(root),
+        }
+      : undefined,
   });
 }
 
