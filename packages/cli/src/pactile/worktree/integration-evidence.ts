@@ -92,7 +92,7 @@ export function verifyWorktreeIntegration(input: {
   runId: string;
   runState: WorkspaceRunState;
   binding: RunWorkspaceBinding;
-  knownOwners: readonly WorkspaceOwnerRef[];
+  knownOwners?: readonly WorkspaceOwnerRef[];
   targetRef: string;
   result: RunResultEvidence | null;
 }): { binding: RunWorkspaceBinding; receipt: WorktreeIntegrationReceipt } {

@@ -496,7 +496,7 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
     if (!pathExists || !registered) {
       return cleanupResultFromKernel({ ...input, result: "recovery-required", reason: "Interrupted cleanup left an inconsistent Git registration/path state" });
     }
-    const staleInspection = inspectRunWorktree({ repoRoot: identity.root, runId: run.id, runState: run.state, binding, knownOwners: [] });
+    const staleInspection = inspectRunWorktree({ repoRoot: identity.root, runId: run.id, runState: run.state, binding });
     if (staleInspection.state !== "clean" || staleInspection.headSha !== activeLease.expectedHeadSha) {
       return cleanupResultFromKernel({ ...input, result: "recovery-required", reason: `Interrupted cleanup checkout needs preservation (${staleInspection.state})` });
     }
@@ -565,7 +565,7 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
     }
     const verified = verifyWorktreeIntegration({
       repoRoot: freshIdentity.root, runId: currentRun.id, runState: currentRun.state,
-      binding: currentWorkspace, knownOwners: [], targetRef: integrationReceipt.targetBranch,
+      binding: currentWorkspace, targetRef: integrationReceipt.targetBranch,
       result: { runId: currentRun.id, summary: currentResult.summary, evidenceRefs: currentResult.evidenceRefs,
         candidateSnapshotId: currentCandidate.id, candidateFingerprint: currentCandidate.fingerprint },
     });
@@ -574,7 +574,7 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
       || verified.receipt.contentFingerprint !== integrationReceipt.contentFingerprint) {
       throw new WorktreeManagerError("cleanup-head-changed", "Worktree HEAD, integrated target branch, or preserved content changed before Git removal", canonicalPath);
     }
-    const finalInspection = inspectRunWorktree({ repoRoot: freshIdentity.root, runId: currentRun.id, runState: currentRun.state, binding: currentWorkspace, knownOwners: [] });
+    const finalInspection = inspectRunWorktree({ repoRoot: freshIdentity.root, runId: currentRun.id, runState: currentRun.state, binding: currentWorkspace });
     if (finalInspection.state !== "clean" || finalInspection.headSha?.toLowerCase() !== expectedHeadSha
       || !finalInspection.gitDir || pathKey(finalInspection.gitDir) !== pathKey(currentWorkspace.manager.gitDir)) {
       throw new WorktreeManagerError("cleanup-worktree-changed", `Worktree changed or contains user/ignored files (${finalInspection.state})`, canonicalPath);

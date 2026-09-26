@@ -1,7 +1,8 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   adoptRunWorktree,
@@ -13,6 +14,9 @@ import {
   type RunResultEvidence,
   type RunWorkspaceBinding,
 } from "../../../src/pactile/worktree/index.js";
+import { repoIdentity } from "../../../src/pactile/worktree/git-probe.js";
+import { persistManagerProvenance, provenanceFor, readAllManagerProvenance } from "../../../src/pactile/worktree/manager-provenance.js";
+import { WorktreeManagerError } from "../../../src/pactile/worktree/manager-types.js";
 
 const roots: string[] = [];
 const fixturePrefix = "pactile-run-worktree-";
@@ -106,7 +110,192 @@ function integration(input: {
   });
 }
 
+function ownershipRegistry(root: string): string {
+  const commonDir = path.resolve(root, git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"));
+  return path.join(commonDir, "pactile-run-workspaces-v1");
+}
+
+function ownerProvenance(input: {
+  root: string; baseSha: string; runId: string; canonicalPath: string; branch: string;
+}): ReturnType<typeof provenanceFor> {
+  const identity = repoIdentity(input.root);
+  const gitDir = git(input.canonicalPath, "rev-parse", "--absolute-git-dir");
+  return provenanceFor({
+    identity,
+    binding: {
+      ownerRunId: input.runId, canonicalPath: input.canonicalPath, branch: input.branch,
+      baseSha: input.baseSha, writeSet: ["src"], integrationState: "not-integrated", reclamationState: "not-requested",
+    },
+    gitDir,
+    source: "adopted",
+    adoption: { approvedBy: "test-approver", approvedAt: "2026-09-26T00:00:00.000Z", evidenceRef: "test:adoption" },
+  });
+}
+
+function spawnOwnershipClaim(input: {
+  cliRoot: string; root: string; runId: string; canonicalPath: string; branch: string; baseSha: string; barrierDir: string;
+}) {
+  const source = `
+    import fs from "node:fs";
+    import path from "node:path";
+    import { execFileSync } from "node:child_process";
+    import { pathToFileURL } from "node:url";
+    const [cliRoot, root, runId, canonicalPath, branch, baseSha, barrierDir] = process.argv.slice(1);
+    const { repoIdentity } = await import(pathToFileURL(path.join(cliRoot, "src/pactile/worktree/git-probe.ts")).href);
+    const { persistManagerProvenance, provenanceFor } = await import(pathToFileURL(path.join(cliRoot, "src/pactile/worktree/manager-provenance.ts")).href);
+    const identity = repoIdentity(root);
+    const registry = path.join(identity.commonDir, "pactile-run-workspaces-v1");
+    const originalOpenSync = fs.openSync.bind(fs);
+    let pausedAtOwnerRecord = false;
+    fs.openSync = (file, flags, ...options) => {
+      const requested = typeof file === "string" ? file : String(file);
+      if (!pausedAtOwnerRecord && flags === "wx" && path.dirname(requested) === registry) {
+        pausedAtOwnerRecord = true;
+        fs.writeFileSync(path.join(barrierDir, runId + ".ready"), "after-precheck");
+        const waitCell = new Int32Array(new SharedArrayBuffer(4));
+        const deadline = Date.now() + 15000;
+        while (!fs.existsSync(path.join(barrierDir, "go"))) {
+          if (Date.now() > deadline) throw new Error("claim barrier timed out");
+          Atomics.wait(waitCell, 0, 0, 10);
+        }
+      }
+      return originalOpenSync(file, flags, ...options);
+    };
+    const gitDir = execFileSync("git", ["rev-parse", "--absolute-git-dir"], { cwd: canonicalPath, encoding: "utf8" }).trim();
+    const provenance = provenanceFor({ identity, gitDir, source: "adopted", adoption: { approvedBy: "test", approvedAt: "now", evidenceRef: "test:race" },
+      binding: { ownerRunId: runId, canonicalPath, branch, baseSha, writeSet: ["src"], integrationState: "not-integrated", reclamationState: "not-requested" } });
+    try {
+      persistManagerProvenance(identity, provenance);
+      console.log("CLAIMED:" + runId);
+    } catch (error) {
+      const code = error && typeof error === "object" ? error.code : undefined;
+      if (code === "owner-conflict" || code === "manager-provenance-invalid") {
+        console.log("REJECTED:" + runId + ":" + code);
+      } else {
+        console.error(error);
+        process.exitCode = 1;
+      }
+    }
+  `;
+  const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", source, "--",
+    input.cliRoot, input.root, input.runId, input.canonicalPath, input.branch, input.baseSha, input.barrierDir,
+  ], { cwd: input.cliRoot, stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+  const completion = new Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }>((resolve) => {
+    child.on("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
+  });
+  return { child, completion };
+}
+
+function waitForReadyClaims(input: { children: ReturnType<typeof spawnOwnershipClaim>[]; barrierDir: string; runIds: string[] }): void {
+  const waitCell = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + 15000;
+  while (!input.runIds.every((runId) => fs.existsSync(path.join(input.barrierDir, runId + ".ready")))) {
+    const exited = input.children.find(({ child }) => child.exitCode !== null);
+    if (exited) throw new Error("Ownership claimant exited before the barrier: " + exited.child.exitCode);
+    if (Date.now() > deadline) throw new Error("Ownership claimants did not reach the read barrier");
+    Atomics.wait(waitCell, 0, 0, 10);
+  }
+}
+
 describe("Run worktree manager", () => {
+  it("atomically assigns one canonical checkout to one Run across two Node processes", async () => {
+    const { root, baseSha } = fixture();
+    const canonicalPath = path.join(root, ".pactile", "worktrees", "shared-checkout");
+    fs.mkdirSync(path.dirname(canonicalPath), { recursive: true });
+    git(root, "worktree", "add", "--no-track", "-b", "feat/shared-checkout", canonicalPath, baseSha);
+    const barrierDir = path.join(root, ".ownership-race-barrier");
+    fs.mkdirSync(barrierDir);
+    const cliRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+    const runIds = ["run-race-a", "run-race-b"];
+    const children = runIds.map((runId) => spawnOwnershipClaim({
+      cliRoot, root, runId, canonicalPath, branch: "feat/shared-checkout", baseSha, barrierDir,
+    }));
+
+    try {
+      waitForReadyClaims({ children, barrierDir, runIds });
+      fs.writeFileSync(path.join(barrierDir, "go"), "go");
+      const completed = await Promise.all(children.map(({ completion }) => completion));
+      expect(completed.map(({ code }) => code), JSON.stringify(completed)).toEqual([0, 0]);
+      const output = completed.map(({ stdout, stderr }) => `${stdout}\n${stderr}`).join("\n");
+      expect((output.match(/CLAIMED:/g) ?? []).length, output).toBe(1);
+      expect((output.match(/REJECTED:/g) ?? []).length, output).toBe(1);
+
+      const records = readAllManagerProvenance(repoIdentity(root));
+      expect(records).toHaveLength(1);
+      expect(records[0]?.canonicalPath).toBe(canonicalPath);
+      expect(records[0]?.ownershipProtocol).toBe("canonical-path-index-v1");
+      const pathIndexFiles = fs.readdirSync(path.join(ownershipRegistry(root), "paths"))
+        .filter((name) => name.endsWith(".json"));
+      expect(pathIndexFiles).toHaveLength(1);
+      expect(hasRegisteredWorktree(root, canonicalPath)).toBe(true);
+    } finally {
+      for (const { child } of children) if (child.exitCode === null) child.kill();
+      await Promise.all(children.map(({ completion }) => completion));
+    }
+  });
+
+  it("fails closed when a process crashes between the Run record and canonical-path index", () => {
+    const { root, baseSha } = fixture();
+    const binding = create({ root, baseSha });
+    const registry = ownershipRegistry(root);
+    const ownerRecord = path.join(registry, `${binding.ownerRunId}.json`);
+    const pathIndexes = fs.readdirSync(path.join(registry, "paths")).filter((name) => name.endsWith(".json"));
+    expect(pathIndexes).toHaveLength(1);
+    fs.unlinkSync(path.join(registry, "paths", pathIndexes[0] as string));
+
+    const inspection = inspectRunWorktree({
+      repoRoot: root, runId: binding.ownerRunId, runState: "running", binding,
+    });
+    expect(inspection.state).toBe("manager-provenance-mismatch");
+    expect(() => readAllManagerProvenance(repoIdentity(root))).toThrow(WorktreeManagerError);
+    const competingClaim = ownerProvenance({
+      root, baseSha, runId: "run-after-crash", canonicalPath: binding.canonicalPath, branch: binding.branch,
+    });
+    expect(() => persistManagerProvenance(repoIdentity(root), competingClaim)).toThrow(WorktreeManagerError);
+    expect(fs.existsSync(ownerRecord)).toBe(true);
+    expect(fs.existsSync(binding.canonicalPath)).toBe(true);
+    expect(hasRegisteredWorktree(root, binding.canonicalPath)).toBe(true);
+  });
+
+  it("detects a pre-existing legacy duplicate owner and makes inspection fail closed", () => {
+    const { root, baseSha } = fixture();
+    const binding = create({ root, baseSha });
+    const registry = ownershipRegistry(root);
+    const primaryFile = path.join(registry, `${binding.ownerRunId}.json`);
+    const duplicate = JSON.parse(fs.readFileSync(primaryFile, "utf8")) as Record<string, unknown>;
+    duplicate.ownerRunId = "legacy-duplicate-owner";
+    duplicate.credentialId = "legacy-duplicate-credential";
+    delete duplicate.ownershipProtocol;
+    fs.writeFileSync(path.join(registry, "legacy-duplicate-owner.json"), `${JSON.stringify(duplicate, null, 2)}\n`);
+
+    expect(() => readAllManagerProvenance(repoIdentity(root))).toThrow(/multiple Run owners/);
+    const inspection = inspectRunWorktree({
+      repoRoot: root, runId: binding.ownerRunId, runState: "running", binding,
+    });
+    expect(inspection.state).toBe("manager-provenance-mismatch");
+    expect(fs.existsSync(binding.canonicalPath)).toBe(true);
+    expect(hasRegisteredWorktree(root, binding.canonicalPath)).toBe(true);
+  });
+
+  it("treats Windows case variants as the same canonical ownership path", () => {
+    if (process.platform !== "win32") return;
+    const { root, baseSha } = fixture();
+    const binding = create({ root, baseSha });
+    const secondClaim = ownerProvenance({
+      root, baseSha, runId: "run-case-variant", canonicalPath: alternateCase(binding.canonicalPath), branch: binding.branch,
+    });
+
+    expect(() => persistManagerProvenance(repoIdentity(root), secondClaim)).toThrow(/already has a manager ownership record/);
+    expect(readAllManagerProvenance(repoIdentity(root))).toHaveLength(1);
+    expect(fs.readdirSync(path.join(ownershipRegistry(root), "paths")).filter((name) => name.endsWith(".json"))).toHaveLength(1);
+    expect(fs.existsSync(binding.canonicalPath)).toBe(true);
+    expect(hasRegisteredWorktree(root, binding.canonicalPath)).toBe(true);
+  });
+
   it("creates and verifies a registered checkout with explicit Run, branch, base SHA, and write set", () => {
     const { root, baseSha } = fixture();
     const binding = create({ root, baseSha });

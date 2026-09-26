@@ -162,7 +162,7 @@ export async function runWorktreeCli(argv: string[], cwd = process.cwd()): Promi
       return 2;
     }
     const inspection = inspectRunWorktree({
-      repoRoot, runId, runState: run.state, binding, knownOwners: [],
+      repoRoot, runId, runState: run.state, binding,
     });
     console.log(JSON.stringify({ operation, runId, inspection }, null, 2));
     return inspection.state === "clean" || inspection.state === "unintegrated" ? 0 : 2;

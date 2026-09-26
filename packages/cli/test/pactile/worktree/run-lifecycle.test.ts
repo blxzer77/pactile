@@ -267,6 +267,34 @@ describe("managed Run worktree reclamation", () => {
     expect(fs.existsSync(prepared.workspace.canonicalPath)).toBe(false);
   });
 
+  it("retains a closed Run checkout when durable registry history contains a second owner", async () => {
+    const { root, baseSha } = fixture();
+    const prepared = prepareIntegratedRun({ root, baseSha, taskId: "cleanup-duplicate-owner", close: true });
+    const commonDir = path.resolve(root, git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"));
+    const registry = path.join(commonDir, "pactile-run-workspaces-v1");
+    const primaryPath = path.join(registry, `${prepared.runId}.json`);
+    const duplicate = JSON.parse(fs.readFileSync(primaryPath, "utf8")) as Record<string, unknown>;
+    duplicate.ownerRunId = "legacy-duplicate-owner";
+    duplicate.credentialId = "legacy-duplicate-credential";
+    delete duplicate.ownershipProtocol;
+    fs.writeFileSync(path.join(registry, "legacy-duplicate-owner.json"), `${JSON.stringify(duplicate, null, 2)}\n`);
+    const removal = vi.spyOn(gitRemoval, "removeManagedGitWorktree");
+
+    const result = await reclaimRunWorktree({
+      repoRoot: root, taskDir: prepared.taskDir, runId: prepared.runId,
+      actor: closer, idempotencyKey: "cleanup-duplicate-owner:reclaim",
+    });
+
+    expect(result.state).not.toBe("reclaimed");
+    expect(result.reason).toMatch(/multiple Run owners|provenance/i);
+    expect(removal).not.toHaveBeenCalled();
+    expect(fs.existsSync(prepared.workspace.canonicalPath)).toBe(true);
+    expect(hasRegisteredWorktree(root, prepared.workspace.canonicalPath)).toBe(true);
+    const kernel = readKernel(root, prepared.taskDir);
+    expect(kernel.runs.find((item) => item.id === prepared.runId)?.workspace?.cleanupLease?.state).toBe("recovery-required");
+    expect(kernel.events.some((event) => event.type === "run.workspace-recovery-required" && event.entityId === prepared.runId)).toBe(true);
+  });
+
   it("retains a Run before Close without invoking Git removal", async () => {
     const { root, baseSha } = fixture();
     const prepared = prepareIntegratedRun({ root, baseSha, taskId: "cleanup-open", close: false });
