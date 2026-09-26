@@ -9,6 +9,7 @@ import type {
   JevCallOptionsV1,
   JevDecisionFacadeV1,
   JevDecisionResultV1,
+  JevProjectEgressPolicyV1,
 } from "../jev/index.js";
 import {
   decideTileSelection,
@@ -29,6 +30,8 @@ const MIN_TILE_SELECTION_CONFIDENCE = 0.75;
 export interface TileSelectionJevOptionsV1 {
   readonly facade: JevDecisionFacadeV1;
   readonly callOptions: JevCallOptionsV1;
+  /** Optional project fence supplied by the selected-Task entry point. */
+  readonly projectEgressPolicy?: JevProjectEgressPolicyV1;
 }
 
 export interface AdviseTileSelectionWithJevInputV1 {
@@ -82,6 +85,13 @@ const LOCAL_FALLBACK_EXPLANATIONS: Readonly<
     "The Compiler rejected or could not complete Jev's proposed Tile selection; use the deterministic offer.",
 };
 
+const PROJECT_EGRESS_FALLBACK_EXPLANATIONS = {
+  "egress-denied":
+    "Project policy denies Jev egress; use the deterministic Tile offer.",
+  "configuration-invalid":
+    "Project Jev egress configuration is invalid; use the deterministic Tile offer.",
+} as const;
+
 function policyAllowsJev(request: TileSelectionRequest): boolean {
   const policy = request.policyCeiling;
   return (
@@ -98,16 +108,18 @@ function fallback(
   eligibleCandidateCount: number,
   reasonCode: TileSelectionJevFallbackCodeV1,
   decision: JevDecisionResultV1 | null = null,
+  explanationOverride?: string,
 ): TileSelectionJevAdviceV1 {
   const explanation =
-    reasonCode in LOCAL_FALLBACK_EXPLANATIONS
+    explanationOverride ??
+    (reasonCode in LOCAL_FALLBACK_EXPLANATIONS
       ? LOCAL_FALLBACK_EXPLANATIONS[
           reasonCode as keyof typeof LOCAL_FALLBACK_EXPLANATIONS
         ]
       : decision?.status === "fallback" &&
           decision.fallback.reasonCode === reasonCode
         ? decision.fallback.explanation
-        : "Jev advice is unavailable; use the deterministic Tile offer.";
+        : "Jev advice is unavailable; use the deterministic Tile offer.");
   return {
     offer,
     source: "deterministic",
@@ -205,6 +217,19 @@ export async function adviseTileSelectionWithJevV1(
       success: true,
       data: fallback(offer, eligibleCandidates.length, "not-configured"),
     };
+  if (input.jev.projectEgressPolicy?.allowed === false) {
+    const { reasonCode } = input.jev.projectEgressPolicy;
+    return {
+      success: true,
+      data: fallback(
+        offer,
+        eligibleCandidates.length,
+        reasonCode,
+        null,
+        PROJECT_EGRESS_FALLBACK_EXPLANATIONS[reasonCode],
+      ),
+    };
+  }
   if (!policyAllowsJev(input.request))
     return {
       success: true,
