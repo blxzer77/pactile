@@ -178,6 +178,55 @@ describe("verification plan selection", () => {
     expect(plan.coverageStatus).toBe("missing-public-behavior-evidence");
   });
 
+  it("does not let an unrelated integration check cover a cross-module auth change", () => {
+    const plan = createVerificationPlan({
+      impact: {
+        changedSurfaces: ["auth.authorize"],
+        risks: ["permission-boundary"],
+        scope: "cross-module",
+      },
+      checks: [
+        {
+          kind: "behavior",
+          id: "auth.authorize.focused",
+          title: "Authorization boundary behavior",
+          mode: "focused",
+          evidence: "independent-public-behavior",
+          coversSurfaces: ["auth.authorize"],
+          coversRisks: ["permission-boundary"],
+        },
+        {
+          kind: "behavior",
+          id: "image.render.integration",
+          title: "Image rendering integration behavior",
+          mode: "integration",
+          evidence: "independent-public-behavior",
+          coversSurfaces: ["image.render"],
+          coversRisks: [],
+        },
+      ],
+    });
+
+    expect(plan.selected.map(({ checkId }) => checkId)).toEqual([
+      "auth.authorize.focused",
+    ]);
+    expect(plan.uncoveredGoals).toEqual([
+      expect.objectContaining({
+        goal: expect.objectContaining({ id: "scope:cross-module" }),
+        reason: "no-registered-public-behavior-check",
+        checkIds: [],
+      }),
+    ]);
+    expect(plan.skipped).toContainEqual(
+      expect.objectContaining({
+        checkId: "image.render.integration",
+        reason: "no-relevant-goal",
+        relevantGoalIds: [],
+      }),
+    );
+    expect(plan.coverageStatus).toBe("missing-public-behavior-evidence");
+  });
+
   it("exposes missing or mirror-only public evidence while still selecting required CI", () => {
     const plan = createVerificationPlan({
       impact: {

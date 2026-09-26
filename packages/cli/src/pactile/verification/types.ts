@@ -42,6 +42,7 @@ export interface BehaviorVerificationCheck {
   /** Only independently asserted public outcomes can satisfy behavior goals. */
   readonly evidence: "independent-public-behavior" | "implementation-mirror";
   readonly coversRisks: readonly VerificationRisk[];
+  /** Cross-module coverage must match at least one impacted behavior surface. */
   readonly coversSurfaces: readonly string[];
 }
 

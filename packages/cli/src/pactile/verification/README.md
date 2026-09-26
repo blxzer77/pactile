@@ -51,9 +51,10 @@ if (plan.coverageStatus !== "covered") {
 
 For a migration or release change, add the matching risk and checks with
 `migration` or `release` mode. For a cross-module change, declare
-`scope: "cross-module"` and include a check that covers the affected seams or
-integration behavior. The planner returns uncovered goals when the inventory
-cannot support the declared impact.
+`scope: "cross-module"` and include an `integration` or `full-suite` check whose
+`coversSurfaces` includes at least one value from `impact.changedSurfaces`. An
+unrelated integration check leaves the cross-module goal uncovered. The planner
+returns uncovered goals when the inventory cannot support the declared impact.
 
 Routine single-area changes do not receive an automatic full-suite check. If a
 routine change has no focused independent check, the plan reports missing

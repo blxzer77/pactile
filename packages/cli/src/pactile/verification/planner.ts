@@ -267,11 +267,17 @@ function modeSupportsGoal(
 function checkDeclaresGoal(
   check: BehaviorVerificationCheck,
   goal: InternalGoal,
+  impact: VerificationImpact,
 ): boolean {
   if (!modeSupportsGoal(check.mode, goal)) return false;
   if (goal.kind === "surface") return check.coversSurfaces.includes(goal.label);
   if (goal.kind === "risk")
     return check.coversRisks.includes(goal.label as VerificationRisk);
+  if (goal.id === "scope:cross-module") {
+    return impact.changedSurfaces.some((surface) =>
+      check.coversSurfaces.includes(surface),
+    );
+  }
   return true;
 }
 
@@ -280,7 +286,7 @@ function checkCoversGoal(
   goal: InternalGoal,
   impact: VerificationImpact,
 ): boolean {
-  if (!checkDeclaresGoal(check, goal)) return false;
+  if (!checkDeclaresGoal(check, goal, impact)) return false;
   return !(
     check.mode === "full-suite" &&
     impact.scope === "single-area" &&
@@ -341,7 +347,10 @@ function uncoveredReason(
   const mirrorIds: string[] = [];
   const broadIds: string[] = [];
   for (const candidate of checks) {
-    if (candidate.kind !== "behavior" || !checkDeclaresGoal(candidate, goal))
+    if (
+      candidate.kind !== "behavior" ||
+      !checkDeclaresGoal(candidate, goal, impact)
+    )
       continue;
     if (
       candidate.mode === "full-suite" &&
@@ -385,7 +394,7 @@ function skippedBehavior(
   impact: VerificationImpact,
 ): SkippedVerificationCheck {
   const declaredGoalIds = goals
-    .filter((goal) => checkDeclaresGoal(check, goal))
+    .filter((goal) => checkDeclaresGoal(check, goal, impact))
     .map((goal) => goal.id);
   const relevantGoalIds = goals
     .filter((goal) => checkCoversGoal(check, goal, impact))
