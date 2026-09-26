@@ -2,9 +2,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 import { createCommandRunner } from "./release-guard.js";
+import { assertNoPythonOnPath } from "./assert-no-python-on-path.js";
 import {
   inspectReleaseTarball,
   prepareReleaseArtifacts,
@@ -15,6 +16,7 @@ import {
   readPackageInfo,
 } from "./publish-packages.js";
 import type { CommandRunner, PackageInfo } from "./types.js";
+import { resolveCliPackageRoot } from "./script-paths.js";
 
 const NODE_ENGINE = ">=20.0.0";
 const EXPECTED_BINS = {
@@ -160,20 +162,6 @@ export function buildSealedTarballInstallArgs({
   ];
 }
 
-function assertNoPythonOnPath({ runner, cwd, env }) {
-  const probe = [
-    "const { spawnSync } = require('node:child_process');",
-    "for (const command of ['python', 'python.exe', 'python3', 'python3.exe', 'py', 'py.exe']) {",
-    "  const result = spawnSync(command, ['--version'], { stdio: 'ignore', windowsHide: true });",
-    "  if (result.error?.code !== 'ENOENT') {",
-    "    console.error(`Python command is available on the conformance PATH: ${command}`);",
-    "    process.exitCode = 1;",
-    "  }",
-    "}",
-  ].join("\n");
-  runner(process.execPath, ["-e", probe], { cwd, capture: true, env });
-}
-
 export async function verifyReleaseConformance({
   runner = createCommandRunner(),
   packageInfo = readPackageInfo(),
@@ -289,7 +277,7 @@ export async function verifyReleaseConformance({
         );
       }
       installScriptsEnabled = true;
-      assertNoPythonOnPath({ runner, cwd: prefix, env });
+      assertNoPythonOnPath({ cwd: prefix, env });
       noPythonOnInstallPath = true;
       runner(
         "npm",
@@ -350,9 +338,9 @@ export async function verifyReleaseConformance({
         runner(
           process.execPath,
           [
-            path.resolve(
-              path.dirname(fileURLToPath(import.meta.url)),
-              "../.tmp/p31-script-build/node-only-acceptance.js",
+            path.join(
+              resolveCliPackageRoot(import.meta.url),
+              ".tmp/p31-script-build/node-only-acceptance.js",
             ),
             installed,
             path.join(root, "node-only-project"),

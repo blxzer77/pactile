@@ -10,13 +10,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolveCliPackageRoot } from "./script-paths.js";
 
 /** Static npm `files` entries for @blxzer/pactile. */
 const cliPackFilesStatic = ["dist", "README.md", "CHANGELOG.md", "LICENSE"];
 
 export function defaultPackageRoot() {
-  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  return resolveCliPackageRoot(import.meta.url);
 }
 
 /**

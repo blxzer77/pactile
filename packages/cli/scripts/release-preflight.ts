@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 import {
   assertMatchingVersions,
@@ -19,9 +19,9 @@ import type {
   CliPackageManifest,
 } from "./types.js";
 import { isRecord } from "./types.js";
+import { resolveRepositoryRoot } from "./script-paths.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, "../../..");
+const REPO_ROOT = resolveRepositoryRoot(import.meta.url);
 const CLI_PKG = path.join(REPO_ROOT, "packages/cli/package.json");
 const CORE_DEPENDENCY = "@blxzer/pactile-core";
 const LEGACY_DEPENDENCIES = [
