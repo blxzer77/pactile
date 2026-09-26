@@ -1380,6 +1380,26 @@ function readExistingTaskKernelReceipt(
   return receipt;
 }
 
+/** Reads a content-addressed V2 Task schedule receipt and verifies its fingerprint. */
+export function readTaskKernelScheduleReceiptV1(
+  rootValue: string,
+  fingerprint: string,
+): TaskKernelScheduleDecisionReceiptV1 {
+  if (!/^[a-f0-9]{64}$/u.test(fingerprint))
+    throw new Error("Task Kernel schedule receipt fingerprint must be a lowercase SHA-256 digest");
+  const file = path.join(
+    path.resolve(rootValue),
+    ".pactile",
+    ".runtime",
+    "scheduler",
+    "receipts",
+    `${fingerprint}.json`,
+  );
+  if (!fs.existsSync(file))
+    throw new Error(`Task Kernel schedule receipt not found: ${fingerprint}`);
+  return readExistingTaskKernelReceipt(file, fingerprint);
+}
+
 function persistTaskKernelReceipt(
   root: string,
   receiptBase: Omit<

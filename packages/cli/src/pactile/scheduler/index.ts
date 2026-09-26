@@ -20,6 +20,7 @@ export {
   scheduleParentTaskGraphWithJevV1,
   planTaskKernelGraphV1,
   scheduleTaskKernelGraph,
+  readTaskKernelScheduleReceiptV1,
   type PersistedTaskScheduleV1,
   type PersistedTaskKernelScheduleV1,
   type SchedulerTaskCostOverridesV1,
