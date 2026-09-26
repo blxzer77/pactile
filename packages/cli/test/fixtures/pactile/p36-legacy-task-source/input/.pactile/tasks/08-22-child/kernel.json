@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "identity": { "taskId": "child-legacy" },
+  "revision": 3,
+  "phase": "verify",
+  "condition": "active",
+  "outcome": null,
+  "audit": [
+    {
+      "id": "legacy-child-audit-1",
+      "at": "2026-08-22T09:00:00.000Z",
+      "actor": "user",
+      "idempotencyKey": "start:child-legacy:2026-08-22T09:00:00Z",
+      "evidence": "task.py start-execution --approved",
+      "from": { "phase": "define", "condition": "ready", "outcome": null, "revision": 1 },
+      "to": { "phase": "execute", "condition": "active", "outcome": null, "revision": 2 }
+    },
+    {
+      "id": "legacy-child-audit-2",
+      "at": "2026-08-22T12:00:00.000Z",
+      "actor": "task.py record-gate",
+      "idempotencyKey": "gate:child-review:code-review:verify.md",
+      "evidence": "verify.md",
+      "from": { "phase": "execute", "condition": "active", "outcome": null, "revision": 2 },
+      "to": { "phase": "verify", "condition": "active", "outcome": null, "revision": 3 }
+    }
+  ],
+  "gates": {
+    "schemaVersion": 1,
+    "transitions": {
+      "child-review": {
+        "code-review": { "result": "FAIL", "reviewer": "tester", "evidence": "verify.md" }
+      }
+    }
+  },
+  "projection": {
+    "status": "review",
+    "record": { "id": "child-legacy", "status": "review", "parent": "08-21-parent" },
+    "extras": { "depends_on": ["prerequisite-legacy"] }
+  }
+}

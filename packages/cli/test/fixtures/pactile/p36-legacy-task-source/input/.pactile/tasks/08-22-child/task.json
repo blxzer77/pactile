@@ -1,0 +1,58 @@
+{
+  "id": "child-legacy",
+  "name": "child-legacy",
+  "title": "Legacy Full Child sample",
+  "description": "Representative v0.5.0 Child source record.",
+  "status": "review",
+  "dev_type": null,
+  "scope": null,
+  "package": "cli",
+  "priority": "P1",
+  "creator": "fixture-author",
+  "assignee": "fixture-reviewer",
+  "createdAt": "2026-08-22",
+  "completedAt": null,
+  "branch": "feat/legacy-child",
+  "base_branch": "develop",
+  "worktree_path": null,
+  "commit": "abc1234",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-21-parent",
+  "relatedFiles": [],
+  "notes": "Child notes.",
+  "meta": {
+    "classification": "full",
+    "depends_mode": "block",
+    "review_context": "preserve-original-context"
+  },
+  "depends_on": ["prerequisite-legacy"],
+  "execution_approval": {
+    "schema_version": 1,
+    "transition": "start-execution",
+    "approved_by": "user",
+    "approved_at": "2026-08-22T09:00:00Z",
+    "approval_source": "task.py start-execution --approved",
+    "contract_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "quality_gate_results": {
+    "schema_version": 1,
+    "transitions": {
+      "child-review": {
+        "code-review": {
+          "schema_version": 1,
+          "transition": "child-review",
+          "gate": "code-review",
+          "result": "FAIL",
+          "reviewer": "tester",
+          "evidence": "verify.md",
+          "checked_at": "2026-08-22T12:00:00Z",
+          "issue_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "root_cause": "implementation-defect"
+        }
+      }
+    }
+  },
+  "custom_extension": { "preserve": ["all", "unknown", "values"] }
+}

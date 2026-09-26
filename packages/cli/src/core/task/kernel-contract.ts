@@ -13,12 +13,23 @@ import {
   type PactileTaskRecord,
 } from "./schema.js";
 import {
-  assuranceSatisfiesV1, policyWithinCeilingV1, parseResolvedProviderV1,
-  decodePolicyCeilingV1, type PolicyCeilingV1, type ResolvedProviderV1,
+  assuranceSatisfiesV1,
+  policyWithinCeilingV1,
+  parseResolvedProviderV1,
+  decodePolicyCeilingV1,
+  type PolicyCeilingV1,
+  type ResolvedProviderV1,
 } from "../pactile/provider.js";
-import { parseTileManifestV1, tilePolicyCeilingV1, TILE_EVIDENCE_KINDS_V1, type TileEvidenceKindV1 } from "../pactile/tile.js";
 import {
-  ContractDecoderV1, PACTILE_FINGERPRINT_PATTERN, decodeOpaqueReferenceV1,
+  parseTileManifestV1,
+  tilePolicyCeilingV1,
+  TILE_EVIDENCE_KINDS_V1,
+  type TileEvidenceKindV1,
+} from "../pactile/tile.js";
+import {
+  ContractDecoderV1,
+  PACTILE_FINGERPRINT_PATTERN,
+  decodeOpaqueReferenceV1,
   fingerprintPactileContractV1,
 } from "../pactile/validation.js";
 
@@ -30,7 +41,8 @@ export type KernelExtrasBoundary = (
 ) => void;
 
 /** New host-neutral callers explicitly opt out of legacy projection defaults. */
-export const neutralKernelExtrasBoundary: KernelExtrasBoundary = () => undefined;
+export const neutralKernelExtrasBoundary: KernelExtrasBoundary = () =>
+  undefined;
 
 export interface ProviderResolutionFact {
   readonly tileId: string;
@@ -53,7 +65,10 @@ export interface EvidenceFactPort {
 export interface CompositionValidationInput {
   /** Already compiled, model-selected order. This port never loads or sorts Tiles. */
   /** fingerprint is the M0 manifest decoder fingerprint, NOT a compiler/SKILL bundle fingerprint. */
-  readonly tiles: readonly { readonly manifest: unknown; readonly fingerprint: string }[];
+  readonly tiles: readonly {
+    readonly manifest: unknown;
+    readonly fingerprint: string;
+  }[];
   readonly policyCeiling: PolicyCeilingV1;
   readonly providers: readonly ProviderResolutionFact[];
   readonly evidenceRefs?: readonly string[];
@@ -62,11 +77,23 @@ export interface CompositionValidationInput {
 }
 
 export type CompositionReasonCode =
-  | "invalid-composition" | "invalid-tile" | "fingerprint-mismatch" | "duplicate-tile"
-  | "dependency-missing" | "dependency-order" | "tile-conflict" | "policy-exceeded"
-  | "attempt-limit" | "provider-missing" | "provider-invalid" | "provider-unavailable"
-  | "provider-unauthorized" | "provider-assurance" | "provider-policy"
-  | "evidence-invalid" | "evidence-missing";
+  | "invalid-composition"
+  | "invalid-tile"
+  | "fingerprint-mismatch"
+  | "duplicate-tile"
+  | "dependency-missing"
+  | "dependency-order"
+  | "tile-conflict"
+  | "policy-exceeded"
+  | "attempt-limit"
+  | "provider-missing"
+  | "provider-invalid"
+  | "provider-unavailable"
+  | "provider-unauthorized"
+  | "provider-assurance"
+  | "provider-policy"
+  | "evidence-invalid"
+  | "evidence-missing";
 
 export interface CompositionValidationOutcome {
   readonly outcome: "accepted" | "rejected";
@@ -76,63 +103,118 @@ export interface CompositionValidationOutcome {
 }
 
 export interface CompositionValidationPort {
-  validate(input: CompositionValidationInput, evidence?: EvidenceFactPort): CompositionValidationOutcome;
+  validate(
+    input: CompositionValidationInput,
+    evidence?: EvidenceFactPort,
+  ): CompositionValidationOutcome;
 }
 
 /** Pure contract validation: no catalog, provider selection/probe, host or filesystem. */
-export function validateComposition(input: CompositionValidationInput, evidence?: EvidenceFactPort): CompositionValidationOutcome {
-  try { return evaluateComposition(input, evidence); }
-  catch {
-    const value = { outcome: "rejected" as const, reasonCodes: ["invalid-composition" as const], selectedTileIds: [] };
+export function validateComposition(
+  input: CompositionValidationInput,
+  evidence?: EvidenceFactPort,
+): CompositionValidationOutcome {
+  try {
+    return evaluateComposition(input, evidence);
+  } catch {
+    const value = {
+      outcome: "rejected" as const,
+      reasonCodes: ["invalid-composition" as const],
+      selectedTileIds: [],
+    };
     return { ...value, fingerprint: fingerprintPactileContractV1(value) };
   }
 }
 
-function evaluateComposition(input: CompositionValidationInput, evidence?: EvidenceFactPort): CompositionValidationOutcome {
+function evaluateComposition(
+  input: CompositionValidationInput,
+  evidence?: EvidenceFactPort,
+): CompositionValidationOutcome {
   const reasons: CompositionReasonCode[] = [];
   const ids: string[] = [];
   const validatedFacts: string[] = [];
-  const add = (code: CompositionReasonCode): void => { if (!reasons.includes(code)) reasons.push(code); };
-  const finish = (): CompositionValidationOutcome => {
-    const value = { outcome: reasons.length === 0 ? "accepted" as const : "rejected" as const, reasonCodes: reasons, selectedTileIds: ids };
-    return { ...value, fingerprint: fingerprintPactileContractV1({ ...value, validatedFacts }) };
+  const add = (code: CompositionReasonCode): void => {
+    if (!reasons.includes(code)) reasons.push(code);
   };
-  if (!input || !Array.isArray(input.tiles) || !Array.isArray(input.providers)) {
-    add("invalid-composition"); return finish();
+  const finish = (): CompositionValidationOutcome => {
+    const value = {
+      outcome:
+        reasons.length === 0 ? ("accepted" as const) : ("rejected" as const),
+      reasonCodes: reasons,
+      selectedTileIds: ids,
+    };
+    return {
+      ...value,
+      fingerprint: fingerprintPactileContractV1({ ...value, validatedFacts }),
+    };
+  };
+  if (
+    !input ||
+    !Array.isArray(input.tiles) ||
+    !Array.isArray(input.providers)
+  ) {
+    add("invalid-composition");
+    return finish();
   }
   const policyDecoder = new ContractDecoderV1();
   const policy = decodePolicyCeilingV1(input.policyCeiling, policyDecoder, "$");
-  if (policyDecoder.issues.length > 0) { add("invalid-composition"); return finish(); }
+  if (policyDecoder.issues.length > 0) {
+    add("invalid-composition");
+    return finish();
+  }
   validatedFacts.push(fingerprintPactileContractV1(policy));
-  if ((input.evidenceRefs !== undefined && !Array.isArray(input.evidenceRefs)) ||
-      (input.requireEvidence !== undefined && typeof input.requireEvidence !== "boolean") ||
-      (input.attempts !== undefined && !isPlainObject(input.attempts))) {
-    add("invalid-composition"); return finish();
+  if (
+    (input.evidenceRefs !== undefined && !Array.isArray(input.evidenceRefs)) ||
+    (input.requireEvidence !== undefined &&
+      typeof input.requireEvidence !== "boolean") ||
+    (input.attempts !== undefined && !isPlainObject(input.attempts))
+  ) {
+    add("invalid-composition");
+    return finish();
   }
   // Use decoded manifests, not casts of caller-owned values.
   const decoded = input.tiles.flatMap((tile) => {
     try {
       const result = parseTileManifestV1(tile.manifest);
-      if (!result.success) { add("invalid-tile"); return []; }
+      if (!result.success) {
+        add("invalid-tile");
+        return [];
+      }
       if (tile.fingerprint !== result.fingerprint) add("fingerprint-mismatch");
       validatedFacts.push(result.fingerprint);
       const id = result.data.identity.id;
       if (ids.includes(id)) add("duplicate-tile");
       ids.push(id);
       return [result.data];
-    } catch { add("invalid-tile"); return []; }
+    } catch {
+      add("invalid-tile");
+      return [];
+    }
   });
   const observed = new Set<TileEvidenceKindV1>();
   for (const ref of input.evidenceRefs ?? []) {
     const decoder = new ContractDecoderV1();
     decodeOpaqueReferenceV1(ref, decoder, "$", ["evidence"]);
-    if (decoder.issues.length > 0) { add("evidence-invalid"); continue; }
+    if (decoder.issues.length > 0) {
+      add("evidence-invalid");
+      continue;
+    }
     try {
       const fact = evidence?.lookup(ref);
       if (fact?.exists !== true) add("evidence-missing");
-      else if (fact.ref !== ref || !TILE_EVIDENCE_KINDS_V1.includes(fact.kind) || !PACTILE_FINGERPRINT_PATTERN.test(fact.fingerprint)) add("evidence-invalid");
-      else { observed.add(fact.kind); validatedFacts.push(fact.fingerprint); }
-    } catch { add("evidence-missing"); }
+      else if (
+        fact.ref !== ref ||
+        !TILE_EVIDENCE_KINDS_V1.includes(fact.kind) ||
+        !PACTILE_FINGERPRINT_PATTERN.test(fact.fingerprint)
+      )
+        add("evidence-invalid");
+      else {
+        observed.add(fact.kind);
+        validatedFacts.push(fact.fingerprint);
+      }
+    } catch {
+      add("evidence-missing");
+    }
   }
   for (const [position, tile] of decoded.entries()) {
     for (const dependency of tile.dependencies) {
@@ -140,37 +222,93 @@ function evaluateComposition(input: CompositionValidationInput, evidence?: Evide
       if (dependencyPosition < 0) add("dependency-missing");
       else if (dependencyPosition >= position) add("dependency-order");
     }
-    if (tile.conflicts.some((conflict) => ids.includes(conflict))) add("tile-conflict");
+    if (tile.conflicts.some((conflict) => ids.includes(conflict)))
+      add("tile-conflict");
     const tilePolicy = tilePolicyCeilingV1(tile);
     if (!policyWithinCeilingV1(tilePolicy, policy)) add("policy-exceeded");
-    const attempts = input.attempts && Object.hasOwn(input.attempts, tile.identity.id)
-      ? input.attempts[tile.identity.id] : 0;
-    if (!Number.isSafeInteger(attempts) || attempts < 0 || attempts >= tile.stop.maxAttempts) add("attempt-limit");
-    if (input.requireEvidence && tile.evidence.some((need) => need.required && !observed.has(need.kind))) add("evidence-missing");
+    const attempts =
+      input.attempts && Object.hasOwn(input.attempts, tile.identity.id)
+        ? input.attempts[tile.identity.id]
+        : 0;
+    if (
+      !Number.isSafeInteger(attempts) ||
+      attempts < 0 ||
+      attempts >= tile.stop.maxAttempts
+    )
+      add("attempt-limit");
+    if (
+      input.requireEvidence &&
+      tile.evidence.some((need) => need.required && !observed.has(need.kind))
+    )
+      add("evidence-missing");
     for (const intent of tile.trigger.intents) {
-      const facts = input.providers.filter((fact) => fact.tileId === tile.identity.id && fact.resolution?.intent === intent);
-      if (facts.length !== 1) { add(facts.length === 0 ? "provider-missing" : "provider-invalid"); continue; }
+      const facts = input.providers.filter(
+        (fact) =>
+          fact.tileId === tile.identity.id &&
+          fact.resolution?.intent === intent,
+      );
+      if (facts.length !== 1) {
+        add(facts.length === 0 ? "provider-missing" : "provider-invalid");
+        continue;
+      }
       const fact = facts[0];
       if (fact.authorized !== true) add("provider-unauthorized");
       const result = parseResolvedProviderV1(fact.resolution);
-      if (!result.success) { add("provider-invalid"); continue; }
+      if (!result.success) {
+        add("provider-invalid");
+        continue;
+      }
       const provider = result.data;
       validatedFacts.push(result.fingerprint);
-      if (provider.origin === "unsupported" || provider.readiness !== "ready") add("provider-unavailable");
-      if (provider.assurance === null || !assuranceSatisfiesV1(provider.assurance, tile.minimumAssurance)) add("provider-assurance");
-      if (provider.effectivePolicy === null || !policyWithinCeilingV1(provider.effectivePolicy, tilePolicy) || !policyWithinCeilingV1(provider.requestedPolicy, policy)) add("provider-policy");
-      if (provider.fallbackFromProviderId !== null && (
-        !tile.fallback.allowed || tile.fallback.policy === null || tile.fallback.minimumAssurance === null ||
-        provider.assurance === null || !assuranceSatisfiesV1(provider.assurance, tile.fallback.minimumAssurance) ||
-        provider.effectivePolicy === null || !policyWithinCeilingV1(provider.effectivePolicy, tilePolicyCeilingV1(tile.fallback.policy))
-      )) add("provider-policy");
+      if (provider.origin === "unsupported" || provider.readiness !== "ready")
+        add("provider-unavailable");
+      if (
+        provider.assurance === null ||
+        !assuranceSatisfiesV1(provider.assurance, tile.minimumAssurance)
+      )
+        add("provider-assurance");
+      if (
+        provider.effectivePolicy === null ||
+        !policyWithinCeilingV1(provider.effectivePolicy, tilePolicy) ||
+        !policyWithinCeilingV1(provider.requestedPolicy, policy)
+      )
+        add("provider-policy");
+      if (
+        provider.fallbackFromProviderId !== null &&
+        (!tile.fallback.allowed ||
+          tile.fallback.policy === null ||
+          tile.fallback.minimumAssurance === null ||
+          provider.assurance === null ||
+          !assuranceSatisfiesV1(
+            provider.assurance,
+            tile.fallback.minimumAssurance,
+          ) ||
+          provider.effectivePolicy === null ||
+          !policyWithinCeilingV1(
+            provider.effectivePolicy,
+            tilePolicyCeilingV1(tile.fallback.policy),
+          ))
+      )
+        add("provider-policy");
     }
   }
-  if (input.providers.some((fact) => !decoded.some((tile) => tile.identity.id === fact.tileId && tile.trigger.intents.includes(fact.resolution.intent)))) add("provider-invalid");
+  if (
+    input.providers.some(
+      (fact) =>
+        !decoded.some(
+          (tile) =>
+            tile.identity.id === fact.tileId &&
+            tile.trigger.intents.includes(fact.resolution.intent),
+        ),
+    )
+  )
+    add("provider-invalid");
   return finish();
 }
 
-export const compositionValidationPort: CompositionValidationPort = { validate: validateComposition };
+export const compositionValidationPort: CompositionValidationPort = {
+  validate: validateComposition,
+};
 
 export const KERNEL_SCHEMA_VERSION = 1 as const;
 
@@ -217,7 +355,9 @@ export type KernelErrorCode =
   | "ACCEPTANCE_EVIDENCE_MISSING"
   | "CANDIDATE_MISMATCH"
   | "REVIEW_NOT_INDEPENDENT"
-  | "INVALID_DELIVERY_EVIDENCE";
+  | "INVALID_DELIVERY_EVIDENCE"
+  | "LEGACY_TASK_REQUIRES_DEFINITION"
+  | "LEGACY_TASK_REQUIRES_COORDINATION";
 
 export class KernelError extends Error {
   readonly code: KernelErrorCode;
@@ -322,16 +462,18 @@ export interface LegacyTaskProjection {
  * Close is reachable from Verify or Integrate. Condition/outcome are
  * derived from the target phase — they are not independently requested.
  */
-export const KERNEL_PHASE_EDGES: readonly (readonly [KernelPhase, KernelPhase])[] =
-  [
-    ["open", "define"],
-    ["define", "approve"],
-    ["approve", "execute"],
-    ["execute", "verify"],
-    ["verify", "integrate"],
-    ["verify", "close"],
-    ["integrate", "close"],
-  ];
+export const KERNEL_PHASE_EDGES: readonly (readonly [
+  KernelPhase,
+  KernelPhase,
+])[] = [
+  ["open", "define"],
+  ["define", "approve"],
+  ["approve", "execute"],
+  ["execute", "verify"],
+  ["verify", "integrate"],
+  ["verify", "close"],
+  ["integrate", "close"],
+];
 
 const EDGE_SET: ReadonlySet<string> = new Set(
   KERNEL_PHASE_EDGES.map(([from, to]) => `${from}->${to}`),
@@ -465,7 +607,10 @@ export function hopsToClose(from: KernelPhase): KernelPhase[] {
 
 export function parseKernelSnapshot(input: unknown): KernelSnapshot {
   if (!isPlainObject(input)) {
-    throw new KernelError("CORRUPT_STATE", "kernel snapshot must be a JSON object");
+    throw new KernelError(
+      "CORRUPT_STATE",
+      "kernel snapshot must be a JSON object",
+    );
   }
   if (input.schemaVersion !== KERNEL_SCHEMA_VERSION) {
     throw new KernelError(
@@ -473,11 +618,20 @@ export function parseKernelSnapshot(input: unknown): KernelSnapshot {
       `unsupported kernel schemaVersion: ${String(input.schemaVersion)}`,
     );
   }
-  if (!isPlainObject(input.identity) || typeof input.identity.taskId !== "string") {
-    throw new KernelError("CORRUPT_STATE", "kernel.identity.taskId must be a string");
+  if (
+    !isPlainObject(input.identity) ||
+    typeof input.identity.taskId !== "string"
+  ) {
+    throw new KernelError(
+      "CORRUPT_STATE",
+      "kernel.identity.taskId must be a string",
+    );
   }
   if (!isNonNegativeInt(input.revision)) {
-    throw new KernelError("CORRUPT_STATE", "kernel.revision must be a non-negative integer");
+    throw new KernelError(
+      "CORRUPT_STATE",
+      "kernel.revision must be a non-negative integer",
+    );
   }
   if (!isKernelPhase(input.phase)) {
     throw new KernelError("CORRUPT_STATE", "kernel.phase is invalid");
@@ -507,7 +661,8 @@ function parseGates(input: unknown): KernelGates {
   if (!isPlainObject(input)) {
     throw new KernelError("CORRUPT_STATE", "kernel.gates must be an object");
   }
-  const schemaVersion = input.schemaVersion === undefined ? 1 : input.schemaVersion;
+  const schemaVersion =
+    input.schemaVersion === undefined ? 1 : input.schemaVersion;
   if (schemaVersion !== 1) {
     throw new KernelError(
       "CORRUPT_STATE",
@@ -519,7 +674,10 @@ function parseGates(input: unknown): KernelGates {
     return emptyKernelGates();
   }
   if (!isPlainObject(transitionsIn)) {
-    throw new KernelError("CORRUPT_STATE", "kernel.gates.transitions must be an object");
+    throw new KernelError(
+      "CORRUPT_STATE",
+      "kernel.gates.transitions must be an object",
+    );
   }
   const transitions: Record<string, Record<string, unknown>> = {};
   for (const [transition, gates] of Object.entries(transitionsIn)) {
@@ -530,7 +688,10 @@ function parseGates(input: unknown): KernelGates {
       );
     }
     Object.defineProperty(transitions, transition, {
-      value: { ...gates }, enumerable: true, configurable: true, writable: true,
+      value: { ...gates },
+      enumerable: true,
+      configurable: true,
+      writable: true,
     });
   }
   return { schemaVersion: 1, transitions };
@@ -539,10 +700,16 @@ function parseGates(input: unknown): KernelGates {
 function parseProjection(input: unknown): KernelLegacyProjection | null {
   if (input === undefined || input === null) return null;
   if (!isPlainObject(input)) {
-    throw new KernelError("CORRUPT_STATE", "kernel.projection must be an object");
+    throw new KernelError(
+      "CORRUPT_STATE",
+      "kernel.projection must be an object",
+    );
   }
   if (typeof input.status !== "string" || input.status.trim() === "") {
-    throw new KernelError("CORRUPT_STATE", "kernel.projection.status must be a string");
+    throw new KernelError(
+      "CORRUPT_STATE",
+      "kernel.projection.status must be a string",
+    );
   }
   const extras =
     input.extras === undefined || input.extras === null
@@ -577,12 +744,21 @@ function parseOutcome(value: unknown): KernelOutcome | null {
 
 function parseAuditEvent(input: unknown, index: number): KernelAuditEvent {
   if (!isPlainObject(input)) {
-    throw new KernelError("CORRUPT_STATE", `kernel.audit[${index}] must be an object`);
+    throw new KernelError(
+      "CORRUPT_STATE",
+      `kernel.audit[${index}] must be an object`,
+    );
   }
   if (typeof input.id !== "string" || typeof input.at !== "string") {
-    throw new KernelError("CORRUPT_STATE", `kernel.audit[${index}] is missing id/at`);
+    throw new KernelError(
+      "CORRUPT_STATE",
+      `kernel.audit[${index}] is missing id/at`,
+    );
   }
-  if (typeof input.actor !== "string" || typeof input.idempotencyKey !== "string") {
+  if (
+    typeof input.actor !== "string" ||
+    typeof input.idempotencyKey !== "string"
+  ) {
     throw new KernelError(
       "CORRUPT_STATE",
       `kernel.audit[${index}] is missing actor/idempotencyKey`,
@@ -640,7 +816,10 @@ export function isNonNegativeInt(value: unknown): value is number {
 
 export function requireNonEmptyString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim() === "") {
-    throw new KernelError("INVALID_REQUEST", `${field} must be a non-empty string`);
+    throw new KernelError(
+      "INVALID_REQUEST",
+      `${field} must be a non-empty string`,
+    );
   }
   return value;
 }

@@ -65,6 +65,15 @@
       "manifestSha256": "03467f203521bc762220df270dacc5942d2c554e61653779594f0e03445fc962"
     },
     {
+      "id": "p36-legacy-task-source",
+      "provenanceKind": "representative",
+      "sourceRef": "pactile-v0.5.0",
+      "sourceCommit": "ad98139610b71822c23293894aabb3e99d149bdd",
+      "sourcePath": "packages/cli/src/templates/pactile/scripts/common/task_store.py",
+      "contentClasses": ["active", "closed-history"],
+      "manifestSha256": "a6ad450ad7cc71a49c01b63b01ef11a5decdea0281287e2813db495a4978fe35"
+    },
+    {
       "id": "trellis-legacy",
       "provenanceKind": "representative",
       "sourceRef": null,

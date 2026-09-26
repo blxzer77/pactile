@@ -13,6 +13,27 @@ local and reversible until a user explicitly confirms a destructive purge.
 | Unsealed rollback target | Generation verification error                        | Select a sealed generation from install state/receipts.                                                  | No sealed generation is available.                  |
 | Bin conflict             | Command resolves to an unexpected executable         | Inspect PATH and package bins; use the canonical `pactile` bin and do not remove a user's alias blindly. | The package manifest or installed bin is ambiguous. |
 
+## Legacy Task migration recovery
+
+The migration authority pointer is the only switch that makes a sealed V2
+generation visible. If `authority.json` is missing while any migration backup,
+journal, generation, or overlay artifact remains, readers and `pactile update`
+fail closed and preserve those bytes; they do not fall back to the legacy
+`task.json` or silently re-import it.
+
+An update retry may resume only a verified journal in a pre-commit stage
+(`planned`, `backed-up`, `staged`, or `validated`) for the exact same source,
+target, and plan fingerprints, with its required verified backup and sealed
+generation, and with no overlay mutation evidence. A committed or
+ambiguous journal, fingerprint mismatch, corrupt or missing backup/generation,
+or any overlay journal/override evidence requires reconciliation from the
+preserved migration store. Do not delete that store or rerun against changed
+legacy inputs to clear the error.
+
+A lone lock file for the exact batch can proceed to the lock check; Pactile
+removes it only when the recorded process is confirmed dead. A live, malformed,
+or unverifiable lock remains blocked.
+
 Never repair by deleting `.pactile/`, rewriting a legacy source, or copying a
 secret into a template. Capture the minimal command output and open a governed
 issue using [Support](../governance/index.md).

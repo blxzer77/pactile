@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readTaskKernel, type KernelPhase } from "../../core/task/index.js";
+import { readLegacyTaskImportRecord } from "../../core/task/legacy-task-migration-reader.js";
 import { prepareSelectedTaskAgentTileSelection } from "../registry.js";
 import { resolveSelectedTask, resolveTaskDir } from "./session.js";
 
@@ -82,13 +83,20 @@ export function compileSessionPack(root: string, factGap = false): Record<string
   const selected = Boolean(selection.taskPath) && !selection.stale;
   const stale = selection.stale;
   const dir = selection.taskPath && !stale ? resolveTaskDir(root, selection.taskPath) : null;
-  const kernelRead = dir && fs.existsSync(path.join(dir, "kernel.json")) ? readTaskKernel({ root, taskDir: dir, cwd: root }) : null;
+  const migrationRecord = dir
+    ? readLegacyTaskImportRecord(root, dir)
+    : null;
+  const migrationNeedsReconciliation =
+    migrationRecord !== null && migrationRecord.status !== "imported";
+  const kernelRead = dir && !migrationNeedsReconciliation && (
+    fs.existsSync(path.join(dir, "kernel.json")) || migrationRecord
+  ) ? readTaskKernel({ root, taskDir: dir, cwd: root }) : null;
   const snapshot = kernelRead?.kind === "legacy-task-kernel-v1" ? kernelRead.kernel.kernel : null;
   const v2 = kernelRead?.kind === "task-kernel-v2" ? kernelRead.kernel : null;
-  const legacyRecord = dir && !kernelRead ? readJson(path.join(dir, "task.json")) : null;
-  const phase: KernelPhase = v2?.phase ?? snapshot?.phase ?? (legacyRecord ? phaseFromLegacyStatus(legacyRecord.status) : "open");
-  const condition = v2?.condition ?? snapshot?.condition ?? "ready";
-  const outcome = v2?.outcome ?? snapshot?.outcome ?? null;
+  const legacyRecord = dir && !kernelRead && !migrationNeedsReconciliation ? readJson(path.join(dir, "task.json")) : null;
+  const phase: KernelPhase = migrationNeedsReconciliation ? "define" : v2?.phase ?? snapshot?.phase ?? (legacyRecord ? phaseFromLegacyStatus(legacyRecord.status) : "open");
+  const condition = migrationNeedsReconciliation ? "blocked" : v2?.condition ?? snapshot?.condition ?? "ready";
+  const outcome = migrationNeedsReconciliation ? null : v2?.outcome ?? snapshot?.outcome ?? null;
   const extras = snapshot?.projection?.extras ?? {};
   const baselineActive = activeModules(extras, "baseline_modules", BASELINE).filter((id) => BASELINE.includes(id));
   const ondemandActive = activeModules(extras, "ondemand_modules");
@@ -139,9 +147,9 @@ export function compileSessionPack(root: string, factGap = false): Record<string
   }
   const contracts = kept.filter((item) => item.kind === "contract");
   const artifacts = kept.filter((item) => item.kind === "artifact");
-  const taskId = v2?.identity.taskId ?? snapshot?.identity.taskId ?? (typeof legacyRecord?.id === "string" ? legacyRecord.id : null);
+  const taskId = v2?.identity.taskId ?? snapshot?.identity.taskId ?? migrationRecord?.legacyTaskId ?? (typeof legacyRecord?.id === "string" ? legacyRecord.id : null);
   const revision = v2?.revision ?? snapshot?.revision ?? 0;
-  const tileSelection = dir && selected && !stale && taskId
+  const tileSelection = dir && selected && !stale && taskId && !migrationNeedsReconciliation
     ? taskTileOffer(root, taskId, phase, revision)
     : null;
   const stuck = stale || condition === "blocked";
@@ -154,17 +162,26 @@ export function compileSessionPack(root: string, factGap = false): Record<string
     integrate: "Use the delivery-level evidence required by the Task contract.",
     close: "Task is closed in the Kernel; keep its Run and Review history readable.",
   };
-  const next = stale ? "Clear the stale selection with `pactile task exit`, then ask what to work on next." : !selected ? "Intake: answer directly, clarify whether there is work, or draft an Open Proposal. Do not create a task without Open approval." : stuck ? "Stop. Classify the stall before retrying the same hypothesis." : v2 ? v2Next[phase] : NEXT[phase];
+  const migrationNext = migrationRecord?.status === "needs-definition"
+    ? "Migration needs-definition: complete the missing Task contract fields before any V2 Run."
+    : migrationRecord?.status === "needs-coordination"
+      ? "Migration needs-coordination: resolve the blocking legacy dependency references before any V2 Run."
+      : null;
+  const next = migrationNext ?? (stale ? "Clear the stale selection with `pactile task exit`, then ask what to work on next." : !selected ? "Intake: answer directly, clarify whether there is work, or draft an Open Proposal. Do not create a task without Open approval." : stuck ? "Stop. Classify the stall before retrying the same hypothesis." : v2 ? v2Next[phase] : NEXT[phase]);
   const constraints = ["Do not treat `.pactile/workflow.md` or AGENTS longform as runtime SSOT.", "Modules absent from this pack are not installed.", v2 ? "Task model=deliverable Task with hard dependencies; no Lite/Full or Parent/Child preset." : `Rigor=${rigor}; topology=${topologyKind}.`, selected ? "Stay inside the selected task contract." : "No selected task: no task-directory dump; no Parent/Worker/VCS teaching."];
   if (condition === "blocked") constraints.push("Condition=blocked: do not silently retry.");
+  if (migrationNeedsReconciliation) constraints.push(`Legacy migration status=${migrationRecord.status}; this is not a runnable V2 Task.`);
   const layer1 = [`Phase: ${HUMAN[phase]} (${phase})`, `Condition: ${condition}`, `Outcome: ${outcome ?? "(none)"}`, "Constraints:", ...constraints, `Next: ${next}`].join("\n");
   const layer4 = factGap ? "Fact gap: route with intents exact / semantic / structural / external. Do not bind Agent tool names. Ranking and retrieval-pack stay with `retrieval-extended`." : "";
   const layer5 = stuck ? "Deep diagnosis pointer only (not a layer-2 contract): `debug-recovery`. Stop homogeneous retries. Classify implementation / contract / environment / platform / process-loop. First failure is not break-loop." : "";
   return {
     version: 1, source: "context-progressive",
     activationSource: { kind: "profile-runtime", filter: "phase-intersect-active", baselineActive, ondemandActive, note: "Layer 2 is phase-needed intersect still-active. Unactivated modules are not installed." },
-    kernel: { taskId: v2?.identity.taskId ?? snapshot?.identity.taskId ?? legacyRecord?.id ?? null, schemaVersion: v2?.schemaVersion ?? (snapshot ? 1 : 0), revision: v2?.revision ?? snapshot?.revision ?? 0,
-      deliveryLevel: v2?.definition.deliveryLevel ?? null, phase, condition, outcome, humanPhase: HUMAN[phase], selected }, rigor, topologyKind,
+    kernel: { taskId: v2?.identity.taskId ?? snapshot?.identity.taskId ?? migrationRecord?.legacyTaskId ?? legacyRecord?.id ?? null, schemaVersion: v2?.schemaVersion ?? (snapshot ? 1 : 0), revision: v2?.revision ?? snapshot?.revision ?? 0,
+      deliveryLevel: v2?.definition.deliveryLevel ?? null, phase, condition, outcome, humanPhase: HUMAN[phase], selected,
+      ...(migrationNeedsReconciliation ? { migrationStatus: migrationRecord.status, runnable: false,
+        missingDefinitionFields: migrationRecord.missingDefinitionFields,
+        coordinationReasons: migrationRecord.coordinationReasons } : {}) }, rigor, topologyKind,
     ...(tileSelection ? { tileSelection } : {}),
     layers: [
       { n: 1, name: "resident-min", text: layer1 },
