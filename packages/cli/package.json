@@ -48,9 +48,9 @@
     "access": "public"
   },
   "scripts": {
-    "build": "pnpm run clean && tsc && pnpm run build:script-artifacts && pnpm exec tsx scripts/copy-templates.ts",
+    "build": "pnpm run clean && tsc && pnpm run build:script-artifacts && node .tmp/p31-script-build/copy-templates.js",
     "build:script-artifacts": "tsc -p tsconfig.scripts.build.json",
-    "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('.tmp/p31-script-build',{recursive:true,force:true})\"",
+    "clean": "pnpm run build:script-artifacts && node .tmp/p31-script-build/clean.js",
     "copy-templates": "tsx scripts/copy-templates.ts",
     "check:pack-files": "tsx scripts/check-cli-pack-files.ts",
     "check:release-pack": "tsx scripts/check-release-pack-contents.ts",

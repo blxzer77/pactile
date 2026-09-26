@@ -45,10 +45,11 @@ pnpm --filter @blxzer/pactile check:pack-files
 pnpm --filter @blxzer/pactile check:release-pack
 pnpm docs:smoke
 pnpm --filter @blxzer/pactile exec tsx scripts/check-pactile-brand-surface.ts --release
-pnpm --filter @blxzer/pactile exec tsx scripts/release-conformance.ts
+node packages/cli/.tmp/p31-script-build/release-conformance.js
 ```
 
-一致性检查在仅含 Node、没有 Python 或 Pi 可执行文件的 PATH 中运行封装包，
+一致性检查从一开始就在仅含 Node、没有 Python 或 Pi 可执行文件的 PATH 中，
+使用 npm 默认生命周期脚本安装封装包，
 覆盖 init、update 预览/应用、任务启动/归档、模拟的 Codex 桌面回执、模拟的
 Pi RPC 和两个 Child 的并行批次。耗时输出是本机基线，不是延迟承诺。
 本机离线预演可在 `pnpm install --offline` 后设置

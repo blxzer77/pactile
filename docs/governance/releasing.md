@@ -51,11 +51,12 @@ pnpm --filter @blxzer/pactile check:pack-files
 pnpm --filter @blxzer/pactile check:release-pack
 pnpm docs:smoke
 pnpm --filter @blxzer/pactile exec tsx scripts/check-pactile-brand-surface.ts --release
-pnpm --filter @blxzer/pactile exec tsx scripts/release-conformance.ts
+node packages/cli/.tmp/p31-script-build/release-conformance.js
 ```
 
-The conformance check runs the sealed package in a PATH with Node and no
-Python or Pi executable. It exercises init, update preview/apply, task
+The conformance check installs the sealed package with npm's default lifecycle
+scripts enabled, from the start in a PATH with Node and no Python or Pi
+executable. It exercises init, update preview/apply, task
 start/archive, a simulated Codex desktop receipt, simulated Pi RPC, and a
 two-child parallel batch. Its timing line is a local baseline, not a latency
 promise. For an offline local rehearsal after `pnpm install --offline`, set

@@ -16,7 +16,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 import {
   assertCleanTree,
@@ -40,10 +40,13 @@ import {
   releasePackageDefinitions,
   resolveNpmTag,
 } from "./release-preflight.js";
+import {
+  resolveCliPackageRoot,
+  resolveRepositoryRoot,
+} from "./script-paths.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CLI_DIR = path.resolve(__dirname, "..");
-const REPO_ROOT = path.resolve(CLI_DIR, "../..");
+const CLI_DIR = resolveCliPackageRoot(import.meta.url);
+const REPO_ROOT = resolveRepositoryRoot(import.meta.url);
 
 interface PackageInfo {
   cliName: string;

@@ -60,7 +60,7 @@ Use Node.js 20 or newer and pnpm.
 | `pnpm test` | Run CLI and Core tests |
 | `pnpm release:check` | Validate the single-package release graph |
 | `pnpm --filter @blxzer/pactile check:release-pack` | Check tarball file contents |
-| `pnpm --filter @blxzer/pactile exec tsx scripts/release-conformance.ts` | Install and smoke-test the tarball |
+| `node packages/cli/.tmp/p31-script-build/release-conformance.js` (after `pnpm build`) | Install and smoke-test the tarball |
 
 Source is strict ESM with NodeNext resolution and explicit `.js` specifiers.
 Node.js is the only required runtime for generated Pactile projects.
@@ -96,3 +96,13 @@ script, or workflow caller, and the npm package excludes `scripts/`. The old
 project mutator requires Bash and `jq`; it is not part of the current Node-only
 install, build, release, or runtime path. Remove it only when the archived
 manifest no longer carries that historical reference.
+
+## Tooling configuration exception
+
+`packages/cli/eslint.config.js` remains a small, declarative JavaScript flat
+configuration. ESLint loads it before the repository's TypeScript maintenance
+scripts are compiled, so keeping the bootstrap configuration directly
+executable avoids adding another TypeScript loader to the lint startup path.
+Keep product and maintenance behavior out of this file. Revisit the exception
+when ESLint can load a TypeScript flat configuration on the supported Node 20
+floor without a separate runtime loader or additional bootstrap dependency.

@@ -122,4 +122,4 @@ jobs:
         run: pnpm build
 
       - name: Verify default lifecycle install with no Python on PATH and V2 Task smoke
-        run: pnpm --filter @blxzer/pactile exec tsx scripts/release-conformance.ts
+        run: node packages/cli/.tmp/p31-script-build/release-conformance.js

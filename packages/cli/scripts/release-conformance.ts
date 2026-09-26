@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 import { createCommandRunner } from "./release-guard.js";
 import {
@@ -15,6 +15,7 @@ import {
   readPackageInfo,
 } from "./publish-packages.js";
 import type { CommandRunner, PackageInfo } from "./types.js";
+import { resolveCliPackageRoot } from "./script-paths.js";
 
 const NODE_ENGINE = ">=20.0.0";
 const EXPECTED_BINS = {
@@ -350,9 +351,9 @@ export async function verifyReleaseConformance({
         runner(
           process.execPath,
           [
-            path.resolve(
-              path.dirname(fileURLToPath(import.meta.url)),
-              "../.tmp/p31-script-build/node-only-acceptance.js",
+            path.join(
+              resolveCliPackageRoot(import.meta.url),
+              ".tmp/p31-script-build/node-only-acceptance.js",
             ),
             installed,
             path.join(root, "node-only-project"),
