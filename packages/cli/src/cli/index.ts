@@ -25,6 +25,7 @@ import { runTaskCliWithWorkspaceReclaim } from "../commands/task-worktree-close.
 import { runWorktreeCommand } from "../commands/worktree.js";
 import { runPiCli } from "../commands/pi.js";
 import { runParallelCli } from "../commands/parallel.js";
+import { runLegacyTaskCli } from "../commands/legacy-task.js";
 import { runCodexCli } from "../commands/codex.js";
 import { runContextCliAsync } from "../commands/context.js";
 import { runTileSelectionCli } from "../commands/tile-selection.js";
@@ -551,6 +552,23 @@ program
   .argument("[arguments...]")
   .action(async () => {
     process.exitCode = await runParallelCli(process.argv.slice(3));
+  });
+
+program
+  .command("legacy-task")
+  .description(
+    "Read archived legacy Task history or explicitly reconcile one held Task",
+  )
+  .addHelpText(
+    "after",
+    "\n  history <archive-relative-path> [--json]\n  reconcile <task-path> --idempotency-key <key> --activation-at <ISO-time> [definition fields] [--resolve-dependency <raw-ref>=<task-id>] [--approved|--check]\n",
+  )
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[operation]")
+  .argument("[arguments...]")
+  .action(async () => {
+    process.exitCode = await runLegacyTaskCli(process.argv.slice(3));
   });
 
 program
