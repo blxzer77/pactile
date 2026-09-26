@@ -12,6 +12,13 @@ CI 验证。beta 版本在 `develop` 准备，经明确授权后打
 `pactile-vX.Y.Z-beta.N` tag。tag 必须指向当前 `develop` 的精确 HEAD；发布
 工作流验证单包 tarball 后发到 npm `beta`。
 
+本地预检运行 `pnpm --filter @blxzer/pactile run release:check`。
+`pnpm --filter @blxzer/pactile run release:beta` 和
+`pnpm --filter @blxzer/pactile run release:promote` 只生成候选计划，不会打 tag 或发包。
+经单独明确授权后，beta tag 必须指向 `develop` 的精确 HEAD。发布 PR 合入后，
+正式版 `pactile-vX.Y.Z` tag 必须指向 `main` 的精确 HEAD。稳定版晋级需另行批准并
+通过 Publish workflow 手动执行。
+
 beta 验收后，只修改包版本到 `X.Y.Z` 以及发布文档/changelog，再开
 `develop` → `main` 发布 PR。PR 正文须包含以下字段：
 
@@ -48,10 +55,13 @@ pnpm --filter @blxzer/pactile exec tsx scripts/check-pactile-brand-surface.ts --
 node packages/cli/.tmp/p31-script-build/release-conformance.js
 ```
 
-一致性检查从一开始就在仅含 Node、没有 Python 或 Pi 可执行文件的 PATH 中，
-使用 npm 默认生命周期脚本安装封装包，
-覆盖 init、update 预览/应用、任务启动/归档、模拟的 Codex 桌面回执、模拟的
-Pi RPC 和两个 Child 的并行批次。耗时输出是本机基线，不是延迟承诺。
+一致性检查使用 npm 默认生命周期脚本安装封装包。PATH 中的 Node 来自仅含
+Node 可执行文件（Windows 为 `node.exe`）的私有目录（另含操作系统支持目录），npm 通过绝对路径调用
+`npm-cli.js`；安装前会检查 PATH 中没有 Python 或 Pi 可执行文件，
+覆盖全新 init、V2 Task 创建/启动/读回、两个相互独立 V2 Task 的同波次调度与模拟 Pi
+派发、update 预览/应用后再次创建/启动/调度/模拟 Pi 派发 V2 Task，以及 legacy Codex
+bridge 的 prepare/receipt 流程。它不覆盖 Task 归档，也不覆盖独立的 legacy
+`runParallelBatch` 路径。耗时输出是本机基线，不是延迟承诺。
 本机离线预演可在 `pnpm install --offline` 后设置
 `PACTILE_CONFORMANCE_OFFLINE=1`；该模式解开封装包，并链接本地锁定的依赖。
 CI/默认模式会执行全新 npm 安装。真实桌面宿主及模型 Provider 验收应分开记录。

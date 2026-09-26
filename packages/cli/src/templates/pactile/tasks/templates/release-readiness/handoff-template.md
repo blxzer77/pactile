@@ -15,7 +15,13 @@
 
 1. Resolve or waive each **blocking** row in Blockers below.
 2. Create or select a **release-execution** task; obtain explicit publish approval.
-3. Only then run release scripts (`release.js` / CI publish) per project policy.
+3. Run `pnpm --filter @blxzer/pactile run release:check`, then use
+   `pnpm --filter @blxzer/pactile run release:beta` or
+   `pnpm --filter @blxzer/pactile run release:promote` to prepare a local plan.
+   These commands do not tag or publish. After separate approval, create
+   `pactile-vX.Y.Z-beta.N` at the exact `develop` HEAD or `pactile-vX.Y.Z` at the
+   exact `main` HEAD and follow `docs/governance/releasing.md`; stable promotion
+   uses a separate approved Publish workflow dispatch.
 
 ## Not published
 

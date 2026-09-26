@@ -64,7 +64,7 @@
     "sync:pack-files": "tsx scripts/sync-cli-pack-files.ts",
     "dev": "tsc --watch",
     "start": "node ./dist/cli/index.js",
-    "test": "vitest run --maxWorkers=4",
+    "test": "pnpm run build:script-artifacts && vitest run --maxWorkers=4",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src/ test/ scripts/",

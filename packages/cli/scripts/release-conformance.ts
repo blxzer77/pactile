@@ -5,7 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createCommandRunner } from "./release-guard.js";
-import { assertNoPythonOnPath } from "./assert-no-python-on-path.js";
+import { assertNoPythonOrPiOnPath } from "./assert-no-python-on-path.js";
 import {
   inspectReleaseTarball,
   prepareReleaseArtifacts,
@@ -105,13 +105,23 @@ function runtimeEnvironment(root, userConfig) {
 }
 
 export function createNodeOnlyInstallEnvironment(root, userConfig) {
-  const nodeInstallDir = path.dirname(process.execPath);
+  const nodeBin = path.join(root, "node-only-install-bin");
+  fs.mkdirSync(nodeBin, { recursive: true });
+  const nodeExecutable = path.join(
+    nodeBin,
+    process.platform === "win32" ? "node.exe" : "node",
+  );
+  if (process.platform === "win32") {
+    fs.copyFileSync(process.execPath, nodeExecutable);
+  } else {
+    fs.symlinkSync(process.execPath, nodeExecutable);
+  }
   const supportBin = path.join(root, "node-only-install-tools");
   fs.mkdirSync(supportBin, { recursive: true });
   if (process.platform !== "win32") {
     fs.symlinkSync("/bin/sh", path.join(supportBin, "sh"));
   }
-  const pathEntries = [nodeInstallDir, supportBin];
+  const pathEntries = [nodeBin, supportBin];
   if (process.platform === "win32") {
     pathEntries.push(
       path.join(process.env.SystemRoot ?? "C:\\Windows", "System32"),
@@ -125,6 +135,7 @@ export function createNodeOnlyInstallEnvironment(root, userConfig) {
     NODE_AUTH_TOKEN: undefined,
     NPM_TOKEN: undefined,
     NPM_CONFIG_USERCONFIG: userConfig,
+    NPM_CONFIG_CACHE: path.join(root, "npm-cache"),
     npm_config_ignore_scripts: undefined,
     NPM_CONFIG_IGNORE_SCRIPTS: undefined,
     PYTHON: undefined,
@@ -136,6 +147,61 @@ export function createNodeOnlyInstallEnvironment(root, userConfig) {
     VIRTUAL_ENV: undefined,
     CONDA_PREFIX: undefined,
   };
+}
+
+export function resolveNpmCliPath({
+  executablePath = process.execPath,
+  platform = process.platform,
+  isFile = (candidate: string) => {
+    try {
+      return fs.statSync(candidate).isFile();
+    } catch {
+      return false;
+    }
+  },
+}: {
+  executablePath?: string;
+  platform?: NodeJS.Platform;
+  isFile?: (candidate: string) => boolean;
+} = {}): string {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const nodeHome = pathApi.dirname(executablePath);
+  const nodePrefix = pathApi.resolve(nodeHome, "..");
+  const candidates = [
+    // Windows Node distributions bundle npm beside node.exe.
+    pathApi.join(nodeHome, "node_modules", "npm", "bin", "npm-cli.js"),
+    // setup-node, nvm, official Unix archives, and Homebrew use the Node prefix.
+    pathApi.join(nodePrefix, "lib", "node_modules", "npm", "bin", "npm-cli.js"),
+    // Debian and Ubuntu can install npm under /usr/share/nodejs.
+    pathApi.join(nodePrefix, "share", "nodejs", "npm", "bin", "npm-cli.js"),
+  ];
+  const candidate = candidates.find(
+    (value): value is string =>
+      pathApi.isAbsolute(value) &&
+      pathApi.basename(value).toLowerCase() === "npm-cli.js" &&
+      isFile(value),
+  );
+  if (!candidate) {
+    throw new Error(
+      `Could not find npm-cli.js in the supported layouts for Node at ${executablePath}.`,
+    );
+  }
+  return pathApi.resolve(candidate);
+}
+
+function findGitExecutable(environmentPath = process.env.PATH ?? "") {
+  const executable = process.platform === "win32" ? "git.exe" : "git";
+  for (const folder of environmentPath.split(path.delimiter)) {
+    if (!folder) continue;
+    const candidate = path.resolve(folder, executable);
+    if (!fs.existsSync(candidate)) continue;
+    try {
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      // Continue looking through PATH if an entry disappears during the scan.
+    }
+  }
+  throw new Error(`Could not find ${executable} on the host PATH.`);
 }
 
 export function buildSealedTarballInstallArgs({
@@ -232,7 +298,7 @@ export async function verifyReleaseConformance({
 
     const offline = process.env.PACTILE_CONFORMANCE_OFFLINE === "1";
     let installScriptsEnabled = false;
-    let noPythonOnInstallPath = false;
+    let noPythonOrPiOnInstallPath = false;
     if (offline) {
       // Local rehearsal: unpack the sealed bytes and borrow the already locked
       // workspace dependencies. CI uses the clean npm install path below.
@@ -240,8 +306,14 @@ export async function verifyReleaseConformance({
       fs.mkdirSync(target, { recursive: true });
       runner(
         "tar",
-        ["-xzf", tarball.tarballPath, "-C", target, "--strip-components=1"],
-        { capture: true },
+        [
+          "-xzf",
+          path.basename(tarball.tarballPath),
+          "-C",
+          target,
+          "--strip-components=1",
+        ],
+        { cwd: path.dirname(tarball.tarballPath), capture: true },
       );
       for (const name of Object.keys({
         ...packedPackage.dependencies,
@@ -264,12 +336,13 @@ export async function verifyReleaseConformance({
     } else {
       fs.mkdirSync(prefix, { recursive: true });
       const env = createNodeOnlyInstallEnvironment(root, userConfig);
+      const npmCliPath = resolveNpmCliPath();
       const ignoreScripts = String(
-        runner("npm", ["config", "get", "ignore-scripts"], {
-          cwd: prefix,
-          capture: true,
-          env,
-        }),
+        runner(
+          process.execPath,
+          [npmCliPath, "config", "get", "ignore-scripts"],
+          { cwd: prefix, capture: true, env },
+        ),
       ).trim();
       if (ignoreScripts !== "false") {
         throw new Error(
@@ -277,15 +350,18 @@ export async function verifyReleaseConformance({
         );
       }
       installScriptsEnabled = true;
-      assertNoPythonOnPath({ cwd: prefix, env });
-      noPythonOnInstallPath = true;
+      assertNoPythonOrPiOnPath({ env });
+      noPythonOrPiOnInstallPath = true;
       runner(
-        "npm",
-        buildSealedTarballInstallArgs({
-          prefix,
-          cacheDir,
-          tarballPath: tarball.tarballPath,
-        }),
+        process.execPath,
+        [
+          npmCliPath,
+          ...buildSealedTarballInstallArgs({
+            prefix,
+            cacheDir,
+            tarballPath: tarball.tarballPath,
+          }),
+        ],
         { capture: false, env },
       );
     }
@@ -333,6 +409,7 @@ export async function verifyReleaseConformance({
       capture: true,
       env: nodeOnly,
     });
+    const gitExecutable = findGitExecutable();
     const acceptance = JSON.parse(
       String(
         runner(
@@ -344,6 +421,7 @@ export async function verifyReleaseConformance({
             ),
             installed,
             path.join(root, "node-only-project"),
+            gitExecutable,
           ],
           { cwd: prefix, capture: true, env: nodeOnly },
         ),
@@ -367,6 +445,36 @@ export async function verifyReleaseConformance({
         "Installed tarball did not complete the V2 Task create, run-start, and read-back smoke.",
       );
     }
+    if (
+      acceptance.v2PiParallel?.taskIds?.length !== 2 ||
+      acceptance.v2PiParallel?.scheduledWaveCount !== 1 ||
+      JSON.stringify(acceptance.v2PiParallel?.outcomes) !==
+        JSON.stringify(["settled", "settled"]) ||
+      JSON.stringify(acceptance.v2PiParallel?.schemaVersions) !==
+        JSON.stringify([2, 2]) ||
+      JSON.stringify(acceptance.v2PiParallel?.dispatchLeasesReleased) !==
+        JSON.stringify([true, true])
+    ) {
+      throw new Error(
+        "Installed tarball did not complete the V2 scheduler and parallel Pi dispatch smoke.",
+      );
+    }
+    if (acceptance.v2AfterUpdate?.status !== "passed") {
+      throw new Error(
+        `Installed tarball failed the update-to-V2 Task smoke (${acceptance.v2AfterUpdate?.errorCode ?? "unknown"}): ${acceptance.v2AfterUpdate?.errorMessage ?? "no details"}`,
+      );
+    }
+    if (
+      !acceptance.explicitBlockers?.some(
+        (blocker) =>
+          typeof blocker === "string" &&
+          blocker.includes("runParallelBatch remains a separate V1"),
+      )
+    ) {
+      throw new Error(
+        "Installed tarball acceptance must preserve the separate V1 runParallelBatch blocker.",
+      );
+    }
     const result = {
       version,
       manifestSha256: sealed.manifestSha256,
@@ -374,15 +482,18 @@ export async function verifyReleaseConformance({
       nodeOnlyVerified: true,
       offlineDependencyFixture: offline,
       installScriptsEnabled,
-      noPythonOnInstallPath,
+      noPythonOrPiOnInstallPath,
       acceptance,
     };
     log(
-      `ok release conformance ${version}: one sealed tarball; default npm lifecycle install=${installScriptsEnabled}, no Python on install PATH=${noPythonOnInstallPath}; V2 Task create/run-start/read-back and Node-only lifecycle/bridges (${acceptance.endToEndMs} ms E2E).`,
+      `ok release conformance ${version}: one sealed tarball; default npm lifecycle install=${installScriptsEnabled}, no Python or Pi on install PATH=${noPythonOrPiOnInstallPath}; fresh-init and post-update V2 Task scheduler/Pi acceptance, including two parallel fresh-init dispatches (${acceptance.endToEndMs} ms E2E).`,
     );
     log(
-      `baseline ms: CLI cold=${acceptance.coldStartMs}, subsequent=${acceptance.steadyCliMs}, Pi cold=${acceptance.piColdStartupMs}, Pi warm=${acceptance.piWarmStartupMs}, parallel=${acceptance.parallelWallMs}; offline dependency fixture=${offline}.`,
+      `baseline ms: CLI cold=${acceptance.coldStartMs}, subsequent=${acceptance.steadyCliMs}, Pi starts=${acceptance.piColdStartupMs?.join(",")}, V2 parallel=${acceptance.parallelWallMs}; offline dependency fixture=${offline}.`,
     );
+    for (const blocker of acceptance.explicitBlockers) {
+      log(`unresolved legacy acceptance: ${blocker}`);
+    }
     return result;
   } finally {
     if (ownedTemporary && fs.existsSync(root)) {

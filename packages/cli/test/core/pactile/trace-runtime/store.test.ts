@@ -187,13 +187,11 @@ describe("Composition Trace public store", () => {
     expect(() => readTrace(root, "run-a")).toThrow("LOCKED");
   });
 
-  const builtModule = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../dist/pactile/trace-runtime/index.js");
-  it.skipIf(!fs.existsSync(builtModule))("allows exactly one winner when separate processes append against the same head", async () => {
-    const script = `import { appendTrace } from ${JSON.stringify(pathToFileURL(builtModule).href)};
-      try { appendTrace(${JSON.stringify(root)}, ${JSON.stringify(event())}, {sequence:0,fingerprint:null}); process.stdout.write('appended'); }
-      catch(e) { process.stdout.write(e.code ?? 'unexpected'); }`;
+  const builtModule = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../dist/core/pactile/trace-runtime/index.js");
+  const writerFixture = fileURLToPath(new URL("../../../../.tmp/p31-script-build/fixtures/trace-runtime-store-writer.js", import.meta.url));
+  it.skipIf(!fs.existsSync(builtModule) || !fs.existsSync(writerFixture))("allows exactly one winner when separate processes append against the same head", async () => {
     const run = (): Promise<string> => new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, ["--input-type=module", "-e", script]);
+      const child = spawn(process.execPath, [writerFixture, pathToFileURL(builtModule).href, root, JSON.stringify(event())]);
       let output = "";
       child.stdout.on("data", (data: Buffer) => { output += data.toString(); });
       child.on("error", reject);

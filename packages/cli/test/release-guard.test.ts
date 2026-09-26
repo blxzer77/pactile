@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -30,7 +31,9 @@ import {
   assertSinglePackageContract,
   buildSealedTarballInstallArgs,
   createNodeOnlyInstallEnvironment,
+  resolveNpmCliPath,
 } from "../scripts/release-conformance.js";
+import { assertNoPythonOrPiOnPath } from "../scripts/assert-no-python-on-path.js";
 
 const packageInfo = {
   cliName: "@blxzer/pactile",
@@ -133,18 +136,34 @@ describe("single-package release policy", () => {
       .toContain("forbidden packed path: dist/legacy.py");
   });
 
-  it("checks the sealed install with a Node-only PATH and default lifecycle scripts", () => {
+  it("checks the sealed install with a private Node-only PATH and default lifecycle scripts", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-node-only-install-"));
     roots.push(root);
     const userConfig = path.join(root, "empty-npmrc");
     fs.writeFileSync(userConfig, "", "utf8");
     const env = createNodeOnlyInstallEnvironment(root, userConfig);
     const pathEntries = env.PATH?.split(path.delimiter) ?? [];
-    expect(pathEntries).toContain(path.dirname(process.execPath));
+    expect(pathEntries[0]).toBe(path.join(root, "node-only-install-bin"));
+    expect(pathEntries).not.toContain(path.dirname(process.execPath));
+    expect(fs.readdirSync(pathEntries[0] as string)).toEqual([
+      process.platform === "win32" ? "node.exe" : "node",
+    ]);
     expect(env.PATH).not.toBe(process.env.PATH);
     expect(env.PACTILE_SKIP_SMART_SEARCH_POSTINSTALL).toBeUndefined();
     expect(env.npm_config_ignore_scripts).toBeUndefined();
     expect(env.NPM_CONFIG_IGNORE_SCRIPTS).toBeUndefined();
+    expect(() => assertNoPythonOrPiOnPath({ env })).not.toThrow();
+    const npmCliPath = resolveNpmCliPath();
+    expect(path.isAbsolute(npmCliPath)).toBe(true);
+    expect(path.basename(npmCliPath).toLowerCase()).toBe("npm-cli.js");
+    expect(fs.existsSync(npmCliPath)).toBe(true);
+    expect(
+      execFileSync(process.execPath, [npmCliPath, "config", "get", "ignore-scripts"], {
+        cwd: root,
+        env,
+        encoding: "utf8",
+      }).trim(),
+    ).toBe("false");
 
     const args = buildSealedTarballInstallArgs({
       prefix: path.join(root, "install"),
@@ -153,6 +172,76 @@ describe("single-package release policy", () => {
     });
     expect(args).toContain("install");
     expect(args).not.toContain("--ignore-scripts");
+  });
+
+  it("resolves only bounded Windows and Linux npm CLI layouts", () => {
+    const windowsNode = "C:\\hostedtoolcache\\windows\\node\\22\\x64\\node.exe";
+    const windowsNpm = "C:\\hostedtoolcache\\windows\\node\\22\\x64\\node_modules\\npm\\bin\\npm-cli.js";
+    const windowsProbe: string[] = [];
+    expect(
+      resolveNpmCliPath({
+        executablePath: windowsNode,
+        platform: "win32",
+        isFile: (candidate) => {
+          windowsProbe.push(candidate);
+          return candidate === windowsNpm;
+        },
+      }),
+    ).toBe(windowsNpm);
+    expect(windowsProbe).toEqual([windowsNpm]);
+
+    const linuxNode = "/opt/hostedtoolcache/node/22/x64/bin/node";
+    const linuxNpm = "/opt/hostedtoolcache/node/22/x64/lib/node_modules/npm/bin/npm-cli.js";
+    const linuxProbe: string[] = [];
+    expect(
+      resolveNpmCliPath({
+        executablePath: linuxNode,
+        platform: "linux",
+        isFile: (candidate) => {
+          linuxProbe.push(candidate);
+          return candidate === linuxNpm;
+        },
+      }),
+    ).toBe(linuxNpm);
+    expect(linuxProbe).toEqual([
+      "/opt/hostedtoolcache/node/22/x64/bin/node_modules/npm/bin/npm-cli.js",
+      linuxNpm,
+    ]);
+
+    const debianNpm = "/usr/share/nodejs/npm/bin/npm-cli.js";
+    const debianProbe: string[] = [];
+    expect(
+      resolveNpmCliPath({
+        executablePath: "/usr/bin/node",
+        platform: "linux",
+        isFile: (candidate) => {
+          debianProbe.push(candidate);
+          return candidate === debianNpm;
+        },
+      }),
+    ).toBe(debianNpm);
+    expect(debianProbe).toEqual([
+      "/usr/bin/node_modules/npm/bin/npm-cli.js",
+      "/usr/lib/node_modules/npm/bin/npm-cli.js",
+      debianNpm,
+    ]);
+  });
+
+  it("does not select an npm script outside the supported layouts", () => {
+    const probed: string[] = [];
+    const arbitrary = "/tmp/arbitrary/npm-cli.js";
+    expect(() =>
+      resolveNpmCliPath({
+        executablePath: "/usr/bin/node",
+        platform: "linux",
+        isFile: (candidate) => {
+          probed.push(candidate);
+          return candidate === arbitrary;
+        },
+      }),
+    ).toThrow(/supported layouts/);
+    expect(probed.every((candidate) => path.basename(candidate) === "npm-cli.js")).toBe(true);
+    expect(probed).not.toContain(arbitrary);
   });
 });
 

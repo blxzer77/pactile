@@ -14,6 +14,14 @@ after explicit authorization. The tag workflow requires the tag commit to be
 the exact `develop` head, validates the single tarball, and publishes it under
 the npm `beta` dist-tag.
 
+Run `pnpm --filter @blxzer/pactile run release:check` for the local release
+preflight. `pnpm --filter @blxzer/pactile run release:beta` and
+`pnpm --filter @blxzer/pactile run release:promote` print candidate plans; they
+do not create tags or publish. After separate approval, create the beta tag at
+the exact `develop` head. Create a stable `pactile-vX.Y.Z` tag only at the exact
+`main` head after the release PR is merged. Stable promotion is a separate,
+approved Publish workflow dispatch.
+
 After beta acceptance, update only the package version to `X.Y.Z` and the
 release documentation/changelog, then open a `develop` → `main` release PR.
 Its body must contain these exact fields:
@@ -55,11 +63,17 @@ node packages/cli/.tmp/p31-script-build/release-conformance.js
 ```
 
 The conformance check installs the sealed package with npm's default lifecycle
-scripts enabled, from the start in a PATH with Node and no Python or Pi
-executable. It exercises init, update preview/apply, task
-start/archive, a simulated Codex desktop receipt, simulated Pi RPC, and a
-two-child parallel batch. Its timing line is a local baseline, not a latency
-promise. For an offline local rehearsal after `pnpm install --offline`, set
+scripts enabled. Its PATH exposes Node from a private directory containing only
+the Node executable (`node.exe` on Windows), plus operating-system support paths,
+and invokes npm through an absolute `npm-cli.js` path. It verifies that Python
+and Pi executable names are absent before install. It exercises fresh init; V2
+Task create, run-start, and readback; same-wave scheduling and simulated Pi
+dispatch for two independent V2 Tasks; update preview/apply followed by V2
+create, run-start, scheduling, and simulated Pi dispatch; and a legacy Codex
+bridge prepare/receipt flow. It does not test Task archive or the separate legacy
+`runParallelBatch` path. Its timing line is a local baseline, not a latency
+promise. For an offline local rehearsal after
+`pnpm install --offline`, set
 `PACTILE_CONFORMANCE_OFFLINE=1`; this unpacks the sealed tarball and links the
 already locked local dependencies. The CI/default path performs a clean npm
 install. Record real desktop-host and model-provider acceptance separately.

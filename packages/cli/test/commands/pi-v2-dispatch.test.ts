@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -22,6 +23,10 @@ import { PiTaskBridge, readPiHostStopReceipt } from "../../src/pactile/pi/bridge
 import { PiRpcClient } from "../../src/pactile/pi/rpc.js";
 
 const roots: string[] = [];
+const FAKE_PI_PROVIDER = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../.tmp/p31-script-build/fixtures/fake-pi-provider.js",
+);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -107,36 +112,19 @@ function attachManagedWorktree(root: string, task: V2TaskFixture): string {
   return created.binding.canonicalPath;
 }
 
-function piScript(root: string, marker: string, hang = false): string {
-  const script = path.join(root, "fake-pi-v2.mjs");
-  const markerLiteral = JSON.stringify(marker);
-  fs.writeFileSync(script, `
-import fs from 'node:fs';
-import path from 'node:path';
-fs.writeFileSync(${markerLiteral}, 'started');
-const session = path.join(process.env.PI_CODING_AGENT_SESSION_DIR, 'v2-session.jsonl');
-fs.mkdirSync(path.dirname(session), { recursive: true });
-fs.writeFileSync(session, 'session\\n');
-let buffer = '';
-process.stdin.on('data', chunk => {
-  buffer += chunk.toString();
-  let at;
-  while ((at = buffer.indexOf('\\n')) >= 0) {
-    const line = buffer.slice(0, at); buffer = buffer.slice(at + 1);
-    if (!line) continue;
-    const request = JSON.parse(line);
-    const reply = data => process.stdout.write(JSON.stringify({ id: request.id, type: 'response', command: request.type, success: true, ...data }) + '\\n');
-    if (request.type === 'get_state') reply({ data: { isStreaming: false, sessionId: 'pi-session-v2', sessionFile: session } });
-    else if (request.type === 'prompt') {
-      reply();
-      process.stdout.write(JSON.stringify({ type: 'agent_start' }) + '\\n');
-      ${hang ? "" : "process.stdout.write(JSON.stringify({ type: 'agent_end', messages: [{ role: 'assistant', content: [{ type: 'text', text: 'V2 result recorded' }], stopReason: 'stop' }] }) + '\\n');"}
-    } else if (request.type === 'abort') reply();
-  }
-});
-process.stdin.on('end', () => process.exit(0));
-`);
-  return script;
+function piScript(_root: string, marker: string, hang = false): string[] {
+  return [
+    FAKE_PI_PROVIDER,
+    "--marker",
+    marker,
+    "--session-name",
+    "v2-session.jsonl",
+    "--session-id",
+    "pi-session-v2",
+    "--result-text",
+    "V2 result recorded",
+    ...(hang ? ["--hang"] : []),
+  ];
 }
 
 function ownerForAdmission() {
@@ -171,7 +159,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     if (!task.runId) throw new Error("V2 Run is missing");
     attachManagedWorktree(root, task);
     const marker = path.join(root, "pi-started.txt");
-    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: piScript(root, marker) });
     const record = await bridge.run({
       root,
       task: task.taskId,
@@ -222,7 +210,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     const root = makeRoot();
     const task = createTask(root, "missing-managed-workspace");
     const marker = path.join(root, "must-not-start.txt");
-    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: piScript(root, marker) });
     await expect(bridge.run({
       root,
       task: task.taskId,
@@ -281,7 +269,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
       cwd: root,
     });
     const marker = path.join(root, "must-not-start.txt");
-    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: piScript(root, marker) });
     await expect(bridge.run({
       root,
       task: task.taskId,
@@ -302,7 +290,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     const worktree = attachManagedWorktree(root, task);
     const contender = createTask(root, "workspace-race-contender", { writeSet: ["src/shared.ts"] });
     const marker = path.join(root, "must-not-start.txt");
-    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: piScript(root, marker) });
     const evidenceDir = path.join(task.taskDir, "pi-bridge");
     const mkdir = fs.mkdirSync;
     const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation((...args) => {
@@ -348,7 +336,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     if (!task.runId) throw new Error("V2 Run is missing");
     attachManagedWorktree(root, task);
     const marker = path.join(root, "must-not-start.txt");
-    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: piScript(root, marker) });
     const sessionDir = path.join(task.taskDir, "pi-bridge", "sessions");
     const mkdir = fs.mkdirSync;
     let revokedLeasePath: string | null = null;
@@ -416,7 +404,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     if (!task.runId) throw new Error("V2 Run is missing");
     attachManagedWorktree(root, task);
     const marker = path.join(root, "must-not-start.txt");
-    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: piScript(root, marker) });
     const sessionDir = path.join(task.taskDir, "pi-bridge", "sessions");
     const mkdir = fs.mkdirSync;
     let tamperedLeasePath: string | null = null;
@@ -486,7 +474,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     createTask(root, "open-dependency", { start: false });
     const target = createTask(root, "blocked-pi-task", { dependencies: ["open-dependency"], start: false });
     const marker = path.join(root, "must-not-start.txt");
-    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: piScript(root, marker) });
     await expect(bridge.run({
       root,
       task: target.taskId,
@@ -506,7 +494,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     leaseForTask(root, competing);
     attachManagedWorktree(root, target);
     const marker = path.join(root, "must-not-start.txt");
-    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: piScript(root, marker) });
     await expect(bridge.run({
       root,
       task: target.taskId,
@@ -554,7 +542,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     if (!task.runId) throw new Error("V2 Run is missing");
     attachManagedWorktree(root, task);
     const marker = path.join(root, "pi-started.txt");
-    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: piScript(root, marker) });
     const bindSpy = vi.spyOn(taskKernel, "bindTaskRunHostReceipt").mockImplementation(() => {
       throw new Error("injected host binding failure");
     });
@@ -593,7 +581,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     if (!task.runId) throw new Error("V2 Run is missing");
     attachManagedWorktree(root, task);
     const marker = path.join(root, "pi-started.txt");
-    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: piScript(root, marker) });
     const bindSpy = vi.spyOn(scheduler, "bindTaskKernelRunDispatchOwnerV1").mockImplementation(() => {
       throw new Error("injected dispatch owner binding failure");
     });
@@ -632,7 +620,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     if (!cancelledTask.runId) throw new Error("V2 Run is missing");
     attachManagedWorktree(root, cancelledTask);
     const cancelMarker = path.join(root, "cancel-started.txt");
-    const cancelBridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, cancelMarker, true)] });
+    const cancelBridge = new PiTaskBridge(root, { command: process.execPath, args: piScript(root, cancelMarker, true) });
     const controller = new AbortController();
     const cancelRun = cancelBridge.run({
       root,
@@ -659,7 +647,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     if (!timedOutTask.runId) throw new Error("V2 Run is missing");
     attachManagedWorktree(root, timedOutTask);
     const timeoutMarker = path.join(root, "timeout-started.txt");
-    const timeoutBridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, timeoutMarker, true)] });
+    const timeoutBridge = new PiTaskBridge(root, { command: process.execPath, args: piScript(root, timeoutMarker, true) });
     const timedOut = await timeoutBridge.run({
       root,
       task: timedOutTask.taskId,
@@ -681,7 +669,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     if (!task.runId) throw new Error("V2 Run is missing");
     attachManagedWorktree(root, task);
     const marker = path.join(root, "pi-started.txt");
-    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: piScript(root, marker) });
     const closeSpy = vi.spyOn(PiRpcClient.prototype, "closeAndObserve").mockResolvedValue({
       processId: 12345,
       stopRequestedAt: new Date().toISOString(),
@@ -720,7 +708,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     if (!task.runId) throw new Error("V2 Run is missing");
     attachManagedWorktree(root, task);
     const marker = path.join(root, "must-not-start.txt");
-    const launch = { command: process.execPath, args: [piScript(root, marker)] };
+    const launch = { command: process.execPath, args: piScript(root, marker) };
     const wrong = new PiTaskBridge(root, launch);
     await expect(wrong.run({
       root,

@@ -16,13 +16,31 @@ describe("Node Pactile templates", () => {
   it("provides release task seeds and both artifact locales", () => {
     const templates = getAllTaskTemplates();
     expect(templates.size).toBe(10);
+    const releaseHandoff = templates.get(
+      "tasks/templates/release-readiness/handoff-template.md",
+    );
+    expect(releaseHandoff).toContain(
+      "pnpm --filter @blxzer/pactile run release:check",
+    );
+    expect(releaseHandoff).toContain("pactile-vX.Y.Z-beta.N");
+    expect(releaseHandoff).toContain("pactile-vX.Y.Z");
+    expect(releaseHandoff).not.toContain("release.js");
     for (const kind of ["release-readiness", "release-execution"]) {
-      for (const artifact of ["prd.md", "design.md", "implement.md", "handoff-template.md"]) {
-        expect(templates.get(`tasks/templates/${kind}/${artifact}`)?.trim()).toBeTruthy();
+      for (const artifact of [
+        "prd.md",
+        "design.md",
+        "implement.md",
+        "handoff-template.md",
+      ]) {
+        expect(
+          templates.get(`tasks/templates/${kind}/${artifact}`)?.trim(),
+        ).toBeTruthy();
       }
     }
     for (const locale of ["zh", "en"]) {
-      expect(templates.get(`tasks/locale/${locale}/default-prd.md`)).toContain("{title}");
+      expect(templates.get(`tasks/locale/${locale}/default-prd.md`)).toContain(
+        "{title}",
+      );
     }
   });
 });

@@ -174,7 +174,8 @@ export function assertManifestSha256(value: unknown): string {
 
 function tarballEntries(runner: CommandRunner, tarballPath: string): string[] {
   const output = String(
-    runner("tar", ["-tzf", tarballPath], {
+    runner("tar", ["-tzf", path.basename(tarballPath)], {
+      cwd: path.dirname(tarballPath),
       capture: true,
       env: credentialFreeEnvironment(),
     }),
@@ -194,10 +195,15 @@ function tarballPackageJson(
   runner: CommandRunner,
   tarballPath: string,
 ): CliPackageManifest {
-  const output = runner("tar", ["-xOf", tarballPath, "package/package.json"], {
-    capture: true,
-    env: credentialFreeEnvironment(),
-  });
+  const output = runner(
+    "tar",
+    ["-xOf", path.basename(tarballPath), "package/package.json"],
+    {
+      cwd: path.dirname(tarballPath),
+      capture: true,
+      env: credentialFreeEnvironment(),
+    },
+  );
   try {
     const parsed: unknown = JSON.parse(String(output));
     if (
