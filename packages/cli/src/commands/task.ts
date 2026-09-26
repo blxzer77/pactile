@@ -94,6 +94,7 @@ import {
   projectTaskArtifactsForAgentV1,
   projectTaskArtifactsForHumanV1,
   projectTaskKernelArtifactsV1,
+  readSelectedTaskArtifactDocumentSectionsV1,
   readSelectedTaskArtifactDocumentsV1,
   readSelectedTaskArtifactSourcesV1,
   readTaskArtifactDocumentIndexV1,
@@ -318,24 +319,68 @@ function parseTaskArtifactDocumentSelection(value: string): {
   return { id, expectedFingerprint };
 }
 
+function parseTaskArtifactSectionSelection(value: string): {
+  id: string;
+  expectedFingerprint: string;
+} {
+  const separator = value.lastIndexOf("@");
+  if (separator <= 0 || separator === value.length - 1) {
+    throw new Error(
+      "--section must be <section-id>@<sha256-fingerprint> copied from a current artifact index",
+    );
+  }
+  const id = value.slice(0, separator);
+  const expectedFingerprint = value.slice(separator + 1);
+  if (
+    !id.startsWith("section:") ||
+    !/^sha256:[a-f0-9]{64}$/u.test(expectedFingerprint)
+  ) {
+    throw new Error(
+      "--section requires a stable section ID and lowercase sha256 fingerprint",
+    );
+  }
+  return { id, expectedFingerprint };
+}
+
 function taskArtifacts(root: string, args: string[]): number {
   const reference = requireArgument(args[0], "task");
   const { dir, kernel } = taskV2(root, reference);
-  const requestedStages = [...new Set(options(args, "--stage"))].map((value) => {
-    if (!(TASK_ARTIFACT_STAGES_V1 as readonly string[]).includes(value)) {
-      throw new Error(`--stage must be one of: ${TASK_ARTIFACT_STAGES_V1.join(", ")}`);
-    }
-    return value as TaskArtifactStageV1;
-  });
+  const requestedStages = [...new Set(options(args, "--stage"))].map(
+    (value) => {
+      if (!(TASK_ARTIFACT_STAGES_V1 as readonly string[]).includes(value)) {
+        throw new Error(
+          `--stage must be one of: ${TASK_ARTIFACT_STAGES_V1.join(", ")}`,
+        );
+      }
+      return value as TaskArtifactStageV1;
+    },
+  );
   const envelope = projectTaskKernelArtifactsV1(kernel);
-  const documents = readTaskArtifactDocumentIndexV1(dir, kernel.identity.taskId);
+  const documents = readTaskArtifactDocumentIndexV1(
+    dir,
+    kernel.identity.taskId,
+  );
   const projectionOptions = {
     ...(requestedStages.length ? { stages: requestedStages } : {}),
     documents,
   };
-  const selectedFactIds = options(args, "--fact");
+  const requestedFactRefs = options(args, "--fact");
+  const selectedFactIds = requestedFactRefs.map((reference) => {
+    const fact = envelope.facts.find(
+      (candidate) =>
+        candidate.id === reference ||
+        `${candidate.ref.uri}#${candidate.ref.selector}` === reference,
+    );
+    if (!fact) {
+      throw new Error(`Unknown task artifact fact ID or locator: ${reference}`);
+    }
+    return fact.id;
+  });
   const selectedDocuments = options(args, "--document").map(
     parseTaskArtifactDocumentSelection,
+  );
+  const selectedSections = options(args, "--section").map(
+    parseTaskArtifactSectionSelection,
   );
   const agent = args.includes("--agent");
 
@@ -363,6 +408,31 @@ function taskArtifacts(root: string, args: string[]): number {
         selectedDocuments,
       )
     : undefined;
+  if (selectedSections.length) {
+    const visibleSectionIds = new Set(
+      documents
+        .filter(
+          (document) =>
+            !requestedStages.length || requestedStages.includes(document.stage),
+        )
+        .flatMap((document) => (document.sections ?? []).map(({ id }) => id)),
+    );
+    const outsideStage = selectedSections.find(
+      ({ id }) => !visibleSectionIds.has(id),
+    );
+    if (outsideStage) {
+      throw new Error(
+        `Task artifact document section '${outsideStage.id}' is not present in the requested stage view`,
+      );
+    }
+  }
+  const selectedSectionContents = selectedSections.length
+    ? readSelectedTaskArtifactDocumentSectionsV1(
+        dir,
+        kernel.identity.taskId,
+        selectedSections,
+      )
+    : undefined;
 
   if (selectedFactIds.length) {
     const visibleFactIds = new Set(
@@ -372,41 +442,87 @@ function taskArtifacts(root: string, args: string[]): number {
     );
     const outsideStage = selectedFactIds.find((id) => !visibleFactIds.has(id));
     if (outsideStage) {
-      throw new Error(`Task artifact fact '${outsideStage}' is not present in the requested stage view`);
+      throw new Error(
+        `Task artifact fact '${outsideStage}' is not present in the requested stage view`,
+      );
     }
-    const selectedSources = readSelectedTaskArtifactSourcesV1(kernel, envelope, selectedFactIds);
+    const selectedSources = readSelectedTaskArtifactSourcesV1(
+      kernel,
+      envelope,
+      selectedFactIds,
+    );
     if (agent) {
-      console.log(JSON.stringify({
-        index: projectTaskArtifactsForAgentV1(envelope, projectionOptions),
-        selectedSources,
-        ...(selectedDocumentContents
-          ? { selectedDocuments: selectedDocumentContents }
-          : {}),
-      }, null, 2));
+      console.log(
+        JSON.stringify(
+          {
+            index: projectTaskArtifactsForAgentV1(envelope, projectionOptions),
+            selectedSources,
+            ...(selectedDocumentContents
+              ? { selectedDocuments: selectedDocumentContents }
+              : {}),
+            ...(selectedSectionContents
+              ? { selectedSections: selectedSectionContents }
+              : {}),
+          },
+          null,
+          2,
+        ),
+      );
     } else {
-      console.log(JSON.stringify({
-        taskId: kernel.identity.taskId,
-        selectedSources,
-        ...(selectedDocumentContents
-          ? { selectedDocuments: selectedDocumentContents }
-          : {}),
-      }, null, 2));
+      console.log(
+        JSON.stringify(
+          {
+            taskId: kernel.identity.taskId,
+            selectedSources,
+            ...(selectedDocumentContents
+              ? { selectedDocuments: selectedDocumentContents }
+              : {}),
+            ...(selectedSectionContents
+              ? { selectedSections: selectedSectionContents }
+              : {}),
+          },
+          null,
+          2,
+        ),
+      );
     }
     return 0;
   }
 
-  if (selectedDocumentContents) {
-    console.log(JSON.stringify({
-      ...(agent
-        ? { index: projectTaskArtifactsForAgentV1(envelope, projectionOptions) }
-        : { taskId: kernel.identity.taskId }),
-      selectedDocuments: selectedDocumentContents,
-    }, null, 2));
+  if (selectedDocumentContents || selectedSectionContents) {
+    console.log(
+      JSON.stringify(
+        {
+          ...(agent
+            ? {
+                index: projectTaskArtifactsForAgentV1(
+                  envelope,
+                  projectionOptions,
+                ),
+              }
+            : { taskId: kernel.identity.taskId }),
+          ...(selectedDocumentContents
+            ? { selectedDocuments: selectedDocumentContents }
+            : {}),
+          ...(selectedSectionContents
+            ? { selectedSections: selectedSectionContents }
+            : {}),
+        },
+        null,
+        2,
+      ),
+    );
     return 0;
   }
 
   if (agent) {
-    console.log(JSON.stringify(projectTaskArtifactsForAgentV1(envelope, projectionOptions), null, 2));
+    console.log(
+      JSON.stringify(
+        projectTaskArtifactsForAgentV1(envelope, projectionOptions),
+        null,
+        2,
+      ),
+    );
   } else {
     console.log(projectTaskArtifactsForHumanV1(envelope, projectionOptions));
   }
@@ -470,13 +586,23 @@ function createTask(args: string[], root: string): void {
     const prdPath = path.join(dir, "prd.md");
     if (!fs.existsSync(prdPath)) {
       try {
-        fs.writeFileSync(prdPath, renderTaskPrdScaffoldV1(result.kernel), { encoding: "utf8", flag: "wx" });
+        fs.writeFileSync(prdPath, renderTaskPrdScaffoldV1(result.kernel), {
+          encoding: "utf8",
+          flag: "wx",
+        });
       } catch (error) {
-        if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+        if (
+          !(error instanceof Error) ||
+          !("code" in error) ||
+          error.code !== "EEXIST"
+        )
+          throw error;
       }
     }
   }
-  console.log(`${path.relative(root, dir).replaceAll("\\", "/")}\nTask Kernel schema: ${result.kernel.schemaVersion}\nTask ID: ${result.kernel.identity.taskId}\nPRD: ${path.relative(root, path.join(dir, "prd.md")).replaceAll("\\", "/")}\nLive fact view: pactile task artifacts ${result.kernel.identity.taskId}`);
+  console.log(
+    `${path.relative(root, dir).replaceAll("\\", "/")}\nTask Kernel schema: ${result.kernel.schemaVersion}\nTask ID: ${result.kernel.identity.taskId}\nPRD: ${path.relative(root, path.join(dir, "prd.md")).replaceAll("\\", "/")}\nLive fact view: pactile task artifacts ${result.kernel.identity.taskId}`,
+  );
 }
 
 function runStartTask(root: string, args: string[]): number {
@@ -2360,7 +2486,8 @@ export function runTaskCli(argv: string[], root = process.cwd()): number {
         return 0;
       case "show":
         return showTask(root, args);
-      case "artifacts": return taskArtifacts(root, args);
+      case "artifacts":
+        return taskArtifacts(root, args);
       case "add-dependency": {
         const reference = requireArgument(args[0], "task");
         const dependencyId = requireArgument(args[1], "dependency task ID");
