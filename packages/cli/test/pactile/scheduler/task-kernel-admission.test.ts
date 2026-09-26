@@ -12,11 +12,16 @@ import {
   startTaskRun,
 } from "../../../src/core/task/index.js";
 import {
+  createTaskCandidateEntry,
+  observeTaskRunCandidate,
+} from "../../../src/core/task/task-candidate-observer.js";
+import {
   acquireTaskKernelRunDispatchV1,
   assertTaskKernelRunDispatchLeaseV1,
   assertTaskKernelRunDispatchPreSpawnV1,
   bindTaskKernelRunDispatchOwnerV1,
   releaseTaskKernelRunDispatchV1,
+  readTaskKernelScheduleReceiptV1,
   validateTaskKernelRunDispatchStopProofV1,
   scheduleTaskKernelGraph,
   type TaskKernelRunDispatchOwnerV1,
@@ -420,6 +425,68 @@ function admit(
     runId,
     ...(owner ? { owner } : {}),
   });
+}
+
+function withoutRecordKeys(
+  value: Record<string, unknown>,
+  omitted: readonly string[],
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !omitted.includes(key)),
+  );
+}
+
+function writeLegacyScheduleReceiptWithoutIntegrationOwner(
+  root: string,
+  fingerprint: string,
+): string {
+  const folder = path.join(
+    root,
+    ".pactile",
+    ".runtime",
+    "scheduler",
+    "receipts",
+  );
+  const originalFile = path.join(folder, `${fingerprint}.json`);
+  const receipt = JSON.parse(
+    fs.readFileSync(originalFile, "utf8"),
+  ) as Record<string, unknown>;
+  const request = receipt.request as {
+    conflictParallelizations?: Record<string, unknown>[];
+  };
+  request.conflictParallelizations = (
+    request.conflictParallelizations ?? []
+  ).map((authorization) =>
+    withoutRecordKeys(authorization, ["integrationOwner"]),
+  );
+  const plan = receipt.plan as {
+    waves: { conflictAuthorizations: Record<string, unknown>[] }[];
+  };
+  for (const wave of plan.waves)
+    wave.conflictAuthorizations = wave.conflictAuthorizations.map(
+      (authorization) =>
+        withoutRecordKeys(authorization, ["integrationOwner"]),
+    );
+
+  const receiptBase = withoutRecordKeys(receipt, [
+    "schemaVersion",
+    "scope",
+    "receiptFingerprint",
+    "createdAt",
+    "integrityVersion",
+    "scheduleKey",
+  ]);
+  receipt.scheduleKey = fingerprintTaskValue(receiptBase);
+  const envelope = withoutRecordKeys(receipt, ["receiptFingerprint"]);
+  const legacyFingerprint = fingerprintTaskValue(envelope);
+  receipt.receiptFingerprint = legacyFingerprint;
+  fs.writeFileSync(
+    path.join(folder, `${legacyFingerprint}.json`),
+    `${JSON.stringify(receipt, null, 2)}\n`,
+    { flag: "wx" },
+  );
+  fs.rmSync(originalFile, { force: true });
+  return legacyFingerprint;
 }
 
 describe("Task Kernel V2 Run dispatch admission", () => {
@@ -826,6 +893,59 @@ describe("Task Kernel V2 Run dispatch admission", () => {
     expect(permits.every((result) => result.permitted)).toBe(true);
   });
 
+  it("rejects direct V2 lease admission for a fingerprint-valid same-wave overlap without an integration owner", () => {
+    const root = makeRoot();
+    const firstTaskId = "v2-old-owner-a";
+    const secondTaskId = "v2-old-owner-b";
+    const first = createTask(root, firstTaskId, {
+      writeSet: ["src/shared.ts"],
+      host: true,
+    });
+    const second = createTask(root, secondTaskId, {
+      writeSet: ["src/shared.ts"],
+      host: true,
+    });
+    const schedule = scheduleTaskKernelGraph(
+      root,
+      [firstTaskId, secondTaskId],
+      {
+        conflictParallelizations: [
+          {
+            taskIds: [firstTaskId, secondTaskId],
+            approvedBy: "approver",
+            authorizationRef: "approval://old-owner-pair",
+            integrationOwner: "parent-integrator",
+            integrationPlan: "Review and integrate the shared writer pair.",
+          },
+        ],
+      },
+    );
+    expect(schedule.receipt.plan.waves[0]?.taskIds).toHaveLength(2);
+    const legacyFingerprint = writeLegacyScheduleReceiptWithoutIntegrationOwner(
+      root,
+      schedule.receipt.receiptFingerprint,
+    );
+    expect(
+      readTaskKernelScheduleReceiptV1(root, legacyFingerprint).integrity,
+    ).toBe("fingerprint-verified");
+
+    const firstPermit = admit(root, legacyFingerprint, firstTaskId, first.runId);
+    expect(firstPermit.permitted).toBe(true);
+    const blocked = admit(
+      root,
+      legacyFingerprint,
+      secondTaskId,
+      second.runId,
+    );
+    expect(blocked).toMatchObject({
+      permitted: false,
+      receipt: {
+        reasonCodes: ["project-write-set-conflict-integration-owner-missing"],
+        conflictingLeaseIds: [firstPermit.permitted ? firstPermit.leaseId : ""],
+      },
+    });
+  });
+
   it("checks every active overlap and rejects the unapproved conflict even when another pair is authorized", () => {
     const root = makeRoot();
     const taskC = createTask(root, "v2-multi-c", {
@@ -860,6 +980,7 @@ describe("Task Kernel V2 Run dispatch admission", () => {
             taskIds: ["v2-multi-a", "v2-multi-b"],
             approvedBy: "approver",
             authorizationRef: "approval://pair-v2-multi-a-b",
+            integrationOwner: "parent-integrator",
             integrationPlan: "integrate A then run verification",
           },
         ],
@@ -893,6 +1014,7 @@ describe("Task Kernel V2 Run dispatch admission", () => {
   it("releases only after a fingerprinted native terminal receipt and keeps a lease on proof tampering", () => {
     const root = makeRoot();
     const task = createTask(root, "v2-native-stop", {
+      writeSet: ["src/output.txt"],
       host: {
         host: "codex-desktop",
         role: "execute",
@@ -939,6 +1061,24 @@ describe("Task Kernel V2 Run dispatch admission", () => {
       actor: "implementer",
       idempotencyKey: "resume:v2-native-stop",
     });
+    const activeRun = running.kernel.runs.at(-1);
+    if (!activeRun) throw new Error("native-stop Run was not resumed");
+    fs.mkdirSync(path.join(root, "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "src", "output.txt"),
+      "native child exited\n",
+    );
+    const observation = observeTaskRunCandidate({
+      run: activeRun,
+      repositoryRoot: root,
+    });
+    const outputFile = observation.currentFiles.find(
+      (file) => file.path === "src/output.txt",
+    );
+    if (!outputFile?.sha256)
+      throw new Error(
+        "native-stop Run output was not observed in its write set",
+      );
     const settled = recordTaskRunResult({
       root,
       taskDir: task.taskDir,
@@ -947,7 +1087,8 @@ describe("Task Kernel V2 Run dispatch admission", () => {
       outcome: "completed",
       summary: "native child exited",
       candidateEntries: [
-        { ref: "src/output.txt", fingerprint: "a".repeat(64) },
+        { ref: outputFile.path, fingerprint: outputFile.sha256 },
+        createTaskCandidateEntry(observation),
       ],
       actor: "implementer",
       idempotencyKey: "complete:v2-native-stop",

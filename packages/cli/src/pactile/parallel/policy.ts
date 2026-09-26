@@ -274,6 +274,13 @@ export function reserveParallelChild(
         throw new Error(
           `write-set conflict with active writer ${collision.task_id ?? collision.child ?? collision.id}`,
         );
+      if (
+        typeof authorized.integrationOwner !== "string" ||
+        !authorized.integrationOwner.trim()
+      )
+        throw new Error(
+          `write-set conflict authorization is missing integration owner for active writer ${collision.task_id ?? collision.child ?? collision.id}`,
+        );
       authorizedConflicts.push(authorized);
     }
     if (authorizedConflicts.length)

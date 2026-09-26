@@ -5,7 +5,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runTaskCli } from "../../src/commands/task.js";
-import { createTaskKernel, startTaskRun } from "../../src/core/task/index.js";
+import {
+  createTaskKernel,
+  fingerprintTaskValue,
+  readTaskKernel,
+  startTaskRun,
+} from "../../src/core/task/index.js";
 import {
   parallelStatus,
   runParallelBatch,
@@ -13,6 +18,7 @@ import {
 import { PiTaskBridge, type PiRunRecord } from "../../src/pactile/pi/bridge.js";
 import { reserveParallelChild } from "../../src/pactile/parallel/policy.js";
 import { projectWriteSetsConflict } from "../../src/pactile/scheduler/project-lease-store.js";
+import { scheduleParentTaskGraph } from "../../src/pactile/scheduler/index.js";
 import { readTaskMap, writeTaskMap } from "../../src/pactile/task/task-map.js";
 import {
   prepareCodexRequest,
@@ -29,6 +35,55 @@ function requiredAt<T>(items: readonly T[], index: number): T {
   const value = items[index];
   if (value === undefined) throw new Error(`Missing item at index ${index}`);
   return value;
+}
+
+function withoutRecordKeys(
+  value: Record<string, unknown>,
+  omitted: readonly string[],
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !omitted.includes(key)),
+  );
+}
+
+function rewriteParentReceiptWithoutIntegrationOwner(
+  receiptFile: string,
+): string {
+  const receipt = JSON.parse(
+    fs.readFileSync(receiptFile, "utf8"),
+  ) as Record<string, unknown>;
+  const request = receipt.request as {
+    conflictParallelizations?: Record<string, unknown>[];
+  };
+  request.conflictParallelizations = (
+    request.conflictParallelizations ?? []
+  ).map((authorization) =>
+    withoutRecordKeys(authorization, ["integrationOwner"]),
+  );
+  const plan = receipt.plan as {
+    waves: { conflictAuthorizations: Record<string, unknown>[] }[];
+  };
+  for (const wave of plan.waves)
+    wave.conflictAuthorizations = wave.conflictAuthorizations.map(
+      (authorization) =>
+        withoutRecordKeys(authorization, ["integrationOwner"]),
+    );
+  const base = withoutRecordKeys(receipt, [
+    "schemaVersion",
+    "receiptFingerprint",
+    "createdAt",
+  ]);
+  const legacyFingerprint = fingerprintTaskValue(base);
+  receipt.receiptFingerprint = legacyFingerprint;
+  const legacyFile = path.join(
+    path.dirname(receiptFile),
+    `${legacyFingerprint}.json`,
+  );
+  fs.writeFileSync(legacyFile, `${JSON.stringify(receipt, null, 2)}\n`, {
+    flag: "wx",
+  });
+  fs.rmSync(receiptFile, { force: true });
+  return legacyFingerprint;
 }
 afterEach(() => {
   vi.restoreAllMocks();
@@ -566,6 +621,7 @@ describe("scheduler-driven Parent dispatch", () => {
         task_ids: [children[0], children[2]],
         approved_by: "reviewer",
         authorization_ref: "approval/P37-overlap",
+        integration_owner: "parent-integrator",
         integration_plan:
           "Integrate alpha and gamma serially and resolve their shared src/alpha paths before review.",
       },
@@ -586,6 +642,7 @@ describe("scheduler-driven Parent dispatch", () => {
           conflictAuthorizations: {
             approvedBy: string;
             authorizationRef: string;
+            integrationOwner: string;
             integrationPlan: string;
           }[];
         }[];
@@ -596,6 +653,7 @@ describe("scheduler-driven Parent dispatch", () => {
       .find((item) => item.authorizationRef === "approval/P37-overlap");
     expect(authorization).toMatchObject({
       approvedBy: "reviewer",
+      integrationOwner: "parent-integrator",
       integrationPlan: expect.stringContaining("serially"),
     });
 
@@ -613,6 +671,58 @@ describe("scheduler-driven Parent dispatch", () => {
         args: scriptArgs,
       }),
     ).rejects.toThrow(/integrationPlan/);
+  });
+
+  it("rejects a direct Parent lease overlap when a valid historical receipt has no integration owner", () => {
+    const { root, parent, children } = fixture();
+    const firstTaskDir = requiredAt(children, 0);
+    const secondTaskDir = requiredAt(children, 2);
+    const readTaskId = (taskDirName: string): string => {
+      const read = readTaskKernel({
+        root,
+        taskDir: path.join(root, ".pactile", "tasks", taskDirName),
+        cwd: root,
+      });
+      return read.kind === "task-kernel-v2"
+        ? read.kernel.identity.taskId
+        : read.kernel.kernel.identity.taskId;
+    };
+    const firstTaskId = readTaskId(firstTaskDir);
+    const secondTaskId = readTaskId(secondTaskDir);
+    const scheduled = scheduleParentTaskGraph(root, parent, {
+      candidateTaskIds: [firstTaskId, secondTaskId],
+      estimatedCosts: {
+        [firstTaskId]: { executionMs: 120_000 },
+        [secondTaskId]: { executionMs: 120_000 },
+      },
+      conflictParallelizations: [
+        {
+          taskIds: [firstTaskId, secondTaskId],
+          approvedBy: "approver",
+          authorizationRef: "approval://historical-parent-overlap",
+          integrationOwner: "parent-integrator",
+          integrationPlan: "Review and integrate the shared writer pair.",
+        },
+      ],
+    });
+    expect(scheduled.receipt.plan.waves[0]?.taskIds).toHaveLength(2);
+    const legacyReceiptFingerprint = rewriteParentReceiptWithoutIntegrationOwner(
+      path.resolve(root, scheduled.receiptFile),
+    );
+    const firstDir = path.join(root, ".pactile", "tasks", firstTaskDir);
+    const secondDir = path.join(root, ".pactile", "tasks", secondTaskDir);
+    const releaseFirst = reserveParallelChild(root, firstDir, {
+      scheduleReceiptFingerprint: legacyReceiptFingerprint,
+    });
+    try {
+      expect(() =>
+        reserveParallelChild(root, secondDir, {
+          scheduleReceiptFingerprint: legacyReceiptFingerprint,
+        }),
+      ).toThrow(/missing integration owner/u);
+    } finally {
+      releaseFirst();
+    }
   });
 
   it("runs 33 approved disjoint Children in one planned wave despite old 1-child and 32-child limits", async () => {

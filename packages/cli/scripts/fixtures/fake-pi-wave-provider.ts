@@ -158,6 +158,7 @@ function handleLine(line: string): void {
     return;
   }
 
+  markStarted();
   const delay = Number(option("--response-delay-ms", "30"));
   setTimeout(finish, Number.isFinite(delay) && delay >= 0 ? delay : 30);
 }
