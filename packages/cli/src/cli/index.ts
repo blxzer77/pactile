@@ -565,13 +565,18 @@ program
   .argument("[operation]")
   .argument("[arguments...]")
   .action(async () => {
-    process.exitCode = await runTaskCliWithWorkspaceReclaim(process.argv.slice(3));
+    process.exitCode = await runTaskCliWithWorkspaceReclaim(
+      process.argv.slice(3),
+    );
   });
 
 program
   .command("worktree")
   .description("Manage the current Pactile Run's Git worktree")
-  .addHelpText("after", "\n  create <task> <run-id> [--branch <branch>] [--base-ref <ref>]\n  adopt <task> <run-id> --path <registered-checkout> --branch <branch> --base-sha <sha> --approved-by <name> --approval-evidence <ref>\n  inspect <task> <run-id> | integrate <task> <run-id> --target <local-branch> | reclaim <task> <run-id>\n")
+  .addHelpText(
+    "after",
+    "\n  create <task> <run-id> [--branch <branch>] [--base-ref <ref>]\n  adopt <task> <run-id> --path <registered-checkout> --branch <branch> --base-sha <sha> --approved-by <name> --approval-evidence <ref>\n  inspect <task> <run-id> | integrate <task> <run-id> --target <local-branch> | reclaim <task> <run-id>\n",
+  )
   .allowUnknownOption()
   .allowExcessArguments()
   .argument("[operation]")
