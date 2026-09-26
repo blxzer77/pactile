@@ -88,11 +88,13 @@ PRD 中的验收项和硬依赖分别成为 `requirement` 与 `constraint` facts
 
 ```bash
 pactile task run-start timeout-fallback \
+  --actor implementer \
   --input-summary "Preserve the configured timeout when no override is supplied" \
   --input-ref prd.md --input-ref design.md \
   --approved-by requester --authorization-scope "the declared timeout fix" \
   --authorization-evidence evidence/timeout-approval.md
 pactile task run-result timeout-fallback <run-id> --outcome completed \
+  --actor implementer \
   --summary "The fallback preserves the configured timeout" \
   --candidate src/config/timeout.ts=<64-lowercase-hex-fingerprint> \
   --evidence tests/timeout-fallback.txt
@@ -100,7 +102,7 @@ pactile task artifacts timeout-fallback --agent --stage implement
 pactile task artifacts timeout-fallback --agent --stage implement --fact <candidate-fact-id>
 pactile task review timeout-fallback --run <run-id> \
   --candidate-id <snapshot-id> --candidate-fingerprint <64-lowercase-hex-fingerprint> \
-  --reviewer independent-reviewer --decision pass \
+  --reviewer independent-reviewer --actor independent-reviewer --decision pass \
   --evidence review/timeout-fallback.md \
   --criterion AC-1=tests/timeout-fallback.txt
 pactile task close timeout-fallback --run <run-id> --review <review-id> \
@@ -155,11 +157,13 @@ An inserted same-kind heading can change later occurrence-based section IDs.
 
 ```bash
 pactile task run-start legacy-doc-read \
+  --actor implementer \
   --input-summary "Implement the three approved acceptance criteria" \
   --input-ref prd.md --input-ref design.md --input-ref implement.md \
   --approved-by requester --authorization-scope "read-only Task artifact indexing" \
   --authorization-evidence evidence/legacy-doc-read-approval.md
 pactile task run-result legacy-doc-read <run-id> --outcome completed \
+  --actor implementer \
   --summary "Selected facts and current document sections are readable" \
   --candidate packages/cli/src/pactile/artifacts=<source-tree-64-hex-fingerprint> \
   --candidate docs/capabilities/structured-task-artifacts.zh-CN.md=<docs-64-hex-fingerprint> \
@@ -169,7 +173,7 @@ pactile task artifacts legacy-doc-read --agent --stage implement
 pactile task artifacts legacy-doc-read --agent --stage implement --fact <candidate-fact-id>
 pactile task review legacy-doc-read --run <run-id> \
   --candidate-id <snapshot-id> --candidate-fingerprint <64-lowercase-hex-fingerprint> \
-  --reviewer independent-reviewer --decision pass \
+  --reviewer independent-reviewer --actor independent-reviewer --decision pass \
   --evidence review/legacy-doc-read-review.md \
   --criterion AC-1=evidence/p36-overlay-read.txt \
   --criterion AC-2=evidence/stale-fingerprint-rejected.txt \
@@ -204,4 +208,4 @@ P36 导入的旧 Task 还可能有 `task-map.md` 和 `handoff.md`。它们保留
 
 ## 旧 Task 的读取路径
 
-`pactile task artifacts` 是只读入口：它不会迁移旧 `task.json`、改写阶段 Markdown 或触发 import。尚未导入的 0.5.x Task 仍走旧读取路径。按 P36 流程先运行 `pactile update --dry-run` 审阅计划，再在确认更新后运行 `pactile update`；有未解决定义或协调问题的任务须先完成对应 reconciliation。导入后，Kernel reader 从当前 migration generation/overlay 读取 V2 状态；原始 `task.json` 与阶段作者文档仍保持源内容，artifact reader 只生成索引，不创建 `artifacts.json` 副本。详见[升级与迁移](../lifecycle/upgrade-and-migrate.zh-CN.md)和[Task system](../concepts/task-system.zh-CN.md)。
+`pactile task artifacts` 是只读入口：它不会迁移旧 `task.json`、改写阶段 Markdown 或触发 import。尚未导入的 0.5.x Task 仍走旧读取路径。P36 导入后的 held Task 状态检查、定义补全、依赖协调与 reconciliation 命令见[升级指南中的 P36 held Task 步骤](../lifecycle/upgrade-and-migrate.zh-CN.md#p36-held-task-reconciliation)。导入后，Kernel reader 从当前 migration generation/overlay 读取 V2 状态；原始 `task.json` 与阶段作者文档仍保持源内容，artifact reader 只生成索引，不创建 `artifacts.json` 副本。详见[Task system](../concepts/task-system.zh-CN.md)。
