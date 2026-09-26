@@ -27,14 +27,18 @@ vi.mock("node:child_process", () => ({
 // === Imports ===
 
 import { init } from "../../src/commands/init.js";
+import { runTaskCli } from "../../src/commands/task.js";
 import { VERSION } from "../../src/constants/version.js";
 import { DIR_NAMES, FILE_NAMES, PATHS } from "../../src/constants/paths.js";
 import { frameworkDocs } from "../../src/templates/markdown/index.js";
+import { contextMdTemplate } from "../../src/templates/pactile/index.js";
+import { compileSessionPack } from "../../src/pactile/task/session-pack.js";
 import {
   PACTILE_BLOCK_END,
   PACTILE_BLOCK_START,
   extractBlock,
 } from "../../src/utils/agents-md.js";
+import { computeHash } from "../../src/utils/template-hash.js";
 import { execSync } from "node:child_process";
 import inquirer from "inquirer";
 
@@ -730,6 +734,54 @@ describe("init() integration", () => {
     }
     expect(fs.existsSync(path.join(frameworkDir, "index.md"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, PATHS.MIDDLEWARE))).toBe(false);
+  });
+
+  it("generates a V2 Session Pack from the six current baseline contracts without V1 workflow instructions", async () => {
+    await init({ yes: true });
+    vi.stubEnv("PACTILE_CONTEXT_ID", "fresh_generated_v2");
+
+    expect(runTaskCli([
+      "create", "Fresh generated V2", "--slug", "fresh-generated-v2", "--description", "Generated Session Pack acceptance",
+      "--deliverable", "A reviewable local result", "--delivery-level", "local-result", "--accept", "AC-1=The result is testable",
+    ], tmpDir)).toBe(0);
+    expect(runTaskCli(["select", "fresh-generated-v2"], tmpDir)).toBe(0);
+
+    const pack = compileSessionPack(tmpDir);
+    expect(pack.kernel).toMatchObject({ taskId: "fresh-generated-v2", schemaVersion: 2, phase: "define", deliveryLevel: "local-result" });
+    const activeContracts = pack.layers[1] as { moduleIds: string[]; text: string };
+    expect(activeContracts.moduleIds).toContain("define-basic");
+    expect(activeContracts.text).toContain("验收标准");
+    expect(activeContracts.text).not.toMatch(/pactile task (?:start-execution|archive)/i);
+
+    const baselineIds = ["intake-basic", "define-basic", "approval-personal", "execute-agent", "verify-basic", "close-basic"];
+    for (const id of baselineIds) {
+      const contract = fs.readFileSync(path.join(tmpDir, PATHS.MODULES, id, "contract.md"), "utf8");
+      expect(contract).not.toMatch(/\b(?:Lite|Full|Parent|Child)\b/);
+      expect(contract).not.toMatch(/pactile task (?:start-execution|archive)/i);
+    }
+
+    const templateHashes = JSON.parse(fs.readFileSync(path.join(tmpDir, PATHS.WORKFLOW, ".template-hashes.json"), "utf8")) as { hashes?: Record<string, string> };
+    const generatedWorkflow = fs.readFileSync(path.join(tmpDir, PATHS.WORKFLOW_GUIDE_FILE), "utf8");
+    expect(templateHashes.hashes?.[PATHS.WORKFLOW_GUIDE_FILE]).toBe(computeHash(generatedWorkflow));
+    for (const id of baselineIds) {
+      const contractPath = `${PATHS.MODULES}/${id}/contract.md`;
+      const contract = fs.readFileSync(path.join(tmpDir, contractPath), "utf8");
+      expect(templateHashes.hashes?.[contractPath]).toBe(computeHash(contract));
+    }
+
+    const workflow = generatedWorkflow;
+    const legacyBoundary = workflow.indexOf("## Compatibility boundary: explicit V1 legacy Tasks");
+    expect(legacyBoundary).toBeGreaterThan(0);
+    expect(workflow.slice(0, legacyBoundary)).not.toMatch(/pactile task (?:start-execution|archive)/i);
+    expect(workflow.slice(legacyBoundary)).toContain("pactile task start-execution <task> --approved");
+    expect(workflow.slice(legacyBoundary)).toContain("pactile task archive <task>");
+    expect(workflow.slice(legacyBoundary)).toContain("A CLI flag does not authenticate the caller");
+
+    // CONTEXT.md is a root template, outside the canonical lifecycle generation.
+    // Keep its source current without assuming fresh init publishes it.
+    expect(fs.existsSync(path.join(tmpDir, "CONTEXT.md"))).toBe(false);
+    expect(contextMdTemplate).toContain("## Task Kernel V2 terms");
+    expect(contextMdTemplate).not.toMatch(/Task Ladder|\bLite\b|\bFull\b|\bParent\b|\bChild\b/);
   });
 
   it("#10b spec/guides seeds stay init-only (8 guides + index; no moved docs, no maintainer runbooks)", async () => {

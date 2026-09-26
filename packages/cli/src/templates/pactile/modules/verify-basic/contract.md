@@ -4,35 +4,26 @@ P29 表名：`verify-basic`（不得改名）。层：baseline。
 
 ## 职责
 
-Verify 槽与 Evidence 角色。做确定性检查，并把每条 AC 映射到真实证据。Lite 也必须有真实 Evidence；占位、TBD、空勾选、假绿不得 Close。`verify.md` 是给人看的投影；机器账本是 `ac_evidence_ledger`（Kernel extras）。本块不负责独立第二遍语义 Check（那是 `independent-check`）。
+检查已完成的 V2 Run，并针对该 Run 的准确候选快照 ID 和 fingerprint 记录独立 Review。每条已记录 AC 都要映射到可定位证据。Run 结果或面向人的 `verify.md` 本身不能满足 Kernel Review 门。
+
+每条 Review 都是绑定到一个候选的追加式判定。某候选的最新 Review 若为 `fail` 或 `needs-changes`，该候选不能 Close。之后可以重新检查同一候选并追加 Review；若实现已变化，必须新建 Run，并针对新候选重新 Review。Close 必须引用该候选的最新 Review。
 
 ## 触发/披露
 
-Phase=Verify，或 Execute 刚结束正在收证据时加载。Intake / Define 不讲假绿、不灌 `verification-strength-guide`。Close 之后本块教战从常驻包拿掉，只留「证据是否已覆盖」。
-
-Agent 看见：
-
-1. 每条 AC 必须有可定位证据（测试输出、diff、命令结果、人工验收记录）；缺映射或指纹在定义/代码变更后过期 → 不得 Close。
-2. 实现缺陷 → 回 Execute 修，再验。不得在 Verify 里扩范围或改 AC 来「验过」。
-3. 契约/范围缺陷 → Return-to-Define，再走 Execute 门。
-4. 不得把 `self-review` 写成 `true-independent`；独立 Check 未激活则本块只做 Baseline Evidence。
-5. Adapter 可把卡住的运行时问题绑到 Cursor Debug；证据仍必须落回 Evidence 角色，Debug 不是本块。
-
-用户看见：阶段名 Verify。能否收工、哪条 AC 还没证据。Lite 不出现「独立审查员」叙事。
-
-渐进：非 Verify（及收证窗口）不加载本块教战。
+Run 完成并产生候选快照后加载。按已记录的交付物和 AC 检查候选。Reviewer 必须与 Run 执行者和授权者都不同。为 Review 记录证据引用，并为每条 AC 记录证据。
 
 ## 停止条件
 
-- 输入：Execute 已产生可验的工作结果；AC 列表来自已批 Definition。
-- 输出：AC→Evidence 覆盖；人读 `verify.md`；机器 ledger 更新。未覆盖 = Verify 未完成。
-- 停止：假绿；在 Verify 中改需求；宣称 Close 但 Evidence 槽空。
-- Lite / Full：本块对两者都强制真实 Evidence。Full 额外的 Independent Check 是另一模块。
+- 候选 ID 和 fingerprint 必须与选中的已完成 Run 完全一致。
+- 缺少 AC 证据、有未解决 blocker，或最新 Review 未通过，均表示验证未完成。
+- 同一候选的后续 Review 会取代更早判定；先前的 pass 不能绕过后续的 fail 或 needs-changes。
+- 候选变化时，不得把旧候选的 Review 用作新结果证据。
+- 不在验证中扩展交付物或改写 AC。契约有误时回到获授权的定义更新路径。
 
 ## 关掉必须消失
 
-不能 Close（缺 Evidence 必需槽）。不得用「看起来做过检查」代替映射。
+Review 和证据始终绑定其检查过的候选。不得依据未绑定的笔记或自我 Review 宣称可 Close。
 
 ## 不得带走
 
-独立只读 Check（`independent-check`）；retrieval pack 打分（`retrieval-extended`）；如何写 AC（`define-basic`）；学习写回 spec（`spec-learning`）。
+实现修改（`execute-agent`）；定义修改（`define-basic`）；交付层级证据和 Close（`close-basic`）；由其他模块激活的可选专项检查。
