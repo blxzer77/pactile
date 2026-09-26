@@ -1,10 +1,13 @@
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   appendTaskRunHostSettlementRefs,
   bindTaskRunHostReceipt,
+  bindTaskRunWorkspace,
   createTaskKernel,
   recordTaskRunHostStopReceipt,
   recordTaskRunResult,
@@ -31,6 +34,14 @@ afterEach(() => {
 function setup() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   roots.push(root);
+  execFileSync("git", ["init", "--initial-branch=main"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "Pactile Test"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "pactile-test@example.invalid"], { cwd: root, stdio: "ignore" });
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".gitignore"), ".pactile/\n");
+  fs.writeFileSync(path.join(root, "src", "base.ts"), "export const base = true;\n");
+  execFileSync("git", ["add", "--all"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "test baseline"], { cwd: root, stdio: "ignore" });
   const taskDir = path.join(root, ".pactile", "tasks", "host-contract");
   const created = createTaskKernel({
     root, taskDir, actor: "author", idempotencyKey: "create:host-contract",
@@ -43,12 +54,64 @@ function setup() {
     root, taskDir, expectedRevision: created.kernel.revision, actor, idempotencyKey: "start:host-contract",
     input: { summary: "Run with a manager-owned Pi child", references: ["task contract"] },
     authorization: { approvedBy: "approver", approvedAt: "2026-09-26T00:00:00.000Z", scope: "src", evidenceRef: "approval.json" },
-    writeSetSnapshot: ["src"],
+    writeSetSnapshot: ["src/"],
   });
   const runId = started.kernel.runs.at(-1)?.id;
   if (!runId) throw new Error("Run was not started");
   return { root, taskDir, runId, started: started.kernel };
 }
+
+describe("Task Run workspace candidate baseline", () => {
+  it("moves the branch binding to a managed checkout at the same captured base and rejects a changed base", () => {
+    const context = setup();
+    const prior = context.started.runs.at(-1);
+    if (!prior?.candidateBaseSha) throw new Error("Run Git baseline is missing");
+    execFileSync("git", ["switch", "--create", "feat/host-contract"], { cwd: context.root, stdio: "ignore" });
+    const workspace = {
+      ownerRunId: context.runId,
+      canonicalPath: context.root,
+      branch: "feat/host-contract",
+      baseSha: prior.candidateBaseSha,
+      writeSet: ["src/"],
+      integrationState: "not-integrated" as const,
+      reclamationState: "not-requested" as const,
+      manager: {
+        version: 1 as const,
+        credentialId: "manager:test",
+        projectRoot: context.root,
+        commonDir: path.join(context.root, ".git"),
+        gitDir: path.join(context.root, ".git"),
+        source: "created" as const,
+        recordedAt: "2026-09-26T00:00:00.000Z",
+      },
+      integrationReceipt: null,
+      cleanupLease: null,
+    };
+    expect(() => bindTaskRunWorkspace({
+      root: context.root,
+      taskDir: context.taskDir,
+      expectedRevision: context.started.revision,
+      runId: context.runId,
+      workspace: { ...workspace, baseSha: "b".repeat(40) },
+      actor,
+      idempotencyKey: "workspace:wrong-base",
+    })).toThrow(/base must match the Git commit captured when the Run started/);
+
+    const bound = bindTaskRunWorkspace({
+      root: context.root,
+      taskDir: context.taskDir,
+      expectedRevision: context.started.revision,
+      runId: context.runId,
+      workspace,
+      actor,
+      idempotencyKey: "workspace:matching-base",
+    });
+    const run = bound.kernel.runs.at(-1);
+    expect(run?.candidateBaseSha).toBe(workspace.baseSha);
+    expect(run?.candidateBaseBranch).toBe(workspace.branch);
+    expect(run?.workspace?.branch).toBe(workspace.branch);
+  });
+});
 
 describe("Task Run host binding and stop receipt contract", () => {
   it("requires one active binding, append-only settlement refs, a terminal Run, and the exact current candidate", () => {
@@ -102,10 +165,13 @@ describe("Task Run host binding and stop receipt contract", () => {
       receipt: premature, actor, idempotencyKey: "host-stop-premature:run-1",
     })).toThrow(/terminal Run/);
 
+    const candidateBytes = "export const ready = true;\n";
+    fs.writeFileSync(path.join(context.root, "src", "feature.ts"), candidateBytes);
+    fs.writeFileSync(path.join(context.taskDir, "run-result.json"), "{\"result\":\"ready\"}\n");
     const completed = recordTaskRunResult({
       root: context.root, taskDir: context.taskDir, expectedRevision: settled.kernel.revision, runId: context.runId,
       outcome: "completed", summary: "Feature is ready", evidenceRefs: ["run-result.json"],
-      candidateEntries: [{ ref: "src/feature.ts", fingerprint: "a".repeat(64) }], actor,
+      candidateEntries: [{ ref: "src/feature.ts", fingerprint: createHash("sha256").update(candidateBytes).digest("hex") }], actor,
       idempotencyKey: "result:run-1",
     });
     const candidate = completed.kernel.runs.at(-1)?.candidateSnapshot;

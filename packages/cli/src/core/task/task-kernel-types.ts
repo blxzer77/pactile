@@ -1,4 +1,9 @@
-import type { KernelAuditEvent, KernelCondition, KernelOutcome, KernelPhase } from "./kernel-contract.js";
+import type {
+  KernelAuditEvent,
+  KernelCondition,
+  KernelOutcome,
+  KernelPhase,
+} from "./kernel-contract.js";
 import type { readKernel } from "./kernel-store.js";
 
 export const TASK_KERNEL_SCHEMA_VERSION = 2 as const;
@@ -65,7 +70,13 @@ export interface TaskRunAuthorization {
   evidenceRef: string;
 }
 
-export type TaskRunState = "waiting" | "running" | "completed" | "failed" | "blocked" | "cancelled";
+export type TaskRunState =
+  | "waiting"
+  | "running"
+  | "completed"
+  | "failed"
+  | "blocked"
+  | "cancelled";
 
 export interface TaskRunDurations {
   executionMs: number | null;
@@ -82,6 +93,28 @@ export interface TaskRunMeasurementRefs {
 export interface TaskRunResult {
   summary: string;
   evidenceRefs: string[];
+  /** Completion-time digests for every Run evidence reference; absent on legacy Runs. */
+  evidenceVerification?: TaskRunEvidenceVerificationV1;
+}
+
+export type TaskRunEvidenceSource = "candidate-snapshot" | "task-evidence";
+
+export interface TaskRunEvidenceItemV1 {
+  ref: string;
+  sha256: string;
+  sizeBytes: number;
+  source: TaskRunEvidenceSource;
+}
+
+/** Core-observed evidence bytes frozen when a completed Run is recorded. */
+export interface TaskRunEvidenceVerificationV1 {
+  schemaVersion: 1;
+  source: "pactile-task-run-evidence-v1";
+  observedAt: string;
+  runId: string;
+  candidateSnapshotId: string;
+  candidateFingerprint: string;
+  items: TaskRunEvidenceItemV1[];
 }
 
 export interface TaskRunFailure {
@@ -181,6 +214,22 @@ export interface TaskRunHostBinding {
   stopReceipt: TaskRunHostStopReceipt | null;
 }
 
+export interface ProjectFileBaselineEntryV1 {
+  path: string;
+  sizeBytes: number;
+  sha256: string;
+}
+
+/** Bounded local snapshot used only when a standalone Run has no Git metadata. */
+export interface ProjectFileBaselineV1 {
+  schemaVersion: 1;
+  source: "pactile-project-file-baseline-v1";
+  policy: "project-files-bounded-v1";
+  rootIdentitySha256: string;
+  files: ProjectFileBaselineEntryV1[];
+  fingerprint: string;
+}
+
 export interface TaskRunV2 {
   id: string;
   taskId: string;
@@ -195,6 +244,11 @@ export interface TaskRunV2 {
   writeSetSnapshot: string[];
   estimatedDurations: TaskRunDurations;
   measurementRefs: TaskRunMeasurementRefs;
+  /** Core-observed Git baseline captured when this Run starts; null only on legacy/non-Git Runs. */
+  candidateBaseSha: string | null;
+  candidateBaseBranch: string | null;
+  /** Bounded file baseline; absent only on legacy V2 Runs written before P41. */
+  candidateFileBaseline?: ProjectFileBaselineV1 | null;
   workspace: TaskRunWorkspaceBinding | null;
   host: TaskRunHostBinding | null;
   candidateSnapshot: TaskCandidateSnapshot | null;
@@ -204,6 +258,30 @@ export interface TaskRunV2 {
 }
 
 export type TaskReviewDecision = "pass" | "fail" | "needs-changes";
+
+export type TaskReviewEvidenceSource =
+  | "candidate-snapshot"
+  | "run-evidence"
+  | "task-evidence"
+  | "pactile-receipt";
+
+export interface TaskReviewEvidenceItemV1 {
+  ref: string;
+  sha256: string;
+  sizeBytes: number;
+  source: TaskReviewEvidenceSource;
+}
+
+/** Core-observed bytes bound to one completed Run and its candidate snapshot. */
+export interface TaskReviewEvidenceVerificationV1 {
+  schemaVersion: 1;
+  source: "pactile-task-review-evidence-v1";
+  observedAt: string;
+  runId: string;
+  candidateSnapshotId: string;
+  candidateFingerprint: string;
+  items: TaskReviewEvidenceItemV1[];
+}
 
 export interface TaskReviewV2 {
   id: string;
@@ -216,6 +294,8 @@ export interface TaskReviewV2 {
   decision: TaskReviewDecision;
   evidenceRefs: string[];
   acceptanceEvidence: Record<string, string[]>;
+  /** Absent only on legacy Reviews written before Core evidence observation. */
+  evidenceVerification?: TaskReviewEvidenceVerificationV1;
   unresolvedBlockers: string[];
   reviewedAt: string;
 }
@@ -224,6 +304,42 @@ export interface TaskDeliveryEvidence {
   level: TaskDeliveryLevel;
   reference: string;
   summary: string;
+  /** Repository-relative file observed at Run candidate and Close time. */
+  path?: string;
+  /** Local base branch used to prove merged-result integration. */
+  targetBranch?: string;
+}
+
+export interface TaskPullRequestDeliveryFact {
+  source: "github-rest-pull-request-v1";
+  url: string;
+  repository: string;
+  number: number;
+  state: "open" | "closed";
+  draft: boolean;
+  headSha: string;
+  baseBranch: string;
+  merged: boolean;
+  mergeCommitSha: string | null;
+}
+
+/** Machine-observed proof bound to a frozen candidate and a delivery path. */
+export interface TaskDeliveryVerificationV1 {
+  schemaVersion: 1;
+  source: "pactile-task-delivery-observer-v1";
+  observedAt: string;
+  candidateFingerprint: string;
+  candidateSource: "git-working-tree-v1" | "project-files-v1";
+  candidateHead: string | null;
+  level: TaskDeliveryLevel;
+  path: string;
+  fileSha256: string;
+  gitBlobSha256: string | null;
+  targetBranch: string | null;
+  targetSha: string | null;
+  integrationCommitSha: string | null;
+  ancestryVerified: boolean | null;
+  pullRequest: TaskPullRequestDeliveryFact | null;
 }
 
 export interface TaskClosureV2 {
@@ -233,6 +349,8 @@ export interface TaskClosureV2 {
   candidateFingerprint: string;
   candidateObservation: TaskCandidateObservation;
   deliveryEvidence: TaskDeliveryEvidence;
+  /** Absent only in legacy V2 closures written before machine delivery observation. */
+  deliveryVerification?: TaskDeliveryVerificationV1;
   acceptanceEvidence: Record<string, string[]>;
   closedAt: string;
   closedBy: string;
@@ -435,7 +553,9 @@ export interface RecordTaskRunResultRequest {
   evidenceRefs?: string[];
   candidateEntries?: TaskSnapshotEntry[];
   measurementRefs?: Partial<TaskRunMeasurementRefs>;
-  failure?: Omit<TaskRunFailure, "evidenceRef"> & { evidenceRef?: string | null };
+  failure?: Omit<TaskRunFailure, "evidenceRef"> & {
+    evidenceRef?: string | null;
+  };
   actor: string;
   idempotencyKey: string;
   cwd?: string;
@@ -445,6 +565,8 @@ export interface RecordTaskReviewRequest {
   root: string;
   taskDir: string;
   expectedRevision: number;
+  /** Optional stable ID so a Review artifact can be written before Core records it. */
+  reviewId?: string;
   runId: string;
   candidateSnapshotId: string;
   candidateFingerprint: string;
@@ -472,7 +594,10 @@ export interface CloseTaskKernelRequest {
   cwd?: string;
 }
 
-export type CheckTaskCloseRequest = Omit<CloseTaskKernelRequest, "idempotencyKey" | "actor">;
+export type CheckTaskCloseRequest = Omit<
+  CloseTaskKernelRequest,
+  "idempotencyKey" | "actor"
+>;
 
 export interface TaskKernelReadResult {
   kind: "task-kernel-v2";
@@ -484,7 +609,9 @@ export interface LegacyTaskKernelReadResult {
   kernel: ReturnType<typeof readKernel>;
 }
 
-export type AnyTaskKernelReadResult = TaskKernelReadResult | LegacyTaskKernelReadResult;
+export type AnyTaskKernelReadResult =
+  | TaskKernelReadResult
+  | LegacyTaskKernelReadResult;
 
 export interface TaskKernelLifecycleProjection {
   taskId: string;

@@ -36,11 +36,17 @@ import {
   type TaskSnapshotEntry,
 } from "../core/task/index.js";
 import {
+  createTaskCandidateEntry,
+  isRunCandidateObservationEntry,
+  observeTaskRunCandidate,
+} from "../core/task/task-candidate-observer.js";
+import {
   addContextEntry,
   CONTEXT_FILES,
   readContextEntries,
   validateContextFile,
 } from "../pactile/task/context.js";
+import * as piBridge from "../pactile/pi/bridge.js";
 import { approvedExecuteTask } from "../pactile/task/authorization.js";
 import { createTaskWithArtifacts } from "../pactile/task/creation.js";
 import { readPactileConfig } from "../pactile/task/config.js";
@@ -94,6 +100,22 @@ import {
   renderTaskPrdScaffoldV1,
   type TaskArtifactStageV1,
 } from "../pactile/artifacts/index.js";
+
+interface PiTaskRunEvidence {
+  taskId: string;
+  taskRunId: string;
+  evidenceRefs: string[];
+  executionMeasurementRef: string;
+  assurance: "manager-owned-child-exit";
+  outcome: "settled";
+}
+
+function readPiTaskRunEvidence(root: string, taskDir: string, taskRunId: string): PiTaskRunEvidence | null {
+  const reader = (piBridge as unknown as {
+    readPiTaskRunEvidence?: (root: string, taskDir: string, taskRunId: string) => PiTaskRunEvidence | null;
+  }).readPiTaskRunEvidence;
+  return typeof reader === "function" ? reader(root, taskDir, taskRunId) : null;
+}
 
 function option(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -644,6 +666,73 @@ function runResultTask(root: string, args: string[]): number {
             ? { evidenceRef: option(args, "--failure-evidence") }
             : {}),
         };
+  let candidateEntries: TaskSnapshotEntry[] = [];
+  let evidenceRefs = options(args, "--evidence");
+  let executionMeasurementRef = option(args, "--execution-measurement-ref");
+  if (outcome === "completed") {
+    const run = kernel.runs.find((item) => item.id === runId);
+    if (!run)
+      throw new Error(
+        `Run ${runId} does not exist on Task ${kernel.identity.taskId}`,
+      );
+    const candidateInputs = parseCandidateEntries(args);
+    if (
+      candidateInputs.some((entry) => isRunCandidateObservationEntry(entry.ref))
+    ) {
+      throw new Error(
+        "--candidate cannot set a reserved P41 machine-observation reference",
+      );
+    }
+    const piBound = run.host?.host === "pi";
+    let piEvidence: ReturnType<typeof readPiTaskRunEvidence> = null;
+    if (piBound) {
+      if (
+        run.host?.role !== "implement" ||
+        run.host.assuranceSource !== "manager-owned-child-exit"
+      ) {
+        throw new Error(
+          "Pi Run completion requires implement role and manager-owned-child-exit assurance",
+        );
+      }
+      piEvidence = readPiTaskRunEvidence(root, dir, runId);
+      if (!piEvidence) {
+        throw new Error(
+          "Pi Run has no valid settled host-stop and persisted result receipt; it cannot be recorded completed",
+        );
+      }
+      if (
+        piEvidence.taskRunId !== run.id ||
+        piEvidence.taskId !== run.taskId ||
+        piEvidence.outcome !== "settled" ||
+        piEvidence.assurance !== "manager-owned-child-exit"
+      ) {
+        throw new Error(
+          "Pi success evidence does not match the selected Task Run binding",
+        );
+      }
+      const suppliedMeasurement = executionMeasurementRef;
+      if (
+        suppliedMeasurement &&
+        suppliedMeasurement !== piEvidence.executionMeasurementRef
+      ) {
+        throw new Error(
+          "--execution-measurement-ref conflicts with the verified Pi Run receipt",
+        );
+      }
+      executionMeasurementRef = piEvidence.executionMeasurementRef;
+      evidenceRefs = [
+        ...new Set([...evidenceRefs, ...piEvidence.evidenceRefs]),
+      ];
+    }
+    const runObservation = observeTaskRunCandidate({
+      run,
+      ...(run.workspace === null ? { repositoryRoot: root } : {}),
+    });
+    candidateEntries = [
+      ...candidateInputs,
+      createTaskCandidateEntry(runObservation),
+    ];
+  }
   const result = recordTaskRunResult({
     root,
     taskDir: dir,
@@ -653,12 +742,12 @@ function runResultTask(root: string, args: string[]): number {
     ...(option(args, "--summary")
       ? { summary: option(args, "--summary") }
       : {}),
-    evidenceRefs: options(args, "--evidence"),
-    candidateEntries: parseCandidateEntries(args),
+    evidenceRefs,
+    candidateEntries,
     failure,
     measurementRefs: {
-      ...(option(args, "--execution-measurement-ref")
-        ? { execution: option(args, "--execution-measurement-ref") }
+      ...(executionMeasurementRef
+        ? { execution: executionMeasurementRef }
         : {}),
       ...(option(args, "--waiting-measurement-ref")
         ? { waiting: option(args, "--waiting-measurement-ref") }
@@ -772,6 +861,12 @@ function closeTask(root: string, args: string[]): number {
       option(args, "--delivery-summary"),
       "--delivery-summary",
     ),
+    ...(option(args, "--delivery-path")
+      ? { path: option(args, "--delivery-path") }
+      : {}),
+    ...(option(args, "--target-branch")
+      ? { targetBranch: option(args, "--target-branch") }
+      : {}),
   };
   if (!isTaskDeliveryLevel(deliveryEvidence.level))
     throw new Error(
@@ -815,7 +910,7 @@ function closeTask(root: string, args: string[]): number {
       `Task Close check: ${errors.length ? "FAIL" : "PASS"}${errors.length ? `\n${errors.map((error) => `  - ${error}`).join("\n")}` : ""}`,
     );
     console.log(
-      "Candidate freshness: caller-supplied observation is matched to the frozen Run snapshot; Kernel does not recompute current Git or filesystem bytes.",
+      "Candidate freshness: Close re-observes current project state against the frozen Run candidate.",
     );
     return errors.length ? 1 : 0;
   }
@@ -833,7 +928,7 @@ function closeTask(root: string, args: string[]): number {
       `task-close:${kernel.identity.taskId}`,
   });
   console.log(
-    `Task closed: ${result.kernel.identity.taskId}\nDelivery level: ${deliveryEvidence.level}\nCandidate freshness: caller-supplied observation recorded\nKernel revision: ${result.kernel.revision}`,
+    `Task closed: ${result.kernel.identity.taskId}\nDelivery level: ${deliveryEvidence.level}\nCandidate freshness: current project state re-observed\nDelivery evidence: machine-observed\nKernel revision: ${result.kernel.revision}`,
   );
   return 0;
 }

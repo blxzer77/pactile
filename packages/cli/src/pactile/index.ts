@@ -4,6 +4,7 @@ export * from "./runtime/index.js";
 export * from "./lifecycle/index.js";
 export * from "./exit/index.js";
 export * from "./scheduler/index.js";
+export * from "./verification/index.js";
 
 export * from "./tiles/loader.js";
 export * from "./tiles/catalog.js";
