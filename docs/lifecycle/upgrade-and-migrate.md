@@ -23,6 +23,65 @@ record the evidence, and resolve it before `--force`.
 `pactile rollout --project <path> --dry-run --json` can aggregate previews for
 explicitly listed projects; it must not be used as an implicit global scan.
 
+<a id="p36-held-task-reconciliation"></a>
+## Held Task reconciliation after P36 import
+
+P36 imports legacy Task records through the project `update` command. Inspect the
+plan first, then apply the update. In an interactive terminal, confirm
+`pactile update` after review. The `--skip-all` example below is for a confirmed
+non-interactive update that should preserve every locally modified managed file:
+
+```bash
+pactile update --dry-run --json
+pactile update --skip-all --json
+pactile task list
+```
+
+`pactile task list` shows unresolved imported items as `needs definition` or
+`needs dependency coordination` and marks them `not runnable`. Add a missing
+definition or map dependencies only for those held Tasks. Use `--check` to
+inspect the reconciliation plan for one Task before applying it:
+
+```bash
+pactile legacy-task reconcile .pactile/tasks/09-26-v050-migration-sample \
+  --idempotency-key p36-migration-definition-2026-09-26 \
+  --activation-at 2026-09-26T12:00:00.000Z \
+  --deliverable "An explicitly defined migrated Task" \
+  --delivery-level local-result \
+  --accept "The original Task source remains available" \
+  --accept "The V2 Task begins without inferred lifecycle history" \
+  --check
+```
+
+Fill the definition from the source record and project evidence. A
+`needs-coordination` Task also requires an explicit
+`--resolve-dependency "<legacy-reference>=<existing-task-id>"` for every pending
+reference. Pass the same mappings to the check and approved execution. After
+reviewing the plan, use the same arguments and idempotency key, replacing the
+final `--check` with `--approved`:
+
+```bash
+pactile legacy-task reconcile .pactile/tasks/09-26-v050-migration-sample \
+  --idempotency-key p36-migration-definition-2026-09-26 \
+  --activation-at 2026-09-26T12:00:00.000Z \
+  --deliverable "An explicitly defined migrated Task" \
+  --delivery-level local-result \
+  --accept "The original Task source remains available" \
+  --accept "The V2 Task begins without inferred lifecycle history" \
+  --approved
+pactile task artifacts 09-26-v050-migration-sample --agent
+```
+
+`--check` returns a dry run and does not write or activate the Task. `--approved`
+activates only this held Task. Reconciliation uses a new migration generation,
+preserves the original `task.json` and authored documentation byte-for-byte, and
+does not infer V2 Run, Review, or Close history. An activated Task accepts only
+a retry with the same idempotency key and request; a different request cannot
+redefine it. If source files change after import, reconciliation is rejected;
+inspect `pactile task list` and the source state before deciding whether to
+retry. For the structured Task artifact read pattern, see the
+[Chinese structured Task artifacts guide](../capabilities/structured-task-artifacts.zh-CN.md).
+
 ## Existing installations moving to the Node entry (v0.6.0)
 
 Run these commands from each installed project's root after installing the
