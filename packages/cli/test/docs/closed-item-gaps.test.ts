@@ -141,11 +141,26 @@ describe("P43 product template mirrors", () => {
     );
   });
 
-  it("makes design.md conditional for complex planning artifacts", () => {
+  it("keeps design.md conditional across planning templates", () => {
     const brainstorm = readUtf8(
       path.join(templates, "common/skills/brainstorm.md"),
     );
+    const frontier = readUtf8(
+      path.join(templates, "markdown/framework/prd-grill-frontier.md.txt"),
+    );
+    const defineExtended = readUtf8(
+      path.join(templates, "pactile/modules/define-extended/contract.md"),
+    );
 
+    expect(defineExtended).toContain(
+      "Design 角色仅当 Risk/Policy 或 `verification_profile: architecture` 要求时才成为必产出",
+    );
+    expect(brainstorm).toContain(
+      "Add `design.md` only when Risk/Policy or `verification_profile: architecture` requires it",
+    );
+    expect(brainstorm).toContain(
+      "`design.md` records technical design when Risk/Policy or `verification_profile: architecture` requires it:",
+    );
     expect(brainstorm).toContain(
       "Complex tasks must have `prd.md` and `implement.md`",
     );
@@ -155,7 +170,20 @@ describe("P43 product template mirrors", () => {
     expect(brainstorm).toContain(
       "Complex tasks: `implement.md` present; `design.md` only when Risk/Policy or `verification_profile: architecture` requires it",
     );
+    expect(frontier).toContain(
+      "`design.md` records technical design when Risk/Policy or `verification_profile: architecture` requires it",
+    );
+    expect(frontier).toContain(
+      "Complex tasks need `prd.md` and `implement.md` before `start-execution --check`",
+    );
+    expect(frontier).toContain(
+      "Complex tasks: `implement.md` present; `design.md` only when Risk/Policy or `verification_profile: architecture` requires it",
+    );
     expect(brainstorm).not.toContain(
+      "Complex tasks: `design.md` and `implement.md` present",
+    );
+    expect(frontier).not.toContain("Complex tasks need all three");
+    expect(frontier).not.toContain(
       "Complex tasks: `design.md` and `implement.md` present",
     );
   });

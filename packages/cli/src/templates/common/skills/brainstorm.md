@@ -94,7 +94,7 @@ After Discovery, flesh out `prd.md`:
 - out of scope
 - open questions (tag **blocking** vs **nice-to-have**)
 
-For complex tasks, start `design.md` / `implement.md` skeletons only when boundaries are already clear from Discovery; otherwise wait until Phase B.
+For complex tasks, start the `implement.md` skeleton when boundaries are clear from Discovery. Add `design.md` only when Risk/Policy or `verification_profile: architecture` requires it; if boundaries are unclear, resolve blocking questions before drafting the artifacts.
 
 ## Phase B — Optional PRD Grill pass
 
@@ -165,7 +165,7 @@ Your recommended answer defaults to Occam's Razor: the **minimal sufficient** op
 - out of scope
 - open questions that still block planning
 
-`design.md` records technical design for complex tasks:
+`design.md` records technical design when Risk/Policy or `verification_profile: architecture` requires it:
 
 - architecture and boundaries
 - data flow and contracts
