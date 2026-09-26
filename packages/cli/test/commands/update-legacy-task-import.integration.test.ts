@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import inquirer from "inquirer";
+import { fileURLToPath } from "node:url";
 
 vi.mock("figlet", () => ({ default: { textSync: vi.fn(() => "PACTILE") } }));
 vi.mock("inquirer", () => ({
@@ -21,12 +22,15 @@ vi.mock("node:child_process", () => ({
 }));
 
 import { init } from "../../src/commands/init.js";
+import { runTaskCli } from "../../src/commands/task.js";
 import { update } from "../../src/commands/update.js";
 import { buildLegacyTaskV2Import } from "../../src/core/task/legacy-task-v2-import.js";
 import { scanLegacyTaskMigration } from "../../src/core/task/legacy-task-migration.js";
 import { VERSION } from "../../src/constants/version.js";
 import {
   legacyTaskMigrationOverlayPath,
+  readLegacyTaskImportRecord,
+  readLegacyTaskMigrationView,
 } from "../../src/core/task/legacy-task-migration-reader.js";
 import { readTaskKernel, startTaskRun } from "../../src/core/task/task-kernel.js";
 import {
@@ -35,6 +39,9 @@ import {
 } from "../../src/pactile/migration/legacy-task-batch.js";
 
 const roots: string[] = [];
+const P36_HISTORY_FIXTURE_ROOT = fileURLToPath(
+  new URL("../fixtures/pactile/p36-legacy-task-source/input", import.meta.url),
+);
 let originalIsTTY: PropertyDescriptor | undefined;
 let root: string;
 
@@ -290,21 +297,128 @@ describe("pactile update legacy Task import", () => {
     ).not.toHaveLength(0);
   });
 
-  it("refuses a damaged legacy Kernel before update writes an authority pointer", async () => {
+  it("keeps a damaged legacy Kernel held and recoverable while update imports other Tasks", async () => {
     const taskDir = addLegacyTask({ damagedKernel: true });
     const sourceBytes = fs.readFileSync(path.join(taskDir, "task.json"));
-    await expect(
-      update({ force: true, skipReadiness: true, skipPostUpdateSmoke: true }),
-    ).rejects.toThrow(/Legacy Task migration preflight blocked/);
-    expect(readPreparedLegacyTaskBatch(root)).toBeNull();
-    expect(
-      fs.existsSync(
-        projectFile(".pactile", "runtime", "legacy-task-migrations"),
-      ),
-    ).toBe(false);
+    const kernelBytes = fs.readFileSync(path.join(taskDir, "kernel.json"));
+    await update({ force: true, skipReadiness: true, skipPostUpdateSmoke: true });
+    const record = readLegacyTaskImportRecord(root, taskDir);
+    expect(record).toMatchObject({
+      status: "needs-definition",
+      missingDefinitionFields: ["legacyHistoryGap"],
+      legacyHistoryDiagnostics: ["legacy-kernel-unparsed:.pactile/tasks/09-26-legacy-task/kernel.json"],
+    });
+    expect(readPreparedLegacyTaskBatch(root)).toMatchObject({ visibility: "active-v2" });
+    expect(() => readTaskKernel({ root, taskDir, cwd: root })).toThrow(
+      /needs definition fields before it can run: legacyHistoryGap/,
+    );
     expect(
       fs.readFileSync(path.join(taskDir, "task.json")).equals(sourceBytes),
     ).toBe(true);
+    expect(fs.readFileSync(path.join(taskDir, "kernel.json"))).toEqual(kernelBytes);
+    const authorityPath = projectFile(
+      ".pactile",
+      "runtime",
+      "legacy-task-migrations",
+      "authority.json",
+    );
+    const pointer = fs.readFileSync(authorityPath);
+    await update({ force: true, skipReadiness: true, skipPostUpdateSmoke: true });
+    expect(fs.readFileSync(authorityPath)).toEqual(pointer);
+    expect(readLegacyTaskImportRecord(root, taskDir)?.status).toBe(
+      "needs-definition",
+    );
+  });
+
+  it("indexes archived history automatically without a Kernel and keeps it read-only across repeated update", async () => {
+    const archivedSource = path.join(
+      P36_HISTORY_FIXTURE_ROOT,
+      ".pactile",
+      "tasks",
+      "archive",
+      "2026-08",
+      "08-20-closed-lite",
+    );
+    const archivedTaskDir = projectFile(
+      ".pactile",
+      "tasks",
+      "archive",
+      "2026-08",
+      "08-20-closed-lite",
+    );
+    fs.cpSync(archivedSource, archivedTaskDir, { recursive: true });
+    const original = new Map(
+      fs
+        .readdirSync(archivedTaskDir)
+        .map((name) => [name, fs.readFileSync(path.join(archivedTaskDir, name))]),
+    );
+    addLegacyTask();
+
+    await update({ force: true, skipReadiness: true, skipPostUpdateSmoke: true });
+
+    expect(readLegacyTaskImportRecord(root, archivedTaskDir)).toMatchObject({
+      status: "archived-historical-only",
+      taskPath: ".pactile/tasks/archive/2026-08/08-20-closed-lite",
+      legacySourceMetadata: {
+        fileReferences: {
+          taskJson: { path: ".pactile/tasks/archive/2026-08/08-20-closed-lite/task.json" },
+        },
+      },
+    });
+    expect(readLegacyTaskMigrationView(root)?.files.has(
+      ".pactile/tasks/archive/2026-08/08-20-closed-lite/kernel.json",
+    )).toBe(false);
+    for (const [name, bytes] of original)
+      expect(fs.readFileSync(path.join(archivedTaskDir, name))).toEqual(bytes);
+
+    const archiveRecordBytes = fs.readFileSync(
+      path.join(
+        root,
+        ".pactile",
+        "runtime",
+        "legacy-task-migrations",
+        "generations",
+        readPreparedLegacyTaskBatch(root)?.generationId ?? "missing",
+        "files",
+        ".pactile",
+        "tasks",
+        "archive",
+        "2026-08",
+        "08-20-closed-lite",
+        "legacy-import.json",
+      ),
+    );
+    const authority = fs.readFileSync(
+      projectFile(".pactile", "runtime", "legacy-task-migrations", "authority.json"),
+    );
+    await update({ force: true, skipReadiness: true, skipPostUpdateSmoke: true });
+    expect(fs.readFileSync(
+      path.join(
+        root,
+        ".pactile",
+        "runtime",
+        "legacy-task-migrations",
+        "generations",
+        readPreparedLegacyTaskBatch(root)?.generationId ?? "missing",
+        "files",
+        ".pactile",
+        "tasks",
+        "archive",
+        "2026-08",
+        "08-20-closed-lite",
+        "legacy-import.json",
+      ),
+    )).toEqual(archiveRecordBytes);
+    expect(fs.readFileSync(
+      projectFile(".pactile", "runtime", "legacy-task-migrations", "authority.json"),
+    )).toEqual(authority);
+    const listStart = vi.mocked(console.log).mock.calls.length;
+    expect(runTaskCli(["list"], root)).toBe(0);
+    const listOutput = vi.mocked(console.log).mock.calls
+      .slice(listStart)
+      .map((call) => String(call[0]))
+      .join("\n");
+    expect(listOutput).not.toContain("archive/2026-08/08-20-closed-lite");
   });
 
   it("blocks an update retry when an active V2 overlay was removed", async () => {

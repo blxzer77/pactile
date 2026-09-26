@@ -22,6 +22,9 @@ const ORPHAN_CANDIDATE_FILES = new Set([
   TASK_MAP_MD,
   "prd.md",
   "verify.md",
+  "design.md",
+  "implement.md",
+  "handoff.md",
 ]);
 const SOURCE_COMPLETENESS_FINDINGS = new Set<LegacyMigrationFindingCode>([
   "source-directory-unreadable",
@@ -156,8 +159,8 @@ export interface LegacyTaskSource {
   typeMarkers: {
     topLevel: Record<string, unknown>;
     meta: Record<string, unknown>;
-    requiredControls: unknown;
-    topology: unknown;
+    requiredControls: LegacyFieldFact;
+    topology: LegacyFieldFact;
   };
   dependencies: {
     taskJsonDependsOn: LegacyFieldFact;
@@ -528,7 +531,7 @@ function buildTaskSource(
       findings,
       projectRoot,
       "invalid-kernel-json",
-      "blocker",
+      "warning",
       path.join(
         projectRoot,
         kernelFile?.path.replaceAll("/", path.sep) ?? "kernel.json",
@@ -645,8 +648,8 @@ function buildTaskSource(
         "task_type",
         "mode",
       ]),
-      requiredControls: record?.required_controls,
-      topology: record?.topology,
+      requiredControls: fact(record, "required_controls"),
+      topology: fact(record, "topology"),
     },
     dependencies: {
       taskJsonDependsOn: dependsOn,

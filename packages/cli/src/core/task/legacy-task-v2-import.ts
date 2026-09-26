@@ -22,7 +22,7 @@ import {
 
 const TASK_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const PLACEHOLDER =
-  /^(?:\[[ xX]\]\s*)?(?:tbd|todo|tba|n\/?a|to be determined|to be supplied)(?:[.!…]*)$/i;
+  /^(?:\[[ xX]\]\s*)?(?:tbd|todo|tba|n\/?a|to be determined|to be supplied|待补充|待定义|未定义|待确定|待完善)(?:[.!…]*)$/i;
 
 export interface LegacyTaskV2ImportTarget {
   readonly path: string;
@@ -36,11 +36,19 @@ export interface LegacyTaskV2ImportSummary {
   readonly needsDefinition: number;
   readonly needsCoordination: number;
   readonly archived: number;
+  readonly archivedTasks: readonly {
+    readonly taskPath: string;
+    readonly legacyTaskId: string;
+    readonly missingDefinitionFields: readonly string[];
+    readonly sourceFiles: readonly { path: string; fingerprint: string }[];
+  }[];
   readonly diagnostics: readonly string[];
 }
 
 export interface LegacyTaskV2ReconciliationInput {
   readonly taskPath: string;
+  /** Required when explicitly restoring an archived source into an active path. */
+  readonly targetTaskPath?: string;
   readonly idempotencyKey: string;
   readonly activationAt: string;
   /** Added by the transaction writer; callers must not choose this value. */
@@ -52,6 +60,8 @@ export interface LegacyTaskV2ReconciliationInput {
       readonly createdAt?: string;
       readonly acceptanceCriteria?: readonly string[];
   };
+  /** Explicitly acknowledge a malformed source Kernel before starting a fresh Define lifecycle. */
+  readonly acknowledgeLegacyHistoryGap?: boolean;
   readonly dependencyResolutions?: readonly {
     readonly reference: string;
     readonly taskId: string;
@@ -90,6 +100,7 @@ interface ParsedTaskMap {
   readonly topLevelDependsMode: unknown;
   readonly hasTopLevelDependsMode: boolean;
   readonly topLevelDependsParseInvalid: boolean;
+  readonly topLevelDependsModeParseInvalid: boolean;
   readonly unsupported: boolean;
 }
 
@@ -99,6 +110,7 @@ interface TaskImportAssessment {
   readonly hardDependencies: Set<string>;
   readonly dependencyDiagnostics: string[];
   readonly coordinationReasons: Set<string>;
+  readonly legacyHistoryDiagnostics: string[];
   readonly missingDefinitionFields: Set<string>;
   title: string | null;
   description: string;
@@ -132,6 +144,33 @@ function factValue(fact: { present: boolean; value?: unknown }): unknown {
   return fact.present ? fact.value : undefined;
 }
 
+function canonicalActiveTaskPath(value: string): string {
+  if (
+    !value ||
+    value.length > 2048 ||
+    value.includes("\\") ||
+    value.startsWith("/") ||
+    /^[A-Za-z]:/.test(value)
+  ) throw new Error("legacy-task-reconciliation-target-path-invalid");
+  const relative = value.startsWith(".pactile/tasks/")
+    ? value.slice(".pactile/tasks/".length)
+    : value;
+  const parts = relative.split("/");
+  if (
+    parts.length === 0 ||
+    parts.length > 32 ||
+    parts.some(
+      (part) =>
+        !part ||
+        part === "." ||
+        part === ".." ||
+        part.length > 255 ||
+        part.toLowerCase() === "archive",
+    )
+  ) throw new Error("legacy-task-reconciliation-target-path-invalid");
+  return `.pactile/tasks/${parts.join("/")}`;
+}
+
 function nonPlaceholder(value: unknown): value is string {
   return (
     typeof value === "string" &&
@@ -152,7 +191,7 @@ function parseModeFacts(
   );
   if (normalized.length === 0) return { state: "warn", raw };
   if (normalized.some((value) => !["block", "warn", "off"].includes(value))) {
-    return { state: normalized.includes("block") ? "conflict" : "warn", raw };
+    return { state: "conflict", raw };
   }
   if (new Set(normalized).size > 1) {
     return { state: normalized.includes("block") ? "conflict" : "warn", raw };
@@ -229,6 +268,7 @@ function parseTaskMap(text: string): ParsedTaskMap {
       topLevelDependsMode: undefined,
       hasTopLevelDependsMode: false,
       topLevelDependsParseInvalid: false,
+      topLevelDependsModeParseInvalid: false,
       unsupported: true,
     };
   }
@@ -240,6 +280,7 @@ function parseTaskMap(text: string): ParsedTaskMap {
   let topLevelDependsOn: unknown[] = [];
   let hasTopLevelDependsOn = false;
   let topLevelDependsParseInvalid = false;
+  let topLevelDependsModeParseInvalid = false;
   let topLevelDependsMode: unknown;
   let hasTopLevelDependsMode = false;
   const parseListValue = (
@@ -271,14 +312,45 @@ function parseTaskMap(text: string): ParsedTaskMap {
       inChildren = line.startsWith("children:");
       const topMode = line.match(/^depends_mode:\s*(.*?)\s*$/);
       if (topMode) {
+        if (hasTopLevelDependsMode) {
+          unsupported = true;
+          topLevelDependsModeParseInvalid = true;
+        }
         hasTopLevelDependsMode = true;
         topLevelDependsMode = parseYamlScalar(topMode[1] ?? "");
-        if (topLevelDependsMode === null) unsupported = true;
+        if (topLevelDependsMode === null) {
+          unsupported = true;
+          topLevelDependsModeParseInvalid = true;
+        }
       }
       const topDeps = line.match(/^depends_on:\s*(.*?)\s*$/);
       if (topDeps) {
+        if (hasTopLevelDependsOn) {
+          unsupported = true;
+          topLevelDependsParseInvalid = true;
+        }
         hasTopLevelDependsOn = true;
-        const parsed = parseListValue(topDeps[1] ?? "");
+        const raw = topDeps[1] ?? "";
+        let parsed = parseListValue(raw);
+        if (!raw.trim()) {
+          const nested: string[] = [];
+          let lookahead = index + 1;
+          while (lookahead < lines.length && /^\s{2}-\s+/.test(lines[lookahead] ?? "")) {
+            const nestedLine = lines[lookahead] ?? "";
+            const item = parseYamlScalar(nestedLine.replace(/^\s{2}-\s+/, ""));
+            if (item === null) {
+              unsupported = true;
+              topLevelDependsParseInvalid = true;
+            } else nested.push(item);
+            lookahead++;
+          }
+          if (/^\s+-\s+/.test(lines[lookahead] ?? "")) {
+            unsupported = true;
+            topLevelDependsParseInvalid = true;
+          }
+          parsed = { valid: !topLevelDependsParseInvalid, values: nested };
+          index = lookahead - 1;
+        }
         if (!parsed.valid) {
           unsupported = true;
           topLevelDependsParseInvalid = true;
@@ -293,6 +365,10 @@ function parseTaskMap(text: string): ParsedTaskMap {
     if (!current || !inChildren) continue;
     const mode = line.match(/^\s{4}depends_mode:\s*(.*?)\s*$/);
     if (mode) {
+      if (current.dependsMode !== undefined) {
+        unsupported = true;
+        current.dependsModeParseInvalid = true;
+      }
       current.dependsMode = parseYamlScalar(mode[1] ?? "");
       if (current.dependsMode === null) {
         unsupported = true;
@@ -302,6 +378,10 @@ function parseTaskMap(text: string): ParsedTaskMap {
     }
     const dependency = line.match(/^\s{4}depends_on:\s*(.*?)\s*$/);
     if (dependency) {
+      if (current.hasDependsOn) {
+        unsupported = true;
+        current.dependencyParseInvalid = true;
+      }
       current.hasDependsOn = true;
       const raw = dependency[1] ?? "";
       if (raw.trim()) {
@@ -328,6 +408,10 @@ function parseTaskMap(text: string): ParsedTaskMap {
           } else nested.push(item);
           lookahead++;
         }
+        if (/^\s+-\s+/.test(lines[lookahead] ?? "")) {
+          unsupported = true;
+          current.dependencyParseInvalid = true;
+        }
         current.dependsOn = nested;
       }
       continue;
@@ -344,6 +428,7 @@ function parseTaskMap(text: string): ParsedTaskMap {
     topLevelDependsMode,
     hasTopLevelDependsMode,
     topLevelDependsParseInvalid,
+    topLevelDependsModeParseInvalid,
     unsupported,
   };
 }
@@ -471,6 +556,11 @@ function taskMapDeclarations(
         );
       }
     }
+    if (parsed.topLevelDependsModeParseInvalid) {
+      parentAssessment?.coordinationReasons.add(
+        "task-map-top-level-dependency-mode-unparsed",
+      );
+    }
     for (const entry of parsed.entries) {
       if (!entry.dependencyParseInvalid && !entry.dependsModeParseInvalid)
         continue;
@@ -494,6 +584,12 @@ function taskMapDeclarations(
           )
         : parseModeFacts([], rowMode);
       if (mode.state === "warn" || mode.state === "off") {
+        if (entry.dependsModeParseInvalid) {
+          (ownerAssessment ?? parentAssessment)?.coordinationReasons.add(
+            "task-map-dependency-mode-unparsed",
+          );
+          continue;
+        }
         (ownerAssessment ?? parentAssessment)?.dependencyDiagnostics.push(
           `${mode.state}-task-map-dependency-frontmatter-unparsed:${parent.taskMap.path}`,
         );
@@ -521,7 +617,9 @@ function parsePrdAcceptanceCriteria(
   if (prd?.encoding !== "utf8") return null;
   const lines = prd.content.split(/\r?\n/);
   const headings = lines.flatMap((line, index) => {
-    const match = line.match(/^(#{1,6})\s+Acceptance Criteria\s*#*\s*$/i);
+    const match = line.match(
+      /^(#{1,6})\s+(?:Acceptance Criteria|验收标准)\s*#*\s*$/i,
+    );
     return match ? [{ index, level: (match[1] ?? "").length }] : [];
   });
   if (headings.length !== 1) return null;
@@ -577,12 +675,18 @@ function assessmentFor(source: LegacyTaskSource): TaskImportAssessment {
   ) {
     missingDefinitionFields.add("createdAt");
   }
+  if (source.kernelJson?.parseError) {
+    missingDefinitionFields.add("legacyHistoryGap");
+  }
   return {
     source,
     taskId,
     hardDependencies: new Set(),
     dependencyDiagnostics: [],
     coordinationReasons: new Set(),
+    legacyHistoryDiagnostics: source.kernelJson?.parseError
+      ? [`legacy-kernel-unparsed:${source.kernelJson.file.path}`]
+      : [],
     missingDefinitionFields,
     title,
     description: typeof raw.description === "string" ? raw.description : "",
@@ -649,6 +753,13 @@ function applyReconciliationDefinition(
       id: `legacy-ac-${index + 1}-${stableHash({ path: assessment.source.directory, description: description.trim() }).slice(0, 8)}`,
       description: description.trim(),
     }));
+  }
+  if (input.acknowledgeLegacyHistoryGap === true) {
+    if (
+      !assessment.legacyHistoryDiagnostics.length ||
+      !assessment.missingDefinitionFields.has("legacyHistoryGap")
+    ) throw new Error("legacy-task-reconciliation-history-gap-acknowledgement-not-required");
+    assessment.missingDefinitionFields.delete("legacyHistoryGap");
   }
 }
 
@@ -834,6 +945,7 @@ function importedSnapshot(
 function importRecord(
   assessment: TaskImportAssessment,
   sourceFingerprint: string,
+  statusOverride?: "archived-historical-only",
 ): Record<string, unknown> {
   const dependencies = assessment.source.dependencies;
   const modeFacts = [
@@ -847,10 +959,12 @@ function importRecord(
     : assessment.missingDefinitionFields.size
       ? "needs-definition"
       : "imported";
+  const taskJson = assessment.source.taskJson?.file;
+  const taskMap = assessment.source.taskMap;
   return {
     schemaVersion: 1,
     kind: "legacy-task-import-record",
-    status,
+    status: statusOverride ?? status,
     taskPath: assessment.source.directory,
     legacyTaskId: assessment.taskId,
     sourceFingerprint,
@@ -858,6 +972,19 @@ function importRecord(
       path: file.path,
       fingerprint: file.sha256,
     })),
+    legacySourceMetadata: {
+      parent: assessment.source.parent,
+      children: assessment.source.children,
+      typeMarkers: assessment.source.typeMarkers,
+      fileReferences: {
+        taskJson: taskJson
+          ? { path: taskJson.path, fingerprint: taskJson.sha256 }
+          : null,
+        taskMap: taskMap
+          ? { path: taskMap.path, fingerprint: taskMap.sha256 }
+          : null,
+      },
+    },
     historicalStatus: assessment.source.status,
     dependencyFacts: {
       taskJsonDependsOn: dependencies.taskJsonDependsOn,
@@ -870,6 +997,7 @@ function importRecord(
       ].sort(),
       rawModes: modeFacts,
     },
+    legacyHistoryDiagnostics: [...assessment.legacyHistoryDiagnostics].sort(),
     missingDefinitionFields: [...assessment.missingDefinitionFields].sort(),
     coordinationReasons: [...assessment.coordinationReasons].sort(),
   };
@@ -891,6 +1019,7 @@ export function buildLegacyTaskV2Import(
       needsDefinition: 0,
       needsCoordination: 0,
       archived: plan.tasks.filter((task) => task.archivedByPath).length,
+      archivedTasks: [],
       diagnostics: ["legacy-task-preflight-blocked"],
     };
   }
@@ -908,7 +1037,27 @@ export function buildLegacyTaskV2Import(
     addDependencyDeclarations(declaration, plan.tasks, byDirectory);
   markHardDependencyCycles(assessments);
 
+  const archivedAssessments = plan.tasks
+    .filter((task) => task.archivedByPath)
+    .map(assessmentFor);
+  const archivedTasks = archivedAssessments.map((assessment) => ({
+    taskPath: assessment.source.directory,
+    legacyTaskId: assessment.taskId,
+    missingDefinitionFields: [...assessment.missingDefinitionFields].sort(),
+    sourceFiles: assessment.source.files.map((file) => ({
+      path: file.path,
+      fingerprint: file.sha256,
+    })),
+  }));
   const targets: LegacyTaskV2ImportTarget[] = [];
+  for (const assessment of archivedAssessments) {
+    targets.push({
+      path: `${assessment.source.directory}/legacy-import.json`,
+      bytes: jsonBytes(
+        importRecord(assessment, plan.sourceFingerprint, "archived-historical-only"),
+      ),
+    });
+  }
   const diagnostics: string[] = [];
   let imported = 0;
   let needsDefinition = 0;
@@ -963,6 +1112,7 @@ export function buildLegacyTaskV2Import(
     needsDefinition,
     needsCoordination,
     archived: plan.tasks.filter((task) => task.archivedByPath).length,
+    archivedTasks,
     diagnostics: [...new Set(diagnostics)].sort(),
   };
 }
@@ -983,16 +1133,35 @@ export function buildLegacyTaskV2Reconciliation(
     Number.isNaN(Date.parse(input.activationAt))
   ) throw new Error("legacy-task-reconciliation-preflight-blocked");
   const source = plan.tasks.find((task) => task.directory === input.taskPath);
-  if (!source || source.archivedByPath)
-    throw new Error("legacy-task-reconciliation-task-not-active");
+  if (!source)
+    throw new Error("legacy-task-reconciliation-task-not-found");
   const active = plan.tasks.filter((task) => !task.archivedByPath);
-  const assessments = active.map((task) => assessmentFor(task));
+  const targetTaskPath = input.targetTaskPath
+    ? canonicalActiveTaskPath(input.targetTaskPath)
+    : source.directory;
+  const isArchivedSource = source.archivedByPath;
+  const isInterruptedSource = Boolean(source.kernelJson?.parseError);
+  const requiresSeparateTarget =
+    isArchivedSource ||
+    isInterruptedSource && input.acknowledgeLegacyHistoryGap === true;
+  if (
+    requiresSeparateTarget && !input.targetTaskPath ||
+    !requiresSeparateTarget && input.targetTaskPath && targetTaskPath !== source.directory ||
+    isInterruptedSource && input.acknowledgeLegacyHistoryGap !== true && input.targetTaskPath !== undefined ||
+    targetTaskPath.split("/").some((part) => part.toLowerCase() === "archive") ||
+    plan.tasks.some((task) => task.directory === targetTaskPath && targetTaskPath !== source.directory)
+  ) throw new Error("legacy-task-reconciliation-target-path-invalid");
+  const assessments = [
+    ...active.map((task) => assessmentFor(task)),
+    ...(isArchivedSource ? [assessmentFor(source)] : []),
+  ];
   const byDirectory = new Map(assessments.map((item) => [item.source.directory, item]));
   const finalAssessment = byDirectory.get(source.directory);
   if (!finalAssessment || finalAssessment.missingDefinitionFields.has("taskId"))
     throw new Error("legacy-task-reconciliation-task-id-invalid");
   applyReconciliationDefinition(finalAssessment, input);
-  const declarations = active.flatMap((task) => {
+  const dependencySources = isArchivedSource ? [...active, source] : active;
+  const declarations = dependencySources.flatMap((task) => {
     const jsonDeclaration = explicitTaskJsonDeclaration(task);
     return jsonDeclaration ? [jsonDeclaration] : [];
   });
@@ -1042,7 +1211,10 @@ export function buildLegacyTaskV2Reconciliation(
     reference: item.reference.trim(),
     taskId: item.taskId,
   }));
+  if (isInterruptedSource && input.acknowledgeLegacyHistoryGap !== true)
+    throw new Error("legacy-task-reconciliation-history-gap-acknowledgement-required");
   const record = importRecord(reconciledAssessment, plan.sourceFingerprint);
+  record.taskPath = targetTaskPath;
   record.reconciliation = {
     schemaVersion: 1,
     kind: "explicit-legacy-task-reconciliation",
@@ -1050,11 +1222,14 @@ export function buildLegacyTaskV2Reconciliation(
     idempotencyKey: input.idempotencyKey,
     requestFingerprint: input.requestFingerprint ?? null,
     suppliedDefinition: input.definition ?? {},
+    ...(input.acknowledgeLegacyHistoryGap === true
+      ? { acknowledgedLegacyHistoryGap: true }
+      : {}),
     resolvedDependencies,
     historyPolicy: "legacy-lifecycle-remains-source-only",
   };
   const kernel = importedSnapshot(reconciledAssessment, plan.sourceFingerprint, input.activationAt);
-  const root = source.directory;
+  const root = targetTaskPath;
   return {
     targets: [
       { path: `${root}/legacy-import.json`, bytes: jsonBytes(record) },

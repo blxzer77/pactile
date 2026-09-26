@@ -5,13 +5,18 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { scanLegacyTaskMigration } from "../core/task/legacy-task-migration.js";
+import { buildLegacyTaskV2Import } from "../core/task/legacy-task-v2-import.js";
+import {
+  readLegacyTaskImportRecord,
+  readLegacyTaskMigrationView,
+} from "../core/task/legacy-task-migration-reader.js";
 import { runLegacyTaskReconciliation } from "../pactile/migration/legacy-task-reconciliation.js";
 import { readLegacyTaskHeldSource } from "../pactile/migration/legacy-task-held-source-reader.js";
 
 const HELP = `
 Pactile legacy Task compatibility
 
-  legacy-task reconcile <task-path> --idempotency-key <key> --activation-at <ISO-time> [definition fields] [--resolve-dependency <raw-ref>=<task-id>] [--approved|--check]
+  legacy-task reconcile <task-path> --idempotency-key <key> --activation-at <ISO-time> [--target-path <active-task-path>] [--acknowledge-history-gap] [definition fields] [--resolve-dependency <raw-ref>=<task-id>] [--approved|--check]
   legacy-task history <archive-relative-path|held/<active-task-path>> [--json]
 
 Reconciliation only activates a Task after its missing definition and blocking references are explicitly resolved.
@@ -35,6 +40,7 @@ function parseArgs(args: string[]): ParsedArgs {
   const valueOptions = new Set([
     "--idempotency-key",
     "--activation-at",
+    "--target-path",
     "--title",
     "--deliverable",
     "--delivery-level",
@@ -47,6 +53,7 @@ function parseArgs(args: string[]): ParsedArgs {
     "--check",
     "--json",
     "--cancel",
+    "--acknowledge-history-gap",
   ]);
   const repeatableValueOptions = new Set(["--accept", "--resolve-dependency"]);
   for (let index = 0; index < args.length; index++) {
@@ -191,21 +198,37 @@ function showHistory(args: string[], root: string): number {
     | {
         taskPath: string;
         status: "archived-historical-only";
+        missingDefinitionFields: readonly string[];
         runnable: false;
         lifecyclePolicy: "source-only-no-v2-run-review-or-close";
         files: ReturnType<typeof historyFiles>;
       };
   if (taskPath.startsWith("archive/")) {
-    const files = historyFiles(root, taskPath);
-    if (!files.some((file) => file.path.endsWith("/task.json")))
-      throw new Error("archived-task-history-task-json-missing");
-    result = {
-      taskPath,
-      status: "archived-historical-only",
-      runnable: false,
-      lifecyclePolicy: "source-only-no-v2-run-review-or-close",
-      files,
-    };
+    const archiveDir = path.join(root, ".pactile", "tasks", ...taskPath.split("/"));
+    const migrationView = readLegacyTaskMigrationView(root);
+    const importRecord = migrationView
+      ? readLegacyTaskImportRecord(root, archiveDir, migrationView)
+      : null;
+    if (importRecord?.status === "archived-historical-only") {
+      result = readLegacyTaskHeldSource(root, taskPath);
+    } else {
+      const files = historyFiles(root, taskPath);
+      if (!files.some((file) => file.path.endsWith("/task.json")))
+        throw new Error("archived-task-history-task-json-missing");
+      const inspected = buildLegacyTaskV2Import(
+        scanLegacyTaskMigration({ projectRoot: root }),
+      ).archivedTasks.find(
+        (item) => item.taskPath === `.pactile/tasks/${taskPath}`,
+      );
+      result = {
+        taskPath,
+        status: "archived-historical-only",
+        missingDefinitionFields: inspected?.missingDefinitionFields ?? [],
+        runnable: false,
+        lifecyclePolicy: "source-only-no-v2-run-review-or-close",
+        files,
+      };
+    }
   } else if (taskPath.startsWith("held/")) {
     result = readLegacyTaskHeldSource(root, taskPath.slice("held/".length));
   } else {
@@ -235,7 +258,7 @@ async function reconcile(args: string[], root: string): Promise<number> {
   const parsed = parseArgs(args);
   if (
     [...parsed.flags].some(
-      (flag) => !["--approved", "--check", "--cancel"].includes(flag),
+      (flag) => !["--approved", "--check", "--cancel", "--acknowledge-history-gap"].includes(flag),
     ) ||
     (parsed.flags.has("--check") && parsed.flags.has("--cancel")) ||
     (parsed.flags.has("--approved") &&
@@ -249,6 +272,9 @@ async function reconcile(args: string[], root: string): Promise<number> {
     );
   const idempotencyKey = option(parsed, "--idempotency-key");
   const activationAt = option(parsed, "--activation-at");
+  const targetTaskPath = option(parsed, "--target-path");
+  if (taskPath.startsWith("archive/") && !targetTaskPath)
+    throw new Error("archived-task-reconcile-requires-target-path");
   if (!idempotencyKey || !activationAt)
     throw new Error(
       "--idempotency-key and --activation-at are required for repeatable reconciliation",
@@ -292,6 +318,10 @@ async function reconcile(args: string[], root: string): Promise<number> {
       plan,
       input: {
         taskPath,
+        ...(targetTaskPath ? { targetTaskPath } : {}),
+        ...(parsed.flags.has("--acknowledge-history-gap")
+          ? { acknowledgeLegacyHistoryGap: true }
+          : {}),
         idempotencyKey,
         activationAt,
         definition,

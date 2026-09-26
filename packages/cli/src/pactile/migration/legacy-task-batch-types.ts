@@ -197,7 +197,10 @@ export function fingerprintSources(
 
 export function canonicalTargetPath(value: string): string {
   const normalized = normalizeRuntimeRelativePath(value);
-  if (normalized.split("/").some((part) => part.toLowerCase() === "archive"))
+  if (
+    normalized.split("/").some((part) => part.toLowerCase() === "archive") &&
+    !normalized.endsWith("/legacy-import.json")
+  )
     throw new Error("archived-target-write-forbidden");
   return normalized;
 }
@@ -233,6 +236,26 @@ export function normalizeRequest(
       .map((target): NormalizedTarget => {
         const targetPath = canonicalTargetPath(target.path);
         const bytes = Buffer.from(target.bytes);
+        if (targetPath.split("/").some((part) => part.toLowerCase() === "archive")) {
+          const taskPath = targetPath.slice(0, -"/legacy-import.json".length);
+          const source = plan.tasks.find(
+            (task) => task.directory === taskPath && task.archivedByPath,
+          );
+          let record: unknown;
+          try {
+            record = JSON.parse(bytes.toString("utf8")) as unknown;
+          } catch {
+            throw new Error("archived-target-record-invalid");
+          }
+          if (
+            !source ||
+            !record ||
+            typeof record !== "object" ||
+            Array.isArray(record) ||
+            (record as { status?: unknown }).status !== "archived-historical-only" ||
+            (record as { taskPath?: unknown }).taskPath !== taskPath
+          ) throw new Error("archived-target-record-invalid");
+        }
         return { path: targetPath, bytes, fingerprint: digest(bytes) };
       })
       .sort((left, right) =>

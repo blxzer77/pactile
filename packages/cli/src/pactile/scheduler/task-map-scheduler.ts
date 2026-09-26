@@ -170,7 +170,7 @@ interface ReconciliationIndexedTask {
 type TaskKernelGraphIndexedTask = IndexedTask | ReconciliationIndexedTask;
 type ReconciliationStatus = Exclude<
   LegacyTaskImportRecord["status"],
-  "imported"
+  "imported" | "archived-historical-only"
 >;
 
 interface SelectedTask extends IndexedTask {

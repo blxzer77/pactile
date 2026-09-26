@@ -56,6 +56,10 @@ pactile task artifacts 09-26-v050-migration-sample --agent
 
 `--check` 返回 dry-run 且不写入、不激活 Task；`--approved` 只激活这一个 held Task。reconciliation 使用新的 migration generation，保留原始 `task.json` 与作者文档字节，不从旧状态推断 V2 Run、Review 或 Close。已激活的 Task 只接受相同幂等键与请求的重试；不同请求不能重新定义它。若源文件在导入后变化，命令会拒绝 reconciliation；先检查 `pactile task list` 和源状态，再决定是否重试。结构化文档读取方式见[结构化 Task 工件](../capabilities/structured-task-artifacts.zh-CN.md)。
 
+archive 记录会由 `update` 写入可校验的 held 来源记录，并继续保留原归档字节。用 `pactile legacy-task history archive/<月份>/<目录> --json` 查看来源与缺失定义。只有显式选定新的 active 目标并补齐缺失字段后，才会从 archive 创建新的 Define Task；例如给 reconcile 增加 `--target-path 09-26-restored-task`。原归档不移动、不改写，恢复后的 Task 不继承旧 Run、Review 或 Close。
+
+Kernel JSON 被截断或无法解析的 active 来源会作为 `legacyHistoryGap` held 项保留。用 `pactile legacy-task history held/<目录> --json` 查看原始字节、来源元数据和诊断。补全定义并审阅历史缺口后，通过 `--acknowledge-history-gap --target-path <active-task-path> --approved` 显式继续；此确认只表示无法解析旧 lifecycle 字节，不会修复或解释这些字节，新 V2 Task 从 Define 开始。
+
 ## 已有安装迁到 Node 入口（v0.6.0）
 
 安装 v0.6.0 CLI 后，在每个已安装项目的根目录执行：

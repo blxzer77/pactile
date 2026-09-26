@@ -20,7 +20,8 @@ const TARGET_ROOT = ".pactile/tasks/";
 export type LegacyTaskImportStatus =
   | "imported"
   | "needs-definition"
-  | "needs-coordination";
+  | "needs-coordination"
+  | "archived-historical-only";
 
 export interface LegacyTaskImportRecord {
   readonly schemaVersion: 1;
@@ -33,6 +34,28 @@ export interface LegacyTaskImportRecord {
     readonly path: string;
     readonly fingerprint: string;
   }[];
+  readonly legacySourceMetadata?: {
+    readonly parent: { readonly present: boolean; readonly value?: unknown };
+    readonly children: { readonly present: boolean; readonly value?: unknown };
+    readonly typeMarkers: {
+      readonly topLevel: Readonly<Record<string, unknown>>;
+      readonly meta: Readonly<Record<string, unknown>>;
+      readonly requiredControls: { readonly present: boolean; readonly value?: unknown };
+      readonly topology: { readonly present: boolean; readonly value?: unknown };
+    };
+    readonly fileReferences: {
+      readonly taskJson: { readonly path: string; readonly fingerprint: string } | null;
+      readonly taskMap: { readonly path: string; readonly fingerprint: string } | null;
+    };
+  };
+  readonly legacyHistoryDiagnostics?: readonly string[];
+  readonly reconciliation?: {
+    readonly schemaVersion: 1;
+    readonly kind: "explicit-legacy-task-reconciliation";
+    readonly idempotencyKey: string;
+    readonly requestFingerprint?: string | null;
+    readonly acknowledgedLegacyHistoryGap?: true;
+  };
   readonly historicalStatus: {
     readonly present: boolean;
     readonly value?: unknown;
@@ -357,7 +380,8 @@ function verifyGeneration(
     if (
       !validRelative(entry.path) ||
       !entry.path.startsWith(TARGET_ROOT) ||
-      entry.path.split("/").some((part) => part.toLowerCase() === "archive") ||
+      entry.path.split("/").some((part) => part.toLowerCase() === "archive") &&
+        !entry.path.endsWith("/legacy-import.json") ||
       typeof entry.byteLength !== "number" ||
       !Number.isSafeInteger(entry.byteLength) ||
       entry.byteLength < 0 ||
@@ -383,6 +407,18 @@ function verifyGeneration(
       byteLength: bytes.byteLength,
       fingerprint: digest(bytes),
     });
+    if (entry.path.split("/").some((part) => part.toLowerCase() === "archive")) {
+      let archivedRecord: LegacyTaskImportRecord;
+      try {
+        archivedRecord = parseLegacyTaskImportRecord(bytes);
+      } catch {
+        throw new Error("legacy-task-migration-generation-invalid");
+      }
+      if (
+        archivedRecord.status !== "archived-historical-only" ||
+        archivedRecord.taskPath !== entry.path.slice(0, -"/legacy-import.json".length)
+      ) throw new Error("legacy-task-migration-generation-invalid");
+    }
   }
   const actualFiles = listInternalFiles(projectRoot, `${base}/files`).map(
     (file) => file.slice(`${base}/files/`.length),
@@ -449,7 +485,11 @@ export function readLegacyTaskMigrationView(
   };
 }
 
-function taskRelativePath(projectRoot: string, taskDir: string): string | null {
+function taskRelativePath(
+  projectRoot: string,
+  taskDir: string,
+  allowArchived = false,
+): string | null {
   const root = path.resolve(projectRoot);
   const tasksRoot = path.join(root, ".pactile", "tasks");
   const candidate = path.resolve(taskDir);
@@ -463,9 +503,26 @@ function taskRelativePath(projectRoot: string, taskDir: string): string | null {
     return null;
   }
   const posix = relative.split(path.sep).join("/");
-  if (posix.split("/").some((part) => part.toLowerCase() === "archive"))
+  if (!allowArchived && posix.split("/").some((part) => part.toLowerCase() === "archive"))
     return null;
   return posix;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.getPrototypeOf(value) === Object.prototype,
+  );
+}
+
+function validFact(value: unknown): boolean {
+  return (
+    isPlainRecord(value) &&
+    typeof value.present === "boolean" &&
+    (!Object.hasOwn(value, "value") || value.present)
+  );
 }
 
 /** Read one file from the committed generation using a canonical task directory. */
@@ -475,7 +532,11 @@ export function readLegacyTaskMigrationFile(
   basename: "kernel.json" | "legacy-import.json",
   view?: LegacyTaskMigrationView | null,
 ): Buffer | null {
-  const relative = taskRelativePath(projectRoot, taskDir);
+  const relative = taskRelativePath(
+    projectRoot,
+    taskDir,
+    basename === "legacy-import.json",
+  );
   if (!relative) return null;
   const snapshot =
     view === undefined ? readLegacyTaskMigrationView(projectRoot) : view;
@@ -585,10 +646,51 @@ export function parseLegacyTaskImportRecord(
     throw new Error("legacy-task-migration-record-invalid");
   }
   const record = value as Partial<LegacyTaskImportRecord>;
+  const sourceFiles = Array.isArray(record.sourceFiles)
+    ? record.sourceFiles
+    : [];
+  const sourceMetadata = record.legacySourceMetadata;
+  const validFileReference = (
+    reference: unknown,
+    expectedRole: "task-json" | "task-map",
+  ): boolean => {
+    if (reference === null) return true;
+    if (!isPlainRecord(reference)) return false;
+    const filePath = reference.path;
+    const fingerprint = reference.fingerprint;
+    return (
+      typeof filePath === "string" &&
+      validRelative(filePath) &&
+      typeof fingerprint === "string" &&
+      FINGERPRINT.test(fingerprint) &&
+      sourceFiles.some(
+        (item) =>
+          isPlainRecord(item) &&
+          item.path === filePath &&
+          item.fingerprint === fingerprint,
+      ) &&
+      (expectedRole === "task-json"
+        ? filePath.endsWith("/task.json")
+        : filePath.endsWith("/task-map.md"))
+    );
+  };
+  const validSourceMetadata =
+    sourceMetadata === undefined ||
+    (isPlainRecord(sourceMetadata) &&
+      validFact(sourceMetadata.parent) &&
+      validFact(sourceMetadata.children) &&
+      isPlainRecord(sourceMetadata.typeMarkers) &&
+      isPlainRecord(sourceMetadata.typeMarkers.topLevel) &&
+      isPlainRecord(sourceMetadata.typeMarkers.meta) &&
+      validFact(sourceMetadata.typeMarkers.requiredControls) &&
+      validFact(sourceMetadata.typeMarkers.topology) &&
+      isPlainRecord(sourceMetadata.fileReferences) &&
+      validFileReference(sourceMetadata.fileReferences.taskJson, "task-json") &&
+      validFileReference(sourceMetadata.fileReferences.taskMap, "task-map"));
   if (
     record.schemaVersion !== 1 ||
     record.kind !== "legacy-task-import-record" ||
-    !["imported", "needs-definition", "needs-coordination"].includes(
+    !["imported", "needs-definition", "needs-coordination", "archived-historical-only"].includes(
       String(record.status),
     ) ||
     typeof record.taskPath !== "string" ||
@@ -597,6 +699,10 @@ export function parseLegacyTaskImportRecord(
     !record.legacyTaskId.trim() ||
     !FINGERPRINT.test(record.sourceFingerprint ?? "") ||
     !Array.isArray(record.sourceFiles) ||
+    !validSourceMetadata ||
+    record.legacyHistoryDiagnostics !== undefined &&
+      (!Array.isArray(record.legacyHistoryDiagnostics) ||
+        record.legacyHistoryDiagnostics.some((item) => typeof item !== "string")) ||
     !Array.isArray(record.missingDefinitionFields) ||
     !Array.isArray(record.coordinationReasons) ||
     !record.dependencyFacts ||

@@ -89,6 +89,8 @@ interface ReconciliationManifest {
     readonly fingerprint: string;
   }[];
   readonly createdAt: string;
+  readonly sourceTaskPath?: string;
+  readonly targetTaskPath?: string;
 }
 
 interface ReconciliationJournal {
@@ -132,7 +134,7 @@ function journalPath(root: string, generationId: string): string {
   return storagePath(root, "reconciliations", "journals", `${generationId}.json`);
 }
 
-function canonicalTaskPath(value: string): string {
+function canonicalTaskPath(value: string, allowArchived = false): string {
   if (
     !value ||
     value.length > 2048 ||
@@ -150,7 +152,10 @@ function canonicalTaskPath(value: string): string {
     taskParts.length > 32 ||
     taskParts.some((part) => part.length > 255) ||
     parts.some((part) => part === "" || part === "." || part === "..") ||
-    taskParts.some((part) => part.toLowerCase() === "archive")
+    taskParts.some(
+      (part, index) =>
+        part.toLowerCase() === "archive" && !(allowArchived && index === 0),
+    )
   ) throw new Error("legacy-task-reconciliation-task-path-invalid");
   return `.pactile/tasks/${taskParts.join("/")}`;
 }
@@ -237,6 +242,8 @@ function stageGeneration(
     expectedAuthorityFingerprint: authority.expectedAuthorityFingerprint,
     files: files.map((file) => ({ path: file.path, byteLength: file.bytes.byteLength, fingerprint: file.fingerprint })),
     createdAt,
+    sourceTaskPath: authority.sourceTaskPath,
+    targetTaskPath: authority.targetTaskPath,
   };
   writeExclusive(root, path.join(directory, "manifest.json"), jsonBytes(manifest));
   verifyLegacyTaskReconciliationGeneration(root, authority, baseFiles);
@@ -302,9 +309,11 @@ function requestFingerprint(
     baseGenerationId: authority.generationId,
     sourceFingerprint: authority.sourceFingerprint,
     taskPath: input.taskPath,
+    targetTaskPath: input.targetTaskPath ?? input.taskPath,
     idempotencyKey: input.idempotencyKey,
     activationAt: input.activationAt,
     definition: input.definition ?? {},
+    acknowledgeLegacyHistoryGap: input.acknowledgeLegacyHistoryGap === true,
     dependencyResolutions: [...(input.dependencyResolutions ?? [])].map((item) => ({ reference: item.reference.trim(), taskId: item.taskId })).sort((a, b) => {
       const left = `${a.reference}\0${a.taskId}`;
       const right = `${b.reference}\0${b.taskId}`;
@@ -423,6 +432,7 @@ export async function runLegacyTaskReconciliation(
   options: LegacyTaskReconciliationOptions = {},
 ): Promise<LegacyTaskReconciliationResult> {
   const root = path.resolve(request.projectRoot);
+  let sourceTaskPath = request.input.taskPath;
   let taskPath = request.input.taskPath;
   let input: LegacyTaskV2ReconciliationInput = request.input;
   let wrote = false;
@@ -430,8 +440,30 @@ export async function runLegacyTaskReconciliation(
   let committedHere = false;
   let fingerprint: string | null = null;
   try {
-    taskPath = canonicalTaskPath(taskPath);
-    input = { ...request.input, taskPath };
+    sourceTaskPath = canonicalTaskPath(sourceTaskPath, true);
+    const sourceRelative = sourceTaskPath.slice(".pactile/tasks/".length);
+    const archivedSource = sourceRelative.split("/")[0]?.toLowerCase() === "archive";
+    const interruptedSource = Boolean(
+      request.plan.tasks.find((task) => task.directory === sourceTaskPath)
+        ?.kernelJson?.parseError,
+    );
+    const requiresSeparateTarget =
+      archivedSource ||
+      interruptedSource && request.input.acknowledgeLegacyHistoryGap === true;
+    taskPath = request.input.targetTaskPath
+      ? canonicalTaskPath(request.input.targetTaskPath)
+      : sourceTaskPath;
+    if (
+      requiresSeparateTarget && !request.input.targetTaskPath ||
+      !requiresSeparateTarget && taskPath !== sourceTaskPath ||
+      interruptedSource && request.input.acknowledgeLegacyHistoryGap !== true &&
+        request.input.targetTaskPath !== undefined
+    ) throw new Error("legacy-task-reconciliation-target-path-invalid");
+    input = {
+      ...request.input,
+      taskPath: sourceTaskPath,
+      ...(requiresSeparateTarget ? { targetTaskPath: taskPath } : {}),
+    };
     if (
       !path.isAbsolute(request.projectRoot) ||
       path.resolve(request.plan.projectRoot) !== root ||
@@ -488,11 +520,30 @@ export async function runLegacyTaskReconciliation(
       }
       throw new Error("legacy-task-reconciliation-task-already-active");
     }
-    const baseRecord = readBaseImportRecord(baseView, taskPath);
+    if (archivedSource || interruptedSource) {
+      const sourceTaskJsonPath = `${sourceTaskPath}/task.json`;
+      for (const file of currentView?.reconciliationFiles.values() ?? []) {
+        if (!file.path.endsWith("/legacy-import.json")) continue;
+        let restored: LegacyTaskImportRecord;
+        try {
+          restored = JSON.parse(file.bytes.toString("utf8")) as LegacyTaskImportRecord;
+        } catch {
+          throw new Error("legacy-task-reconciliation-record-invalid");
+        }
+        if (
+          restored.status === "imported" &&
+          restored.taskPath !== taskPath &&
+          restored.legacySourceMetadata?.fileReferences.taskJson?.path === sourceTaskJsonPath
+        ) throw new Error("legacy-task-reconciliation-source-already-restored");
+      }
+    }
+    const baseRecord = readBaseImportRecord(baseView, sourceTaskPath);
     if (
-      baseRecord?.taskPath !== taskPath ||
+      baseRecord?.taskPath !== sourceTaskPath ||
       baseRecord.sourceFingerprint !== baseView.authority.sourceFingerprint ||
-      (baseRecord.status !== "needs-definition" && baseRecord.status !== "needs-coordination")
+      (baseRecord.status !== "needs-definition" &&
+        baseRecord.status !== "needs-coordination" &&
+        baseRecord.status !== "archived-historical-only")
     )
       throw new Error("legacy-task-reconciliation-task-not-held");
 
@@ -520,6 +571,8 @@ export async function runLegacyTaskReconciliation(
     const authority: LegacyTaskReconciliationAuthority = {
       schemaVersion: 1,
       kind: "legacy-task-reconciliation-authority",
+      sourceTaskPath,
+      targetTaskPath: taskPath,
       baseGenerationId: baseView.authority.generationId,
       sourceFingerprint: baseView.authority.sourceFingerprint,
       generationId,

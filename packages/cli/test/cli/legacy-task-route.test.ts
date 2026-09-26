@@ -8,9 +8,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildLegacyTaskV2Import } from "../../src/core/task/legacy-task-v2-import.js";
 import { scanLegacyTaskMigration } from "../../src/core/task/legacy-task-migration.js";
+import { readLegacyTaskImportRecord } from "../../src/core/task/legacy-task-migration-reader.js";
 import { readTaskKernel } from "../../src/core/task/task-kernel.js";
 import { runLegacyTaskBatch } from "../../src/pactile/migration/legacy-task-batch.js";
 import { runTaskCli } from "../../src/commands/task.js";
+import { applyLegacyTaskUpdate } from "../../src/pactile/migration/legacy-task-update.js";
 
 const CLI_SOURCE = fileURLToPath(
   new URL("../../src/cli/index.ts", import.meta.url),
@@ -179,6 +181,213 @@ describe("legacy-task CLI route", () => {
     expect(humanResult.stdout).toContain("Pactile update available: 0.5.0");
     expect(humanResult.stdout).toContain("Archived legacy Task:");
     expect(snapshotTree(root)).toEqual(before);
+  });
+
+  it("indexes archived and interrupted sources, exposes source metadata, and explicitly restores them through CLI", async () => {
+    const root = makeRoot();
+    fs.cpSync(HISTORY_FIXTURE, root, { recursive: true });
+    markLegacyProjectVersion(root);
+    const archivedDir = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      "archive",
+      "2026-08",
+      "08-20-closed-lite",
+    );
+    const interruptedDir = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      "08-23-interrupted",
+    );
+    const archivedBefore = snapshotTree(archivedDir);
+    const interruptedBefore = snapshotTree(interruptedDir);
+
+    const updateResult = await applyLegacyTaskUpdate(root);
+
+    expect(updateResult.status).toBe("completed");
+    expect(snapshotTree(archivedDir)).toEqual(archivedBefore);
+    expect(snapshotTree(interruptedDir)).toEqual(interruptedBefore);
+
+    const archiveHistory = runCli(root, [
+      "legacy-task",
+      "history",
+      "archive/2026-08/08-20-closed-lite",
+      "--json",
+    ]);
+    expect(archiveHistory.status, archiveHistory.stderr).toBe(0);
+    const archiveReport = parseJsonOutput(archiveHistory.stdout);
+    expect(archiveReport).toMatchObject({
+      status: "held-source-read-only",
+      migrationStatus: "archived-historical-only",
+      archived: true,
+      runnable: false,
+      missingDefinitionFields: expect.arrayContaining([
+        "deliverable",
+        "deliveryLevel",
+        "acceptanceCriteria",
+      ]),
+    });
+
+    const interruptedHistory = runCli(root, [
+      "legacy-task",
+      "history",
+      "held/08-23-interrupted",
+      "--json",
+    ]);
+    expect(interruptedHistory.status, interruptedHistory.stderr).toBe(0);
+    expect(parseJsonOutput(interruptedHistory.stdout)).toMatchObject({
+      status: "held-source-read-only",
+      migrationStatus: "needs-definition",
+      archived: false,
+      missingDefinitionFields: expect.arrayContaining([
+        "acceptanceCriteria",
+        "deliverable",
+        "deliveryLevel",
+        "legacyHistoryGap",
+      ]),
+      legacyHistoryDiagnostics: [
+        "legacy-kernel-unparsed:.pactile/tasks/08-23-interrupted/kernel.json",
+      ],
+      legacySourceMetadata: {
+        typeMarkers: {
+          meta: { classification: "full" },
+        },
+      },
+    });
+
+    const archiveReconcileArgs = [
+      "legacy-task",
+      "reconcile",
+      "archive/2026-08/08-20-closed-lite",
+      "--target-path",
+      "09-26-restored-archive",
+      "--idempotency-key",
+      "restore-archive-once",
+      "--activation-at",
+      "2026-09-26T12:00:00.000Z",
+      "--deliverable",
+      "A new active result with preserved archive evidence.",
+      "--delivery-level",
+      "local-result",
+      "--accept",
+      "The original archived bytes remain queryable.",
+      "--approved",
+    ];
+    const archiveRestore = runCli(root, archiveReconcileArgs);
+    expect(archiveRestore.status, `${archiveRestore.stderr}\n${archiveRestore.stdout}`).toBe(0);
+    expect(parseJsonOutput(archiveRestore.stdout)).toMatchObject({
+      status: "completed",
+      taskPath: ".pactile/tasks/09-26-restored-archive",
+      visible: true,
+    });
+    const archiveTargetDir = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      "09-26-restored-archive",
+    );
+    const archiveKernel = readTaskKernel({
+      root,
+      taskDir: archiveTargetDir,
+      cwd: root,
+    });
+    expect(archiveKernel).toMatchObject({
+      kind: "task-kernel-v2",
+      kernel: { phase: "define", outcome: null, runs: [], reviews: [], closure: null },
+    });
+    const restoredArchiveRecord = readLegacyTaskImportRecord(root, archiveTargetDir);
+    expect(restoredArchiveRecord).toMatchObject({
+      status: "imported",
+      legacySourceMetadata: {
+        fileReferences: {
+          taskJson: {
+            path: ".pactile/tasks/archive/2026-08/08-20-closed-lite/task.json",
+          },
+        },
+      },
+    });
+
+    const interruptedReconcileArgs = [
+      "legacy-task",
+      "reconcile",
+      "08-23-interrupted",
+      "--target-path",
+      "09-27-restored-interrupted",
+      "--acknowledge-history-gap",
+      "--idempotency-key",
+      "restore-interrupted-once",
+      "--activation-at",
+      "2026-09-26T12:30:00.000Z",
+      "--deliverable",
+      "A new active result after explicit history-gap review.",
+      "--delivery-level",
+      "documentation",
+      "--accept",
+      "The damaged Kernel bytes remain available without inferred history.",
+      "--approved",
+    ];
+    const interruptedRestore = runCli(root, interruptedReconcileArgs);
+    expect(interruptedRestore.status, interruptedRestore.stderr).toBe(0);
+    expect(parseJsonOutput(interruptedRestore.stdout)).toMatchObject({
+      status: "completed",
+      taskPath: ".pactile/tasks/09-27-restored-interrupted",
+      visible: true,
+    });
+    const interruptedTargetDir = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      "09-27-restored-interrupted",
+    );
+    const interruptedKernel = readTaskKernel({
+      root,
+      taskDir: interruptedTargetDir,
+      cwd: root,
+    });
+    expect(interruptedKernel).toMatchObject({
+      kind: "task-kernel-v2",
+      kernel: { phase: "define", outcome: null, runs: [], reviews: [], closure: null },
+    });
+    expect(readLegacyTaskImportRecord(root, interruptedTargetDir)).toMatchObject({
+      status: "imported",
+      legacySourceMetadata: {
+        fileReferences: {
+          taskJson: { path: ".pactile/tasks/08-23-interrupted/task.json" },
+        },
+      },
+      reconciliation: { acknowledgedLegacyHistoryGap: true },
+    });
+    expect(snapshotTree(archivedDir)).toEqual(archivedBefore);
+    expect(snapshotTree(interruptedDir)).toEqual(interruptedBefore);
+
+    const retriedArchiveRestore = runCli(root, archiveReconcileArgs);
+    expect(retriedArchiveRestore.status, retriedArchiveRestore.stderr).toBe(0);
+    expect(parseJsonOutput(retriedArchiveRestore.stdout)).toMatchObject({
+      status: "completed",
+      wrote: false,
+      visible: true,
+    });
+    const rereadArchive = runCli(root, [
+      "legacy-task",
+      "history",
+      "archive/2026-08/08-20-closed-lite",
+      "--json",
+    ]);
+    expect(rereadArchive.status, rereadArchive.stderr).toBe(0);
+    expect(parseJsonOutput(rereadArchive.stdout)).toMatchObject({
+      migrationStatus: "archived-historical-only",
+      archived: true,
+    });
+    expect((await applyLegacyTaskUpdate(root)).status).toBe("already-active");
+    const taskList = runCli(root, ["task", "list"]);
+    expect(taskList.status, taskList.stderr).toBe(0);
+    expect(taskList.stdout).toContain("09-26-restored-archive/");
+    expect(taskList.stdout).toContain("09-27-restored-interrupted/");
+    expect(taskList.stdout).not.toContain(
+      "08-23-interrupted/ (needs definition",
+    );
   });
 
   it("reads a still-held source and keeps run-start and close gated without writes", async () => {

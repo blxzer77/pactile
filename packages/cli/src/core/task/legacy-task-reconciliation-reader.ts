@@ -25,6 +25,10 @@ export interface LegacyTaskReconciliationAuthority {
   readonly idempotencyKey: string;
   readonly expectedAuthorityFingerprint: string | null;
   readonly committedAt: string;
+  /** Original held source path when an archived record is restored elsewhere. */
+  readonly sourceTaskPath?: string;
+  /** Active destination associated with sourceTaskPath for this generation. */
+  readonly targetTaskPath?: string;
 }
 
 interface ReconciliationManifest {
@@ -43,6 +47,8 @@ interface ReconciliationManifest {
     readonly fingerprint: string;
   }[];
   readonly createdAt: string;
+  readonly sourceTaskPath?: string;
+  readonly targetTaskPath?: string;
 }
 
 const FINGERPRINT = /^sha256:[a-f0-9]{64}$/;
@@ -60,6 +66,23 @@ function jsonBytes(value: unknown): Buffer {
 function validRelative(value: string): boolean {
   if (!value || value.includes("\\") || path.posix.isAbsolute(value)) return false;
   return value.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+}
+
+function validTaskPath(value: unknown, allowArchive: boolean): value is string {
+  if (
+    typeof value !== "string" ||
+    !value.startsWith(TARGET_ROOT) ||
+    !validRelative(value)
+  ) return false;
+  const parts = value.slice(TARGET_ROOT.length).split("/");
+  return (
+    parts.length > 0 &&
+    parts.length <= 32 &&
+    parts.every((part) => part.length <= 255) &&
+    parts.every((part, index) =>
+      part.toLowerCase() !== "archive" || (allowArchive && index === 0),
+    )
+  );
 }
 
 function readInternalFile(projectRoot: string, relative: string): Buffer | null {
@@ -137,7 +160,11 @@ function parseAuthority(value: unknown): LegacyTaskReconciliationAuthority {
     (authority.expectedAuthorityFingerprint !== null &&
       !FINGERPRINT.test(authority.expectedAuthorityFingerprint ?? "")) ||
     typeof authority.committedAt !== "string" ||
-    Number.isNaN(Date.parse(authority.committedAt))
+    Number.isNaN(Date.parse(authority.committedAt)) ||
+    authority.sourceTaskPath !== undefined &&
+      !validTaskPath(authority.sourceTaskPath, true) ||
+    authority.targetTaskPath !== undefined &&
+      !validTaskPath(authority.targetTaskPath, false)
   ) throw new Error("legacy-task-reconciliation-authority-invalid");
   return authority as LegacyTaskReconciliationAuthority;
 }
@@ -159,6 +186,8 @@ function parseManifest(
     manifest.requestFingerprint !== authority.requestFingerprint ||
     manifest.idempotencyKey !== authority.idempotencyKey ||
     manifest.expectedAuthorityFingerprint !== authority.expectedAuthorityFingerprint ||
+    manifest.sourceTaskPath !== authority.sourceTaskPath ||
+    manifest.targetTaskPath !== authority.targetTaskPath ||
     typeof manifest.createdAt !== "string" ||
     Number.isNaN(Date.parse(manifest.createdAt)) ||
     !Array.isArray(manifest.files)
@@ -177,6 +206,15 @@ function parseRecord(bytes: Buffer): LegacyTaskImportRecord {
     throw new Error("legacy-task-reconciliation-record-invalid");
   const record = value as Partial<LegacyTaskImportRecord>;
   const reconciliation = (value as { reconciliation?: unknown }).reconciliation;
+  const acknowledgedLegacyHistoryGap =
+    reconciliation && typeof reconciliation === "object" && !Array.isArray(reconciliation)
+      ? (reconciliation as { acknowledgedLegacyHistoryGap?: unknown }).acknowledgedLegacyHistoryGap
+      : undefined;
+  const hasLegacyHistoryGap =
+    Array.isArray(record.legacyHistoryDiagnostics) &&
+    record.legacyHistoryDiagnostics.some((item) =>
+      typeof item === "string" && item.startsWith("legacy-kernel-unparsed:"),
+    );
   if (
     record.schemaVersion !== 1 ||
     record.kind !== "legacy-task-import-record" ||
@@ -198,9 +236,27 @@ function parseRecord(bytes: Buffer): LegacyTaskImportRecord {
     typeof (reconciliation as { activationAt?: unknown }).activationAt !== "string" ||
     Number.isNaN(Date.parse((reconciliation as { activationAt: string }).activationAt)) ||
     (reconciliation as { historyPolicy?: unknown }).historyPolicy !== "legacy-lifecycle-remains-source-only" ||
+    acknowledgedLegacyHistoryGap !== undefined && acknowledgedLegacyHistoryGap !== true ||
+    hasLegacyHistoryGap !== (acknowledgedLegacyHistoryGap === true) ||
     !Array.isArray((reconciliation as { resolvedDependencies?: unknown }).resolvedDependencies)
   ) throw new Error("legacy-task-reconciliation-record-invalid");
   return record as LegacyTaskImportRecord;
+}
+
+function sourceTaskPathForReconciledRecord(
+  record: LegacyTaskImportRecord,
+  projectTaskPath: string,
+  baseFiles: ReadonlyMap<string, LegacyTaskMigrationFile>,
+): string {
+  const sourceFilePath = record.legacySourceMetadata?.fileReferences.taskJson?.path;
+  if (!sourceFilePath?.startsWith(TARGET_ROOT) || !sourceFilePath.endsWith("/task.json"))
+    return projectTaskPath;
+  const candidate = sourceFilePath.slice(0, -"/task.json".length);
+  if (
+    !validTaskPath(candidate, true) ||
+    !baseFiles.has(`${candidate}/legacy-import.json`)
+  ) return projectTaskPath;
+  return candidate;
 }
 
 export function verifyLegacyTaskReconciliationGeneration(
@@ -249,22 +305,38 @@ export function verifyLegacyTaskReconciliationGeneration(
     const projectTaskPath = `${TARGET_ROOT}${taskPath}`;
     const recordFile = files.get(importPath);
     const kernelFile = files.get(kernelPath);
-    const baseRecordFile = baseFiles.get(importPath);
-    if (!recordFile || !kernelFile || !baseRecordFile || baseFiles.has(kernelPath))
+    if (!recordFile || !kernelFile || baseFiles.has(kernelPath))
+      throw new Error("legacy-task-reconciliation-generation-invalid");
+    const targetRecord = parseRecord(recordFile.bytes);
+    const baseSourceTaskPath = projectTaskPath === authority.targetTaskPath
+      ? authority.sourceTaskPath ?? sourceTaskPathForReconciledRecord(targetRecord, projectTaskPath, baseFiles)
+      : sourceTaskPathForReconciledRecord(targetRecord, projectTaskPath, baseFiles);
+    const baseRecordFile = baseFiles.get(`${baseSourceTaskPath}/legacy-import.json`);
+    if (!baseRecordFile)
       throw new Error("legacy-task-reconciliation-generation-invalid");
     const baseRecord = JSON.parse(baseRecordFile.bytes.toString("utf8")) as Partial<LegacyTaskImportRecord>;
     const baseFacts = baseRecord.dependencyFacts as unknown as Record<string, unknown> | undefined;
+    const archivedSource = baseSourceTaskPath
+      .slice(TARGET_ROOT.length)
+      .split("/")[0]
+      ?.toLowerCase() === "archive";
     if (
-      baseRecord.status !== "needs-definition" && baseRecord.status !== "needs-coordination" ||
+      baseRecord.taskPath !== baseSourceTaskPath ||
+      baseRecord.status !== "needs-definition" &&
+        baseRecord.status !== "needs-coordination" &&
+        baseRecord.status !== "archived-historical-only" ||
+      archivedSource !== (baseRecord.status === "archived-historical-only") ||
       baseRecord.sourceFingerprint !== authority.sourceFingerprint
     ) throw new Error("legacy-task-reconciliation-generation-invalid");
-    const record = parseRecord(recordFile.bytes);
+    const record = targetRecord;
     if (
       record.taskPath !== projectTaskPath ||
       record.sourceFingerprint !== authority.sourceFingerprint ||
       record.legacyTaskId !== baseRecord.legacyTaskId ||
       JSON.stringify(record.sourceFiles) !== JSON.stringify(baseRecord.sourceFiles) ||
       JSON.stringify(record.historicalStatus) !== JSON.stringify(baseRecord.historicalStatus) ||
+      JSON.stringify(record.legacySourceMetadata) !== JSON.stringify(baseRecord.legacySourceMetadata) ||
+      JSON.stringify(record.legacyHistoryDiagnostics) !== JSON.stringify(baseRecord.legacyHistoryDiagnostics) ||
       JSON.stringify((record.dependencyFacts as unknown as Record<string, unknown>).taskJsonDependsOn) !== JSON.stringify(baseFacts?.taskJsonDependsOn) ||
       JSON.stringify((record.dependencyFacts as unknown as Record<string, unknown>).topLevelDependsMode) !== JSON.stringify(baseFacts?.topLevelDependsMode) ||
       JSON.stringify((record.dependencyFacts as unknown as Record<string, unknown>).metaDependsMode) !== JSON.stringify(baseFacts?.metaDependsMode) ||
