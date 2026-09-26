@@ -147,7 +147,12 @@ describe("optional Jev transport input and egress boundary", () => {
     ["credential assignment", "TYPESAFE_API_KEY=sk-test-12345678901234567890"],
     ["package registry token", "NPM_TOKEN=p34syntheticvalue"],
     ["private token", "PRIVATE_TOKEN=p34syntheticvalue"],
+    ["session cookie", "SESSION_COOKIE=p34syntheticvalue"],
+    ["cookie", "COOKIE=p34syntheticvalue"],
     ["registry auth token", "REGISTRY_AUTH_TOKEN=p34syntheticvalue"],
+    ["cookie JSON key-value field", '{"cookie":"p34syntheticvalue"}'],
+    ["cookie header", "Set-Cookie: sessionid=p34syntheticvalue"],
+    ["authorization header", "Authorization: Bearer p34syntheticvalue"],
     [
       "database URL with credentials",
       "DATABASE_URL=postgres://user:pass@host/db",
@@ -182,6 +187,9 @@ describe("optional Jev transport input and egress boundary", () => {
       fetchImpl,
     })(unsafe, { egress });
     expect(result.fallback?.reasonCode).toBe("sensitive-content");
+    expect(result.fallback?.explanation).toContain(
+      "structured key/value field",
+    );
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(JSON.stringify(result.receipt)).not.toContain(text);
   });
@@ -196,6 +204,8 @@ describe("optional Jev transport input and egress boundary", () => {
     })(
       {
         ...request,
+        taskSummary:
+          "Task: trace cookie behavior; session handling and authorization remain local.",
         sourceSnippets: [{ ref: "retrieval.planner", text: ordinarySource }],
       },
       { egress },

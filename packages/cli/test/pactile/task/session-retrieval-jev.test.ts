@@ -215,7 +215,11 @@ describe("Jev project egress policy", () => {
 
 describe("V2 Session Jev retrieval planning", () => {
   it("adds a confident local route to exact through the context command", async () => {
-    const root = createRoot();
+    const unmarkedCanary = "p34-unmarked-canary";
+    const root = createRoot(
+      undefined,
+      "Trace request behavior " + unmarkedCanary,
+    );
     vi.stubEnv("PACTILE_SESSION_FACT_GAP", "1");
     vi.stubEnv("PACTILE_JEV_API_KEY", API_KEY);
     const captures: Record<string, unknown>[] = [];
@@ -247,14 +251,18 @@ describe("V2 Session Jev retrieval planning", () => {
         }
       | undefined;
     expect(retrievalCapture?.state.taskSummary).toContain(
+      "V2 Session fact gap in phase define",
+    );
+    expect(retrievalCapture?.state.taskSummary).not.toContain(
       "Trace request behavior",
     );
+    expect(retrievalCapture?.state.taskSummary).not.toContain(unmarkedCanary);
     expect(retrievalCapture?.state.sourceSnippets).toEqual([]);
     expect(Object.keys(retrievalCapture?.questions ?? {}).sort()).toEqual([
       "semantic",
       "structural",
     ]);
-    expect(JSON.stringify(pack)).not.toContain(API_KEY);
+    expect(JSON.stringify(retrievalCapture)).not.toContain(API_KEY);
   });
 
   it("keeps the exact plan when Jev has no configured key", async () => {
@@ -364,33 +372,42 @@ describe("V2 Session Jev retrieval planning", () => {
     );
   });
 
-  it("does not send a sensitive V2 Task summary", async () => {
-    const sensitiveValue = "p34syntheticvalue";
-    const root = createRoot(undefined, "Review NPM_TOKEN=" + sensitiveValue);
-    vi.stubEnv("PACTILE_SESSION_FACT_GAP", "1");
-    vi.stubEnv("PACTILE_JEV_API_KEY", API_KEY);
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  it.each([
+    ["session cookie", "Review SESSION_COOKIE=p34syntheticvalue"],
+    ["cookie", "Review COOKIE=p34syntheticvalue"],
+    ["token", "Review NPM_TOKEN=p34syntheticvalue"],
+    ["unknown assignment field", "Review BUILD_LABEL=p34syntheticvalue"],
+    ["JSON key-value field", 'Review {"featureFlag":"p34syntheticvalue"}'],
+  ])(
+    "does not send a V2 Task summary containing %s",
+    async (_label, taskTitle) => {
+      const sensitiveValue = "p34syntheticvalue";
+      const root = createRoot(undefined, taskTitle);
+      vi.stubEnv("PACTILE_SESSION_FACT_GAP", "1");
+      vi.stubEnv("PACTILE_JEV_API_KEY", API_KEY);
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    expect(
-      await runContextCliAsync(["--mode", "session", "--json"], root),
-    ).toBe(0);
-    const planned = parseLastPack(log);
+      expect(
+        await runContextCliAsync(["--mode", "session", "--json"], root),
+      ).toBe(0);
+      const planned = parseLastPack(log);
 
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(planned.retrievalPlanning).toMatchObject({
-      source: "deterministic",
-      intents: ["exact"],
-      fallback: {
-        reasonCode: "sensitive-content",
-        explanation: expect.any(String),
-      },
-    });
-    expect(JSON.stringify(planned.retrievalPlanning)).not.toContain(
-      sensitiveValue,
-    );
-  });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(planned.retrievalPlanning).toMatchObject({
+        source: "deterministic",
+        intents: ["exact"],
+        fallback: {
+          reasonCode: "sensitive-content",
+          explanation: expect.any(String),
+        },
+      });
+      expect(JSON.stringify(planned.retrievalPlanning)).not.toContain(
+        sensitiveValue,
+      );
+    },
+  );
 
   it("preserves caller-specified intents and skips Jev", async () => {
     const root = createRoot("jev:\n  egress: allow\n");

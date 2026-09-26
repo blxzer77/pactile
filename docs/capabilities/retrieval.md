@@ -38,9 +38,13 @@ The asynchronous `pactile context --mode session --json` path may ask Jev
 whether to add semantic or structural routes when the V2 Session has a fact
 gap and no caller-specified intents. It always keeps `exact`. Jev cannot add
 `external`, authorize a Provider, or change Kernel policy. The current request
-contains only a bounded Task title and deliverable summary; it includes no
-source snippets. Recognized credentials and sensitive markers block the
-request before HTTP.
+contains only a locally generated summary of the V2 phase and fact-gap state;
+it never sends the user-controlled Task title, deliverable, or source snippets.
+The bounded Task text is checked locally for known credentials, assignments,
+JSON fields, cookie/session/authorization fields, URL user-info, and sensitive
+markers. A match falls back before HTTP. This is intentionally conservative for
+structured text; arbitrary unmarked secret values cannot be identified
+reliably, so raw Task text stays local in all cases.
 
 Project configuration can explicitly allow or deny this planning egress:
 

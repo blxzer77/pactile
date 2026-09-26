@@ -9,6 +9,10 @@ import {
   type JevEgressAuthorizationV1,
 } from "../jev/index.js";
 import { JEV_ORIGIN_V1 } from "../jev/contracts.js";
+import {
+  containsJevSensitiveContentV1,
+  containsJevStructuredTextV1,
+} from "../jev/outbound.js";
 import { resolveJevProjectEgressPolicyV1 } from "../jev/project-policy.js";
 import { planRetrievalWithJevV1 } from "../retrieval/index.js";
 import { RETRIEVAL_INTENT_ORDER } from "../retrieval/types.js";
@@ -68,6 +72,10 @@ function boundedSummary(value: string): string {
     result += character;
   }
   return result || "Selected V2 Task";
+}
+
+function safeSessionPlanningSummary(phase: KernelPhase): string {
+  return `V2 Session fact gap in phase ${phase}. Decide whether semantic or structural local retrieval should supplement exact search.`;
 }
 
 function readCurrentV2Session(root: string): CurrentV2SessionV1 | null {
@@ -238,7 +246,9 @@ export async function compileSessionRetrievalPlanWithJevV1(
     initial.stamp.phase === expected.phase
       ? initial
       : null;
-  const summary = matchedSession?.summary ?? boundedSummary(expected.taskId);
+  const summary = matchedSession
+    ? safeSessionPlanningSummary(matchedSession.stamp.phase)
+    : "V2 Session fact gap. Decide whether semantic or structural local retrieval should supplement exact search.";
   const request = {
     query: summary,
     ...(options.intents === undefined ? {} : { intents: [...options.intents] }),
@@ -270,6 +280,11 @@ export async function compileSessionRetrievalPlanWithJevV1(
 
   if (!matchedSession) return deterministic("session-changed");
   if (options.intents !== undefined) return deterministic();
+  if (
+    containsJevSensitiveContentV1(matchedSession.summary) ||
+    containsJevStructuredTextV1(matchedSession.summary)
+  )
+    return deterministic("sensitive-content");
 
   const projectEgress = resolveJevProjectEgressPolicyV1(root);
   if (!projectEgress.allowed) return deterministic(projectEgress.reasonCode);

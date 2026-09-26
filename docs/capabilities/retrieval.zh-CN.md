@@ -25,7 +25,7 @@ External intent 只能向选定 Provider 发送用户批准的 query 与允许�
 
 ## 可选 Jev 规划建议
 
-异步 `pactile context --mode session --json` 路径在 V2 Session 存在 fact gap 且调用方没有显式指定 intents 时，可以询问 Jev 是否增加 semantic 或 structural 路由。它始终保留 `exact`。Jev 不能增加 `external`、授权 Provider 或改变 Kernel 策略。当前请求只包含有长度上限的 Task 标题和交付物摘要，不带源码片段。检测到已知凭据或敏感标记时，请求会在 HTTP 前被拦截。
+异步 `pactile context --mode session --json` 路径在 V2 Session 存在 fact gap 且调用方没有显式指定 intents 时，可以询问 Jev 是否增加 semantic 或 structural 路由。它始终保留 `exact`。Jev 不能增加 `external`、授权 Provider 或改变 Kernel 策略。外发请求仅带本地生成的 V2 phase 与 fact-gap 摘要，不带用户控制的 Task 标题、交付物或源码片段。本地会检查有界 Task 文本中的已知凭据、assignment、JSON 字段、cookie/session/authorization 字段、含 user-info 的 URL 与敏感标记；命中时在 HTTP 前回退。结构化内容采用保守判断，可能触发安全回退；无法可靠识别任意未标记的秘密值，因此本入口始终不外发原始 Task 文本。
 
 可在项目配置中显式允许或拒绝这次规划外发：
 
