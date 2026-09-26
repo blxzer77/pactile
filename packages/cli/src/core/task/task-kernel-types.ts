@@ -520,7 +520,7 @@ export interface RecordTaskRunWorkspaceCleanupRefusalRequest {
   cwd?: string;
 }
 
-export type TaskRunWorkspaceClaimOperation = "create" | "adopt";
+export type TaskRunWorkspaceClaimOperation = "create" | "adopt" | "reconcile";
 
 export const TASK_RUN_WORKSPACE_CLAIM_ERROR_CODES = [
   "owner-conflict",
@@ -528,6 +528,8 @@ export const TASK_RUN_WORKSPACE_CLAIM_ERROR_CODES = [
   "invalid-run-id",
   "invalid-write-set",
   "invalid-ref",
+  "candidate-baseline-mismatch",
+  "candidate-baseline-unavailable",
   "path-anomaly",
   "invalid-repository",
   "adoption-not-authorized",
@@ -539,6 +541,7 @@ export const TASK_RUN_WORKSPACE_CLAIM_ERROR_CODES = [
   "manager-provenance-write-failed",
   "worktree-create-failed",
   "post-create-verification-failed",
+  "workspace-kernel-bind-failed",
   "claim-failed",
 ] as const;
 

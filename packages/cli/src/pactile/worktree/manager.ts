@@ -15,10 +15,11 @@ export {
   createRunWorktree,
   adoptRunWorktree,
   inspectRunWorktree,
+  reconcileRunWorktree,
 } from "./manager-core.js";
 export type { WorktreeIntegrationReceipt, WorktreeCleanupResult } from "./integration-evidence.js";
 export { verifyWorktreeIntegration, planRunWorktreeCleanup } from "./integration-evidence.js";
-export type { AdoptTaskRunWorktreeInput, CreateTaskRunWorktreeInput, IntegrateTaskRunWorktreeInput } from "./run-workspace-lifecycle.js";
-export { adoptTaskRunWorktree, createTaskRunWorktree, integrateTaskRunWorktree } from "./run-workspace-lifecycle.js";
+export type { AdoptTaskRunWorktreeInput, CreateTaskRunWorktreeInput, ReconcileTaskRunWorktreeInput, IntegrateTaskRunWorktreeInput } from "./run-workspace-lifecycle.js";
+export { adoptTaskRunWorktree, createTaskRunWorktree, reconcileTaskRunWorktree, integrateTaskRunWorktree } from "./run-workspace-lifecycle.js";
 export type { ReclaimTaskRunWorktreeInput } from "./run-workspace-cleanup.js";
 export { reclaimRunWorktree } from "./run-workspace-cleanup.js";

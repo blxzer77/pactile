@@ -11,6 +11,7 @@ import {
   createTaskRunWorktree,
   inspectRunWorktree,
   integrateTaskRunWorktree,
+  reconcileTaskRunWorktree,
   reclaimRunWorktree,
 } from "../pactile/worktree/index.js";
 import { readDeveloper } from "../utils/developer.js";
@@ -86,13 +87,14 @@ function idempotencyKey(parsed: ParsedArgs, operation: string, runId: string, re
 
 function usage(): string {
   return [
-    "Usage: pactile worktree <create|adopt|inspect|integrate|reclaim> <task> <run-id> [options]",
+    "Usage: pactile worktree <create|reconcile|adopt|inspect|integrate|reclaim> <task> <run-id> [options]",
     "  create <task> <run-id> [--branch <branch>] [--base-ref <ref>] [--actor <name>]",
+    "  reconcile <task> <run-id> [--actor <name>]",
     "  adopt <task> <run-id> --path <registered-checkout> --branch <branch> --base-sha <sha> --approved-by <name> --approval-evidence <ref> [--approved-at <iso>]",
     "  inspect <task> <run-id>",
     "  integrate <task> <run-id> --target <local-branch>",
     "  reclaim <task> <run-id>  (automatic only after host stop, integration and Task Close gates pass)",
-    "Create/adopt binds manager provenance to the active Run. Integration verifies that the target already contains the Run result; it does not merge branches.",
+    "Create/adopt binds manager provenance to the active Run; reconcile safely completes an interrupted same-Run bind. Integration verifies that the target already contains the Run result; it does not merge branches.",
   ].join("\n");
 }
 
@@ -106,6 +108,7 @@ export async function runWorktreeCli(argv: string[], cwd = process.cwd()): Promi
 
   const allowedByOperation: Record<string, readonly string[]> = {
     create: ["--branch", "--base-ref", "--actor", "--idempotency-key"],
+    reconcile: ["--actor", "--idempotency-key"],
     adopt: ["--path", "--branch", "--base-sha", "--approved-by", "--approval-evidence", "--approved-at", "--actor", "--idempotency-key"],
     inspect: [],
     integrate: ["--target", "--actor", "--idempotency-key"],
@@ -120,7 +123,7 @@ export async function runWorktreeCli(argv: string[], cwd = process.cwd()): Promi
   if (operation === "create") {
     const branchSuffix = runId.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
     const branch = option(parsed, "--branch") ?? `pactile/run/${branchSuffix}`;
-    const baseRef = option(parsed, "--base-ref") ?? "HEAD";
+    const baseRef = option(parsed, "--base-ref") ?? run.candidateBaseSha ?? "HEAD";
     const request = { runId, branch, baseRef, writeSet: run.writeSetSnapshot };
     const created = createTaskRunWorktree({
       repoRoot, taskDir, runId, branch, baseRef,
@@ -130,6 +133,22 @@ export async function runWorktreeCli(argv: string[], cwd = process.cwd()): Promi
     console.log(JSON.stringify({
       operation, runId, branch: created.binding.branch, canonicalPath: created.binding.canonicalPath,
       baseSha: created.binding.baseSha, writeSet: created.binding.writeSet, credentialId: created.binding.manager?.credentialId,
+    }, null, 2));
+    return 0;
+  }
+
+  if (operation === "reconcile") {
+    const request = { runId };
+    const reconciled = reconcileTaskRunWorktree({
+      repoRoot, taskDir, runId,
+      actor: actor(repoRoot, parsed),
+      idempotencyKey: idempotencyKey(parsed, operation, runId, request),
+    });
+    console.log(JSON.stringify({
+      operation, runId, state: reconciled.mutation ? "reconciled" : "already-bound",
+      branch: reconciled.binding.branch, canonicalPath: reconciled.binding.canonicalPath,
+      baseSha: reconciled.binding.baseSha, writeSet: reconciled.binding.writeSet,
+      credentialId: reconciled.binding.manager?.credentialId,
     }, null, 2));
     return 0;
   }

@@ -308,3 +308,57 @@ export function inspectRunWorktree(input: {
 }): WorktreeInspection {
   return inspectRunWorktreeInternal(input, true);
 }
+
+/** Rebuild a binding only from a fully verified provenance pair owned by this Run. */
+export function reconcileRunWorktree(input: {
+  repoRoot: string;
+  runId: string;
+  runState: "waiting" | "running";
+  baseSha: string;
+  writeSet: readonly string[];
+  branch?: string;
+  knownOwners?: readonly WorkspaceOwnerRef[];
+}): RunWorkspaceBinding {
+  assertRunId(input.runId);
+  const identity = repoIdentity(input.repoRoot);
+  const baseSha = validateSha(input.baseSha);
+  resolveCommit(identity.root, baseSha);
+  const writeSet = normalizeWriteSet(input.writeSet);
+  const owners = readAllManagerProvenance(identity);
+  const matches = owners.filter((item) => item.ownerRunId === input.runId);
+  const provenance = matches[0];
+  if (matches.length !== 1 || !provenance) {
+    throw new WorktreeManagerError("manager-provenance-invalid", "No unique manager provenance is available to reconcile this Run");
+  }
+  if (pathKey(provenance.projectRoot) !== pathKey(identity.root)
+    || pathKey(provenance.commonDir) !== pathKey(identity.commonDir)
+    || provenance.baseSha.toLowerCase() !== baseSha.toLowerCase()
+    || (input.branch !== undefined && provenance.branch !== input.branch)
+    || provenance.writeSet.map(comparable).join("\0") !== writeSet.map(comparable).join("\0")) {
+    throw new WorktreeManagerError("manager-provenance-invalid", "Persisted manager provenance does not match this Run's frozen baseline, branch, or write set", provenance.canonicalPath);
+  }
+  const canonicalPath = assertAllowedPath(identity, provenance.canonicalPath);
+  const binding: RunWorkspaceBinding = {
+    ownerRunId: provenance.ownerRunId,
+    canonicalPath,
+    branch: provenance.branch,
+    baseSha: provenance.baseSha,
+    writeSet: [...provenance.writeSet],
+    integrationState: "not-integrated",
+    reclamationState: "not-requested",
+    manager: taskKernelManagerBinding(provenance),
+    integrationReceipt: null,
+    cleanupLease: null,
+  };
+  const inspection = inspectRunWorktree({
+    repoRoot: identity.root,
+    runId: input.runId,
+    runState: input.runState,
+    binding,
+    knownOwners: input.knownOwners,
+  });
+  if (inspection.issues.some((issue) => issue !== "unintegrated") || !inspection.headSha || inspection.dirty) {
+    throw new WorktreeManagerError("post-create-verification-failed", `Persisted Run checkout is not safe to reconcile (${inspection.state})`, canonicalPath);
+  }
+  return binding;
+}

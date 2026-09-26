@@ -1,9 +1,13 @@
 import {
   adoptRunWorktree,
   createRunWorktree,
+  inspectRunWorktree,
+  reconcileRunWorktree,
 } from "./manager-core.js";
 import { verifyWorktreeIntegration, type WorktreeIntegrationReceipt } from "./integration-evidence.js";
 import { WorktreeManagerError, type RunWorkspaceBinding } from "./manager-types.js";
+import { pathKey, repoIdentity, resolveCommit } from "./git-probe.js";
+import { readAllManagerProvenance } from "./manager-provenance.js";
 import {
   bindTaskRunWorkspace,
   fingerprintTaskValue,
@@ -48,7 +52,7 @@ function isRevisionConflict(error: unknown): boolean {
 }
 
 function recordWorkspaceClaimRefusal(
-  input: CreateTaskRunWorktreeInput | AdoptTaskRunWorktreeInput,
+  input: Pick<CreateTaskRunWorktreeInput, "repoRoot" | "taskDir" | "runId" | "actor" | "idempotencyKey">,
   operation: TaskRunWorkspaceClaimOperation,
   claimError: unknown,
 ): void {
@@ -88,7 +92,7 @@ function recordWorkspaceClaimRefusal(
 }
 
 function bindWorkspaceAtLatestRevision(
-  input: CreateTaskRunWorktreeInput | AdoptTaskRunWorktreeInput,
+  input: Pick<CreateTaskRunWorktreeInput, "repoRoot" | "taskDir" | "runId" | "actor" | "idempotencyKey">,
   binding: RunWorkspaceBinding,
 ): TaskKernelMutationResult {
   const maxAttempts = 3;
@@ -109,6 +113,42 @@ function bindWorkspaceAtLatestRevision(
     }
   }
   throw new WorktreeManagerError("workspace-kernel-bind-failed", "Task Kernel revision kept changing while binding the workspace; the checkout is preserved for reconciliation");
+}
+
+function resolveFrozenRunBase(repoRoot: string, baseRef: string, run: TaskRunV2): string {
+  if (!run.candidateBaseSha) {
+    throw new WorktreeManagerError("candidate-baseline-unavailable", "This Run has no frozen Git baseline; refusing to create a managed Git checkout");
+  }
+  let requestedBase: string;
+  try {
+    requestedBase = resolveCommit(repoRoot, baseRef);
+  } catch {
+    throw new WorktreeManagerError("invalid-ref", "The requested worktree base could not be resolved", null);
+  }
+  if (requestedBase.toLowerCase() !== run.candidateBaseSha.toLowerCase()) {
+    throw new WorktreeManagerError("candidate-baseline-mismatch", "Requested worktree base does not match the Git commit captured when the Run started");
+  }
+  return run.candidateBaseSha;
+}
+
+function managerProvenanceMatchesBinding(
+  provenance: ReturnType<typeof readAllManagerProvenance>[number] | undefined,
+  binding: RunWorkspaceBinding,
+): boolean {
+  const manager = binding.manager;
+  return !!provenance && !!manager
+    && provenance.ownerRunId === binding.ownerRunId
+    && provenance.credentialId === manager.credentialId
+    && pathKey(provenance.canonicalPath) === pathKey(binding.canonicalPath)
+    && pathKey(provenance.projectRoot) === pathKey(manager.projectRoot)
+    && pathKey(provenance.commonDir) === pathKey(manager.commonDir)
+    && pathKey(provenance.gitDir) === pathKey(manager.gitDir)
+    && provenance.branch === binding.branch
+    && provenance.baseSha.toLowerCase() === binding.baseSha.toLowerCase()
+    && provenance.writeSet.length === binding.writeSet.length
+    && provenance.writeSet.every((item, index) => item === binding.writeSet[index])
+    && provenance.source === manager.source
+    && provenance.recordedAt === manager.recordedAt;
 }
 
 export interface CreateTaskRunWorktreeInput {
@@ -132,11 +172,17 @@ export function createTaskRunWorktree(input: CreateTaskRunWorktreeInput): {
   if (stored.run.workspace) throw new WorktreeManagerError("workspace-already-bound", "Run already has a workspace binding; inspect it instead of replacing it");
   let binding: RunWorkspaceBinding;
   try {
+    const baseSha = resolveFrozenRunBase(input.repoRoot, input.baseRef, stored.run);
+    const identity = repoIdentity(input.repoRoot);
+    const existingOwner = readAllManagerProvenance(identity).find((item) => item.ownerRunId === input.runId);
+    if (existingOwner) {
+      throw new WorktreeManagerError("path-exists", "Run already has a preserved manager-owned checkout; use reconcile after verifying the Run credentials", existingOwner.canonicalPath);
+    }
     binding = createRunWorktree({
       repoRoot: input.repoRoot,
       runId: input.runId,
       branch: input.branch,
-      baseRef: input.baseRef,
+      baseRef: baseSha,
       writeSet: stored.run.writeSetSnapshot,
     });
   } catch (error) {
@@ -147,7 +193,66 @@ export function createTaskRunWorktree(input: CreateTaskRunWorktreeInput): {
     const mutation = bindWorkspaceAtLatestRevision(input, binding);
     return { binding, mutation };
   } catch {
-    throw new WorktreeManagerError("workspace-kernel-bind-failed", "The created checkout is preserved, but its Task Kernel bind failed; do not dispatch work until it is reconciled", binding.canonicalPath);
+    const failure = new WorktreeManagerError("workspace-kernel-bind-failed", "The created checkout is preserved, but its Task Kernel bind failed; do not dispatch work until it is reconciled", binding.canonicalPath);
+    recordWorkspaceClaimRefusal(input, "create", failure);
+    throw failure;
+  }
+}
+
+export interface ReconcileTaskRunWorktreeInput {
+  repoRoot: string;
+  taskDir: string;
+  runId: string;
+  actor: string;
+  idempotencyKey: string;
+}
+
+export function reconcileTaskRunWorktree(input: ReconcileTaskRunWorktreeInput): {
+  binding: RunWorkspaceBinding;
+  mutation: TaskKernelMutationResult | null;
+} {
+  const stored = readStoredTaskRun(input.repoRoot, input.taskDir, input.runId);
+  if (stored.kernel.runs.at(-1)?.id !== stored.run.id || (stored.run.state !== "waiting" && stored.run.state !== "running")) {
+    throw new WorktreeManagerError("run-not-active", "Only the latest waiting or running Run can reconcile a managed worktree");
+  }
+  try {
+    if (stored.run.workspace) {
+      const provenance = readAllManagerProvenance(repoIdentity(input.repoRoot))
+        .find((item) => item.ownerRunId === input.runId);
+      if (!managerProvenanceMatchesBinding(provenance, stored.run.workspace)) {
+        throw new WorktreeManagerError("manager-provenance-invalid", "Bound Run workspace credentials do not match the persisted manager provenance", stored.run.workspace.canonicalPath);
+      }
+      const inspection = inspectRunWorktree({
+        repoRoot: input.repoRoot,
+        runId: input.runId,
+        runState: stored.run.state,
+        binding: stored.run.workspace,
+      });
+      if (inspection.issues.some((issue) => issue !== "unintegrated") || !inspection.headSha || inspection.dirty) {
+        throw new WorktreeManagerError("post-create-verification-failed", `Bound Run checkout is not safe to reconcile (${inspection.state})`, stored.run.workspace.canonicalPath);
+      }
+      return { binding: stored.run.workspace, mutation: null };
+    }
+    const binding = reconcileRunWorktree({
+      repoRoot: input.repoRoot,
+      runId: input.runId,
+      runState: stored.run.state,
+      baseSha: stored.run.candidateBaseSha ?? "",
+      writeSet: stored.run.writeSetSnapshot,
+    });
+    const provenance = readAllManagerProvenance(repoIdentity(input.repoRoot))
+      .find((item) => item.ownerRunId === input.runId);
+    if (!provenance) throw new WorktreeManagerError("manager-provenance-invalid", "No manager provenance is available to reconcile this Run");
+    let mutation: TaskKernelMutationResult;
+    try {
+      mutation = bindWorkspaceAtLatestRevision(input, binding);
+    } catch {
+      throw new WorktreeManagerError("workspace-kernel-bind-failed", "The preserved manager checkout could not be rebound to this Run", binding.canonicalPath);
+    }
+    return { binding, mutation };
+  } catch (error) {
+    recordWorkspaceClaimRefusal(input, "reconcile", error);
+    throw error;
   }
 }
 
@@ -174,13 +279,14 @@ export function adoptTaskRunWorktree(input: AdoptTaskRunWorktreeInput): {
   if (stored.run.workspace) throw new WorktreeManagerError("workspace-already-bound", "Run already has a workspace binding; inspect it instead of adopting another path");
   let binding: RunWorkspaceBinding;
   try {
+    const baseSha = resolveFrozenRunBase(input.repoRoot, input.baseSha, stored.run);
     binding = adoptRunWorktree({
       repoRoot: input.repoRoot,
       runId: input.runId,
       runState: stored.run.state,
       canonicalPath: input.canonicalPath,
       branch: input.branch,
-      baseSha: input.baseSha,
+      baseSha,
       writeSet: stored.run.writeSetSnapshot,
       authorization: input.authorization,
     });
@@ -192,7 +298,9 @@ export function adoptTaskRunWorktree(input: AdoptTaskRunWorktreeInput): {
     const mutation = bindWorkspaceAtLatestRevision(input, binding);
     return { binding, mutation };
   } catch {
-    throw new WorktreeManagerError("workspace-kernel-bind-failed", "The adopted checkout is preserved, but its Task Kernel bind failed; do not dispatch work until it is reconciled", binding.canonicalPath);
+    const failure = new WorktreeManagerError("workspace-kernel-bind-failed", "The adopted checkout is preserved, but its Task Kernel bind failed; do not dispatch work until it is reconciled", binding.canonicalPath);
+    recordWorkspaceClaimRefusal(input, "adopt", failure);
+    throw failure;
   }
 }
 

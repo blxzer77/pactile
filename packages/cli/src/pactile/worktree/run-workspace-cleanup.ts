@@ -17,7 +17,7 @@ import {
   resolveLocalBranchTarget,
   verifyLinkedGitDirectory,
 } from "./git-probe.js";
-import { provenanceRoot, readAllManagerProvenance } from "./manager-provenance.js";
+import { readAllManagerProvenance, synchronizeManagerProvenanceGitDir } from "./manager-provenance.js";
 import { inspectRunWorktree } from "./manager-core.js";
 import {
   WorktreeManagerError,
@@ -179,30 +179,6 @@ async function readVerifiedHostStopReceipt(root: string, taskDir: string, kernel
   throw new WorktreeManagerError("host-stop-unverified", `No terminal receipt reader is configured for host ${host.host}`);
 }
 
-function writeReplacementManagerProvenance(identity: GitIdentity, updated: ManagerProvenance): void {
-  const root = provenanceRoot(identity, false);
-  if (!root) throw new WorktreeManagerError("manager-provenance-invalid", "Manager provenance directory is unavailable");
-  const file = path.join(root, `${updated.ownerRunId}.json`);
-  const stat = fs.lstatSync(file, { throwIfNoEntry: false });
-  if (!stat?.isFile() || stat.isSymbolicLink() || pathKey(fs.realpathSync(file)) !== pathKey(file)) {
-    throw new WorktreeManagerError("manager-provenance-invalid", "Existing Run provenance file is not safe to update", file);
-  }
-  const temporary = `${file}.${randomUUID()}.tmp`;
-  let descriptor: number | undefined;
-  try {
-    descriptor = fs.openSync(temporary, "wx", 0o600);
-    fs.writeFileSync(descriptor, `${JSON.stringify(updated, null, 2)}\n`, "utf8");
-    fs.fsyncSync(descriptor);
-    fs.closeSync(descriptor);
-    descriptor = undefined;
-    fs.renameSync(temporary, file);
-  } catch {
-    throw new WorktreeManagerError("manager-provenance-write-failed", "Could not persist recovered worktree Git directory", file);
-  } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
-  }
-}
-
 function restoreRemovedWorktree(identity: GitIdentity, binding: RunWorkspaceBinding): { binding: TaskRunWorkspaceManagerBinding | null; reason: string | null } {
   let stage = "checking the recorded Run owner";
   const failed = (reason: string): { binding: null; reason: string } => ({ binding: null, reason });
@@ -246,7 +222,13 @@ function restoreRemovedWorktree(identity: GitIdentity, binding: RunWorkspaceBind
     if (registration?.branch !== expectedRef || registration.head !== actualHead
       || actualBranch !== expectedRef || actualHead !== resolveCommit(identity.root, expectedRef)) return failed("Restored checkout did not match the Run branch registration and HEAD");
     stage = "updating the trusted manager Git-directory record";
-    writeReplacementManagerProvenance(identity, { ...old, gitDir });
+    synchronizeManagerProvenanceGitDir({
+      identity,
+      ownerRunId: old.ownerRunId,
+      credentialId: old.credentialId,
+      priorGitDir: binding.manager.gitDir,
+      actualGitDir: gitDir,
+    });
     return { binding: { ...binding.manager, gitDir }, reason: null };
   } catch (error) {
     const stderr = error && typeof error === "object" && "stderr" in error
@@ -254,6 +236,55 @@ function restoreRemovedWorktree(identity: GitIdentity, binding: RunWorkspaceBind
       : undefined;
     const detail = typeof stderr === "string" ? stderr.trim().split(/\r?\n/)[0] : Buffer.isBuffer(stderr) ? stderr.toString("utf8").trim().split(/\r?\n/)[0] : null;
     return failed(`${stage} failed${detail ? `: ${detail}` : error instanceof Error ? `: ${error.message}` : ""}`);
+  }
+}
+
+function reconcileRestoredManagerBinding(input: {
+  identity: GitIdentity;
+  runId: string;
+  runState: TaskRunV2["state"];
+  binding: RunWorkspaceBinding;
+}): { managerBinding: TaskRunWorkspaceManagerBinding; changed: boolean } | null {
+  const manager = input.binding.manager;
+  if (!manager) return null;
+  try {
+    const canonicalPath = assertAllowedPath(input.identity, input.binding.canonicalPath);
+    const actualGitDir = verifyLinkedGitDirectory(canonicalPath, input.identity.commonDir);
+    const proposedBinding = { ...input.binding, manager: { ...manager, gitDir: actualGitDir } };
+    const before = inspectRunWorktree({
+      repoRoot: input.identity.root,
+      runId: input.runId,
+      runState: input.runState,
+      binding: proposedBinding,
+    });
+    if (before.issues.some((issue) => issue !== "manager-provenance-mismatch") || before.gitDir === null) return null;
+
+    let priorRecord: ManagerProvenance | undefined;
+    try {
+      priorRecord = readAllManagerProvenance(input.identity).find((item) => item.ownerRunId === input.runId);
+    } catch {
+      // The synchronizer below accepts only a one-field Git-directory mismatch.
+    }
+    const changed = pathKey(manager.gitDir) !== pathKey(actualGitDir)
+      || !priorRecord || pathKey(priorRecord.gitDir) !== pathKey(actualGitDir);
+    const synchronized = synchronizeManagerProvenanceGitDir({
+      identity: input.identity,
+      ownerRunId: input.runId,
+      credentialId: manager.credentialId,
+      priorGitDir: manager.gitDir,
+      actualGitDir,
+    });
+    const managerBinding = { ...manager, gitDir: synchronized.gitDir };
+    const after = inspectRunWorktree({
+      repoRoot: input.identity.root,
+      runId: input.runId,
+      runState: input.runState,
+      binding: { ...input.binding, manager: managerBinding },
+    });
+    if (after.issues.length > 0 || after.state !== "clean") return null;
+    return { managerBinding, changed };
+  } catch {
+    return null;
   }
 }
 
@@ -400,6 +431,23 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
     }
   }
   if (binding.cleanupLease?.state === "partial-removal" || binding.cleanupLease?.state === "recovery-required") {
+    if (binding.cleanupLease.state === "recovery-required") {
+      const reason = binding.cleanupLease.reason ?? "Worktree is in a persisted recovery state";
+      try {
+        const identity = repoIdentity(input.repoRoot);
+        const reconciled = reconcileRestoredManagerBinding({ identity, runId: run.id, runState: run.state, binding });
+        if (reconciled?.changed) {
+          return cleanupResultFromKernel({
+            ...input,
+            result: "recovery-required",
+            reason: `${reason}; manager provenance and canonical-path index were synchronized for inspection`,
+            updatedManagerBinding: reconciled.managerBinding,
+          });
+        }
+      } catch {
+        // Keep the previously persisted recovery state authoritative when a repair cannot be proven.
+      }
+    }
     return retain(binding.cleanupLease.reason ?? "Worktree is in a persisted recovery state", "recovery-required");
   }
 
