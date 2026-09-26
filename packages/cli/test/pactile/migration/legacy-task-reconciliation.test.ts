@@ -649,7 +649,7 @@ describe("P36 explicit legacy Task reconciliation", () => {
     },
   );
 
-  it("rechecks the live V2 dependency graph under the authority CAS lock", async () => {
+  it("recovers an acyclic graph-change generation with the same idempotency key", async () => {
     const root = makeRoot();
     const heldDir = addLegacyTask(root, {
       id: "cas-cycle-b",
@@ -666,20 +666,21 @@ describe("P36 explicit legacy Task reconciliation", () => {
     await importRoot(root);
 
     const existingTaskDir = addV2Task(root, "01-cas-cycle-a", "cas-cycle-a");
+    addV2Task(root, "00-cas-cycle-c", "cas-cycle-c");
     const existingRead = readTaskKernel({ root, taskDir: existingTaskDir, cwd: root });
     if (existingRead.kind !== "task-kernel-v2") throw new Error("expected existing V2 Task");
     const sourceBytes = new Map(fs.readdirSync(heldDir).map((name) => [name, fs.readFileSync(path.join(heldDir, name))]));
     const migrationAuthority = path.join(root, ".pactile", "runtime", "legacy-task-migrations", "authority.json");
     const migrationAuthorityBefore = fs.readFileSync(migrationAuthority);
     const reconciliationAuthority = path.join(root, ".pactile", "runtime", "legacy-task-migrations", "reconciliations", "authority.json");
-    const nextDefinition = { ...existingRead.kernel.definition, dependencies: ["cas-cycle-b"] };
+    const nextDefinition = { ...existingRead.kernel.definition, dependencies: ["cas-cycle-c"] };
     const changedKernel = appendMutation(
       existingRead.kernel,
       "concurrent-v2-writer",
-      "add-cas-cycle-edge",
+      "change-cas-v2-graph",
       "task.dependency-added",
-      "cas-cycle-b",
-      fingerprintTaskValue({ dependencyId: "cas-cycle-b" }),
+      "cas-cycle-c",
+      fingerprintTaskValue({ dependencyId: "cas-cycle-c" }),
       { definition: nextDefinition },
       "A concurrent writer adds a hard dependency after reconciliation preflight.",
     );
@@ -708,7 +709,7 @@ describe("P36 explicit legacy Task reconciliation", () => {
 
     expect(result).toMatchObject({
       status: "blocked",
-      reason: "legacy-task-reconciliation-hard-dependency-cycle:cas-cycle-b",
+      reason: "legacy-task-reconciliation-dependency-graph-changed",
       wrote: true,
       visible: false,
     });
@@ -718,7 +719,113 @@ describe("P36 explicit legacy Task reconciliation", () => {
     const liveKernel = JSON.parse(fs.readFileSync(path.join(existingTaskDir, "kernel.json"), "utf8")) as {
       definition: { dependencies: string[] };
     };
-    expect(liveKernel.definition.dependencies).toEqual(["cas-cycle-b"]);
+    expect(liveKernel.definition.dependencies).toEqual(["cas-cycle-c"]);
+
+    const retry = await runLegacyTaskReconciliation(request, { approved: true });
+    expect(retry).toMatchObject({ status: "completed", resumed: true, wrote: true, visible: true });
+    const migratedKernel = readTaskKernel({ root, taskDir: heldDir, cwd: root });
+    if (migratedKernel.kind !== "task-kernel-v2") throw new Error("expected recovered held Task to be V2");
+    expect(migratedKernel.kernel.definition.dependencies).toEqual(["cas-cycle-a"]);
+    expect(fs.readFileSync(migrationAuthority)).toEqual(migrationAuthorityBefore);
+    const liveKernelAfterRetry = JSON.parse(fs.readFileSync(path.join(existingTaskDir, "kernel.json"), "utf8")) as {
+      definition: { dependencies: string[] };
+    };
+    expect(liveKernelAfterRetry.definition.dependencies).toEqual(["cas-cycle-c"]);
+  });
+
+  it("keeps a raced cycle held across retries until the existing graph is corrected", async () => {
+    const root = makeRoot();
+    const heldDir = addLegacyTask(root, {
+      id: "retry-cycle-b",
+      directory: "02-retry-cycle-b",
+      dependsOn: ["missing-ref"],
+      dependsMode: "block",
+    });
+    const heldTaskJsonPath = path.join(heldDir, "task.json");
+    const heldTaskJson = JSON.parse(fs.readFileSync(heldTaskJsonPath, "utf8")) as Record<string, unknown>;
+    delete heldTaskJson.deliverable;
+    delete heldTaskJson.deliveryLevel;
+    writeJson(heldTaskJsonPath, heldTaskJson);
+    fs.writeFileSync(path.join(heldDir, "prd.md"), "# retry-cycle-b\n\nDefinition is intentionally held.\n", "utf8");
+    await importRoot(root);
+
+    const existingTaskDir = addV2Task(root, "01-retry-cycle-a", "retry-cycle-a");
+    addV2Task(root, "00-retry-cycle-c", "retry-cycle-c");
+    const existingRead = readTaskKernel({ root, taskDir: existingTaskDir, cwd: root });
+    if (existingRead.kind !== "task-kernel-v2") throw new Error("expected existing V2 Task");
+    const sourceBytes = new Map(fs.readdirSync(heldDir).map((name) => [name, fs.readFileSync(path.join(heldDir, name))]));
+    const migrationAuthority = path.join(root, ".pactile", "runtime", "legacy-task-migrations", "authority.json");
+    const migrationAuthorityBefore = fs.readFileSync(migrationAuthority);
+    const reconciliationAuthority = path.join(root, ".pactile", "runtime", "legacy-task-migrations", "reconciliations", "authority.json");
+    const cyclicKernel = appendMutation(
+      existingRead.kernel,
+      "concurrent-v2-writer",
+      "introduce-retry-cycle",
+      "task.dependency-added",
+      "retry-cycle-b",
+      fingerprintTaskValue({ dependencyId: "retry-cycle-b" }),
+      { definition: { ...existingRead.kernel.definition, dependencies: ["retry-cycle-b"] } },
+      "A concurrent writer closes a cycle after reconciliation preflight.",
+    );
+    const request = {
+      projectRoot: root,
+      plan: scanLegacyTaskMigration({ projectRoot: root }),
+      input: {
+        taskPath: "02-retry-cycle-b",
+        idempotencyKey: "recover-after-cycle-correction",
+        activationAt: "2026-09-26T17:45:00.000Z",
+        definition: {
+          deliverable: "A defined result after the existing graph is corrected.",
+          deliveryLevel: "local-result",
+          acceptanceCriteria: ["A held Task activates only after the graph is acyclic."],
+        },
+        dependencyResolutions: [{ reference: "missing-ref", taskId: "retry-cycle-a" }],
+      },
+    };
+    const first = await runLegacyTaskReconciliation(request, {
+      approved: true,
+      onPhase: (phase) => {
+        if (phase === "generation-staged")
+          fs.writeFileSync(path.join(existingTaskDir, "kernel.json"), `${JSON.stringify(cyclicKernel, null, 2)}\n`, "utf8");
+      },
+    });
+    expect(first).toMatchObject({
+      status: "blocked",
+      reason: "legacy-task-reconciliation-hard-dependency-cycle:retry-cycle-b",
+      wrote: true,
+      visible: false,
+    });
+
+    const stillCyclic = await runLegacyTaskReconciliation(request, { approved: true });
+    expect(stillCyclic).toMatchObject({
+      status: "blocked",
+      reason: "legacy-task-reconciliation-hard-dependency-cycle:retry-cycle-b",
+      visible: false,
+    });
+    expect(fs.existsSync(reconciliationAuthority)).toBe(false);
+
+    const correctedKernel = appendMutation(
+      cyclicKernel,
+      "concurrent-v2-writer",
+      "correct-retry-cycle",
+      "task.dependency-added",
+      "retry-cycle-c",
+      fingerprintTaskValue({ dependencyId: "retry-cycle-c" }),
+      { definition: { ...cyclicKernel.definition, dependencies: ["retry-cycle-c"] } },
+      "The pre-existing graph is corrected while preserving the user's dependency change.",
+    );
+    fs.writeFileSync(path.join(existingTaskDir, "kernel.json"), `${JSON.stringify(correctedKernel, null, 2)}\n`, "utf8");
+    const recovered = await runLegacyTaskReconciliation(request, { approved: true });
+    expect(recovered).toMatchObject({ status: "completed", resumed: true, wrote: true, visible: true });
+    expect(fs.readFileSync(migrationAuthority)).toEqual(migrationAuthorityBefore);
+    for (const [name, bytes] of sourceBytes) expect(fs.readFileSync(path.join(heldDir, name))).toEqual(bytes);
+    const recoveredKernel = readTaskKernel({ root, taskDir: heldDir, cwd: root });
+    if (recoveredKernel.kind !== "task-kernel-v2") throw new Error("expected recovered cycle Task to be V2");
+    expect(recoveredKernel.kernel.definition.dependencies).toEqual(["retry-cycle-a"]);
+    const liveKernel = JSON.parse(fs.readFileSync(path.join(existingTaskDir, "kernel.json"), "utf8")) as {
+      definition: { dependencies: string[] };
+    };
+    expect(liveKernel.definition.dependencies).toEqual(["retry-cycle-c"]);
   });
 
   it("keeps dry-run, cancel, placeholder, source-field override, and bad delivery level at zero visible writes", async () => {

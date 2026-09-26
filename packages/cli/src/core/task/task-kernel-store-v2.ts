@@ -69,12 +69,19 @@ interface LegacyTaskKernelOverlayJournalEntry {
   readonly kernelFingerprint: string;
 }
 
-export function readTaskKernel(options: { root: string; taskDir: string; cwd?: string }): AnyTaskKernelReadResult {
+export function readTaskKernel(options: {
+  root: string;
+  taskDir: string;
+  cwd?: string;
+  validatedView?: LegacyTaskMigrationView | null;
+}): AnyTaskKernelReadResult {
   const root = canonicalProjectRoot(options.root, options.cwd);
   const taskDir = resolveInsideTasksRoot(root, options.taskDir, options.cwd);
   let migrationView: ReturnType<typeof readLegacyTaskMigrationView>;
   try {
-    migrationView = readLegacyTaskMigrationView(root);
+    migrationView = options.validatedView === undefined
+      ? readLegacyTaskMigrationView(root)
+      : options.validatedView;
   } catch (error) {
     throw new KernelError("CORRUPT_STATE", error instanceof Error ? error.message : String(error));
   }

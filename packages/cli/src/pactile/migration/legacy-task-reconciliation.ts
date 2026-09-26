@@ -646,9 +646,10 @@ export async function runLegacyTaskReconciliation(
     for (const resolution of input.dependencyResolutions ?? []) {
       const legacyTargets = currentScan.tasks.filter((task) => !task.archivedByPath && task.legacyTaskId.value === resolution.taskId);
       if (legacyTargets.length) continue;
-      const dependencyDir = resolveTaskDirectoryById(root, resolution.taskId);
+      const validatedView = currentView ?? baseView;
+      const dependencyDir = resolveTaskDirectoryById(root, resolution.taskId, validatedView);
       if (!dependencyDir) throw new Error(`legacy-task-reconciliation-dependency-target-not-unique:${resolution.taskId}`);
-      const dependency = readTaskKernel({ root, taskDir: dependencyDir, cwd: root });
+      const dependency = readTaskKernel({ root, taskDir: dependencyDir, cwd: root, validatedView });
       if (dependency.kind !== "task-kernel-v2")
         throw new Error(`legacy-task-reconciliation-dependency-target-not-v2:${resolution.taskId}`);
       externalDependencyIds.add(resolution.taskId);

@@ -77,8 +77,12 @@ export function assertHardDependenciesSatisfied(root: string, dependencies: read
 }
 
 /** Resolves a Task ID across active and archived records for read-only evidence checks. */
-export function resolveTaskDirectoryById(root: string, taskId: string): string | null {
-  const located = findTaskById(root, requireNonEmptyString(taskId, "taskId"));
+export function resolveTaskDirectoryById(
+  root: string,
+  taskId: string,
+  validatedView?: LegacyTaskMigrationView | null,
+): string | null {
+  const located = findTaskById(root, requireNonEmptyString(taskId, "taskId"), undefined, validatedView);
   return located?.taskDir ?? null;
 }
 
@@ -122,7 +126,7 @@ function findTaskById(
         }];
       }
       try {
-        const read = readTaskKernel({ root: canonicalRoot, taskDir });
+        const read = readTaskKernel({ root: canonicalRoot, taskDir, validatedView: migrationView });
         if (read.kind === "task-kernel-v2" && read.kernel.identity.taskId === taskId) {
           return [{ taskDir, taskId, phase: read.kernel.phase, outcome: read.kernel.outcome, dependencies: read.kernel.definition.dependencies }];
         }
