@@ -2896,3 +2896,11 @@ export function runTaskCli(argv: string[], root = process.cwd()): number {
     return 1;
   }
 }
+
+/** Promise-aware entry for Task commands; async Task routes can be added here. */
+export async function runTaskCliAsync(
+  argv: string[],
+  root = process.cwd(),
+): Promise<number> {
+  return runTaskCli(argv, root);
+}

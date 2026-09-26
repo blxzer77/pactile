@@ -118,6 +118,16 @@ Closeout Evidence normally identifies:
 
 `pactile task prepare-archive-evidence <task>` drafts missing `verify.md` slots with `TODO` markers; those markers never pass the archive gate. `pactile task prepare-learning-scaffold <task>` prints a read-only spec decision checklist. For Child work, the Parent can inspect the handoff with `pactile task review-child <parent> <child> --check` before recording an acceptance or change decision.
 
+## Verification planning
+
+`pactile task verify-plan <task-id> --manifest <project-relative-json> (--adopt|--override) [--no-jev]` builds a deterministic P41 proposal for the Task's latest completed Run. The command re-observes the Run candidate before and after optional Jev advice; a changed Run, candidate, or Jev egress policy rejects the response as stale.
+
+The UTF-8 JSON manifest is limited to 32 KiB and contains only `impact` and `checks`. Its bounded metadata cannot contain file paths, links, email addresses, or secret-like values. It is a caller-supplied inventory, not proof that the repository's complete required-CI set was listed. Repository policy and repository CI remain authoritative; the planner never removes a required check from its supplied list, and it never executes any check.
+
+Jev may suggest one additional independent behavior check after the deterministic plan. Project `jev.egress: deny`, invalid policy, missing credentials, transport failure, and low confidence fall back locally. The request contains only the bounded impact summary and optional check modes; it does not send source snippets, check titles, paths, or secrets. `--adopt` or `--override` records the caller's decision about the suggestion. Adoption is a planning choice only: it does not execute the check, create a Run or Review, claim Review PASS, or authorize Close.
+
+The command writes a `planned-only` receipt under `.pactile/.runtime/task-verification/plans/` only when the runtime path is excluded from Git candidate observation. Otherwise it prints the bound plan without persisting it. The receipt is separate from Run execution receipts and does not change Kernel lifecycle state. Actual validation outcomes belong in Run Evidence and Review; repository CI still must run under its normal policy.
+
 ## Parent and Child tasks
 
 A Parent is an integration authority, not a container that automatically completes its Children. Each Child owns an independently definable and verifiable deliverable. The Parent owns cross-Child acceptance, dependency ordering, conflict decisions, and final integration Evidence.

@@ -3,7 +3,8 @@ import { readTaskKernel } from "../core/task/index.js";
 import { resolveTaskDir } from "../pactile/task/session.js";
 import { reclaimRunWorktree } from "../pactile/worktree/index.js";
 import { readDeveloper } from "../utils/developer.js";
-import { runTaskCli } from "./task.js";
+import { runTaskCliAsync } from "./task.js";
+import { runTaskVerifyPlanCli } from "./task-verify-plan.js";
 
 function option(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -20,7 +21,10 @@ function repositoryRoot(cwd: string): string {
 
 /** Run the existing Close command, then automatically attempt safe cleanup for its bound Run. */
 export async function runTaskCliWithWorkspaceReclaim(argv: string[], cwd = process.cwd()): Promise<number> {
-  const closeCode = runTaskCli(argv, cwd);
+  if (argv[0] === "verify-plan") {
+    return runTaskVerifyPlanCli(argv.slice(1), cwd);
+  }
+  const closeCode = await runTaskCliAsync(argv, cwd);
   if (closeCode !== 0 || argv[0] !== "close" || argv.includes("--check")) return closeCode;
 
   try {

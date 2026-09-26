@@ -594,7 +594,11 @@ program
     process.exitCode = await runTaskCliWithWorkspaceReclaim(
       process.argv.slice(3),
     );
-  });
+  })
+  .addHelpText(
+    "after",
+    "\n  verify-plan <task-id> --manifest <project-relative-json> (--adopt|--override) [--no-jev]\n    Plans the latest completed candidate and records planning evidence only; no checks, Runs, Reviews, or Close are executed.\n",
+  );
 
 program
   .command("worktree")
