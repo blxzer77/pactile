@@ -8,6 +8,7 @@ import {
   type TaskKernelSnapshotV2,
   type TaskRunV2,
 } from "../../core/task/index.js";
+import { resolveTaskDirectoryById } from "../../core/task/task-kernel-paths.js";
 import { resolveTaskDir } from "../task/session.js";
 import type { ConflictParallelAuthorizationV1 } from "./scheduler.js";
 import {
@@ -1106,7 +1107,12 @@ function inspectTaskRun(
 
   const dependencyKernelRevisions: Record<string, number | null> = {};
   for (const dependencyId of dependencyIds) {
-    const dependencyDir = resolveTaskDir(root, dependencyId);
+    const dependencyDir = resolveTaskDirectoryById(root, dependencyId);
+    if (!dependencyDir) {
+      dependencyKernelRevisions[dependencyId] = null;
+      reasons.push(`hard-dependency-missing-or-invalid:${dependencyId}`);
+      continue;
+    }
     const dependency = readTaskKernel({ root, taskDir: dependencyDir });
     if (dependency.kind !== "task-kernel-v2") {
       dependencyKernelRevisions[dependencyId] = null;
@@ -1865,9 +1871,12 @@ function assertTaskKernelRunDispatchLeaseInternal(
       for (const dependencyId of dependencies) {
         let dependency: ReturnType<typeof readTaskKernel>;
         try {
+          const dependencyDir = resolveTaskDirectoryById(root, dependencyId);
+          if (!dependencyDir)
+            return empty(`hard-dependency-missing-or-invalid:${dependencyId}`);
           dependency = readTaskKernel({
             root,
-            taskDir: resolveTaskDir(root, dependencyId),
+            taskDir: dependencyDir,
           });
         } catch {
           return empty(`hard-dependency-missing-or-invalid:${dependencyId}`);

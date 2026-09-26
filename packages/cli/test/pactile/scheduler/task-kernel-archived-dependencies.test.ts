@@ -3,13 +3,22 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  bindTaskRunHostReceipt,
   closeTaskKernel,
   createTaskKernel,
   recordTaskReview,
   recordTaskRunResult,
+  resumeTaskRun,
   startTaskRun,
 } from "../../../src/core/task/index.js";
-import { planTaskKernelGraphV1 } from "../../../src/pactile/scheduler/index.js";
+import {
+  acquireTaskKernelRunDispatchV1,
+  assertTaskKernelRunDispatchLeaseV1,
+  assertTaskKernelRunDispatchPreSpawnV1,
+  bindTaskKernelRunDispatchOwnerV1,
+  planTaskKernelGraphV1,
+  scheduleTaskKernelGraph,
+} from "../../../src/pactile/scheduler/index.js";
 
 const roots: string[] = [];
 
@@ -214,4 +223,145 @@ describe("V2 Task DAG archived dependencies", () => {
       );
     },
   );
+
+  it("admits and reasserts a Run whose completed hard dependency was archived", () => {
+    const root = makeRoot();
+    const prerequisiteDir = closeSuccessfully(root, "archived-dispatch-prerequisite");
+    archiveTask(root, prerequisiteDir, "archived-dispatch-prerequisite");
+
+    const dependentDir = createTask(root, "active-dispatch-dependent", [
+      "archived-dispatch-prerequisite",
+    ]);
+    const started = startTaskRun({
+      root,
+      taskDir: dependentDir,
+      expectedRevision: 1,
+      actor: "implementer",
+      idempotencyKey: "run:active-dispatch-dependent",
+      input: { summary: "run after archived prerequisite", references: [] },
+      authorization: {
+        approvedBy: "approver",
+        approvedAt: "2026-09-26T00:00:00.000Z",
+        scope: "fixture",
+        evidenceRef: "approval.json",
+      },
+      initialState: "waiting",
+      writeSetSnapshot: ["src/active-dispatch-dependent.ts"],
+    });
+    const run = started.kernel.runs.at(-1);
+    if (!run) throw new Error("Dependent Run was not started");
+
+    const scheduled = scheduleTaskKernelGraph(root, ["active-dispatch-dependent"]);
+    expect(scheduled.receipt.candidateTaskIds).toEqual([
+      "active-dispatch-dependent",
+    ]);
+    expect(
+      scheduled.receipt.plan.decisions.find(
+        (decision) => decision.taskId === "active-dispatch-dependent",
+      )?.action,
+    ).toBe("scheduled");
+
+    const admissionOwner = {
+      host: "pi",
+      role: "implement",
+      sessionId: null,
+      threadId: null,
+      hostId: null,
+      contractFingerprint: null,
+      startRequestId: null,
+      processId: null,
+    };
+    const admitted = acquireTaskKernelRunDispatchV1(root, {
+      scheduleReceiptFingerprint: scheduled.receipt.receiptFingerprint,
+      taskId: "active-dispatch-dependent",
+      runId: run.id,
+      owner: admissionOwner,
+    });
+    expect(admitted.permitted).toBe(true);
+    if (!admitted.permitted) return;
+
+    const preSpawn = {
+      leaseId: admitted.leaseId,
+      taskId: "active-dispatch-dependent",
+      runId: run.id,
+      scheduleReceiptFingerprint: scheduled.receipt.receiptFingerprint,
+      owner: admissionOwner,
+    };
+    expect(assertTaskKernelRunDispatchPreSpawnV1(root, preSpawn)).toMatchObject({
+      asserted: true,
+      hostBound: false,
+    });
+
+    const hostBound = bindTaskRunHostReceipt({
+      root,
+      taskDir: dependentDir,
+      expectedRevision: started.kernel.revision,
+      runId: run.id,
+      host: {
+        host: "pi",
+        role: "implement",
+        sessionId: "pi-session-archived-dependency",
+        hostId: null,
+        threadId: null,
+        requestRefs: ["pi-start-archived-dependency"],
+        eventRefs: ["pi-progress-archived-dependency"],
+        resultRefs: [],
+        assuranceSource: "manager-owned-child-exit",
+      },
+      actor: "test-pi-bridge",
+      idempotencyKey: "bind-host:active-dispatch-dependent",
+      cwd: root,
+    });
+    const dispatchOwner = {
+      ...admissionOwner,
+      sessionId: "pi-session-archived-dependency",
+      startRequestId: "pi-start-archived-dependency",
+      processId: 42,
+    };
+    expect(
+      bindTaskKernelRunDispatchOwnerV1(root, {
+        leaseId: admitted.leaseId,
+        taskId: "active-dispatch-dependent",
+        runId: run.id,
+        owner: dispatchOwner,
+      }).bound,
+    ).toBe(true);
+    expect(
+      assertTaskKernelRunDispatchLeaseV1(root, {
+        leaseId: admitted.leaseId,
+        taskId: "active-dispatch-dependent",
+        runId: run.id,
+      }).asserted,
+    ).toBe(true);
+
+    const resumed = resumeTaskRun({
+      root,
+      taskDir: dependentDir,
+      expectedRevision: hostBound.kernel.revision,
+      runId: run.id,
+      actor: "implementer",
+      idempotencyKey: "resume:active-dispatch-dependent",
+    });
+    const settled = recordTaskRunResult({
+      root,
+      taskDir: dependentDir,
+      expectedRevision: resumed.kernel.revision,
+      runId: run.id,
+      outcome: "completed",
+      summary: "dependent result is ready",
+      candidateEntries: [{ ref: "result.txt", fingerprint: "b".repeat(64) }],
+      evidenceRefs: ["tests.json"],
+      actor: "implementer",
+      idempotencyKey: "complete:active-dispatch-dependent",
+    });
+    expect(settled.kernel.runs.at(-1)?.state).toBe("completed");
+    expect(
+      assertTaskKernelRunDispatchLeaseV1(root, {
+        leaseId: admitted.leaseId,
+        taskId: "active-dispatch-dependent",
+        runId: run.id,
+        allowSettled: true,
+      }),
+    ).toMatchObject({ asserted: true, reasonCode: null });
+  });
 });

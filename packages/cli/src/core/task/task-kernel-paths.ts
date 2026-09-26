@@ -5,6 +5,12 @@ import { KernelError, requireNonEmptyString, type KernelOutcome, type KernelPhas
 import { readKernel, readKernelStateDocument, withKernelStateLock } from "./kernel-store.js";
 import { isPlainObject } from "./schema.js";
 import { parseTaskKernelSnapshotV2 } from "./task-kernel-schema.js";
+import {
+  listLegacyTaskMigrationDirectories,
+  readLegacyTaskImportRecord,
+  readLegacyTaskMigrationView,
+} from "./legacy-task-migration-reader.js";
+import { readTaskKernel } from "./task-kernel-store-v2.js";
 import { TASK_KERNEL_SCHEMA_VERSION } from "./task-kernel-types.js";
 
 export function assertUniqueTaskId(root: string, taskId: string, ignoredDir: string): void {
@@ -47,6 +53,12 @@ export function assertHardDependenciesSatisfied(root: string, dependencies: read
   if (unmet.length) throw new KernelError("DEPENDENCY_UNSATISFIED", `hard dependencies must be closed successfully: ${unmet.join(", ")}`);
 }
 
+/** Resolves a Task ID across active and archived records for read-only evidence checks. */
+export function resolveTaskDirectoryById(root: string, taskId: string): string | null {
+  const located = findTaskById(root, requireNonEmptyString(taskId, "taskId"));
+  return located?.taskDir ?? null;
+}
+
 interface LocatedTask {
   taskDir: string;
   taskId: string;
@@ -57,8 +69,35 @@ interface LocatedTask {
 
 function findTaskById(root: string, taskId: string, ignoredDir?: string): LocatedTask | null {
   const canonicalRoot = canonicalProjectRoot(root);
-  const matches = enumerateTaskDirs(canonicalRoot).flatMap((taskDir) => {
+  let migrationView: ReturnType<typeof readLegacyTaskMigrationView>;
+  try {
+    migrationView = readLegacyTaskMigrationView(canonicalRoot);
+  } catch (error) {
+    throw new KernelError("CORRUPT_STATE", error instanceof Error ? error.message : String(error));
+  }
+  const matches = enumerateTaskDirs(canonicalRoot, migrationView).flatMap((taskDir) => {
     if (ignoredDir && path.resolve(taskDir) === path.resolve(ignoredDir)) return [];
+    const importRecord = readLegacyTaskImportRecord(canonicalRoot, taskDir, migrationView);
+    if (importRecord?.legacyTaskId === taskId) {
+      if (importRecord.status !== "imported") {
+        return [{
+          taskDir,
+          taskId,
+          phase: "define" as KernelPhase,
+          outcome: null,
+          dependencies: [...importRecord.dependencyFacts.hardDependencies],
+        }];
+      }
+      try {
+        const read = readTaskKernel({ root: canonicalRoot, taskDir });
+        if (read.kind === "task-kernel-v2" && read.kernel.identity.taskId === taskId) {
+          return [{ taskDir, taskId, phase: read.kernel.phase, outcome: read.kernel.outcome, dependencies: read.kernel.definition.dependencies }];
+        }
+      } catch {
+        return [{ taskDir, taskId, phase: "define" as KernelPhase, outcome: null, dependencies: [...importRecord.dependencyFacts.hardDependencies] }];
+      }
+      return [];
+    }
     try {
       const document = withKernelStateLock(taskDir, undefined, (dir) => readKernelStateDocument(dir));
       if (isPlainObject(document) && document.schemaVersion === TASK_KERNEL_SCHEMA_VERSION) {
@@ -75,22 +114,24 @@ function findTaskById(root: string, taskId: string, ignoredDir?: string): Locate
   return matches[0] ?? null;
 }
 
-function enumerateTaskDirs(root: string): string[] {
+function enumerateTaskDirs(root: string, migrationView?: ReturnType<typeof readLegacyTaskMigrationView>): string[] {
   const canonicalRoot = canonicalProjectRoot(root);
   const tasksRoot = path.resolve(canonicalRoot, ".pactile", "tasks");
-  if (!fs.existsSync(tasksRoot)) return [];
   const result: string[] = [];
-  for (const entry of fs.readdirSync(tasksRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory() || ["archive", "locale", "templates"].includes(entry.name)) continue;
-    result.push(path.join(tasksRoot, entry.name));
+  if (fs.existsSync(tasksRoot)) {
+    for (const entry of fs.readdirSync(tasksRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory() || ["archive", "locale", "templates"].includes(entry.name)) continue;
+      result.push(path.join(tasksRoot, entry.name));
+    }
+    const archive = path.join(tasksRoot, "archive");
+    if (fs.existsSync(archive)) for (const month of fs.readdirSync(archive, { withFileTypes: true })) {
+      if (!month.isDirectory()) continue;
+      const monthDir = path.join(archive, month.name);
+      for (const entry of fs.readdirSync(monthDir, { withFileTypes: true })) if (entry.isDirectory()) result.push(path.join(monthDir, entry.name));
+    }
   }
-  const archive = path.join(tasksRoot, "archive");
-  if (fs.existsSync(archive)) for (const month of fs.readdirSync(archive, { withFileTypes: true })) {
-    if (!month.isDirectory()) continue;
-    const monthDir = path.join(archive, month.name);
-    for (const entry of fs.readdirSync(monthDir, { withFileTypes: true })) if (entry.isDirectory()) result.push(path.join(monthDir, entry.name));
-  }
-  return result;
+  result.push(...listLegacyTaskMigrationDirectories(root, migrationView));
+  return [...new Set(result)];
 }
 
 export function resolveInsideTasksRoot(root: string, taskDir: string, cwd?: string): string {
