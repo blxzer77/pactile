@@ -63,3 +63,17 @@ export {
   type TaskKernelRunDispatchPreSpawnAssertionRequestV1,
   type TaskKernelRunDispatchReleaseResultV1,
 } from "./task-kernel-admission.js";
+
+export {
+  dispatchTaskKernelWaveV1,
+  type TaskKernelWaveDispatchOptionsV1,
+  type TaskKernelWaveDispatchResultV1,
+  type TaskKernelWaveDispatchTaskResultV1,
+  type TaskKernelWaveIntegrationPlanV1,
+  type TaskKernelWaveIntegrationTaskV1,
+  type TaskKernelWaveIntegrationWaveV1,
+  type TaskKernelWaveRunOutcomeV1,
+  type TaskKernelWaveRunRequestV1,
+  type TaskKernelWaveRunResultV1,
+  type TaskKernelWaveRunnerV1,
+} from "./task-kernel-wave-dispatch.js";

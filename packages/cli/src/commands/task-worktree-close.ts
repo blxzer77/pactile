@@ -3,7 +3,8 @@ import { readTaskKernel } from "../core/task/index.js";
 import { resolveTaskDir } from "../pactile/task/session.js";
 import { reclaimRunWorktree } from "../pactile/worktree/index.js";
 import { readDeveloper } from "../utils/developer.js";
-import { runTaskCli } from "./task.js";
+import { runTaskCliAsync } from "./task.js";
+import type { TaskScheduleDispatchCliOptionsV1 } from "./task-schedule.js";
 
 function option(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -19,9 +20,14 @@ function repositoryRoot(cwd: string): string {
 }
 
 /** Run the existing Close command, then automatically attempt safe cleanup for its bound Run. */
-export async function runTaskCliWithWorkspaceReclaim(argv: string[], cwd = process.cwd()): Promise<number> {
-  const closeCode = runTaskCli(argv, cwd);
-  if (closeCode !== 0 || argv[0] !== "close" || argv.includes("--check")) return closeCode;
+export async function runTaskCliWithWorkspaceReclaim(
+  argv: string[],
+  cwd = process.cwd(),
+  scheduleDispatchOptions: TaskScheduleDispatchCliOptionsV1 = {},
+): Promise<number> {
+  const closeCode = await runTaskCliAsync(argv, cwd, scheduleDispatchOptions);
+  if (closeCode !== 0 || argv[0] !== "close" || argv.includes("--check"))
+    return closeCode;
 
   try {
     const taskReference = argv[1];
@@ -48,17 +54,28 @@ export async function runTaskCliWithWorkspaceReclaim(argv: string[], cwd = proce
       state: cleanup.state,
       path: cleanup.path,
       receiptRef: "receiptRef" in cleanup ? cleanup.receiptRef : null,
-      reason: "reason" in cleanup ? cleanup.reason ?? null : "Manual cleanup action is required",
+      reason:
+        "reason" in cleanup
+          ? (cleanup.reason ?? null)
+          : "Manual cleanup action is required",
     };
-    (cleanup.state === "reclaimed" ? console.log : console.error)(JSON.stringify(status, null, 2));
+    (cleanup.state === "reclaimed" ? console.log : console.error)(
+      JSON.stringify(status, null, 2),
+    );
     return closeCode;
   } catch (error) {
-    console.error(JSON.stringify({
-      operation: "task-close-worktree-cleanup",
-      runId: option(argv, "--run") ?? null,
-      state: "cleanup-error-retained",
-      reason: error instanceof Error ? error.message : String(error),
-    }, null, 2));
+    console.error(
+      JSON.stringify(
+        {
+          operation: "task-close-worktree-cleanup",
+          runId: option(argv, "--run") ?? null,
+          state: "cleanup-error-retained",
+          reason: error instanceof Error ? error.message : String(error),
+        },
+        null,
+        2,
+      ),
+    );
     return closeCode;
   }
 }

@@ -10,7 +10,11 @@ import {
   updateParallelChildPid,
 } from "../parallel/policy.js";
 import { sameGitRoot } from "../../utils/git-root.js";
-import { PiRpcClient, type PiRpcLaunch, type PiRpcProcessExitReceipt } from "./rpc.js";
+import {
+  PiRpcClient,
+  type PiRpcLaunch,
+  type PiRpcProcessExitReceipt,
+} from "./rpc.js";
 import {
   bindPiV2RunHost,
   persistPiV2StopAndRelease,
@@ -143,7 +147,8 @@ function assistantText(event: Record<string, unknown>): {
         typeof message === "object" &&
         (message as Record<string, unknown>).role === "assistant",
     ) as Record<string, unknown> | undefined;
-  if (!assistant) return { text: "", redacted: false, stopReason: null, errorMessage: null };
+  if (!assistant)
+    return { text: "", redacted: false, stopReason: null, errorMessage: null };
   const content = Array.isArray(assistant.content) ? assistant.content : [];
   const text = content
     .filter(
@@ -347,16 +352,20 @@ export class PiTaskBridge {
     if (this.locked) throw new Error("Pi bridge already has an active run");
     if (input.runId !== undefined) {
       if (input.role !== "implement")
-        throw new Error("Pi V2 dispatch currently supports only the implement role");
+        throw new Error(
+          "Pi V2 dispatch currently supports only the implement role",
+        );
       if (input.resume)
         throw new Error("Pi V2 dispatch cannot resume a prior session");
       if (this.client)
         throw new Error("Pi V2 dispatch requires a fresh Pi bridge process");
-      if (!input.runId.trim()) throw new Error("Pi V2 --run-id must be non-empty");
+      if (!input.runId.trim())
+        throw new Error("Pi V2 --run-id must be non-empty");
       const dispatch = preparePiV2RunDispatch(
         this.root,
         input.task,
         input.runId,
+        input.scheduleReceiptFingerprint,
       );
       return this.runApproved(
         input,
@@ -479,7 +488,9 @@ export class PiTaskBridge {
     const runFile = path.join(evidence, "runs", `${runId}.json`);
     const eventFile = path.join(evidence, "events", `${runId}.jsonl`);
     const runReceiptRef = path.relative(dir, runFile).replaceAll("\\", "/");
-    const progressEvidenceRef = path.relative(dir, eventFile).replaceAll("\\", "/");
+    const progressEvidenceRef = path
+      .relative(dir, eventFile)
+      .replaceAll("\\", "/");
     const startReceiptRef = `pi-bridge/starts/${runId}.json`;
     const record: PiRunRecord = {
       schema_version: dispatch ? 2 : 1,
@@ -556,14 +567,18 @@ export class PiTaskBridge {
         resumeFile,
         dispatch
           ? () => {
-              const verifiedWorkdir = recheckPiV2RunDispatchBeforeSpawn(dispatch);
+              const verifiedWorkdir =
+                recheckPiV2RunDispatchBeforeSpawn(dispatch);
               if (verifiedWorkdir !== workdir) {
-                throw new Error("Pi V2 Run worktree changed immediately before process start");
+                throw new Error(
+                  "Pi V2 Run worktree changed immediately before process start",
+                );
               }
             }
           : undefined,
       );
-      if (parallelLeaseId) updateParallelChildPid(this.root, dir, parallelLeaseId, client.pid);
+      if (parallelLeaseId)
+        updateParallelChildPid(this.root, dir, parallelLeaseId, client.pid);
       fs.writeFileSync(
         lockFile,
         JSON.stringify({
@@ -583,8 +598,15 @@ export class PiTaskBridge {
       atomicJson(runFile, record);
       atomicJson(latestFile, record);
       if (dispatch) {
-        if (!startRequestId || !record.session_id || !Number.isSafeInteger(client.pid) || !client.pid) {
-          throw new Error("Pi V2 host start did not provide a process and session identity");
+        if (
+          !startRequestId ||
+          !record.session_id ||
+          !Number.isSafeInteger(client.pid) ||
+          !client.pid
+        ) {
+          throw new Error(
+            "Pi V2 host start did not provide a process and session identity",
+          );
         }
         const startReceipt = {
           schemaVersion: 1,
@@ -602,11 +624,15 @@ export class PiTaskBridge {
         };
         const startFile = path.join(dir, startReceiptRef);
         fs.mkdirSync(path.dirname(startFile), { recursive: true });
-        fs.writeFileSync(startFile, `${JSON.stringify(startReceipt, null, 2)}\n`, {
-          encoding: "utf8",
-          flag: "wx",
-          mode: 0o600,
-        });
+        fs.writeFileSync(
+          startFile,
+          `${JSON.stringify(startReceipt, null, 2)}\n`,
+          {
+            encoding: "utf8",
+            flag: "wx",
+            mode: 0o600,
+          },
+        );
         record.process_id = client.pid;
         record.host_start_receipt_ref = startReceiptRef;
         atomicJson(runFile, record);
@@ -645,10 +671,19 @@ export class PiTaskBridge {
       const contractExcerpt = fs.existsSync(contractPath)
         ? fs.readFileSync(contractPath, "utf8").slice(0, 1_200)
         : "(no implement.md)";
-      const effectiveTouches = touches ?? (dispatch
-        ? [...new Set([...dispatch.run.writeSetSnapshot, ...(dispatch.run.workspace?.writeSet ?? [])])]
-        : null);
-      const writeSetLabel = dispatch ? "Task Run write set" : "Parent-declared write set";
+      const effectiveTouches =
+        touches ??
+        (dispatch
+          ? [
+              ...new Set([
+                ...dispatch.run.writeSetSnapshot,
+                ...(dispatch.run.workspace?.writeSet ?? []),
+              ]),
+            ]
+          : null);
+      const writeSetLabel = dispatch
+        ? "Task Run write set"
+        : "Parent-declared write set";
       const instructions = [
         `Pactile task: ${taskPath}`,
         `Execution worktree: ${workdir}`,
@@ -673,7 +708,9 @@ export class PiTaskBridge {
         controller.signal,
       );
       record.first_event_ms = result.firstEventMs;
-      const { text, redacted, stopReason, errorMessage } = assistantText(result.event);
+      const { text, redacted, stopReason, errorMessage } = assistantText(
+        result.event,
+      );
       record.outcome =
         stopReason === "stop" && text && !record.tool_errors
           ? "settled"
@@ -690,7 +727,9 @@ export class PiTaskBridge {
       record.result_file = path.relative(dir, resultFile).replaceAll("\\", "/");
       if (dispatch) {
         const resultBytes = fs.readFileSync(resultFile);
-        record.result_sha256 = createHash("sha256").update(resultBytes).digest("hex");
+        record.result_sha256 = createHash("sha256")
+          .update(resultBytes)
+          .digest("hex");
         record.result_redacted = redacted;
       }
     } catch (error) {
@@ -719,16 +758,30 @@ export class PiTaskBridge {
       let processExit: PiProcessExitEvidence | null = null;
       if (dispatch) {
         try {
-          processExit = await this.closeForDispatch() ?? null;
+          processExit = (await this.closeForDispatch()) ?? null;
         } catch (closeError) {
-          record.process_stop_error = redact(closeError instanceof Error ? closeError.message : String(closeError));
+          record.process_stop_error = redact(
+            closeError instanceof Error
+              ? closeError.message
+              : String(closeError),
+          );
         }
         if (processExit) record.process_exit_receipt = processExit;
-        if (processExit?.terminationVerified && processExit.exitObservedAt && startRequestId &&
-          record.session_id && Number.isSafeInteger(record.process_id) && record.process_id) {
-          if (record.outcome === "settled" && (processExit.exitCode !== 0 || processExit.signalCode !== null)) {
+        if (
+          processExit?.terminationVerified &&
+          processExit.exitObservedAt &&
+          startRequestId &&
+          record.session_id &&
+          Number.isSafeInteger(record.process_id) &&
+          record.process_id
+        ) {
+          if (
+            record.outcome === "settled" &&
+            (processExit.exitCode !== 0 || processExit.signalCode !== null)
+          ) {
             record.outcome = "interrupted";
-            record.reason = "Pi reported a settled response but the manager-owned process exited abnormally";
+            record.reason =
+              "Pi reported a settled response but the manager-owned process exited abnormally";
           }
           const settleReceiptId = `settle-${runId}`;
           const receipt: PiHostStopReceipt = {
@@ -746,9 +799,11 @@ export class PiTaskBridge {
             terminal: record.outcome === "cancelled" ? "cancelled" : "exited",
             exitCode: processExit.exitCode,
             signalCode: processExit.signalCode,
-            cancellationRequestId: parseJson(cancelFile)?.run_id === runId && typeof parseJson(cancelFile)?.request_id === "string"
-              ? String(parseJson(cancelFile)?.request_id)
-              : null,
+            cancellationRequestId:
+              parseJson(cancelFile)?.run_id === runId &&
+              typeof parseJson(cancelFile)?.request_id === "string"
+                ? String(parseJson(cancelFile)?.request_id)
+                : null,
             evidenceRef: runReceiptRef,
             progressEvidenceRef,
             resultRef: record.result_file,
@@ -760,7 +815,8 @@ export class PiTaskBridge {
           record.process_stop_receipt = receipt;
           record.process_stop_error = null;
         } else {
-          record.process_stop_error ??= "Pi child close was not verified; dispatch lease retained";
+          record.process_stop_error ??=
+            "Pi child close was not verified; dispatch lease retained";
         }
       }
       if (closeFailed && alive(this.client?.pid)) {
@@ -772,11 +828,20 @@ export class PiTaskBridge {
       atomicJson(runFile, record);
       atomicJson(latestFile, record);
       const v2ChildClosed = processExit?.terminationVerified === true;
-      if ((!dispatch && !(closeFailed && alive(this.client?.pid))) || (dispatch && v2ChildClosed))
+      if (
+        (!dispatch && !(closeFailed && alive(this.client?.pid))) ||
+        (dispatch && v2ChildClosed)
+      )
         fs.rmSync(lockFile, { force: true });
       if (parseJson(cancelFile)?.run_id === runId)
         fs.rmSync(cancelFile, { force: true });
-      if (dispatch && record.process_stop_receipt && startRequestId && record.session_id && record.process_id) {
+      if (
+        dispatch &&
+        record.process_stop_receipt &&
+        startRequestId &&
+        record.session_id &&
+        record.process_id
+      ) {
         try {
           const settlement = persistPiV2StopAndRelease(dispatch, {
             runId,
@@ -789,16 +854,22 @@ export class PiTaskBridge {
             resultRef: record.result_file,
             resultSha256: record.result_sha256 ?? null,
             outcome: record.outcome,
-            cancellationRequestId: record.process_stop_receipt.cancellationRequestId,
+            cancellationRequestId:
+              record.process_stop_receipt.cancellationRequestId,
             processExit: record.process_stop_receipt.processExit,
             processStopReceipt: record.process_stop_receipt,
           });
-          record.dispatch_stop_proof_ref = settlement.stopReceiptTaskRef || null;
+          record.dispatch_stop_proof_ref =
+            settlement.stopReceiptTaskRef || null;
           record.dispatch_lease_released = settlement.released;
           record.dispatch_lease_release_reason = settlement.reasonCode;
         } catch (settleError) {
           record.dispatch_lease_released = false;
-          record.dispatch_lease_release_reason = redact(settleError instanceof Error ? settleError.message : String(settleError));
+          record.dispatch_lease_release_reason = redact(
+            settleError instanceof Error
+              ? settleError.message
+              : String(settleError),
+          );
         }
         atomicJson(runFile, record);
         atomicJson(latestFile, record);

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -218,6 +219,44 @@ describe("Pi V2 dispatch admission and host stop", () => {
     await bridge.close();
   });
 
+  it("passes one persisted multi-candidate receipt through Pi admission without replanning", async () => {
+    const root = makeRoot();
+    const first = createTask(root, "receipt-pass-through-first", { writeSet: ["src/first.ts"] });
+    const second = createTask(root, "receipt-pass-through-second", { writeSet: ["src/second.ts"] });
+    if (!first.runId || !second.runId) throw new Error("V2 Runs are missing");
+    attachManagedWorktree(root, first);
+    attachManagedWorktree(root, second);
+    const schedule = scheduleTaskKernelGraph(root, [first.taskId, second.taskId]);
+    expect(schedule.receipt.plan.decisions.map(({ action }) => action)).toEqual(["in-flight", "in-flight"]);
+    const replanSpy = vi.spyOn(scheduler, "scheduleTaskKernelGraph");
+    const dispatched = [];
+    for (const task of [first, second]) {
+      const marker = path.join(root, `${task.taskId}.started`);
+      const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+      try {
+        dispatched.push(await bridge.run({
+          root,
+          task: task.taskId,
+          runId: task.runId as string,
+          role: "implement",
+          prompt: "Consume the exact multi-candidate V2 schedule receipt.",
+          timeoutMs: 5_000,
+          scheduleReceiptFingerprint: schedule.receipt.receiptFingerprint,
+        }));
+      } finally {
+        await bridge.close();
+      }
+      expect(fs.existsSync(marker)).toBe(true);
+    }
+    expect(replanSpy).not.toHaveBeenCalled();
+    expect(dispatched).toHaveLength(2);
+    expect(dispatched.map(({ schedule_receipt_fingerprint }) => schedule_receipt_fingerprint)).toEqual([
+      schedule.receipt.receiptFingerprint,
+      schedule.receipt.receiptFingerprint,
+    ]);
+    expect(dispatched.every(({ dispatch_lease_released }) => dispatch_lease_released === true)).toBe(true);
+  });
+
   it("refuses a Git project-root Run without a manager-owned workspace", async () => {
     const root = makeRoot();
     const task = createTask(root, "missing-managed-workspace");
@@ -241,13 +280,13 @@ describe("Pi V2 dispatch admission and host stop", () => {
     const task = createTask(root, "foreign-worktree");
     if (!task.runId) throw new Error("V2 Run is missing");
     const foreign = path.join(root, ".pactile", "worktrees", "foreign");
-    fs.mkdirSync(path.join(foreign, "src"), { recursive: true });
-    git(foreign, "init", "-q", "-b", "main");
-    git(foreign, "config", "user.name", "Foreign Repository");
-    git(foreign, "config", "user.email", "foreign@example.invalid");
-    fs.writeFileSync(path.join(foreign, "src", "foreign.ts"), "export const foreign = true;\n");
-    git(foreign, "add", "src/foreign.ts");
-    git(foreign, "commit", "-q", "-m", "foreign base");
+    fs.mkdirSync(path.dirname(foreign), { recursive: true });
+    execFileSync(
+      "git",
+      ["clone", "--local", "--no-hardlinks", "--", root, foreign],
+      { cwd: root, stdio: "ignore" },
+    );
+    git(foreign, "remote", "remove", "origin");
     const read = readTaskKernel({ root, taskDir: task.taskDir, cwd: root });
     if (read.kind !== "task-kernel-v2") throw new Error("V2 Kernel is missing");
     const manager = {
@@ -267,8 +306,8 @@ describe("Pi V2 dispatch admission and host stop", () => {
       workspace: {
         ownerRunId: task.runId,
         canonicalPath: fs.realpathSync(foreign),
-        branch: "main",
-        baseSha: git(foreign, "rev-parse", "HEAD"),
+        branch: git(foreign, "branch", "--show-current"),
+        baseSha: git(root, "rev-parse", "HEAD"),
         writeSet: ["src"],
         integrationState: "not-integrated",
         reclamationState: "not-requested",
@@ -716,9 +755,9 @@ describe("Pi V2 dispatch admission and host stop", () => {
 
   it("rejects a wrong Run ID and a completed candidate before Pi starts", async () => {
     const root = makeRoot();
-    const task = createTask(root, "wrong-run-id");
+    const task = createTask(root, "wrong-run-id", { writeSet: ["src/result.ts"] });
     if (!task.runId) throw new Error("V2 Run is missing");
-    attachManagedWorktree(root, task);
+    const worktree = attachManagedWorktree(root, task);
     const marker = path.join(root, "must-not-start.txt");
     const launch = { command: process.execPath, args: [piScript(root, marker)] };
     const wrong = new PiTaskBridge(root, launch);
@@ -734,6 +773,10 @@ describe("Pi V2 dispatch admission and host stop", () => {
 
     const read = readTaskKernel({ root, taskDir: task.taskDir, cwd: root });
     if (read.kind !== "task-kernel-v2") throw new Error("V2 Kernel is missing");
+    const candidatePath = path.join(worktree, "src", "result.ts");
+    fs.mkdirSync(path.dirname(candidatePath), { recursive: true });
+    const candidateBytes = Buffer.from("export const result = true;\n");
+    fs.writeFileSync(candidatePath, candidateBytes);
     recordTaskRunResult({
       root,
       taskDir: task.taskDir,
@@ -741,7 +784,10 @@ describe("Pi V2 dispatch admission and host stop", () => {
       runId: task.runId,
       outcome: "completed",
       summary: "Candidate already recorded",
-      candidateEntries: [{ ref: "src/result.ts", fingerprint: "a".repeat(64) }],
+      candidateEntries: [{
+        ref: "src/result.ts",
+        fingerprint: createHash("sha256").update(candidateBytes).digest("hex"),
+      }],
       evidenceRefs: [],
       actor: "test-runner",
       idempotencyKey: "complete:wrong-run-id",
