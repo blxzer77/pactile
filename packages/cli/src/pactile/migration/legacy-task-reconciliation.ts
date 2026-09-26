@@ -9,6 +9,7 @@ import {
   readLegacyTaskImportRecord,
   readLegacyTaskMigrationBaseView,
   readLegacyTaskMigrationView,
+  legacyTaskMigrationOverlayPath,
   type LegacyTaskImportRecord,
   type LegacyTaskMigrationFile,
   type LegacyTaskMigrationView,
@@ -19,6 +20,8 @@ import {
   type LegacyTaskReconciliationAuthority,
 } from "../../core/task/legacy-task-reconciliation-reader.js";
 import { readTaskKernel } from "../../core/task/task-kernel.js";
+import { assertUniqueTaskId, resolveTaskDirectoryById } from "../../core/task/task-kernel-paths.js";
+import { parseTaskKernelSnapshotV2 } from "../../core/task/task-kernel-schema.js";
 import { assertLegacyTaskKernelMigrationOverlaysIntact } from "../../core/task/task-kernel-store-v2.js";
 import { assertCanonicalWriteTarget } from "../runtime/paths.js";
 import {
@@ -310,6 +313,7 @@ function requestFingerprint(
     sourceFingerprint: authority.sourceFingerprint,
     taskPath: input.taskPath,
     targetTaskPath: input.targetTaskPath ?? input.taskPath,
+    targetTaskId: input.targetTaskId ?? null,
     idempotencyKey: input.idempotencyKey,
     activationAt: input.activationAt,
     definition: input.definition ?? {},
@@ -340,6 +344,61 @@ function readBaseImportRecord(view: LegacyTaskMigrationView, taskPath: string): 
   } catch {
     throw new Error("legacy-task-migration-record-invalid");
   }
+}
+
+function assertRestoreTargetDirectoryAvailable(root: string, taskPath: string): void {
+  const taskDir = path.join(root, ...taskPath.split("/"));
+  const safeTarget = assertCanonicalWriteTarget(root, taskDir);
+  try {
+    const stat = fs.lstatSync(safeTarget);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || fs.readdirSync(safeTarget).length > 0)
+      throw new Error("legacy-task-reconciliation-target-occupied");
+  } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function assertRestoreTargetAvailable(
+  root: string,
+  taskPath: string,
+  sourceTaskPath: string,
+  baseView: LegacyTaskMigrationView,
+  currentView: LegacyTaskMigrationView | null,
+): void {
+  if (taskPath === sourceTaskPath) return;
+  assertRestoreTargetDirectoryAvailable(root, taskPath);
+  const targetPrefix = `${taskPath}/`;
+  if ([baseView.baseFiles, ...(currentView ? [currentView.reconciliationFiles] : [])].some((files) =>
+    [...files.keys()].some((filePath) => filePath.startsWith(targetPrefix))))
+    throw new Error("legacy-task-reconciliation-target-occupied");
+  const targetDir = path.join(root, ...taskPath.split("/"));
+  const overlayPath = legacyTaskMigrationOverlayPath(root, targetDir);
+  if (overlayPath) {
+    try {
+      fs.lstatSync(overlayPath);
+      throw new Error("legacy-task-reconciliation-target-overlay-occupied");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
+
+function assertReconciliationTaskIdAvailable(
+  root: string,
+  targetTaskPath: string,
+  sourceTaskPath: string,
+  files: readonly { readonly path: string; readonly bytes: Uint8Array }[],
+  validatedView: LegacyTaskMigrationView | null,
+): void {
+  const kernelFile = files.find((file) => file.path === `${targetTaskPath}/kernel.json`);
+  if (!kernelFile) throw new Error("legacy-task-reconciliation-kernel-missing");
+  let kernel: ReturnType<typeof parseTaskKernelSnapshotV2>;
+  try {
+    kernel = parseTaskKernelSnapshotV2(JSON.parse(Buffer.from(kernelFile.bytes).toString("utf8")) as unknown);
+  } catch {
+    throw new Error("legacy-task-reconciliation-kernel-invalid");
+  }
+  assertUniqueTaskId(root, kernel.identity.taskId, path.join(root, ...sourceTaskPath.split("/")), validatedView);
 }
 
 function currentReconciliationFiles(view: LegacyTaskMigrationView): StagedFile[] {
@@ -510,14 +569,19 @@ export async function runLegacyTaskReconciliation(
       ? JSON.parse(effectiveRecordBytes.toString("utf8")) as LegacyTaskImportRecord
       : null;
     const activeMetadata = activeImport ? parseReconciliationMetadata(activeImport) : null;
+    if (requiresSeparateTarget) assertRestoreTargetDirectoryAvailable(root, taskPath);
     if (activeImport?.status === "imported") {
-      visible = true;
       if (activeMetadata?.idempotencyKey === input.idempotencyKey && activeMetadata.requestFingerprint === fingerprint) {
+        visible = true;
         if (!currentView?.reconciliationAuthority)
           throw new Error("legacy-task-reconciliation-authority-invalid");
         const result = reconcileResultFromActive(root, taskPath, currentView.reconciliationAuthority.generationId, fingerprint, input.idempotencyKey, true);
         return finalizedPriorJournal && result.status === "completed" ? { ...result, wrote: true } : result;
       }
+      const activeSourcePath = activeImport.legacySourceMetadata?.fileReferences.taskJson?.path;
+      if (requiresSeparateTarget && activeSourcePath !== `${sourceTaskPath}/task.json`)
+        throw new Error("legacy-task-reconciliation-target-occupied");
+      visible = true;
       throw new Error("legacy-task-reconciliation-task-already-active");
     }
     if (archivedSource || interruptedSource) {
@@ -548,7 +612,21 @@ export async function runLegacyTaskReconciliation(
       throw new Error("legacy-task-reconciliation-task-not-held");
 
     const buildInput: LegacyTaskV2ReconciliationInput = { ...input, requestFingerprint: fingerprint };
-    const built = buildLegacyTaskV2Reconciliation(currentScan, buildInput);
+    if (requiresSeparateTarget)
+      assertRestoreTargetAvailable(root, taskPath, sourceTaskPath, baseView, currentView);
+    const externalDependencyIds = new Set<string>();
+    for (const resolution of input.dependencyResolutions ?? []) {
+      const legacyTargets = currentScan.tasks.filter((task) => !task.archivedByPath && task.legacyTaskId.value === resolution.taskId);
+      if (legacyTargets.length) continue;
+      const dependencyDir = resolveTaskDirectoryById(root, resolution.taskId);
+      if (!dependencyDir) throw new Error(`legacy-task-reconciliation-dependency-target-not-unique:${resolution.taskId}`);
+      const dependency = readTaskKernel({ root, taskDir: dependencyDir, cwd: root });
+      if (dependency.kind !== "task-kernel-v2" || dependency.kernel.phase !== "close" || dependency.kernel.outcome !== "completed")
+        throw new Error(`legacy-task-reconciliation-dependency-target-not-closed:${resolution.taskId}`);
+      externalDependencyIds.add(resolution.taskId);
+    }
+    const built = buildLegacyTaskV2Reconciliation(currentScan, buildInput, { externalDependencyIds });
+    assertReconciliationTaskIdAvailable(root, taskPath, sourceTaskPath, built.targets, currentView ?? baseView);
     const effectiveView = currentView;
     const expectedAuthorityFingerprint = orphanRecovery ? null : readCurrentAuthorityFingerprint(root);
     const previousGenerationId = effectiveView?.reconciliationAuthority?.generationId ?? null;
@@ -596,12 +674,11 @@ export async function runLegacyTaskReconciliation(
       assertOnlyRecoveryArtifacts(root, generationId);
     }
 
+    const overlayCheckView = currentView ?? baseView;
+    assertLegacyTaskKernelMigrationOverlaysIntact(root, overlayCheckView);
     if (options.dryRun) return { status: "dry-run", taskPath, requestFingerprint: fingerprint, wrote: false, visible: false };
     if (options.cancelled || options.approved !== true)
       return { status: "cancelled", taskPath, requestFingerprint: fingerprint, wrote: false, visible: false };
-
-    const overlayCheckView = currentView ?? baseView;
-    assertLegacyTaskKernelMigrationOverlaysIntact(root, overlayCheckView);
     const occurred = occurredAt;
     stageGeneration(root, authority, baseView.baseFiles, stagedFiles, occurred, occurred);
     wrote = true;
@@ -628,6 +705,10 @@ export async function runLegacyTaskReconciliation(
       // Recheck every previously active imported overlay after staging and
       // under the authority CAS lock, immediately before making this generation visible.
       assertLegacyTaskKernelMigrationOverlaysIntact(root, overlayCheckView);
+      if (requiresSeparateTarget) {
+        assertRestoreTargetAvailable(root, taskPath, sourceTaskPath, baseView, currentView);
+      }
+      assertReconciliationTaskIdAvailable(root, taskPath, sourceTaskPath, built.targets, currentView ?? baseView);
       setJournalState(root, authority, "committing", occurred);
       atomicReplace(root, pointerPath, jsonBytes(authority));
       visible = true;

@@ -49,6 +49,8 @@ export interface LegacyTaskV2ReconciliationInput {
   readonly taskPath: string;
   /** Required when explicitly restoring an archived source into an active path. */
   readonly targetTaskPath?: string;
+  /** Explicit replacement V2 identity for an invalid legacy slug. */
+  readonly targetTaskId?: string;
   readonly idempotencyKey: string;
   readonly activationAt: string;
   /** Added by the transaction writer; callers must not choose this value. */
@@ -106,7 +108,8 @@ interface ParsedTaskMap {
 
 interface TaskImportAssessment {
   readonly source: LegacyTaskSource;
-  readonly taskId: string;
+  readonly sourceTaskId: string;
+  taskId: string;
   readonly hardDependencies: Set<string>;
   readonly dependencyDiagnostics: string[];
   readonly coordinationReasons: Set<string>;
@@ -680,6 +683,7 @@ function assessmentFor(source: LegacyTaskSource): TaskImportAssessment {
   }
   return {
     source,
+    sourceTaskId: taskId,
     taskId,
     hardDependencies: new Set(),
     dependencyDiagnostics: [],
@@ -787,6 +791,7 @@ function addDependencyDeclarations(
   tasks: readonly LegacyTaskSource[],
   byDirectory: Map<string, TaskImportAssessment>,
   explicitResolutions: ReadonlyMap<string, LegacyTaskSource> = new Map(),
+  externalResolutions: ReadonlyMap<string, string> = new Map(),
 ): void {
   const owner = declaration.owner
     ? byDirectory.get(declaration.owner.directory)
@@ -816,6 +821,12 @@ function addDependencyDeclarations(
   }
   for (const reference of declaration.references) {
     const resolutionKey = `${declaration.source}\0${typeof reference === "string" ? reference.trim() : String(reference)}`;
+    const externalId = externalResolutions.get(resolutionKey);
+    if (externalId) {
+      if (externalId === owner.taskId) owner.coordinationReasons.add(`dependency-self-cycle:${externalId}`);
+      else owner.hardDependencies.add(externalId);
+      continue;
+    }
     const resolved = explicitResolutions.has(resolutionKey)
       ? { task: explicitResolutions.get(resolutionKey) ?? null, reason: null }
       : uniqueTaskForReference(reference, tasks);
@@ -966,7 +977,7 @@ function importRecord(
     kind: "legacy-task-import-record",
     status: statusOverride ?? status,
     taskPath: assessment.source.directory,
-    legacyTaskId: assessment.taskId,
+    legacyTaskId: assessment.sourceTaskId,
     sourceFingerprint,
     sourceFiles: assessment.source.files.map((file) => ({
       path: file.path,
@@ -1042,7 +1053,7 @@ export function buildLegacyTaskV2Import(
     .map(assessmentFor);
   const archivedTasks = archivedAssessments.map((assessment) => ({
     taskPath: assessment.source.directory,
-    legacyTaskId: assessment.taskId,
+    legacyTaskId: assessment.sourceTaskId,
     missingDefinitionFields: [...assessment.missingDefinitionFields].sort(),
     sourceFiles: assessment.source.files.map((file) => ({
       path: file.path,
@@ -1125,6 +1136,7 @@ export function buildLegacyTaskV2Import(
 export function buildLegacyTaskV2Reconciliation(
   plan: LegacyTaskMigrationPlan,
   input: LegacyTaskV2ReconciliationInput,
+  options: { readonly externalDependencyIds?: ReadonlySet<string> } = {},
 ): LegacyTaskV2ReconciliationBuild {
   if (
     plan.preflight.status !== "clear-to-review" ||
@@ -1157,8 +1169,17 @@ export function buildLegacyTaskV2Reconciliation(
   ];
   const byDirectory = new Map(assessments.map((item) => [item.source.directory, item]));
   const finalAssessment = byDirectory.get(source.directory);
-  if (!finalAssessment || finalAssessment.missingDefinitionFields.has("taskId"))
+  if (!finalAssessment)
     throw new Error("legacy-task-reconciliation-task-id-invalid");
+  const legacyTaskIdIsInvalid = finalAssessment.missingDefinitionFields.has("taskId");
+  if (input.targetTaskId !== undefined) {
+    if (!legacyTaskIdIsInvalid || !TASK_ID.test(input.targetTaskId))
+      throw new Error("legacy-task-reconciliation-target-task-id-invalid");
+    finalAssessment.taskId = input.targetTaskId;
+    finalAssessment.missingDefinitionFields.delete("taskId");
+  } else if (legacyTaskIdIsInvalid) {
+    throw new Error("legacy-task-reconciliation-task-id-invalid");
+  }
   applyReconciliationDefinition(finalAssessment, input);
   const dependencySources = isArchivedSource ? [...active, source] : active;
   const declarations = dependencySources.flatMap((task) => {
@@ -1170,6 +1191,7 @@ export function buildLegacyTaskV2Reconciliation(
   const selectedDeclaration = (declaration: DependencyDeclaration): boolean =>
     declaration.owner?.directory === source.directory;
   const explicitResolutions = new Map<string, LegacyTaskSource>();
+  const explicitExternalResolutions = new Map<string, string>();
   const seenReferences = new Set<string>();
   for (const item of input.dependencyResolutions ?? []) {
     if (
@@ -1192,13 +1214,19 @@ export function buildLegacyTaskV2Reconciliation(
       throw new Error(`legacy-task-reconciliation-dependency-resolution-duplicate:${item.reference}`);
     seenReferences.add(resolutionKey);
     const targets = active.filter((task) => legacyId(task) === item.taskId);
-    if (targets.length !== 1)
+    if (targets.length > 1)
       throw new Error(`legacy-task-reconciliation-dependency-target-not-unique:${item.taskId}`);
-    explicitResolutions.set(resolutionKey, targets[0] as LegacyTaskSource);
+    if (targets.length === 1) {
+      explicitResolutions.set(resolutionKey, targets[0] as LegacyTaskSource);
+    } else if (options.externalDependencyIds?.has(item.taskId)) {
+      explicitExternalResolutions.set(resolutionKey, item.taskId);
+    } else {
+      throw new Error(`legacy-task-reconciliation-dependency-target-not-unique:${item.taskId}`);
+    }
   }
 
   for (const declaration of declarations)
-    addDependencyDeclarations(declaration, plan.tasks, byDirectory, explicitResolutions);
+    addDependencyDeclarations(declaration, plan.tasks, byDirectory, explicitResolutions, explicitExternalResolutions);
   markHardDependencyCycles(assessments);
   const reconciledAssessment = byDirectory.get(source.directory);
   if (!reconciledAssessment) throw new Error("legacy-task-reconciliation-assessment-missing");
@@ -1222,6 +1250,7 @@ export function buildLegacyTaskV2Reconciliation(
     idempotencyKey: input.idempotencyKey,
     requestFingerprint: input.requestFingerprint ?? null,
     suppliedDefinition: input.definition ?? {},
+    ...(input.targetTaskId ? { mappedTaskId: input.targetTaskId } : {}),
     ...(input.acknowledgeLegacyHistoryGap === true
       ? { acknowledgedLegacyHistoryGap: true }
       : {}),

@@ -7,14 +7,21 @@ import { isPlainObject } from "./schema.js";
 import { parseTaskKernelSnapshotV2 } from "./task-kernel-schema.js";
 import {
   listLegacyTaskMigrationDirectories,
+  listSupersededLegacyTaskSourceDirectories,
   readLegacyTaskImportRecord,
   readLegacyTaskMigrationView,
+  type LegacyTaskMigrationView,
 } from "./legacy-task-migration-reader.js";
 import { readTaskKernel } from "./task-kernel-store-v2.js";
 import { TASK_KERNEL_SCHEMA_VERSION } from "./task-kernel-types.js";
 
-export function assertUniqueTaskId(root: string, taskId: string, ignoredDir: string): void {
-  const match = findTaskById(root, taskId, ignoredDir);
+export function assertUniqueTaskId(
+  root: string,
+  taskId: string,
+  ignoredDir: string,
+  validatedView?: LegacyTaskMigrationView | null,
+): void {
+  const match = findTaskById(root, taskId, ignoredDir, validatedView);
   if (match && path.resolve(match.taskDir) !== path.resolve(ignoredDir)) throw new KernelError("INVALID_REQUEST", `Task ID already exists: ${taskId}`);
 }
 
@@ -67,19 +74,29 @@ interface LocatedTask {
   dependencies: string[];
 }
 
-function findTaskById(root: string, taskId: string, ignoredDir?: string): LocatedTask | null {
+function findTaskById(
+  root: string,
+  taskId: string,
+  ignoredDir?: string,
+  validatedView?: LegacyTaskMigrationView | null,
+): LocatedTask | null {
   const canonicalRoot = canonicalProjectRoot(root);
   let migrationView: ReturnType<typeof readLegacyTaskMigrationView>;
   try {
-    migrationView = readLegacyTaskMigrationView(canonicalRoot);
+    migrationView = validatedView === undefined
+      ? readLegacyTaskMigrationView(canonicalRoot)
+      : validatedView;
   } catch (error) {
     throw new KernelError("CORRUPT_STATE", error instanceof Error ? error.message : String(error));
   }
+  const supersededSources = new Set(listSupersededLegacyTaskSourceDirectories(canonicalRoot, migrationView));
   const matches = enumerateTaskDirs(canonicalRoot, migrationView).flatMap((taskDir) => {
     if (ignoredDir && path.resolve(taskDir) === path.resolve(ignoredDir)) return [];
+    if (supersededSources.has(path.resolve(taskDir))) return [];
     const importRecord = readLegacyTaskImportRecord(canonicalRoot, taskDir, migrationView);
-    if (importRecord?.legacyTaskId === taskId) {
+    if (importRecord) {
       if (importRecord.status !== "imported") {
+        if (importRecord.legacyTaskId !== taskId) return [];
         return [{
           taskDir,
           taskId,
@@ -94,7 +111,8 @@ function findTaskById(root: string, taskId: string, ignoredDir?: string): Locate
           return [{ taskDir, taskId, phase: read.kernel.phase, outcome: read.kernel.outcome, dependencies: read.kernel.definition.dependencies }];
         }
       } catch {
-        return [{ taskDir, taskId, phase: "define" as KernelPhase, outcome: null, dependencies: [...importRecord.dependencyFacts.hardDependencies] }];
+        if (importRecord.legacyTaskId === taskId)
+          return [{ taskDir, taskId, phase: "define" as KernelPhase, outcome: null, dependencies: [...importRecord.dependencyFacts.hardDependencies] }];
       }
       return [];
     }

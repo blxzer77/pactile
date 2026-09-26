@@ -178,7 +178,11 @@ describe("legacy Task source migration preflight", () => {
     (name) => {
       const orphan = path.join(tmp, ".pactile", "tasks", `orphan-${name}`);
       fs.mkdirSync(orphan, { recursive: true });
-      fs.writeFileSync(path.join(orphan, name), "legacy source bytes\n", "utf8");
+      fs.writeFileSync(
+        path.join(orphan, name),
+        "legacy source bytes\n",
+        "utf8",
+      );
 
       const plan = scanLegacyTaskMigration({ projectRoot: tmp });
 

@@ -11,6 +11,7 @@ import {
   type TaskRunV2,
 } from "../../core/task/index.js";
 import {
+  listLegacyTaskMigrationDirectories,
   readLegacyTaskImportRecord,
   type LegacyTaskImportRecord,
 } from "../../core/task/legacy-task-migration-reader.js";
@@ -194,7 +195,7 @@ function canonicalFilePath(file: string): string {
 function activeTaskDirectories(root: string): string[] {
   const tasksRoot = path.resolve(root, ".pactile", "tasks");
   if (!fs.existsSync(tasksRoot)) return [];
-  return fs
+  const directories = new Set(fs
     .readdirSync(tasksRoot, { withFileTypes: true })
     .filter(
       (entry) =>
@@ -206,8 +207,17 @@ function activeTaskDirectories(root: string): string[] {
       (dir) =>
         fs.existsSync(path.join(dir, TASK_RECORD)) ||
         fs.existsSync(path.join(dir, KERNEL_RECORD)),
-    )
-    .sort(compareText);
+    ));
+  for (const dir of listLegacyTaskMigrationDirectories(root)) {
+    const relative = path.relative(tasksRoot, dir);
+    if (
+      !relative || relative === ".." || relative.startsWith(`..${path.sep}`) ||
+      relative.split(path.sep).some((part) => part.toLowerCase() === "archive")
+    ) continue;
+    if (readLegacyTaskImportRecord(root, dir)?.status === "imported")
+      directories.add(dir);
+  }
+  return [...directories].sort(compareText);
 }
 
 function indexTasks(root: string): {

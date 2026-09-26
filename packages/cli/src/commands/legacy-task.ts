@@ -16,7 +16,7 @@ import { readLegacyTaskHeldSource } from "../pactile/migration/legacy-task-held-
 const HELP = `
 Pactile legacy Task compatibility
 
-  legacy-task reconcile <task-path> --idempotency-key <key> --activation-at <ISO-time> [--target-path <active-task-path>] [--acknowledge-history-gap] [definition fields] [--resolve-dependency <raw-ref>=<task-id>] [--approved|--check]
+  legacy-task reconcile <task-path> --idempotency-key <key> --activation-at <ISO-time> [--target-path <active-task-path>] [--task-id <valid-v2-id>] [--acknowledge-history-gap] [definition fields] [--resolve-dependency <raw-ref>=<task-id>] [--approved|--check]
   legacy-task history <archive-relative-path|held/<active-task-path>> [--json]
 
 Reconciliation only activates a Task after its missing definition and blocking references are explicitly resolved.
@@ -41,6 +41,7 @@ function parseArgs(args: string[]): ParsedArgs {
     "--idempotency-key",
     "--activation-at",
     "--target-path",
+    "--task-id",
     "--title",
     "--deliverable",
     "--delivery-level",
@@ -204,7 +205,12 @@ function showHistory(args: string[], root: string): number {
         files: ReturnType<typeof historyFiles>;
       };
   if (taskPath.startsWith("archive/")) {
-    const archiveDir = path.join(root, ".pactile", "tasks", ...taskPath.split("/"));
+    const archiveDir = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      ...taskPath.split("/"),
+    );
     const migrationView = readLegacyTaskMigrationView(root);
     const importRecord = migrationView
       ? readLegacyTaskImportRecord(root, archiveDir, migrationView)
@@ -258,7 +264,13 @@ async function reconcile(args: string[], root: string): Promise<number> {
   const parsed = parseArgs(args);
   if (
     [...parsed.flags].some(
-      (flag) => !["--approved", "--check", "--cancel", "--acknowledge-history-gap"].includes(flag),
+      (flag) =>
+        ![
+          "--approved",
+          "--check",
+          "--cancel",
+          "--acknowledge-history-gap",
+        ].includes(flag),
     ) ||
     (parsed.flags.has("--check") && parsed.flags.has("--cancel")) ||
     (parsed.flags.has("--approved") &&
@@ -273,6 +285,7 @@ async function reconcile(args: string[], root: string): Promise<number> {
   const idempotencyKey = option(parsed, "--idempotency-key");
   const activationAt = option(parsed, "--activation-at");
   const targetTaskPath = option(parsed, "--target-path");
+  const targetTaskId = option(parsed, "--task-id");
   if (taskPath.startsWith("archive/") && !targetTaskPath)
     throw new Error("archived-task-reconcile-requires-target-path");
   if (!idempotencyKey || !activationAt)
@@ -319,6 +332,7 @@ async function reconcile(args: string[], root: string): Promise<number> {
       input: {
         taskPath,
         ...(targetTaskPath ? { targetTaskPath } : {}),
+        ...(targetTaskId ? { targetTaskId } : {}),
         ...(parsed.flags.has("--acknowledge-history-gap")
           ? { acknowledgeLegacyHistoryGap: true }
           : {}),

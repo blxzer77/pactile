@@ -55,6 +55,7 @@ export interface LegacyTaskImportRecord {
     readonly idempotencyKey: string;
     readonly requestFingerprint?: string | null;
     readonly acknowledgedLegacyHistoryGap?: true;
+    readonly mappedTaskId?: string;
   };
   readonly historicalStatus: {
     readonly present: boolean;
@@ -631,6 +632,29 @@ export function listLegacyTaskImportRecords(
   return output.sort((left, right) =>
     left.taskDir.localeCompare(right.taskDir),
   );
+}
+
+/**
+ * Return held source directories that have been explicitly superseded by a
+ * different active V2 target. Their records remain readable as history, but
+ * they must not make the active Task ID ambiguous after restoration.
+ */
+export function listSupersededLegacyTaskSourceDirectories(
+  projectRoot: string,
+  view?: LegacyTaskMigrationView | null,
+): string[] {
+  const snapshot = view === undefined ? readLegacyTaskMigrationView(projectRoot) : view;
+  if (!snapshot) return [];
+  const records = listLegacyTaskImportRecords(projectRoot, snapshot);
+  const superseded = new Set<string>();
+  for (const { taskDir, record } of records) {
+    if (record.status !== "imported" || !record.reconciliation) continue;
+    const sourcePath = record.legacySourceMetadata?.fileReferences.taskJson?.path;
+    if (!sourcePath || !sourcePath.startsWith(TARGET_ROOT) || !sourcePath.endsWith("/task.json")) continue;
+    const sourceDir = path.resolve(projectRoot, ...sourcePath.slice(0, -"/task.json".length).split("/"));
+    if (sourceDir !== path.resolve(taskDir)) superseded.add(sourceDir);
+  }
+  return [...superseded].sort();
 }
 
 export function parseLegacyTaskImportRecord(

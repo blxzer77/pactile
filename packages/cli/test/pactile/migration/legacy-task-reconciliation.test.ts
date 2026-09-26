@@ -14,10 +14,16 @@ import {
   readLegacyTaskMigrationView,
 } from "../../../src/core/task/legacy-task-migration-reader.js";
 import {
+  closeTaskKernel,
+  createTaskKernel,
   listTaskKernelSnapshots,
   readTaskKernel,
+  recordTaskReview,
+  recordTaskRunResult,
   startTaskRun,
 } from "../../../src/core/task/task-kernel.js";
+import { planTaskKernelGraphV1 } from "../../../src/pactile/scheduler/index.js";
+import { resolveTaskDirectoryById } from "../../../src/core/task/task-kernel-paths.js";
 import { runLegacyTaskBatch } from "../../../src/pactile/migration/legacy-task-batch.js";
 import { runLegacyTaskReconciliation } from "../../../src/pactile/migration/legacy-task-reconciliation.js";
 
@@ -71,6 +77,121 @@ function addLegacyTask(root: string, options: {
     "utf8",
   );
   return dir;
+}
+
+function addArchivedTask(root: string, id: string): string {
+  const dir = path.join(root, ".pactile", "tasks", "archive", "2026-09", id);
+  writeJson(path.join(dir, "task.json"), {
+    id,
+    title: `Archived ${id}`,
+    description: `Historical source for ${id}.`,
+    status: "completed",
+    createdAt: "2026-09-20T09:00:00.000Z",
+    creator: "legacy-author",
+    deliverable: "A preserved historical output.",
+    deliveryLevel: "local-result",
+  });
+  fs.writeFileSync(path.join(dir, "prd.md"), `## Acceptance Criteria\n\n- The historical output remains available.\n`, "utf8");
+  return dir;
+}
+
+function addV2Task(root: string, directory: string, id: string, dependencies: string[] = []): string {
+  const dir = path.join(root, ".pactile", "tasks", directory);
+  createTaskKernel({
+    root,
+    taskDir: dir,
+    cwd: root,
+    actor: "legacy-reconciliation-test",
+    idempotencyKey: `create-${id}`,
+    definition: {
+      taskId: id,
+      title: `Existing ${id}`,
+      description: "Existing Task for reconciliation safety test.",
+      deliverable: "An existing result.",
+      deliveryLevel: "local-result",
+      acceptanceCriteria: [{ id: "AC-1", description: "The existing Task remains unchanged." }],
+      dependencies,
+    },
+  });
+  return dir;
+}
+
+function closeV2Task(root: string, taskDir: string, id: string): void {
+  const current = readTaskKernel({ root, taskDir, cwd: root });
+  if (current.kind !== "task-kernel-v2") throw new Error("expected V2 prerequisite");
+  const started = startTaskRun({
+    root,
+    taskDir,
+    expectedRevision: current.kernel.revision,
+    actor: "legacy-reconciliation-test-worker",
+    idempotencyKey: `start-${id}`,
+    input: { summary: "Complete the dependency prerequisite", references: [] },
+    authorization: {
+      approvedBy: "test-approver",
+      approvedAt: "2026-09-26T15:00:00.000Z",
+      scope: "test prerequisite",
+      evidenceRef: `approval-${id}`,
+    },
+    writeSetSnapshot: ["result.txt"],
+  });
+  const runId = started.kernel.runs.at(-1)?.id;
+  if (!runId) throw new Error("missing prerequisite Run");
+  fs.mkdirSync(taskDir, { recursive: true });
+  fs.writeFileSync(path.join(root, "result.txt"), `result for ${id}\n`, "utf8");
+  const completed = recordTaskRunResult({
+    root,
+    taskDir,
+    expectedRevision: started.kernel.revision,
+    runId,
+    outcome: "completed",
+    summary: "Prerequisite result is ready",
+    evidenceRefs: ["result.txt"],
+    actor: "legacy-reconciliation-test-worker",
+    idempotencyKey: `result-${id}`,
+  });
+  const candidate = completed.kernel.runs.at(-1)?.candidateSnapshot;
+  if (!candidate) throw new Error("missing prerequisite candidate");
+  const acceptanceCriterion = started.kernel.definition.acceptanceCriteria[0];
+  if (!acceptanceCriterion) throw new Error("missing prerequisite acceptance criterion");
+  fs.writeFileSync(path.join(taskDir, "review.txt"), "Pass review.\n", "utf8");
+  const reviewed = recordTaskReview({
+    root,
+    taskDir,
+    expectedRevision: completed.kernel.revision,
+    runId,
+    candidateSnapshotId: candidate.id,
+    candidateFingerprint: candidate.fingerprint,
+    reviewer: "legacy-reconciliation-test-reviewer",
+    decision: "pass",
+    evidenceRefs: ["review.txt"],
+    acceptanceEvidence: { [acceptanceCriterion.id]: ["result.txt"] },
+    actor: "legacy-reconciliation-test-reviewer",
+    idempotencyKey: `review-${id}`,
+  });
+  const review = reviewed.kernel.reviews.at(-1);
+  if (!review) throw new Error("missing prerequisite Review");
+  closeTaskKernel({
+    root,
+    taskDir,
+    expectedRevision: reviewed.kernel.revision,
+    runId,
+    reviewId: review.id,
+    candidateObservation: {
+      snapshotId: candidate.id,
+      fingerprint: candidate.fingerprint,
+      observedBy: "legacy-reconciliation-test-closer",
+      observedAt: "2026-09-26T15:10:00.000Z",
+      source: "caller-attested",
+      evidenceRef: "result.txt",
+    },
+    deliveryEvidence: {
+      level: "local-result",
+      reference: "result.txt",
+      summary: "The prerequisite result is present.",
+    },
+    actor: "legacy-reconciliation-test-closer",
+    idempotencyKey: `close-${id}`,
+  });
 }
 
 async function importRoot(root: string) {
@@ -203,6 +324,200 @@ describe("P36 explicit legacy Task reconciliation", () => {
     }
     const retry = await runLegacyTaskReconciliation(fixtureRequest(root), { approved: true });
     expect(retry).toMatchObject({ status: "completed", wrote: false, visible: true, resumed: true });
+  });
+
+  it("keeps an archived source held when restore targets are occupied, then restores into a free target with one active ID", async () => {
+    const root = makeRoot();
+    const archivedDir = addArchivedTask(root, "archive-restore-id");
+    const archivedBefore = new Map(fs.readdirSync(archivedDir).map((name) => [name, fs.readFileSync(path.join(archivedDir, name))]));
+    await importRoot(root);
+
+    const existingDir = addV2Task(root, "09-26-existing-v2", "existing-v2");
+    const existingKernel = fs.readFileSync(path.join(existingDir, "kernel.json"));
+    const request = (targetTaskPath: string, idempotencyKey: string) => ({
+      projectRoot: root,
+      plan: scanLegacyTaskMigration({ projectRoot: root }),
+      input: {
+        taskPath: "archive/2026-09/archive-restore-id",
+        targetTaskPath,
+        idempotencyKey,
+        activationAt: "2026-09-26T14:00:00.000Z",
+      },
+    });
+    const occupied = await runLegacyTaskReconciliation(request("09-26-existing-v2", "occupied-target-once"), { approved: true });
+    expect(occupied).toMatchObject({
+      status: "blocked",
+      reason: "legacy-task-reconciliation-target-occupied",
+      wrote: false,
+      visible: false,
+    });
+    expect(fs.readFileSync(path.join(existingDir, "kernel.json"))).toEqual(existingKernel);
+    expect(fs.existsSync(path.join(root, ".pactile", "runtime", "legacy-task-migrations", "reconciliations", "authority.json"))).toBe(false);
+    for (const [name, bytes] of archivedBefore) expect(fs.readFileSync(path.join(archivedDir, name))).toEqual(bytes);
+
+    const restored = await runLegacyTaskReconciliation(request("09-27-restored-after-retry", "free-target-after-retry"), { approved: true });
+    expect(restored).toMatchObject({ status: "completed", visible: true });
+    const restoredDir = path.join(root, ".pactile", "tasks", "09-27-restored-after-retry");
+    expect(resolveTaskDirectoryById(root, "archive-restore-id")).toBe(restoredDir);
+    expect(readLegacyTaskImportRecord(root, archivedDir)?.status).toBe("archived-historical-only");
+    expect(readTaskKernel({ root, taskDir: existingDir, cwd: root })).toMatchObject({
+      kind: "task-kernel-v2", kernel: { identity: { taskId: "existing-v2" } },
+    });
+    for (const [name, bytes] of archivedBefore) expect(fs.readFileSync(path.join(archivedDir, name))).toEqual(bytes);
+  });
+
+  it("rejects an archive restore whose legacy ID is already owned by an independent V2 Task", async () => {
+    const root = makeRoot();
+    addV2Task(root, "01-existing-same-id", "archive-duplicate-id");
+    const archivedDir = addArchivedTask(root, "archive-duplicate-id");
+    const archivedBytes = new Map(fs.readdirSync(archivedDir).map((name) => [name, fs.readFileSync(path.join(archivedDir, name))]));
+    await importRoot(root);
+    const request = {
+      projectRoot: root,
+      plan: scanLegacyTaskMigration({ projectRoot: root }),
+      input: {
+        taskPath: "archive/2026-09/archive-duplicate-id",
+        targetTaskPath: "09-26-free-target",
+        idempotencyKey: "archive-duplicate-id-restore",
+        activationAt: "2026-09-26T14:30:00.000Z",
+      },
+    };
+    const result = await runLegacyTaskReconciliation(request, { approved: true });
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("Task ID already exists: archive-duplicate-id");
+    expect(result).toMatchObject({ wrote: false, visible: false });
+    expect(fs.existsSync(path.join(root, ".pactile", "tasks", "09-26-free-target"))).toBe(false);
+    expect(fs.existsSync(path.join(root, ".pactile", "runtime", "legacy-task-migrations", "reconciliations", "authority.json"))).toBe(false);
+    for (const [name, bytes] of archivedBytes) expect(fs.readFileSync(path.join(archivedDir, name))).toEqual(bytes);
+    expect(() => resolveTaskDirectoryById(root, "archive-duplicate-id")).toThrow(/ambiguous across active and archived records/u);
+  });
+
+  it("keeps an interrupted source held when a restore target is occupied, then retries without changing its bytes", async () => {
+    const root = makeRoot();
+    const existingDir = addV2Task(root, "01-existing-v2", "existing-v2");
+    const existingKernel = fs.readFileSync(path.join(existingDir, "kernel.json"));
+    const interruptedDir = addLegacyTask(root, {
+      id: "interrupted-retry-id",
+      directory: "08-23-interrupted-retry",
+    });
+    fs.writeFileSync(path.join(interruptedDir, "kernel.json"), "{ interrupted\n", "utf8");
+    const interruptedBefore = new Map(fs.readdirSync(interruptedDir).map((name) => [name, fs.readFileSync(path.join(interruptedDir, name))]));
+    await importRoot(root);
+
+    const request = (targetTaskPath: string) => ({
+      projectRoot: root,
+      plan: scanLegacyTaskMigration({ projectRoot: root }),
+      input: {
+        taskPath: "08-23-interrupted-retry",
+        targetTaskPath,
+        idempotencyKey: "restore-interrupted-after-target-retry",
+        activationAt: "2026-09-26T15:25:00.000Z",
+        acknowledgeLegacyHistoryGap: true,
+      },
+    });
+    const blocked = await runLegacyTaskReconciliation(request("01-existing-v2"), { approved: true });
+    expect(blocked).toMatchObject({
+      status: "blocked",
+      reason: "legacy-task-reconciliation-target-occupied",
+      wrote: false,
+      visible: false,
+    });
+    expect(readLegacyTaskImportRecord(root, interruptedDir)?.status).toBe("needs-definition");
+    expect(fs.readFileSync(path.join(existingDir, "kernel.json"))).toEqual(existingKernel);
+    expect(fs.existsSync(path.join(root, ".pactile", "tasks", "09-26-existing-v2", "legacy-import.json"))).toBe(false);
+    for (const [name, bytes] of interruptedBefore) expect(fs.readFileSync(path.join(interruptedDir, name))).toEqual(bytes);
+
+    const recovered = await runLegacyTaskReconciliation(request("09-28-free-interrupted-retry"), { approved: true });
+    expect(recovered).toMatchObject({ status: "completed", visible: true });
+    const targetDir = path.join(root, ".pactile", "tasks", "09-28-free-interrupted-retry");
+    expect(resolveTaskDirectoryById(root, "interrupted-retry-id")).toBe(targetDir);
+    expect(readTaskKernel({ root, taskDir: targetDir, cwd: root })).toMatchObject({
+      kind: "task-kernel-v2",
+      kernel: { phase: "define", outcome: null, runs: [], reviews: [], closure: null },
+    });
+    for (const [name, bytes] of interruptedBefore) expect(fs.readFileSync(path.join(interruptedDir, name))).toEqual(bytes);
+  });
+
+  it("resolves restored IDs for explicit block dependencies only after Close and keeps scheduler gates intact", async () => {
+    const root = makeRoot();
+    const openPrerequisite = addV2Task(root, "01-open-v2-prerequisite", "open-v2-prerequisite");
+    addArchivedTask(root, "archived-v2-prerequisite");
+    const dependent = addLegacyTask(root, {
+      id: "archive-dependent",
+      directory: "02-archive-dependent",
+      dependsOn: ["archive-reference"],
+      dependsMode: "block",
+    });
+    addLegacyTask(root, {
+      id: "open-dependent",
+      directory: "03-open-dependent",
+      dependsOn: ["open-reference"],
+      dependsMode: "block",
+    });
+    await importRoot(root);
+
+    const restoredDir = path.join(root, ".pactile", "tasks", "09-25-restored-prerequisite");
+    const archiveRestore = await runLegacyTaskReconciliation({
+      projectRoot: root,
+      plan: scanLegacyTaskMigration({ projectRoot: root }),
+      input: {
+        taskPath: "archive/2026-09/archived-v2-prerequisite",
+        targetTaskPath: "09-25-restored-prerequisite",
+        idempotencyKey: "restore-prerequisite-once",
+        activationAt: "2026-09-26T15:20:00.000Z",
+      },
+    }, { approved: true });
+    expect(archiveRestore.status).toBe("completed");
+    expect(resolveTaskDirectoryById(root, "archived-v2-prerequisite")).toBe(restoredDir);
+
+    const scheduleDependent = addV2Task(root, "04-scheduler-dependent", "scheduler-dependent", ["archived-v2-prerequisite"]);
+    const beforeCloseSchedule = planTaskKernelGraphV1(root, ["scheduler-dependent"]);
+    expect(beforeCloseSchedule.plan.decisions.find((item) => item.taskId === "scheduler-dependent")?.action).toBe("blocked");
+
+    const dependencyRequest = {
+      projectRoot: root,
+      plan: scanLegacyTaskMigration({ projectRoot: root }),
+      input: {
+        taskPath: "02-archive-dependent",
+        idempotencyKey: "map-restored-archive-dependency",
+        activationAt: "2026-09-26T15:30:00.000Z",
+        dependencyResolutions: [{ reference: "archive-reference", taskId: "archived-v2-prerequisite" }],
+      },
+    };
+    const heldUntilClose = await runLegacyTaskReconciliation(dependencyRequest, { approved: true });
+    expect(heldUntilClose).toMatchObject({ status: "blocked", wrote: false, visible: false });
+    expect(heldUntilClose.reason).toContain("dependency-target-not-closed:archived-v2-prerequisite");
+    expect(readLegacyTaskImportRecord(root, dependent)?.status).toBe("needs-coordination");
+
+    closeV2Task(root, restoredDir, "archived-v2-prerequisite");
+    const closedSchedule = planTaskKernelGraphV1(root, ["scheduler-dependent"]);
+    expect(closedSchedule.plan.decisions.find((item) => item.taskId === "scheduler-dependent")?.action).not.toBe("blocked");
+    expect(readTaskKernel({ root, taskDir: scheduleDependent, cwd: root })).toMatchObject({
+      kind: "task-kernel-v2", kernel: { definition: { dependencies: ["archived-v2-prerequisite"] } },
+    });
+
+    const reconciled = await runLegacyTaskReconciliation(dependencyRequest, { approved: true });
+    expect(reconciled.status).toBe("completed");
+    const dependentKernel = readTaskKernel({ root, taskDir: dependent, cwd: root });
+    if (dependentKernel.kind !== "task-kernel-v2") throw new Error("expected reconciled dependent V2 Task");
+    expect(dependentKernel.kernel.definition.dependencies).toEqual(["archived-v2-prerequisite"]);
+    expect(planTaskKernelGraphV1(root, ["archive-dependent"]).plan.decisions.find((item) => item.taskId === "archive-dependent")?.action).not.toBe("blocked");
+
+    const unresolvedV2 = readTaskKernel({ root, taskDir: openPrerequisite, cwd: root });
+    expect(unresolvedV2).toMatchObject({ kind: "task-kernel-v2", kernel: { phase: "define" } });
+    const openRequest = {
+      projectRoot: root,
+      plan: scanLegacyTaskMigration({ projectRoot: root }),
+      input: {
+        taskPath: "03-open-dependent",
+        idempotencyKey: "refuse-open-v2-dependency",
+        activationAt: "2026-09-26T15:40:00.000Z",
+        dependencyResolutions: [{ reference: "open-reference", taskId: "open-v2-prerequisite" }],
+      },
+    };
+    const openDependency = await runLegacyTaskReconciliation(openRequest, { approved: true });
+    expect(openDependency).toMatchObject({ status: "blocked", wrote: false, visible: false });
+    expect(openDependency.reason).toContain("dependency-target-not-closed:open-v2-prerequisite");
   });
 
   it("keeps dry-run, cancel, placeholder, source-field override, and bad delivery level at zero visible writes", async () => {

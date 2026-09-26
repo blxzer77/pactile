@@ -5,6 +5,8 @@ import {
   scanLegacyTaskMigration,
   type LegacyTaskMigrationPlan,
 } from "../../core/task/legacy-task-migration.js";
+import { assertUniqueTaskId } from "../../core/task/task-kernel-paths.js";
+import { parseTaskKernelSnapshotV2 } from "../../core/task/task-kernel-schema.js";
 import { assertLegacyTaskMigrationAuthorityOrCleanStore } from "../../core/task/legacy-task-migration-reader.js";
 import {
   JOURNAL_EVENTS,
@@ -37,6 +39,46 @@ import {
   writeAuthority,
   writeJournal,
 } from "./legacy-task-batch-journal.js";
+
+export function legacyTaskBatchTaskIdConflict(
+  projectRoot: string,
+  targets: readonly { readonly path: string; readonly bytes: Uint8Array }[],
+): string | null {
+  const root = path.resolve(projectRoot);
+  const kernels: { path: string; taskDir: string; taskId: string }[] = [];
+  try {
+    for (const target of targets) {
+      if (!target.path.endsWith("/kernel.json")) continue;
+      const taskDirPath = target.path.slice(0, -"/kernel.json".length);
+      if (!taskDirPath.startsWith(".pactile/tasks/") || taskDirPath.split("/").some((part) => part.toLowerCase() === "archive"))
+        continue;
+      const kernel = parseTaskKernelSnapshotV2(JSON.parse(Buffer.from(target.bytes).toString("utf8")) as unknown);
+      kernels.push({ path: target.path, taskDir: path.join(root, ...taskDirPath.split("/")), taskId: kernel.identity.taskId });
+    }
+    const ids = new Set<string>();
+    for (const kernel of kernels) {
+      if (ids.has(kernel.taskId)) return `legacy-task-migration-task-id-duplicate:${kernel.taskId}`;
+      ids.add(kernel.taskId);
+      const existingPath = path.join(kernel.taskDir, "kernel.json");
+      try {
+        const stat = fs.lstatSync(existingPath);
+        if (stat.isFile() && !stat.isSymbolicLink()) {
+          let existing: unknown;
+          try { existing = JSON.parse(fs.readFileSync(existingPath, "utf8")) as unknown; } catch { existing = null; }
+          if (existing && typeof existing === "object" && !Array.isArray(existing) && (existing as { schemaVersion?: unknown }).schemaVersion === 2)
+            return "legacy-task-migration-target-kernel-occupied";
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      assertUniqueTaskId(root, kernel.taskId, kernel.taskDir, null);
+    }
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : "legacy-task-migration-task-id-check-failed";
+  }
+}
+
 function initialJournal(
   request: NormalizedRequest,
   expectedAuthorityFingerprint: string | null,
@@ -202,6 +244,7 @@ export function canResumeLegacyTaskBatchWithoutAuthority(
     !normalized ||
     !validatePlanAtRoot(normalized.projectRoot, normalized.plan)
   ) return false;
+  if (legacyTaskBatchTaskIdConflict(normalized.projectRoot, normalized.targets)) return false;
   try {
     if (readAuthoritySnapshot(normalized.projectRoot)) return false;
     const snapshot = readJournal(normalized.projectRoot, normalized.batchId);
@@ -275,6 +318,9 @@ export async function runLegacyTaskBatch(
       false,
       null,
     );
+
+  const taskIdConflict = legacyTaskBatchTaskIdConflict(normalized.projectRoot, normalized.targets);
+  if (taskIdConflict) return makeResult("blocked", taskIdConflict, normalized, false, null);
 
   let currentPlan: LegacyTaskMigrationPlan;
   try {
@@ -533,6 +579,19 @@ export async function runLegacyTaskBatch(
           snapshot.journal,
         );
       } else {
+        const taskIdConflict = legacyTaskBatchTaskIdConflict(normalized.projectRoot, normalized.targets);
+        if (taskIdConflict) {
+          const review = nextJournal(
+            snapshot.journal,
+            "review",
+            "needs-review",
+            normalized.targetFingerprint,
+            occurredAt,
+            taskIdConflict,
+          );
+          snapshot = commitJournal(normalized.projectRoot, snapshot, review);
+          return makeResult("review", taskIdConflict, normalized, wrote, snapshot.journal);
+        }
         const authority: LegacyTaskBatchAuthority = {
           schemaVersion: 1,
           kind: "prepared-legacy-task-batch",

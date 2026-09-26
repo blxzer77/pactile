@@ -81,7 +81,10 @@ function heldTaskRelativePath(value: string): string {
     !validRelativePath(relative) ||
     relative.length > 2048 ||
     parts.length > 32 ||
-    parts.some((part, index) => part.toLowerCase() === "archive" && !(archived && index === 0))
+    parts.some(
+      (part, index) =>
+        part.toLowerCase() === "archive" && !(archived && index === 0),
+    )
   ) {
     throw new Error("legacy-task-held-history-path-invalid");
   }
@@ -315,7 +318,8 @@ export function readLegacyTaskHeldSource(
   }
   if (
     !scannedTask ||
-    scannedTask?.archivedByPath !== (record.status === "archived-historical-only") ||
+    scannedTask?.archivedByPath !==
+      (record.status === "archived-historical-only") ||
     scannedTask.preflight !== "clear-to-review" ||
     !scannedTask.sourceFingerprint ||
     !scannedFacts ||

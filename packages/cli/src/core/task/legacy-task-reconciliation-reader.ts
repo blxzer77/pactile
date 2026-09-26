@@ -52,6 +52,7 @@ interface ReconciliationManifest {
 }
 
 const FINGERPRINT = /^sha256:[a-f0-9]{64}$/;
+const TASK_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const RECONCILIATION_ID = /^reconcile-[a-f0-9]{64}$/;
 const TARGET_ROOT = ".pactile/tasks/";
 
@@ -210,6 +211,10 @@ function parseRecord(bytes: Buffer): LegacyTaskImportRecord {
     reconciliation && typeof reconciliation === "object" && !Array.isArray(reconciliation)
       ? (reconciliation as { acknowledgedLegacyHistoryGap?: unknown }).acknowledgedLegacyHistoryGap
       : undefined;
+  const mappedTaskId =
+    reconciliation && typeof reconciliation === "object" && !Array.isArray(reconciliation)
+      ? (reconciliation as { mappedTaskId?: unknown }).mappedTaskId
+      : undefined;
   const hasLegacyHistoryGap =
     Array.isArray(record.legacyHistoryDiagnostics) &&
     record.legacyHistoryDiagnostics.some((item) =>
@@ -237,6 +242,7 @@ function parseRecord(bytes: Buffer): LegacyTaskImportRecord {
     Number.isNaN(Date.parse((reconciliation as { activationAt: string }).activationAt)) ||
     (reconciliation as { historyPolicy?: unknown }).historyPolicy !== "legacy-lifecycle-remains-source-only" ||
     acknowledgedLegacyHistoryGap !== undefined && acknowledgedLegacyHistoryGap !== true ||
+    mappedTaskId !== undefined && (typeof mappedTaskId !== "string" || !TASK_ID.test(mappedTaskId) || mappedTaskId === record.legacyTaskId) ||
     hasLegacyHistoryGap !== (acknowledgedLegacyHistoryGap === true) ||
     !Array.isArray((reconciliation as { resolvedDependencies?: unknown }).resolvedDependencies)
   ) throw new Error("legacy-task-reconciliation-record-invalid");
@@ -349,8 +355,9 @@ export function verifyLegacyTaskReconciliationGeneration(
       throw new Error("legacy-task-reconciliation-kernel-invalid");
     }
     const kernel = parseTaskKernelSnapshotV2(kernelValue);
+    const mappedTaskId = record.reconciliation?.mappedTaskId;
     if (
-      kernel.identity.taskId !== record.legacyTaskId ||
+      kernel.identity.taskId !== (mappedTaskId ?? record.legacyTaskId) ||
       kernel.phase !== "define" ||
       kernel.outcome !== null ||
       kernel.runs.length !== 0 ||
