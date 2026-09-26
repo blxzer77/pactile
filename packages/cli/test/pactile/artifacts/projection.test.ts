@@ -23,7 +23,10 @@ function envelope(overrides: Record<string, unknown> = {}) {
           actor: "planner",
           method: "direct",
         },
-        ref: { path: "prd.md", selector: "requirements#single-source" },
+        ref: {
+          uri: "artifact://tasks/p42-sample/documents/prd",
+          selector: "requirements#single-source",
+        },
       },
       {
         id: "fact-candidate-1",
@@ -41,7 +44,10 @@ function envelope(overrides: Record<string, unknown> = {}) {
           method: "derived",
           basedOn: ["fact-req-1"],
         },
-        ref: { path: "research/candidates.md", selector: "candidate-file" },
+        ref: {
+          uri: "artifact://tasks/p42-sample/documents/candidates",
+          selector: "candidate-file",
+        },
         candidateFreshness: {
           freshness: "stale",
           checkedAt: "2026-09-24T04:05:00.000Z",
@@ -206,7 +212,10 @@ describe("structured task artifact projections", () => {
     expect(index.facts[0]).toMatchObject({
       id: "fact-req-1",
       summary: "Later stages refer to the same fact ID.",
-      ref: { path: "prd.md", selector: "requirements#single-source" },
+      ref: {
+        uri: "artifact://tasks/p42-sample/documents/prd",
+        selector: "requirements#single-source",
+      },
       source: { kind: "plane", ref: "plane://tasks/pactile-42" },
       provenance: { method: "direct", actor: "planner" },
     });

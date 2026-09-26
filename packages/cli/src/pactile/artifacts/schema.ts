@@ -2,7 +2,6 @@ import {
   ContractDecoderV1,
   decodeLogicalIdV1,
   decodeOpaqueReferenceV1,
-  decodeRelativePosixPathV1,
   decodeTimestampV1,
   definePactileContractSchemaV1,
 } from "../../core/pactile/validation.js";
@@ -178,11 +177,12 @@ function decodeLocator(
   decoder: ContractDecoderV1,
   path: string,
 ): TaskArtifactFactV1["ref"] {
-  const record = decoder.object(value, path, ["path", "selector"]);
-  const refPath = decodeRelativePosixPathV1(
-    decoder.required(record, "path", path),
+  const record = decoder.object(value, path, ["uri", "selector"]);
+  const uri = decodeOpaqueReferenceV1(
+    decoder.required(record, "uri", path),
     decoder,
-    `${path}.path`,
+    `${path}.uri`,
+    ["artifact"],
   );
   const selector = decodeOneLine(
     decoder,
@@ -190,7 +190,7 @@ function decodeLocator(
     `${path}.selector`,
     256,
   );
-  return { path: refPath, selector };
+  return { uri, selector };
 }
 
 function decodeCandidateFreshness(

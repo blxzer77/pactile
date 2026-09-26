@@ -140,6 +140,13 @@ export function projectTaskArtifactsForHumanV1(
           `  - Content fingerprint: ${code(document.contentFingerprint)}`,
         );
       }
+      for (const section of document.sections ?? []) {
+        lines.push(
+          `  - Section: ${code(section.id)} (${section.kind}) — ${markdownText(oneLine(section.title))}`,
+          `    - Content fingerprint: ${code(section.contentFingerprint)}`,
+          `    - Ref: ${code(`${section.ref.path}#${section.ref.selector}`)}`,
+        );
+      }
     }
     for (const id of envelope.stageRefs[stage] ?? []) {
       lines.push(`- ${code(id)}`);
@@ -162,7 +169,7 @@ export function projectTaskArtifactsForHumanV1(
           `- Based on: ${fact.provenance.basedOn.map(code).join(", ")}`,
         );
       }
-      lines.push(`- Ref: ${code(`${fact.ref.path}#${fact.ref.selector}`)}`);
+      lines.push(`- Ref: ${code(`${fact.ref.uri}#${fact.ref.selector}`)}`);
       if (fact.kind === "candidate") {
         lines.push(
           `- Candidate freshness: ${freshnessText(fact.candidateFreshness)}`,

@@ -76,9 +76,9 @@ export interface TaskArtifactProvenanceV1 {
 }
 
 export interface TaskArtifactLocatorV1 {
-  /** Task-relative path to fuller context, using normalized POSIX separators. */
-  readonly path: string;
-  /** Stable heading, block ID, or JSON pointer within `path`. */
+  /** Logical Kernel resource resolved through the active Task reader. */
+  readonly uri: string;
+  /** JSON pointer into the current Kernel snapshot returned by that reader. */
   readonly selector: string;
 }
 
