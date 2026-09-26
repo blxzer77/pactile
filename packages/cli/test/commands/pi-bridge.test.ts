@@ -1,12 +1,17 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { runTaskCli } from "../../src/commands/task.js";
 import { runPiCli } from "../../src/commands/pi.js";
 import { PiTaskBridge } from "../../src/pactile/pi/bridge.js";
 
 const roots: string[] = [];
+const FAKE_PI_PROVIDER = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../.tmp/p31-script-build/fixtures/fake-pi-provider.js",
+);
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
@@ -28,43 +33,7 @@ function fixture(approve = true): { root: string; script: string; task: string }
     "retrieval_profile: exact-only", "optional_capabilities: []", "quality_gates:", "  mode: profile", "",
   ].join("\n"));
   if (approve) expect(runTaskCli(["start-execution", task, "--approved"], root)).toBe(0);
-  const script = path.join(root, "fake-pi.mjs");
-  fs.writeFileSync(script, `
-import fs from 'node:fs';
-import path from 'node:path';
-const session = path.join(process.env.PI_CODING_AGENT_SESSION_DIR, 'fake-session.jsonl');
-fs.mkdirSync(path.dirname(session), {recursive:true});
-fs.writeFileSync(session, 'session\\n');
-let buffer = '';
-process.stdin.on('data', chunk => {
-  buffer += chunk.toString();
-  let at;
-  while ((at = buffer.indexOf('\\n')) >= 0) {
-    const line = buffer.slice(0,at); buffer = buffer.slice(at+1);
-    if (!line) continue;
-    const request = JSON.parse(line);
-    const reply = data => process.stdout.write(JSON.stringify({id:request.id,type:'response',command:request.type,success:true,...data})+'\\n');
-    if (request.type === 'get_state') reply({data:{isStreaming:false,sessionId:'fake-id',sessionFile:session}});
-    else if (request.type === 'switch_session') reply({data:{cancelled:false}});
-    else if (request.type === 'prompt') {
-      fs.appendFileSync(session, request.message+'\\n');
-      reply();
-      process.stdout.write(JSON.stringify({type:'agent_start'})+'\\n');
-      if (request.message.includes('CRASH')) process.exit(7);
-      if (request.message.includes('HANG')) continue;
-      if (request.message.includes('MODEL_ERROR')) {
-        const message = {role:'assistant',content:[],stopReason:'error',errorMessage:'402 Insufficient Balance'};
-        process.stdout.write(JSON.stringify({type:'agent_end',messages:[message]})+'\\n');
-        continue;
-      }
-      if (request.message.includes('TOOL_ERROR')) process.stdout.write(JSON.stringify({type:'tool_execution_end',toolName:'bash',isError:true})+'\\n');
-      const message = {role:'assistant',content:[{type:'text',text:'Work reported. secret=hidden-value'}],stopReason:'stop'};
-      process.stdout.write(JSON.stringify({type:'agent_end',messages:[message]})+'\\n');
-    } else if (request.type === 'abort') reply();
-  }
-});
-`);
-  return { root, script, task };
+  return { root, script: FAKE_PI_PROVIDER, task };
 }
 
 describe("Pi native RPC task bridge", () => {
@@ -95,7 +64,7 @@ describe("Pi native RPC task bridge", () => {
       const progress: string[] = [];
       const first = await bridge.run({ root, task, role: "implement", prompt: "FIRST", timeoutMs: 5000, onProgress: (event) => progress.push(String(event.type)) });
       expect(first).toMatchObject({ outcome: "settled", process_mode: "cold", session_id: "fake-id" });
-      expect(progress).toEqual(["agent_start", "agent_end"]);
+      expect(progress).toEqual(["agent_start", "agent_end", "agent_settled"]);
       if (!first.session_file) throw new Error("Pi session file missing");
       expect(fs.readFileSync(first.session_file, "utf8")).toContain("execution_mode: worker");
       const second = await bridge.run({ root, task, role: "implement", prompt: "SECOND", timeoutMs: 5000 });

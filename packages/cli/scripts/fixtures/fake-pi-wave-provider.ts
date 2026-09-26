@@ -49,6 +49,7 @@ if (marker) fs.writeFileSync(marker, option("--marker-content", "started"));
 
 const taskDir = path.dirname(path.dirname(sessionDirectory));
 const taskId = path.basename(taskDir);
+let isStreaming = false;
 const startedDirectory = option("--started-directory");
 const barrierSize = Number(option("--barrier-size", "0"));
 const failTaskIds = new Set(options("--fail-task-id"));
@@ -83,7 +84,7 @@ function handleLine(line: string): void {
   if (request.type === "get_state") {
     reply({
       data: {
-        isStreaming: false,
+        isStreaming,
         sessionId: option("--session-id", `fake-session-${taskId}`),
         sessionFile,
       },
@@ -112,6 +113,7 @@ function handleLine(line: string): void {
   const prompt = typeof request.message === "string" ? request.message : "";
   fs.appendFileSync(sessionFile, `${prompt}\n`);
   reply();
+  isStreaming = true;
   writeMessage({ type: "agent_start" });
 
   if (hasOption("--hang") || hangTaskIds.has(taskId)) {
@@ -122,6 +124,7 @@ function handleLine(line: string): void {
   const finish = (): void => {
     writeMessage({
       type: "agent_end",
+      willRetry: false,
       messages: [
         {
           role: "assistant",
@@ -138,6 +141,8 @@ function handleLine(line: string): void {
         },
       ],
     });
+    isStreaming = false;
+    writeMessage({ type: "agent_settled" });
   };
 
   if (

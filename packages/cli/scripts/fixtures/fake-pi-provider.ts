@@ -35,6 +35,8 @@ fs.writeFileSync(sessionFile, "session\n");
 const marker = option("--marker");
 if (marker) fs.writeFileSync(marker, option("--marker-content", "started"));
 
+let isStreaming = false;
+
 function writeMessage(message: unknown): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
@@ -57,7 +59,7 @@ function handleLine(line: string): void {
   if (request.type === "get_state") {
     reply({
       data: {
-        isStreaming: false,
+        isStreaming,
         sessionId: option("--session-id", "fake-id"),
         sessionFile,
       },
@@ -83,12 +85,100 @@ function handleLine(line: string): void {
   const message = typeof request.message === "string" ? request.message : "";
   fs.appendFileSync(sessionFile, `${message}\n`);
   reply();
+  isStreaming = true;
   writeMessage({ type: "agent_start" });
+
+  if (hasOption("--settle-without-agent-end")) {
+    isStreaming = false;
+    writeMessage({ type: "agent_settled" });
+    return;
+  }
 
   if (message.includes("CRASH")) {
     process.exit(7);
   }
   if (hasOption("--hang") || message.includes("HANG")) return;
+  if (hasOption("--retry-settlement")) {
+    const delay = Number(option("--response-delay-ms", "100"));
+    const waitMs = Number.isFinite(delay) && delay >= 0 ? delay : 100;
+    writeMessage({
+      type: "agent_end",
+      willRetry: true,
+      messages: [
+        {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage: "Temporary provider error",
+        },
+      ],
+    });
+    writeMessage({ type: "auto_retry_start" });
+    setTimeout(() => {
+      writeMessage({
+        type: "agent_end",
+        willRetry: false,
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "text", text: option("--result-text", "Final retry result") }],
+            stopReason: "stop",
+          },
+        ],
+      });
+      setTimeout(() => {
+        isStreaming = false;
+        writeMessage({ type: "agent_settled" });
+      }, waitMs);
+    }, waitMs);
+    return;
+  }
+  if (hasOption("--retry-settles-without-final-agent-end")) {
+    const delay = Number(option("--response-delay-ms", "100"));
+    const waitMs = Number.isFinite(delay) && delay >= 0 ? delay : 100;
+    writeMessage({
+      type: "agent_end",
+      willRetry: true,
+      messages: [
+        {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage: "Temporary provider error",
+        },
+      ],
+    });
+    writeMessage({ type: "auto_retry_start" });
+    setTimeout(() => {
+      writeMessage({ type: "agent_start" });
+      setTimeout(() => {
+        isStreaming = false;
+        writeMessage({ type: "agent_settled" });
+      }, waitMs);
+    }, waitMs);
+    return;
+  }
+  if (hasOption("--restart-settles-without-final-agent-end")) {
+    const delay = Number(option("--response-delay-ms", "100"));
+    const waitMs = Number.isFinite(delay) && delay >= 0 ? delay : 100;
+    writeMessage({
+      type: "agent_end",
+      willRetry: false,
+      messages: [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Intermediate result" }],
+          stopReason: "stop",
+        },
+      ],
+    });
+    writeMessage({ type: "agent_start" });
+    setTimeout(() => {
+      isStreaming = false;
+      writeMessage({ type: "agent_settled" });
+    }, waitMs);
+    return;
+  }
   if (message.includes("MODEL_ERROR")) {
     writeMessage({
       type: "agent_end",
@@ -101,6 +191,8 @@ function handleLine(line: string): void {
         },
       ],
     });
+    isStreaming = false;
+    writeMessage({ type: "agent_settled" });
     return;
   }
   if (message.includes("TOOL_ERROR")) {
@@ -119,6 +211,7 @@ function handleLine(line: string): void {
     () => {
       writeMessage({
         type: "agent_end",
+        willRetry: false,
         messages: [
           {
             role: "assistant",
@@ -127,6 +220,8 @@ function handleLine(line: string): void {
           },
         ],
       });
+      isStreaming = false;
+      writeMessage({ type: "agent_settled" });
     },
     Number.isFinite(delay) && delay >= 0 ? delay : 100,
   );

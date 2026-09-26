@@ -201,10 +201,24 @@ export class PiRpcClient {
     const done = new Promise<RpcObject>((resolve, fail) => { finish = resolve; reject = fail; });
     // The command response can reject before completion is awaited.
     void done.catch(() => undefined);
+    let lastAgentEnd: RpcObject | null = null;
     const listener = (event: RpcObject): void => {
       if (event.type === "transport_error") reject(new Error(String(event.error)));
-      if (event.type === "agent_start" && firstEventMs === null) firstEventMs = Math.round(performance.now() - began);
-      if (event.type === "agent_end" || event.type === "agent_settled") finish(event);
+      if (event.type === "agent_start") {
+        lastAgentEnd = null;
+        firstEventMs ??= Math.round(performance.now() - began);
+      }
+      if (event.type === "auto_retry_start") lastAgentEnd = null;
+      if (event.type === "agent_end") {
+        lastAgentEnd = event.willRetry === true ? null : event;
+      }
+      if (event.type === "agent_settled") {
+        if (!lastAgentEnd || !Array.isArray(lastAgentEnd.messages) || lastAgentEnd.messages.length === 0) {
+          reject(new Error("Pi settled without a final agent message"));
+          return;
+        }
+        finish(lastAgentEnd);
+      }
     };
     const abort = (): void => reject(new Error("Pi run cancelled"));
     const timer = setTimeout(() => reject(new Error("Pi run timed out")), timeoutMs);
