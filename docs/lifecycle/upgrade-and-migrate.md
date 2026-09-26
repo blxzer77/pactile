@@ -48,10 +48,14 @@ pactile legacy-task reconcile .pactile/tasks/09-26-v050-migration-sample \
   --activation-at 2026-09-26T12:00:00.000Z \
   --deliverable "An explicitly defined migrated Task" \
   --delivery-level local-result \
-  --accept "The original Task source remains available" \
-  --accept "The V2 Task begins without inferred lifecycle history" \
+  --accept "AC-1=The original Task source remains available" \
+  --accept "AC-2=The V2 Task begins without inferred lifecycle history" \
   --check
 ```
+
+The `AC-1=` and `AC-2=` prefixes in these examples are literal parts of the
+`--accept` description values, not submitted criterion IDs; reconciliation
+generates its own V2 criterion IDs.
 
 Fill the definition from the source record and project evidence. A
 `needs-coordination` Task also requires an explicit
@@ -66,8 +70,8 @@ pactile legacy-task reconcile .pactile/tasks/09-26-v050-migration-sample \
   --activation-at 2026-09-26T12:00:00.000Z \
   --deliverable "An explicitly defined migrated Task" \
   --delivery-level local-result \
-  --accept "The original Task source remains available" \
-  --accept "The V2 Task begins without inferred lifecycle history" \
+  --accept "AC-1=The original Task source remains available" \
+  --accept "AC-2=The V2 Task begins without inferred lifecycle history" \
   --approved
 pactile task artifacts 09-26-v050-migration-sample --agent
 ```

@@ -72,6 +72,47 @@ function commandLines(content: string): string[] {
     .filter((line) => /^(?:pactile|pnpm|npm|node|git)\b/u.test(line));
 }
 
+function sectionAfterAnchor(content: string, id: string): string {
+  const anchor = `<a id="${id}"></a>`;
+  const anchorIndex = content.indexOf(anchor);
+  if (anchorIndex < 0) throw new Error(`missing documentation anchor: ${id}`);
+  const section = content.slice(anchorIndex + anchor.length);
+  const headings = [...section.matchAll(/^##\s+.+$/gmu)];
+  const nextHeading = headings[1]?.index;
+  return nextHeading === undefined ? section : section.slice(0, nextHeading);
+}
+
+function fencedCodeBlocks(content: string, language: string): string[] {
+  const blocks: string[] = [];
+  let fence: string | null = null;
+  let capturesBlock = false;
+  let lines: string[] = [];
+  for (const line of content.split(/\r?\n/u)) {
+    const delimiter = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/u);
+    if (fence === null) {
+      if (!delimiter) continue;
+      fence = delimiter[1] ?? null;
+      capturesBlock = delimiter[2]?.trim().split(/\s+/u)[0] === language;
+      lines = [];
+      continue;
+    }
+    if (
+      delimiter &&
+      delimiter[1]?.[0] === fence[0] &&
+      (delimiter[1]?.length ?? 0) >= fence.length &&
+      delimiter[2]?.trim() === ""
+    ) {
+      if (capturesBlock) blocks.push(lines.join("\n"));
+      fence = null;
+      capturesBlock = false;
+      lines = [];
+      continue;
+    }
+    if (capturesBlock) lines.push(line);
+  }
+  return blocks;
+}
+
 function normalizedLinkDestinations(sourcePath: string): string[] {
   return markdownLinks(readUtf8(sourcePath))
     .map((link) => resolveRelative(sourcePath, link))
@@ -135,6 +176,26 @@ describe("Batch 4 documentation links and locale parity", () => {
       }
     }
     expect(failures).toEqual([]);
+  });
+
+  it("keeps all P36 reconciliation command continuations identical", () => {
+    const english = fencedCodeBlocks(
+      sectionAfterAnchor(
+        readUtf8("docs/lifecycle/upgrade-and-migrate.md"),
+        "p36-held-task-reconciliation",
+      ),
+      "bash",
+    );
+    const chinese = fencedCodeBlocks(
+      sectionAfterAnchor(
+        readUtf8("docs/lifecycle/upgrade-and-migrate.zh-CN.md"),
+        "p36-held-task-reconciliation",
+      ),
+      "bash",
+    );
+    // AC-number prefixes here are literal --accept description text, not Kernel criterion IDs.
+    expect(english).toHaveLength(3);
+    expect(english).toEqual(chinese);
   });
 
   it("requires redirect stubs to expose both first-class locale targets", () => {
