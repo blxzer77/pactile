@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -45,7 +46,9 @@ describe("structured artifact Task walkthrough", () => {
   it("runs a temporary Task through explicit implementer and independent reviewer actors", () => {
     const root = makeRoot();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
 
     expect(
       runTaskCli(
@@ -71,6 +74,11 @@ describe("structured artifact Task walkthrough", () => {
       .find((name) => name.endsWith("artifact-walkthrough"));
     if (!taskDirectory) throw new Error("created Task directory is missing");
     const taskDir = path.join(root, ".pactile", "tasks", taskDirectory);
+    const candidateContents = "reviewed result\n";
+    const evidenceContents = "AC-1 passed\n";
+    fs.writeFileSync(path.join(root, "result.txt"), "baseline result\n");
+    fs.mkdirSync(path.join(root, "tests"), { recursive: true });
+    fs.writeFileSync(path.join(root, "tests", "result.txt"), "baseline test\n");
 
     expect(
       runTaskCli(
@@ -89,32 +97,45 @@ describe("structured artifact Task walkthrough", () => {
           "the walkthrough result",
           "--authorization-evidence",
           "evidence/approval.md",
+          "--write-set",
+          "result.txt",
+          "--write-set",
+          "tests/result.txt",
         ],
         root,
       ),
     ).toBe(0);
     const started = must(readV2(root, taskDir).runs.at(-1), "started Run");
     expect(started.startedBy).toBe("implementer");
+    fs.writeFileSync(path.join(root, "result.txt"), candidateContents);
+    fs.writeFileSync(path.join(root, "tests", "result.txt"), evidenceContents);
+    fs.mkdirSync(path.join(taskDir, "review"), { recursive: true });
+    fs.writeFileSync(
+      path.join(taskDir, "review", "artifact-walkthrough.md"),
+      "Independent review: PASS.\n",
+    );
 
+    const runResult = runTaskCli(
+      [
+        "run-result",
+        "artifact-walkthrough",
+        started.id,
+        "--actor",
+        "implementer",
+        "--outcome",
+        "completed",
+        "--summary",
+        "The acceptance result is recorded",
+        "--candidate",
+        `result.txt=${createHash("sha256").update(candidateContents).digest("hex")}`,
+        "--evidence",
+        "tests/result.txt",
+      ],
+      root,
+    );
     expect(
-      runTaskCli(
-        [
-          "run-result",
-          "artifact-walkthrough",
-          started.id,
-          "--actor",
-          "implementer",
-          "--outcome",
-          "completed",
-          "--summary",
-          "The acceptance result is recorded",
-          "--candidate",
-          `result.txt=${"a".repeat(64)}`,
-          "--evidence",
-          "tests/result.txt",
-        ],
-        root,
-      ),
+      runResult,
+      error.mock.calls.map((call) => call.join(" ")).join("\n"),
     ).toBe(0);
     const completedRun = must(
       readV2(root, taskDir).runs.at(-1),
@@ -123,6 +144,22 @@ describe("structured artifact Task walkthrough", () => {
     const candidate = must(
       completedRun.candidateSnapshot,
       "candidate snapshot",
+    );
+    expect(candidate.entries).toContainEqual({
+      ref: "result.txt",
+      fingerprint: createHash("sha256").update(candidateContents).digest("hex"),
+    });
+    expect(candidate.entries).toContainEqual(
+      expect.objectContaining({
+        ref: "pactile:verification:project-files-v1",
+      }),
+    );
+    expect(completedRun.result?.evidenceVerification?.items).toContainEqual(
+      expect.objectContaining({
+        ref: "tests/result.txt",
+        sha256: createHash("sha256").update(evidenceContents).digest("hex"),
+        source: "candidate-snapshot",
+      }),
     );
 
     expect(
@@ -180,6 +217,49 @@ describe("structured artifact Task walkthrough", () => {
       independent: true,
       candidateSnapshotId: candidate.id,
       candidateFingerprint: candidate.fingerprint,
+    });
+
+    const closeArgs = [
+      "close",
+      "artifact-walkthrough",
+      "--run",
+      started.id,
+      "--review",
+      reviewed.id,
+      "--candidate-id",
+      candidate.id,
+      "--candidate-fingerprint",
+      candidate.fingerprint,
+      "--candidate-observed-by",
+      "closer",
+      "--candidate-observation-source",
+      "declared",
+      "--candidate-observation-ref",
+      "evidence/current-candidate.json",
+      "--delivery-level",
+      "local-result",
+      "--delivery-ref",
+      "result.txt",
+      "--delivery-summary",
+      "Reviewed result is present",
+      "--actor",
+      "closer",
+    ];
+    expect(runTaskCli([...closeArgs, "--check"], root)).toBe(0);
+    expect(runTaskCli(closeArgs, root)).toBe(0);
+    const closedKernel = readV2(root, taskDir);
+    expect(closedKernel.phase).toBe("close");
+    expect(closedKernel.closure).toMatchObject({
+      candidateObservation: {
+        observedBy: "pactile-core-task-close",
+        source: "project-files-v1",
+        evidenceRef: "pactile:verification:project-files-v1",
+      },
+      deliveryVerification: {
+        source: "pactile-task-delivery-observer-v1",
+        path: "result.txt",
+        candidateSource: "project-files-v1",
+      },
     });
 
     expect(

@@ -65,7 +65,7 @@ Agent 先读取索引，根据当前决策选定事实 ID、逻辑事实 URI、�
 - Implement 包含 Run 与候选快照；运行结果证据同时可从 Verify 阶段定位。
 - Review 包含独立评审的整体决策与证据。Verify 会在存在该 criterion 的验收证据时复用 PRD 的同一验收事实 ID，并同时列出对应证据 locator。整体 Review verdict 不作为单项 criterion 的决定；criteria 在 Kernel Close 前保持 `active`，Close 才按记录状态变为 `verified`。
 - Design 的决策、理由和风险来自作者已有的 Markdown 标题；reader 暴露稳定章节 ID、来源、ref 和内容指纹，不生成 Kernel 状态或替作者摘要。PRD 的 Scope/Risk 使用同样方式。没有文档或对应标题时不产生章节项。
-- 候选快照在关闭观察前保持 `unknown`；关闭记录的观察与选中的快照一致时标为 `fresh`，其他历史快照标为 `stale`。这仅表示 Kernel 中记录的调用方观察，不重算 Git 或文件内容。
+- `run-result` 完成时，P41 Core 会记录机器观察：Git 项目记录工作树状态；非 Git 项目记录受限的项目文件状态。Run 写入范围内的普通文件会连同 SHA-256 进入候选快照，Run 证据也会绑定到实际字节。Close 前候选新鲜度仍是 `unknown`；Close 会重新观察当前状态，匹配冻结快照才记录为 `fresh`，内容变化或改动超出写入范围则阻止关闭。该可信观察由 Core 写入，不由调用方声明。
 
 创建新的 Kernel V2 Task 时，CLI 只在文件不存在时用 exclusive create 新建最小 `prd.md`：列出稳定事实 ID、Kernel 来源和 locator，并留出人类叙述区。后续流程只更新 Kernel；不会重写此 Markdown，也不会生成空的 Design、Implement、Review 或 Verify 模板。现存文档按只读文件路径和内容指纹索引；读取索引与选读正文都不修改文档。Markdown 内的自由叙述仍由作者维护，Kernel 继续是生命周期状态与证据 ID 的唯一权威。
 
@@ -86,17 +86,20 @@ PRD 中的验收项和硬依赖分别成为 `requirement` 与 `constraint` facts
 
 执行前取得明确批准。Run 结果、独立 Review 与逐项验收证据随后进入 Kernel：
 
+P41 的 Run 完成会读取真实文件。`run-start` 用 `--write-set <path>` 声明允许修改的文件；完成时写入范围内的普通文件及其内容摘要进入候选快照。`--candidate <path>=<sha256>` 必须指向写入范围内当前存在的普通文件，并提供该文件字节的实际 SHA-256。Run 的 `--evidence` 引用必须能解析到写入范围中的冻结候选文件，或 Task 目录下的证据文件；CLI 会读取并冻结其字节摘要。Review 证据也必须解析到真实文件。下面的哈希占位符需换成当前文件的 64 位小写十六进制 SHA-256。
+
 ```bash
 pactile task run-start timeout-fallback \
   --actor implementer \
   --input-summary "Preserve the configured timeout when no override is supplied" \
   --input-ref prd.md --input-ref design.md \
   --approved-by requester --authorization-scope "the declared timeout fix" \
-  --authorization-evidence evidence/timeout-approval.md
+  --authorization-evidence evidence/timeout-approval.md \
+  --write-set src/config/timeout.ts --write-set tests/timeout-fallback.txt
 pactile task run-result timeout-fallback <run-id> --outcome completed \
   --actor implementer \
   --summary "The fallback preserves the configured timeout" \
-  --candidate src/config/timeout.ts=<64-lowercase-hex-fingerprint> \
+  --candidate src/config/timeout.ts=<actual-file-sha256> \
   --evidence tests/timeout-fallback.txt
 pactile task artifacts timeout-fallback --agent --stage implement
 pactile task artifacts timeout-fallback --agent --stage implement --fact <candidate-fact-id>
@@ -113,7 +116,7 @@ pactile task close timeout-fallback --run <run-id> --review <review-id> \
   --delivery-summary "Reviewed timeout fallback is present"
 ```
 
-`<run-id>` 来自 Run 输出；候选 fact 通过 `--fact` 展开后，其 Kernel 值提供 snapshot ID 和完整 fingerprint。命令示例中的 fingerprint 是 64 个小写十六进制字符，不含 `sha256:` 前缀。Review 的 `--criterion` 对每条验收标准各传一次。引用只是调用方记录的 locator：Pactile 不会打开这些文件，也不会认证 reviewer 或 approver。人类复查可分别运行 `pactile task artifacts timeout-fallback --stage prd` 与 `--stage verify`；PRD/Verify 会指向同一个 requirement ID，Review 和 Evidence 则各自只出现一次。
+`src/config/timeout.ts`、`tests/timeout-fallback.txt` 和 Review 证据文件必须在对应步骤前实际存在；前两者属于 Run 写入范围，Review 文件位于 Task 目录。`<run-id>` 来自 Run 输出；候选 fact 通过 `--fact` 展开后，其 Kernel 值提供 snapshot ID 和完整 fingerprint。候选路径上的 SHA-256 不含 `sha256:` 前缀。Review 的 `--criterion` 对每条验收标准各传一次。Close 命令仍要求候选观察请求字段，但 P41 Core 会重新检查项目状态，并将自己的观察收据写入 Kernel；调用方字段本身不构成验证。Pactile 读取候选、Run 证据和 Review 证据文件，但不会认证 reviewer 或 approver 身份。人类复查可分别运行 `pactile task artifacts timeout-fallback --stage prd` 与 `--stage verify`；PRD/Verify 会指向同一个 requirement ID，Review 和 Evidence 则各自只出现一次。
 
 ## 重型 Task：多依赖、多验收项与跨文档证据
 
@@ -153,7 +156,7 @@ The Kernel owns lifecycle state, while document fingerprints pin the requested p
 An inserted same-kind heading can change later occurrence-based section IDs.
 ~~~
 
-作者只建立实际需要的 `prd.md`、`design.md`、`implement.md`；Review 与 Verify 有内容时再写入。先读完整 Agent 索引，再按需取 Run 或文档正文，然后记录多文件候选与逐项证据：
+作者只建立实际需要的 `prd.md`、`design.md`、`implement.md`；Review 与 Verify 有内容时再写入。先读完整 Agent 索引，再按需取 Run 或文档正文。示例中的候选源码、文档和测试证据均是项目中的普通文件；Run 开始前应已存在，`--candidate` 的哈希替换为各文件当前字节的 SHA-256。Review 文件应写在 Task 目录下：
 
 ```bash
 pactile task run-start legacy-doc-read \
@@ -161,12 +164,16 @@ pactile task run-start legacy-doc-read \
   --input-summary "Implement the three approved acceptance criteria" \
   --input-ref prd.md --input-ref design.md --input-ref implement.md \
   --approved-by requester --authorization-scope "read-only Task artifact indexing" \
-  --authorization-evidence evidence/legacy-doc-read-approval.md
+  --authorization-evidence evidence/legacy-doc-read-approval.md \
+  --write-set packages/cli/src/pactile/artifacts/reader.ts \
+  --write-set docs/capabilities/structured-task-artifacts.zh-CN.md \
+  --write-set evidence/artifact-reader-tests.txt \
+  --write-set evidence/p36-overlay-read.txt
 pactile task run-result legacy-doc-read <run-id> --outcome completed \
   --actor implementer \
   --summary "Selected facts and current document sections are readable" \
-  --candidate packages/cli/src/pactile/artifacts=<source-tree-64-hex-fingerprint> \
-  --candidate docs/capabilities/structured-task-artifacts.zh-CN.md=<docs-64-hex-fingerprint> \
+  --candidate packages/cli/src/pactile/artifacts/reader.ts=<actual-reader-file-sha256> \
+  --candidate docs/capabilities/structured-task-artifacts.zh-CN.md=<actual-doc-file-sha256> \
   --evidence evidence/artifact-reader-tests.txt \
   --evidence evidence/p36-overlay-read.txt
 pactile task artifacts legacy-doc-read --agent --stage implement
@@ -183,12 +190,12 @@ pactile task close legacy-doc-read --run <run-id> --review <review-id> \
   --candidate-observed-by closer --candidate-observation-source declared \
   --candidate-observation-ref evidence/legacy-doc-read-candidate.json \
   --delivery-level local-result \
-  --delivery-ref packages/cli/src/pactile/artifacts \
+  --delivery-ref packages/cli/src/pactile/artifacts/reader.ts \
   --delivery-summary "Reviewed artifact reader and evidence are present"
 pactile task artifacts legacy-doc-read --agent
 ```
 
-读索引后，`context:task`、依赖约束、每条验收标准、Run、Review、候选和 Evidence 都有独立 ID、来源、provenance 与 Kernel locator；跨阶段只引用同一 fact ID，不复制事实。PASS Review 后，整体 Review finding 可为 `accepted`，但各验收事实仍为 `active`；Kernel 只有 Close 才把它们记为 `verified`。Close 前候选 freshness 是 `unknown`；Close 记录的 caller-supplied observation 与 snapshot 匹配后，当前候选为 `fresh`，较早候选为 `stale`。这表示调用方观察与 Kernel 记录匹配，不表示 Pactile 重算了 Git 或磁盘字节。
+读索引后，`context:task`、依赖约束、每条验收标准、Run、Review、候选和 Evidence 都有独立 ID、来源、provenance 与 Kernel locator；跨阶段只引用同一 fact ID，不复制事实。PASS Review 后，整体 Review finding 可为 `accepted`，但各验收事实仍为 `active`；Kernel 只有 Close 才把它们记为 `verified`。Close 前候选 freshness 是 `unknown`；Close 会再次读取 Git 或受限项目文件状态，并核对 Run 冻结的机器观察。状态相同且改动仍在写入范围内才可关闭，匹配的当前候选标为 `fresh`，不匹配或超出范围会被阻止，旧候选标为 `stale`。Close 请求中的观察字段不代替这项 Core 检查。运行示例时，`evidence/artifact-reader-tests.txt` 和 `evidence/p36-overlay-read.txt` 必须是真实文件，并包含对应验收结果；Review 证据文件需位于 Task 目录下。
 
 ## 跨文档章节 ID 与指纹
 

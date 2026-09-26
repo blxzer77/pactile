@@ -47,6 +47,16 @@ describe("structured task artifacts help and guide", () => {
     expect(guide).toContain("section:design:decision");
     expect(guide).toContain("section:prd:legacy-task-map:scope");
     expect(guide).toContain("--actor implementer");
+    expect(guide).toContain("`--write-set <path>`");
+    expect(guide).toContain("`--candidate <path>=<sha256>`");
+    expect(guide).toContain("Run 写入范围内的普通文件");
+    expect(guide).toContain("P41 Core 会重新检查项目状态");
+    expect(guide).toContain(
+      "packages/cli/src/pactile/artifacts/reader.ts=<actual-reader-file-sha256>",
+    );
+    expect(guide).toContain(
+      "--delivery-ref packages/cli/src/pactile/artifacts/reader.ts",
+    );
     expect(guide).toContain(
       "--reviewer independent-reviewer --actor independent-reviewer",
     );
