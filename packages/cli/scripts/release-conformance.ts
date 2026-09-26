@@ -138,6 +138,21 @@ export function createNodeOnlyInstallEnvironment(root, userConfig) {
   };
 }
 
+function findGitExecutable(environmentPath = process.env.PATH ?? "") {
+  const executable = process.platform === "win32" ? "git.exe" : "git";
+  for (const folder of environmentPath.split(path.delimiter)) {
+    if (!folder) continue;
+    const candidate = path.resolve(folder, executable);
+    if (!fs.existsSync(candidate)) continue;
+    try {
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      // Continue looking through PATH if an entry disappears during the scan.
+    }
+  }
+  throw new Error(`Could not find ${executable} on the host PATH.`);
+}
+
 export function buildSealedTarballInstallArgs({
   prefix,
   cacheDir,
@@ -240,8 +255,14 @@ export async function verifyReleaseConformance({
       fs.mkdirSync(target, { recursive: true });
       runner(
         "tar",
-        ["-xzf", tarball.tarballPath, "-C", target, "--strip-components=1"],
-        { capture: true },
+        [
+          "-xzf",
+          path.basename(tarball.tarballPath),
+          "-C",
+          target,
+          "--strip-components=1",
+        ],
+        { cwd: path.dirname(tarball.tarballPath), capture: true },
       );
       for (const name of Object.keys({
         ...packedPackage.dependencies,
@@ -333,6 +354,7 @@ export async function verifyReleaseConformance({
       capture: true,
       env: nodeOnly,
     });
+    const gitExecutable = findGitExecutable();
     const acceptance = JSON.parse(
       String(
         runner(
@@ -344,6 +366,7 @@ export async function verifyReleaseConformance({
             ),
             installed,
             path.join(root, "node-only-project"),
+            gitExecutable,
           ],
           { cwd: prefix, capture: true, env: nodeOnly },
         ),
@@ -367,6 +390,36 @@ export async function verifyReleaseConformance({
         "Installed tarball did not complete the V2 Task create, run-start, and read-back smoke.",
       );
     }
+    if (
+      acceptance.v2PiParallel?.taskIds?.length !== 2 ||
+      acceptance.v2PiParallel?.scheduledWaveCount !== 1 ||
+      JSON.stringify(acceptance.v2PiParallel?.outcomes) !==
+        JSON.stringify(["settled", "settled"]) ||
+      JSON.stringify(acceptance.v2PiParallel?.schemaVersions) !==
+        JSON.stringify([2, 2]) ||
+      JSON.stringify(acceptance.v2PiParallel?.dispatchLeasesReleased) !==
+        JSON.stringify([true, true])
+    ) {
+      throw new Error(
+        "Installed tarball did not complete the V2 scheduler and parallel Pi dispatch smoke.",
+      );
+    }
+    if (acceptance.v2AfterUpdate?.status !== "passed") {
+      throw new Error(
+        `Installed tarball failed the update-to-V2 Task smoke (${acceptance.v2AfterUpdate?.errorCode ?? "unknown"}): ${acceptance.v2AfterUpdate?.errorMessage ?? "no details"}`,
+      );
+    }
+    if (
+      !acceptance.explicitBlockers?.some(
+        (blocker) =>
+          typeof blocker === "string" &&
+          blocker.includes("runParallelBatch remains a separate V1"),
+      )
+    ) {
+      throw new Error(
+        "Installed tarball acceptance must preserve the separate V1 runParallelBatch blocker.",
+      );
+    }
     const result = {
       version,
       manifestSha256: sealed.manifestSha256,
@@ -378,11 +431,14 @@ export async function verifyReleaseConformance({
       acceptance,
     };
     log(
-      `ok release conformance ${version}: one sealed tarball; default npm lifecycle install=${installScriptsEnabled}, no Python on install PATH=${noPythonOnInstallPath}; V2 Task create/run-start/read-back and Node-only lifecycle/bridges (${acceptance.endToEndMs} ms E2E).`,
+      `ok release conformance ${version}: one sealed tarball; default npm lifecycle install=${installScriptsEnabled}, no Python on install PATH=${noPythonOnInstallPath}; fresh-init and post-update V2 Task scheduler/Pi acceptance, including two parallel fresh-init dispatches (${acceptance.endToEndMs} ms E2E).`,
     );
     log(
-      `baseline ms: CLI cold=${acceptance.coldStartMs}, subsequent=${acceptance.steadyCliMs}, Pi cold=${acceptance.piColdStartupMs}, Pi warm=${acceptance.piWarmStartupMs}, parallel=${acceptance.parallelWallMs}; offline dependency fixture=${offline}.`,
+      `baseline ms: CLI cold=${acceptance.coldStartMs}, subsequent=${acceptance.steadyCliMs}, Pi starts=${acceptance.piColdStartupMs?.join(",")}, V2 parallel=${acceptance.parallelWallMs}; offline dependency fixture=${offline}.`,
     );
+    for (const blocker of acceptance.explicitBlockers) {
+      log(`unresolved legacy acceptance: ${blocker}`);
+    }
     return result;
   } finally {
     if (ownedTemporary && fs.existsSync(root)) {

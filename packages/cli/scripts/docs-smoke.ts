@@ -43,6 +43,12 @@ const REQUIRED_COMMANDS = new Set([
   "pactile detach codex",
   "pactile uninstall",
 ]);
+const RELEASE_GUIDANCE_COMMANDS = [
+  "pnpm --filter @blxzer/pactile run release:check",
+  "pnpm --filter @blxzer/pactile run release:beta",
+  "pnpm --filter @blxzer/pactile run release:promote",
+];
+const RELEASE_TAG_FORMATS = ["pactile-vX.Y.Z-beta.N", "pactile-vX.Y.Z"];
 
 const BASELINE_SKILL_IDS = [
   "approval-personal",
@@ -117,6 +123,63 @@ function loadCommandContract() {
       );
   }
   return commands;
+}
+
+function assertReleaseGuidance() {
+  const releaseDocs = [
+    path.join(REPO_ROOT, "docs", "governance", "releasing.md"),
+    path.join(REPO_ROOT, "docs", "governance", "releasing.zh-CN.md"),
+  ];
+  const docTexts = releaseDocs.map((file) => fs.readFileSync(file, "utf8"));
+  const handoffPath = path.join(
+    CLI_ROOT,
+    "src",
+    "templates",
+    "pactile",
+    "tasks",
+    "templates",
+    "release-readiness",
+    "handoff-template.md",
+  );
+  const handoff = fs.readFileSync(handoffPath, "utf8");
+
+  for (const [index, text] of docTexts.entries()) {
+    const file = relativePath(releaseDocs[index]);
+    for (const command of RELEASE_GUIDANCE_COMMANDS) {
+      if (!text.includes(command))
+        throw new Error(`${file} is missing release command: ${command}`);
+    }
+    for (const tag of RELEASE_TAG_FORMATS) {
+      if (!text.includes(tag))
+        throw new Error(`${file} is missing release tag format: ${tag}`);
+    }
+    if (text.includes("release.js"))
+      throw new Error(
+        `${file} still refers to the retired release.js entry point`,
+      );
+  }
+  for (const command of RELEASE_GUIDANCE_COMMANDS) {
+    if (!handoff.includes(command))
+      throw new Error(
+        `release-readiness handoff is missing command: ${command}`,
+      );
+  }
+  for (const tag of RELEASE_TAG_FORMATS) {
+    if (!handoff.includes(tag))
+      throw new Error(
+        `release-readiness handoff is missing tag format: ${tag}`,
+      );
+  }
+  if (
+    handoff.includes("release.js") ||
+    !handoff.includes("do not tag or publish") ||
+    !handoff.includes("separate approved Publish workflow dispatch")
+  ) {
+    throw new Error(
+      "release-readiness handoff must describe plan-only commands and the approved Publish workflow",
+    );
+  }
+  return { documents: releaseDocs.length, handoffTemplate: true };
 }
 
 function childEnvironment(home) {
@@ -366,6 +429,7 @@ function assertHelpParity(contract, env) {
 }
 
 async function main() {
+  const releaseGuidance = assertReleaseGuidance();
   const contract = loadCommandContract();
   if (!fs.existsSync(CLI_ENTRY))
     throw new Error(`CLI entry is missing: ${relativePath(CLI_ENTRY)}`);
@@ -430,6 +494,7 @@ async function main() {
       executedCases: results.length,
       sourceSkillParity: sourceParity,
       checkedInFixtureParity: fixtureParity,
+      releaseGuidance,
       helpParity: help,
       skipped: [],
       safety: {
@@ -448,6 +513,9 @@ async function main() {
       );
       console.log(
         `source/generated skills: ${sourceParity.files}; checked-in host fixture: ${fixtureParity.files}`,
+      );
+      console.log(
+        `release guidance: ${releaseGuidance.documents} bilingual docs and the readiness handoff template`,
       );
       console.log(
         `CLI help parity: ${help.cases} cases; shell fences executed: no`,

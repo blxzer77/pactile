@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runTaskCli } from "../../src/commands/task.js";
 import { createTaskKernel, startTaskRun } from "../../src/core/task/index.js";
@@ -19,6 +20,10 @@ import {
 } from "../../src/pactile/codex/bridge.js";
 
 const roots: string[] = [];
+const FAKE_PI_PROVIDER = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../.tmp/p31-script-build/fixtures/fake-pi-provider.js",
+);
 
 function requiredAt<T>(items: readonly T[], index: number): T {
   const value = items[index];
@@ -40,7 +45,7 @@ function fixture(
   parent: string;
   children: string[];
   manifest: string;
-  script: string;
+  scriptArgs: string[];
 } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-parallel-"));
   roots.push(root);
@@ -120,46 +125,23 @@ function fixture(
     manifest,
     JSON.stringify({ schema_version: 1, limit: 1, children: items }),
   );
-  const script = path.join(root, "fake-pi.mjs");
-  fs.writeFileSync(
-    script,
-    `
-import fs from 'node:fs';
-import path from 'node:path';
-const session = path.join(process.env.PI_CODING_AGENT_SESSION_DIR, 'fake-session.jsonl');
-fs.mkdirSync(path.dirname(session), {recursive:true});
-fs.writeFileSync(session, 'session\\n');
-let buffer = '';
-process.stdin.on('data', chunk => {
-  buffer += chunk.toString();
-  let at;
-  while ((at = buffer.indexOf('\\n')) >= 0) {
-    const line = buffer.slice(0,at); buffer = buffer.slice(at+1);
-    if (!line) continue;
-    const request = JSON.parse(line);
-    const reply = data => process.stdout.write(JSON.stringify({id:request.id,type:'response',command:request.type,success:true,...data})+'\\n');
-    if (request.type === 'get_state') reply({data:{isStreaming:false,sessionId:'fake-id',sessionFile:session}});
-    else if (request.type === 'prompt') {
-      reply();
-      process.stdout.write(JSON.stringify({type:'agent_start'})+'\\n');
-      setTimeout(() => {
-        const message = {role:'assistant',content:[{type:'text',text:process.cwd()}],stopReason:'stop'};
-        process.stdout.write(JSON.stringify({type:'agent_end',messages:[message]})+'\\n');
-      }, 250);
-    } else if (request.type === 'abort') reply();
-  }
-});
-`,
-  );
-  return { root, parent, children, manifest, script };
+  const scriptArgs = [
+    FAKE_PI_PROVIDER,
+    "--session-name",
+    "fake-session.jsonl",
+    "--result-cwd",
+    "--response-delay-ms",
+    "250",
+  ];
+  return { root, parent, children, manifest, scriptArgs };
 }
 
 describe("scheduler-driven Parent dispatch", () => {
   it("ignores legacy numeric limits, follows schedule waves, and records integration metrics", async () => {
-    const { root, parent, children, manifest, script } = fixture();
+    const { root, parent, children, manifest, scriptArgs } = fixture();
     const result = await runParallelBatch(root, parent, manifest, {
       command: process.execPath,
-      args: [script],
+      args: scriptArgs,
     });
     expect(result.children.map((child) => child.outcome)).toEqual([
       "settled",
@@ -301,7 +283,7 @@ describe("scheduler-driven Parent dispatch", () => {
   });
 
   it("blocks unmet dependencies and overlapping direct bridge reservations before launch", async () => {
-    const { root, parent, children, manifest, script } = fixture();
+    const { root, parent, children, manifest, scriptArgs } = fixture();
     const parentDir = path.join(root, ".pactile", "tasks", parent);
     const { data, body } = readTaskMap(parentDir);
     if (!data) throw new Error("Missing task map");
@@ -310,7 +292,7 @@ describe("scheduler-driven Parent dispatch", () => {
     await expect(
       runParallelBatch(root, parent, manifest, {
         command: process.execPath,
-        args: [script],
+        args: scriptArgs,
       }),
     ).rejects.toThrow("requires unmet");
     expect(fs.existsSync(path.join(parentDir, "parallel", "latest.json"))).toBe(
@@ -342,7 +324,7 @@ describe("scheduler-driven Parent dispatch", () => {
     await expect(
       runParallelBatch(root, parent, manifest, {
         command: process.execPath,
-        args: [script],
+        args: scriptArgs,
       }),
     ).rejects.toThrow("execution_topology must be parallel");
   });
@@ -561,7 +543,7 @@ describe("scheduler-driven Parent dispatch", () => {
   });
 
   it("uses high review cost as a scheduling weight without forbidding parallel work", async () => {
-    const { root, parent, manifest, script } = fixture();
+    const { root, parent, manifest, scriptArgs } = fixture();
     const value = JSON.parse(fs.readFileSync(manifest, "utf8")) as {
       children: { review_cost: string }[];
     };
@@ -569,13 +551,13 @@ describe("scheduler-driven Parent dispatch", () => {
     fs.writeFileSync(manifest, JSON.stringify(value));
     const result = await runParallelBatch(root, parent, manifest, {
       command: process.execPath,
-      args: [script],
+      args: scriptArgs,
     });
     expect(result.max_active).toBe(2);
   });
 
   it("allows overlapping writers only when the persisted wave carries explicit authorization and an integration plan", async () => {
-    const { root, parent, children, manifest, script } = fixture();
+    const { root, parent, children, manifest, scriptArgs } = fixture();
     const value = JSON.parse(fs.readFileSync(manifest, "utf8")) as {
       conflict_parallelizations?: unknown;
     };
@@ -592,7 +574,7 @@ describe("scheduler-driven Parent dispatch", () => {
 
     const result = await runParallelBatch(root, parent, manifest, {
       command: process.execPath,
-      args: [script],
+      args: scriptArgs,
     });
     expect(result.max_active).toBe(3);
     const receipt = JSON.parse(
@@ -628,7 +610,7 @@ describe("scheduler-driven Parent dispatch", () => {
     await expect(
       runParallelBatch(root, parent, manifest, {
         command: process.execPath,
-        args: [script],
+        args: scriptArgs,
       }),
     ).rejects.toThrow(/integrationPlan/);
   });
@@ -700,11 +682,11 @@ describe("scheduler-driven Parent dispatch", () => {
   });
 
   it("refuses a missing worktree and runs Pi in a verified Child checkout once prepared", async () => {
-    const { root, parent, children, manifest, script } = fixture(true);
+    const { root, parent, children, manifest, scriptArgs } = fixture(true);
     await expect(
       runParallelBatch(root, parent, manifest, {
         command: process.execPath,
-        args: [script],
+        args: scriptArgs,
       }),
     ).rejects.toThrow("prepared Child worktree");
     expect(
@@ -737,7 +719,7 @@ describe("scheduler-driven Parent dispatch", () => {
     fs.writeFileSync(path.join(childDir, "task.json"), JSON.stringify(task));
     const result = await runParallelBatch(root, parent, manifest, {
       command: process.execPath,
-      args: [script],
+      args: scriptArgs,
     });
     expect(result.children[0].outcome).toBe("settled");
     const latest = JSON.parse(

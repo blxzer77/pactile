@@ -27,6 +27,16 @@ const REPO_ROOT = path.resolve(CLI_DIR, "../..");
 const RELEASE_TYPES = new Set(["patch", "minor", "major", "beta", "promote"]);
 const EXPLICIT_VERSION =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.(0|[1-9]\d*))?$/;
+const RELEASE_USAGE = [
+  "usage:",
+  "  pnpm --filter @blxzer/pactile run release (patch)",
+  "  pnpm --filter @blxzer/pactile run release:minor",
+  "  pnpm --filter @blxzer/pactile run release:major",
+  "  pnpm --filter @blxzer/pactile run release:beta",
+  "  pnpm --filter @blxzer/pactile run release:promote",
+  "  pnpm --filter @blxzer/pactile exec tsx scripts/release.ts <x.y.z[-beta.N]>",
+  "See docs/governance/releasing.md for the separately authorized tag and publish workflow.",
+].join("\n");
 
 export function computeReleaseTarget(current, type) {
   let target;
@@ -90,9 +100,7 @@ function readPackageInfo() {
 export function buildReleaseCandidatePlan({ type, packageInfo, git }) {
   assertMatchingVersions(packageInfo);
   if (!RELEASE_TYPES.has(type) && !EXPLICIT_VERSION.test(type)) {
-    throw new Error(
-      "usage: release.js <patch|minor|major|beta|promote|x.y.z[-beta.N]>",
-    );
+    throw new Error(RELEASE_USAGE);
   }
   const targetVersion = computeReleaseTarget(packageInfo.cliVersion, type);
   const parsed = parseReleaseVersion(targetVersion);
@@ -120,9 +128,7 @@ export function runReleaseCandidate({
 }) {
   assertMatchingVersions(packageInfo);
   if (!RELEASE_TYPES.has(type) && !EXPLICIT_VERSION.test(type)) {
-    throw new Error(
-      "usage: release.js <patch|minor|major|beta|promote|x.y.z[-beta.N]>",
-    );
+    throw new Error(RELEASE_USAGE);
   }
   const targetVersion = computeReleaseTarget(packageInfo.cliVersion, type);
   parseReleaseVersion(targetVersion);

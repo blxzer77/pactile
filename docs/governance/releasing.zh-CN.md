@@ -12,6 +12,13 @@ CI 验证。beta 版本在 `develop` 准备，经明确授权后打
 `pactile-vX.Y.Z-beta.N` tag。tag 必须指向当前 `develop` 的精确 HEAD；发布
 工作流验证单包 tarball 后发到 npm `beta`。
 
+本地预检运行 `pnpm --filter @blxzer/pactile run release:check`。
+`pnpm --filter @blxzer/pactile run release:beta` 和
+`pnpm --filter @blxzer/pactile run release:promote` 只生成候选计划，不会打 tag 或发包。
+经单独明确授权后，beta tag 必须指向 `develop` 的精确 HEAD。发布 PR 合入后，
+正式版 `pactile-vX.Y.Z` tag 必须指向 `main` 的精确 HEAD。稳定版晋级需另行批准并
+通过 Publish workflow 手动执行。
+
 beta 验收后，只修改包版本到 `X.Y.Z` 以及发布文档/changelog，再开
 `develop` → `main` 发布 PR。PR 正文须包含以下字段：
 

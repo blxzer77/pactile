@@ -114,3 +114,10 @@ The sealed-install Python PATH check is maintained in
 `tsconfig.scripts.json` and compiled with the release-conformance runner; do not
 replace it with inline `node -e` JavaScript. The check runs against the same
 restricted PATH and environment used for the default npm lifecycle install.
+
+Simulated Pi and Jev providers and the trace-store concurrency child are
+maintained as TypeScript under `packages/cli/scripts/fixtures/`. They are covered
+by `tsconfig.scripts.json` and compiled with the checked script artifacts before
+tests and release acceptance. Invoke their compiled JavaScript with Node; do not
+generate JavaScript source strings or pass inline logic to `node -e`. These are
+local test fixtures, not real provider acceptance claims.

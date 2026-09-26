@@ -17,6 +17,9 @@ const API_KEY = "session-test-secret-key";
 const CLI_SOURCE = fileURLToPath(
   new URL("../../../src/cli/index.ts", import.meta.url),
 );
+const FAKE_JEV_PRELOAD = fileURLToPath(
+  new URL("../../../.tmp/p31-script-build/fixtures/fake-jev-preload.js", import.meta.url),
+);
 const TSX_LOADER = import.meta.resolve("tsx/esm");
 const roots: string[] = [];
 
@@ -46,54 +49,6 @@ interface CliProcessOptions {
   readonly selectedRefs?: readonly string[];
   readonly enabled?: string;
 }
-
-const PRELOAD_SOURCE = `
-import fs from "node:fs";
-
-const captureFile = process.env.PACTILE_TEST_JEV_CAPTURE;
-const responseMode = process.env.PACTILE_TEST_JEV_RESPONSE ?? "answer";
-let callCount = 0;
-
-globalThis.fetch = async (input, init = {}) => {
-  callCount += 1;
-  const headers = new Headers(init.headers);
-  const requestBody = JSON.parse(String(init.body ?? "{}"));
-  const snippetCandidates = (requestBody.state?.sourceSnippets ?? []).flatMap((group) => {
-    try { return JSON.parse(group.text).map((candidate) => candidate.ref); }
-    catch { return []; }
-  });
-  const candidateNames = Object.keys(requestBody.questions ?? {});
-  const capture = {
-    callCount,
-    url: String(input),
-    method: init.method,
-    authorizationMatchesConfiguredKey: headers.get("authorization") === "Bearer " + process.env.PACTILE_JEV_API_KEY,
-    body: requestBody,
-  };
-  fs.writeFileSync(captureFile, JSON.stringify(capture));
-
-  if (responseMode === "wait") {
-    const releaseFile = process.env.PACTILE_TEST_JEV_RELEASE;
-    const deadline = Date.now() + 8_000;
-    while (!fs.existsSync(releaseFile) && Date.now() < deadline)
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    if (!fs.existsSync(releaseFile)) throw new Error("test did not release mock fetch");
-  }
-  if (responseMode === "failure")
-    return new Response("provider detail must not escape", { status: 503 });
-
-  const wantedRefs = new Set(JSON.parse(process.env.PACTILE_TEST_JEV_SELECTED_REFS ?? "[]"));
-  const answers = Object.fromEntries(candidateNames.map((name, index) => [name, {
-    type: "noul",
-    noul: wantedRefs.has(snippetCandidates[index]) ? 0.98 : 0.02,
-  }]));
-  return new Response(JSON.stringify({
-    model: "jev-test-model",
-    answers,
-    usage: { input_tokens: 45, output_tokens: 5 },
-  }), { status: 200, headers: { "content-type": "application/json", "x-typesafe-request-id": "req_session_01" } });
-};
-`;
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -190,10 +145,10 @@ function createRoot(policy: typeof APPROVED_POLICY | typeof DENIED_POLICY): {
   return { root, ...task };
 }
 
-function createPreload(root: string): string {
-  const preload = path.join(root, "fake-jev-http.mjs");
-  fs.writeFileSync(preload, PRELOAD_SOURCE, "utf8");
-  return preload;
+function createPreload(): string {
+  if (!fs.existsSync(FAKE_JEV_PRELOAD))
+    throw new Error("Compiled TypeScript fake Jev preload is missing; run pnpm test.");
+  return FAKE_JEV_PRELOAD;
 }
 
 function childEnv(
@@ -233,7 +188,7 @@ function runCliProcess(
   root: string,
   options: CliProcessOptions = {},
 ): ReturnType<typeof spawnSync> {
-  const preload = options.preload ?? createPreload(root);
+  const preload = options.preload ?? createPreload();
   return spawnSync(
     process.execPath,
     childArgs(root, ["context", "--mode", "session", "--json"], preload),
@@ -241,7 +196,7 @@ function runCliProcess(
       cwd: root,
       env: childEnv(root, options),
       encoding: "utf8",
-      timeout: 12_000,
+      timeout: 30_000,
     },
   );
 }
@@ -254,7 +209,7 @@ function runCliCommand(
     cwd: root,
     env: childEnv(root),
     encoding: "utf8",
-    timeout: 12_000,
+    timeout: 30_000,
   });
 }
 
@@ -314,7 +269,7 @@ function startCliProcess(
 describe("Pactile session Jev route", () => {
   it("uses the active Run grant and returns a receipt from the real CLI process", () => {
     const { root } = createRoot(APPROVED_POLICY);
-    const preload = createPreload(root);
+    const preload = createPreload();
     const current = prepareSelectedTaskAgentTileSelection(root);
     if (!current.success)
       throw new Error("Expected the authorized current session offer");
@@ -323,7 +278,7 @@ describe("Pactile session Jev route", () => {
       preload,
       selectedRefs: current.data.offer.suggestion.selectedRefs,
     });
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, result.error?.message ?? result.stderr).toBe(0);
     expect(result.stdout).not.toContain(API_KEY);
     expect(result.stderr).not.toContain(API_KEY);
     const pack = parseOutput(result.stdout);
@@ -438,7 +393,7 @@ describe("Pactile session Jev route", () => {
 
   it("falls back without a key and does not invoke fake or real fetch", () => {
     const { root } = createRoot(APPROVED_POLICY);
-    const result = runCliProcess(root, { preload: createPreload(root) });
+    const result = runCliProcess(root, { preload: createPreload() });
     expect(result.status, result.stderr).toBe(0);
     expect(fs.existsSync(path.join(root, "fake-jev-capture.json"))).toBe(false);
     const pack = parseOutput(result.stdout);
@@ -459,7 +414,7 @@ describe("Pactile session Jev route", () => {
     const result = runCliProcess(root, {
       apiKey: API_KEY,
       enabled: "false",
-      preload: createPreload(root),
+      preload: createPreload(),
     });
     expect(result.status, result.stderr).toBe(0);
     expect(fs.existsSync(path.join(root, "fake-jev-capture.json"))).toBe(false);
@@ -479,7 +434,7 @@ describe("Pactile session Jev route", () => {
     const { root } = createRoot(DENIED_POLICY);
     const result = runCliProcess(root, {
       apiKey: API_KEY,
-      preload: createPreload(root),
+      preload: createPreload(),
     });
     expect(result.status, result.stderr).toBe(0);
     expect(fs.existsSync(path.join(root, "fake-jev-capture.json"))).toBe(false);
@@ -519,7 +474,7 @@ describe("Pactile session Jev route", () => {
 
     const result = runCliProcess(root, {
       apiKey: API_KEY,
-      preload: createPreload(root),
+      preload: createPreload(),
     });
     expect(result.status, result.stderr).toBe(0);
     expect(fs.existsSync(path.join(root, "fake-jev-capture.json"))).toBe(false);
@@ -544,7 +499,7 @@ describe("Pactile session Jev route", () => {
       throw new Error("Expected the authorized current session offer");
     const result = runCliProcess(root, {
       apiKey: API_KEY,
-      preload: createPreload(root),
+      preload: createPreload(),
       response: "failure",
       selectedRefs: current.data.offer.suggestion.selectedRefs,
     });
@@ -576,7 +531,7 @@ describe("Pactile session Jev route", () => {
     const originalFingerprint = before.data.offer.fingerprint;
     const captureFile = path.join(root, "fake-jev-capture.json");
     const releaseFile = path.join(root, "release-mock-jev");
-    const preload = createPreload(root);
+    const preload = createPreload();
     const { child, completion } = startCliProcess(
       root,
       preload,

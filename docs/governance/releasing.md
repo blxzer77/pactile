@@ -14,6 +14,14 @@ after explicit authorization. The tag workflow requires the tag commit to be
 the exact `develop` head, validates the single tarball, and publishes it under
 the npm `beta` dist-tag.
 
+Run `pnpm --filter @blxzer/pactile run release:check` for the local release
+preflight. `pnpm --filter @blxzer/pactile run release:beta` and
+`pnpm --filter @blxzer/pactile run release:promote` print candidate plans; they
+do not create tags or publish. After separate approval, create the beta tag at
+the exact `develop` head. Create a stable `pactile-vX.Y.Z` tag only at the exact
+`main` head after the release PR is merged. Stable promotion is a separate,
+approved Publish workflow dispatch.
+
 After beta acceptance, update only the package version to `X.Y.Z` and the
 release documentation/changelog, then open a `develop` → `main` release PR.
 Its body must contain these exact fields:
