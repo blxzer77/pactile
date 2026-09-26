@@ -58,7 +58,7 @@
     "clean": "pnpm run build:script-artifacts && node .tmp/p31-script-build/clean.js",
     "copy-templates": "tsx scripts/copy-templates.ts",
     "check:pack-files": "tsx scripts/check-cli-pack-files.ts",
-    "check:release-pack": "tsx scripts/check-release-pack-contents.ts",
+    "check:release-pack": "pnpm run build:script-artifacts && node .tmp/p31-script-build/check-release-pack-contents.js",
     "docs:smoke": "pnpm run build:script-artifacts && tsx scripts/docs-smoke.ts",
     "copy:release-assets": "tsx scripts/copy-release-assets.ts",
     "sync:pack-files": "tsx scripts/sync-cli-pack-files.ts",
