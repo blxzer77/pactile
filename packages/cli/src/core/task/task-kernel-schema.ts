@@ -59,7 +59,7 @@ const EVENT_TYPES: readonly TaskKernelEventType[] = [
   "task.created", "task.dependency-added", "run.queued", "run.started", "run.resumed", "run.completed",
   "run.failed", "run.blocked", "run.cancelled", "run.host-bound", "run.host-settlement-recorded", "run.host-settled",
   "run.workspace-bound", "run.workspace-integrated", "run.workspace-cleanup-acquired", "run.workspace-reclaimed",
-  "run.workspace-retained", "run.workspace-recovery-required", "review.recorded", "task.closed",
+  "run.workspace-cleanup-refused", "run.workspace-retained", "run.workspace-recovery-required", "review.recorded", "task.closed",
 ];
 
 export function isTaskDeliveryLevel(value: unknown): value is TaskDeliveryLevel {

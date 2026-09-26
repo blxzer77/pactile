@@ -102,13 +102,13 @@ export function createRunWorktree(input: {
   branch: string;
   baseRef: string;
   writeSet: readonly string[];
-  knownOwners: readonly WorkspaceOwnerRef[];
+  knownOwners?: readonly WorkspaceOwnerRef[];
 }): RunWorkspaceBinding {
   assertRunId(input.runId);
   const identity = repoIdentity(input.repoRoot);
   const worktreeRoot = allowedWorktreeRoot(identity.root);
   const canonicalPath = path.resolve(worktreeRoot, input.runId);
-  if (!pathWithin(worktreeRoot, canonicalPath) || ownerConflict(canonicalPath, input.runId, input.knownOwners)) {
+  if (!pathWithin(worktreeRoot, canonicalPath) || ownerConflict(canonicalPath, input.runId, input.knownOwners ?? [])) {
     throw new WorktreeManagerError("owner-conflict", "Run worktree path is already owned", canonicalPath);
   }
   branchRef(identity.root, input.branch);
@@ -134,7 +134,7 @@ export function createRunWorktree(input: {
       integrationReceipt: null,
       cleanupLease: null,
     };
-    const candidateInspection = inspectRunWorktreeInternal({ repoRoot: identity.root, runId: input.runId, runState: "running", binding, knownOwners: [] }, false);
+    const candidateInspection = inspectRunWorktreeInternal({ repoRoot: identity.root, runId: input.runId, runState: "running", binding }, false);
     if (candidateInspection.issues.some((issue) => issue !== "unintegrated") || candidateInspection.headSha !== baseSha
       || !candidateInspection.gitDir || !sameGitRoot(candidateInspection.commonDir ?? "", identity.commonDir)) {
       throw new WorktreeManagerError("post-create-verification-failed", `Created worktree failed verification (${candidateInspection.state})`, canonicalPath);
@@ -142,7 +142,7 @@ export function createRunWorktree(input: {
     const provenance = provenanceFor({ identity, binding, gitDir: candidateInspection.gitDir, source: "created" });
     persistManagerProvenance(identity, provenance);
     const ownedBinding = { ...binding, manager: taskKernelManagerBinding(provenance) };
-    const inspection = inspectRunWorktree({ repoRoot: identity.root, runId: input.runId, runState: "running", binding: ownedBinding, knownOwners: [] });
+    const inspection = inspectRunWorktree({ repoRoot: identity.root, runId: input.runId, runState: "running", binding: ownedBinding });
     if (inspection.issues.some((issue) => issue !== "unintegrated") || inspection.headSha !== baseSha || !sameGitRoot(inspection.commonDir ?? "", identity.commonDir)) {
       throw new WorktreeManagerError("post-create-verification-failed", `Created worktree failed verification (${inspection.state})`, canonicalPath);
     }
@@ -161,7 +161,7 @@ export function adoptRunWorktree(input: {
   branch: string;
   baseSha: string;
   writeSet: readonly string[];
-  knownOwners: readonly WorkspaceOwnerRef[];
+  knownOwners?: readonly WorkspaceOwnerRef[];
   authorization: { approvedBy: string; approvedAt: string; evidenceRef: string };
 }): RunWorkspaceBinding {
   assertRunId(input.runId);
@@ -170,7 +170,7 @@ export function adoptRunWorktree(input: {
   }
   const identity = repoIdentity(input.repoRoot);
   const canonicalPath = assertAllowedPath(identity, input.canonicalPath);
-  if (ownerConflict(canonicalPath, input.runId, input.knownOwners)) {
+  if (ownerConflict(canonicalPath, input.runId, input.knownOwners ?? [])) {
     throw new WorktreeManagerError("owner-conflict", "Worktree is already owned by another Run", canonicalPath);
   }
   const baseSha = validateSha(input.baseSha);
@@ -212,7 +212,7 @@ function inspectRunWorktreeInternal(input: {
   runId: string;
   runState: WorkspaceRunState;
   binding: RunWorkspaceBinding;
-  knownOwners: readonly WorkspaceOwnerRef[];
+  knownOwners?: readonly WorkspaceOwnerRef[];
 }, requireManagerProvenance: boolean): WorktreeInspection {
   const blank: WorktreeInspection = {
     state: "path-anomaly", ownerRunId: input.binding.ownerRunId,
@@ -223,7 +223,7 @@ function inspectRunWorktreeInternal(input: {
   const add = (issue: WorktreeIssueCode): void => { if (!blank.issues.includes(issue)) blank.issues.push(issue); };
   try {
     assertRunId(input.runId);
-    if (input.binding.ownerRunId !== input.runId || ownerConflict(input.binding.canonicalPath, input.runId, input.knownOwners)) add("owner-mismatch");
+    if (input.binding.ownerRunId !== input.runId || ownerConflict(input.binding.canonicalPath, input.runId, input.knownOwners ?? [])) add("owner-mismatch");
     const identity = repoIdentity(input.repoRoot);
     const candidate = assertAllowedPath(identity, input.binding.canonicalPath);
     blank.actualPath = candidate;
@@ -256,9 +256,14 @@ function inspectRunWorktreeInternal(input: {
       if (blank.dirty) add("dirty");
       if (requireManagerProvenance) {
         try {
-          const provenance = readAllManagerProvenance(identity).find((item) => item.ownerRunId === input.runId);
+          const provenanceRecords = readAllManagerProvenance(identity);
+          const pathOwners = provenanceRecords.filter((item) => pathKey(item.canonicalPath) === pathKey(candidate));
+          const runOwners = provenanceRecords.filter((item) => item.ownerRunId === input.runId);
+          const provenance = runOwners[0];
           const manager = input.binding.manager;
-          if (!manager || provenance?.ownerRunId !== input.binding.ownerRunId
+          if (pathOwners.length !== 1 || pathOwners[0]?.ownerRunId !== input.runId
+            || runOwners.length !== 1
+            || !manager || provenance?.ownerRunId !== input.binding.ownerRunId
             || provenance.credentialId !== manager.credentialId
             || pathKey(provenance.canonicalPath) !== pathKey(candidate)
             || pathKey(provenance.projectRoot) !== pathKey(identity.root)
@@ -298,7 +303,7 @@ export function inspectRunWorktree(input: {
   runId: string;
   runState: WorkspaceRunState;
   binding: RunWorkspaceBinding;
-  knownOwners: readonly WorkspaceOwnerRef[];
+  knownOwners?: readonly WorkspaceOwnerRef[];
 }): WorktreeInspection {
   return inspectRunWorktreeInternal(input, true);
 }
