@@ -12,6 +12,10 @@ import {
   startTaskRun,
 } from "../../../src/core/task/index.js";
 import {
+  createTaskCandidateEntry,
+  observeTaskRunCandidate,
+} from "../../../src/core/task/task-candidate-observer.js";
+import {
   acquireTaskKernelRunDispatchV1,
   assertTaskKernelRunDispatchLeaseV1,
   assertTaskKernelRunDispatchPreSpawnV1,
@@ -860,6 +864,7 @@ describe("Task Kernel V2 Run dispatch admission", () => {
             taskIds: ["v2-multi-a", "v2-multi-b"],
             approvedBy: "approver",
             authorizationRef: "approval://pair-v2-multi-a-b",
+            integrationOwner: "parent-integrator",
             integrationPlan: "integrate A then run verification",
           },
         ],
@@ -893,6 +898,7 @@ describe("Task Kernel V2 Run dispatch admission", () => {
   it("releases only after a fingerprinted native terminal receipt and keeps a lease on proof tampering", () => {
     const root = makeRoot();
     const task = createTask(root, "v2-native-stop", {
+      writeSet: ["src/output.txt"],
       host: {
         host: "codex-desktop",
         role: "execute",
@@ -939,6 +945,24 @@ describe("Task Kernel V2 Run dispatch admission", () => {
       actor: "implementer",
       idempotencyKey: "resume:v2-native-stop",
     });
+    const activeRun = running.kernel.runs.at(-1);
+    if (!activeRun) throw new Error("native-stop Run was not resumed");
+    fs.mkdirSync(path.join(root, "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "src", "output.txt"),
+      "native child exited\n",
+    );
+    const observation = observeTaskRunCandidate({
+      run: activeRun,
+      repositoryRoot: root,
+    });
+    const outputFile = observation.currentFiles.find(
+      (file) => file.path === "src/output.txt",
+    );
+    if (!outputFile?.sha256)
+      throw new Error(
+        "native-stop Run output was not observed in its write set",
+      );
     const settled = recordTaskRunResult({
       root,
       taskDir: task.taskDir,
@@ -947,7 +971,8 @@ describe("Task Kernel V2 Run dispatch admission", () => {
       outcome: "completed",
       summary: "native child exited",
       candidateEntries: [
-        { ref: "src/output.txt", fingerprint: "a".repeat(64) },
+        { ref: outputFile.path, fingerprint: outputFile.sha256 },
+        createTaskCandidateEntry(observation),
       ],
       actor: "implementer",
       idempotencyKey: "complete:v2-native-stop",

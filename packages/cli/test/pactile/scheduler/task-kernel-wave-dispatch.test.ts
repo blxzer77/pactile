@@ -15,6 +15,10 @@ import {
   resumeTaskRun,
   startTaskRun,
 } from "../../../src/core/task/index.js";
+import {
+  createTaskCandidateEntry,
+  observeTaskRunCandidate,
+} from "../../../src/core/task/task-candidate-observer.js";
 import { init } from "../../../src/commands/init.js";
 import { applyLegacyTaskUpdate } from "../../../src/pactile/migration/legacy-task-update.js";
 import {
@@ -22,7 +26,18 @@ import {
   type TaskKernelWaveRunRequestV1,
   type TaskKernelWaveRunResultV1,
 } from "../../../src/pactile/scheduler/task-kernel-wave-dispatch.js";
-import { scheduleTaskKernelGraph } from "../../../src/pactile/scheduler/index.js";
+import {
+  compareTaskKernelWaveDispatchV1,
+  planParentTaskScheduleV1,
+  scheduleTaskKernelGraph,
+  type TaskKernelWaveScenarioMeasurementV1,
+} from "../../../src/pactile/scheduler/index.js";
+import {
+  readTaskMap,
+  writeTaskMap,
+  type ChildEntry,
+  type TaskMap,
+} from "../../../src/pactile/task/task-map.js";
 import { createTaskRunWorktree } from "../../../src/pactile/worktree/index.js";
 import { createPiTaskKernelWaveRunnerV1 } from "../../../src/commands/task-schedule.js";
 import { PiRpcClient } from "../../../src/pactile/pi/rpc.js";
@@ -300,6 +315,257 @@ function fakePiLaunch(args: string[]) {
   return { command: process.execPath, args };
 }
 
+const MEASURED_TASK_IDS = ["p37-bench-a", "p37-bench-b"] as const;
+const MEASURED_PARENT_ID = "p37-bench-parent";
+
+function makeMeasurementParent(root: string): string {
+  const parentDir = path.join(root, ".pactile", "tasks", MEASURED_PARENT_ID);
+  fs.mkdirSync(parentDir, { recursive: true });
+  const children: ChildEntry[] = MEASURED_TASK_IDS.map((id) => ({
+    id,
+    state: "open",
+    depends_on: [],
+    touches: [`src/${id}.ts`],
+    isolation: "git-worktree",
+    ref: null,
+  }));
+  const map: TaskMap = {
+    parent_id: MEASURED_PARENT_ID,
+    contract_epoch: 1,
+    execution_topology: "parallel",
+    merge_limit: 1,
+    children,
+    stages: [],
+    integration_queue: [],
+  };
+  writeTaskMap(parentDir, map, "# P37 paired measurement\n\n## Event Log\n");
+  return parentDir;
+}
+
+function recordParentChildState(
+  parentDir: string,
+  taskId: string,
+  state: ChildEntry["state"],
+  event: string,
+): void {
+  const read = readTaskMap(parentDir);
+  if (!read.data) throw new Error("Parent task map could not be read");
+  const child = read.data.children.find((candidate) => candidate.id === taskId);
+  if (!child) throw new Error(`Parent Child is missing: ${taskId}`);
+  child.state = state;
+  writeTaskMap(parentDir, read.data, read.body, event);
+}
+
+async function finishMeasuredTask(
+  root: string,
+  parentDir: string,
+  task: TaskFixture,
+): Promise<void> {
+  const beforeResult = readTaskKernel({
+    root,
+    taskDir: task.taskDir,
+    cwd: root,
+  });
+  if (beforeResult.kind !== "task-kernel-v2")
+    throw new Error("Expected Task Kernel V2");
+  let kernel = beforeResult.kernel;
+  let run = kernel.runs.find(({ id }) => id === task.runId);
+  if (run?.state === "waiting") {
+    const resumed = resumeTaskRun({
+      root,
+      taskDir: task.taskDir,
+      expectedRevision: kernel.revision,
+      runId: run.id,
+      actor: "measurement-fixture-worker",
+      idempotencyKey: `resume:${task.taskId}`,
+    });
+    kernel = resumed.kernel;
+    run = kernel.runs.find(({ id }) => id === task.runId);
+  }
+  if (!run?.workspace?.canonicalPath)
+    throw new Error(`Managed workspace is missing for ${task.taskId}`);
+  const outputRef = `src/${task.taskId}.ts`;
+  const outputPath = path.join(run.workspace.canonicalPath, outputRef);
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(
+    outputPath,
+    `export const ${task.taskId.replaceAll("-", "_")} = true;\n`,
+  );
+  const observation = observeTaskRunCandidate({ run });
+  const outputFile = observation.currentFiles.find(
+    (file) => file.path === outputRef,
+  );
+  if (!outputFile?.sha256)
+    throw new Error(`Candidate output was not observed for ${task.taskId}`);
+  const completed = recordTaskRunResult({
+    root,
+    taskDir: task.taskDir,
+    expectedRevision: kernel.revision,
+    runId: run.id,
+    outcome: "completed",
+    summary: "Fake Pi measurement run produced a real scoped candidate file.",
+    candidateEntries: [
+      { ref: outputFile.path, fingerprint: outputFile.sha256 },
+      createTaskCandidateEntry(observation),
+    ],
+    actor: "measurement-fixture-worker",
+    idempotencyKey: `result:${task.taskId}`,
+  });
+  const candidate = completed.kernel.runs.at(-1)?.candidateSnapshot;
+  if (!candidate)
+    throw new Error(`Candidate snapshot is missing for ${task.taskId}`);
+
+  const firstReviewRef = "review-needs-changes.md";
+  fs.writeFileSync(
+    path.join(task.taskDir, firstReviewRef),
+    "Simulation fixture: first review requested a bounded follow-up.\n",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  const firstReview = recordTaskReview({
+    root,
+    taskDir: task.taskDir,
+    expectedRevision: completed.kernel.revision,
+    runId: run.id,
+    candidateSnapshotId: candidate.id,
+    candidateFingerprint: candidate.fingerprint,
+    reviewer: "fake-independent-reviewer-simulation-only",
+    decision: "needs-changes",
+    evidenceRefs: [firstReviewRef],
+    unresolvedBlockers: ["Add the measured comparison receipt to the fixture."],
+    actor: "fake-independent-reviewer-simulation-only",
+    idempotencyKey: `review-needs-changes:${task.taskId}`,
+  });
+  recordParentChildState(
+    parentDir,
+    task.taskId,
+    "changes",
+    `Child reported ${task.taskId} as changes.`,
+  );
+
+  const secondReviewRef = "review-pass.md";
+  fs.writeFileSync(
+    path.join(task.taskDir, secondReviewRef),
+    "Simulation fixture: scoped output and measured receipt are present.\n",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  const passingReview = recordTaskReview({
+    root,
+    taskDir: task.taskDir,
+    expectedRevision: firstReview.kernel.revision,
+    runId: run.id,
+    candidateSnapshotId: candidate.id,
+    candidateFingerprint: candidate.fingerprint,
+    reviewer: "fake-independent-reviewer-simulation-only",
+    decision: "pass",
+    evidenceRefs: [secondReviewRef],
+    acceptanceEvidence: { "AC-1": [outputRef] },
+    actor: "fake-independent-reviewer-simulation-only",
+    idempotencyKey: `review-pass:${task.taskId}`,
+  });
+  void passingReview;
+  recordParentChildState(
+    parentDir,
+    task.taskId,
+    "accepted",
+    `Child reported ${task.taskId} as accepted.`,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  recordParentChildState(
+    parentDir,
+    task.taskId,
+    "integrating",
+    `Child reported ${task.taskId} as integrating.`,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  recordParentChildState(
+    parentDir,
+    task.taskId,
+    "integrated",
+    `Parent integrated ${task.taskId} as integrated.`,
+  );
+}
+
+async function runPairedMeasurementScenario(
+  serialControl: boolean,
+): Promise<TaskKernelWaveScenarioMeasurementV1> {
+  const root = makeGitRoot();
+  const tasks = MEASURED_TASK_IDS.map((taskId) =>
+    makeTask(root, taskId, {
+      writeSet: [`src/${taskId}.ts`],
+    }),
+  );
+  const parentDir = makeMeasurementParent(root);
+  for (const task of tasks) attachManagedWorktree(root, task);
+
+  const costs = Object.fromEntries(
+    tasks.map(({ taskId }) => [
+      taskId,
+      {
+        latencyMs: 10,
+        waitingMs: 30,
+        executionMs: 120,
+        integrationMs: 20,
+        reworkMs: 30,
+        reviewMs: 25,
+      },
+    ]),
+  );
+  const endToEndStartedAt = performance.now();
+  const schedule = scheduleTaskKernelGraph(
+    root,
+    tasks.map(({ taskId }) => taskId),
+    { estimatedCosts: costs },
+  );
+  const piRunner = createPiTaskKernelWaveRunnerV1(
+    root,
+    fakePiLaunch(fakePiScript(root)),
+  );
+  const runner = async (request: TaskKernelWaveRunRequestV1) => {
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const task = tasks.find(({ taskId }) => taskId === request.taskId);
+    if (!task)
+      throw new Error(`Measurement Task is missing: ${request.taskId}`);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    return piRunner(request);
+  };
+  const dispatch = await dispatchTaskKernelWaveV1(
+    root,
+    schedule.receipt.receiptFingerprint,
+    {
+      timeoutMs: 10_000,
+      runnerLabel: "fake-pi-wave-provider-simulation-only",
+      runner,
+      ...(serialControl ? { serialControl: true } : {}),
+    },
+  );
+  if (dispatch.status !== "provider-runs-complete")
+    throw new Error(
+      `Paired simulation did not complete: ${dispatch.status}; ${JSON.stringify(dispatch.tasks)}`,
+    );
+  for (const task of tasks) await finishMeasuredTask(root, parentDir, task);
+  const observed = planParentTaskScheduleV1(root, MEASURED_PARENT_ID);
+  const lifecycleCosts = {
+    source: "task-kernel-dispatch-and-parent-task-map" as const,
+    tasks: tasks.map(({ taskId }) => {
+      const lifecycle = observed.lifecycle.find(
+        (candidate) => candidate.taskId === taskId,
+      );
+      if (!lifecycle)
+        throw new Error(`Observed lifecycle is missing for ${taskId}`);
+      return {
+        taskId,
+        observedCosts: lifecycle.observedCosts,
+        evidenceRefs: lifecycle.observedCostEvidenceRefs,
+      };
+    }),
+  };
+  return {
+    dispatch,
+    endToEndElapsedMs: Math.round(performance.now() - endToEndStartedAt),
+    lifecycleCosts,
+  };
+}
+
 describe("Task Kernel V2 writer-wave dispatch", () => {
   it("runs two independent isolated Tasks concurrently against the same persisted receipt using a fake Pi provider", async () => {
     const root = makeGitRoot();
@@ -350,6 +616,7 @@ describe("Task Kernel V2 writer-wave dispatch", () => {
       },
       measurements: {
         source: "dispatch-wall-clock",
+        mode: "scheduled-waves",
         elapsedMs: expect.any(Number),
         waves: [{ elapsedMs: expect.any(Number) }],
       },
@@ -415,6 +682,60 @@ describe("Task Kernel V2 writer-wave dispatch", () => {
       expect(read.kernel.runs.at(-1)?.result).toBeNull();
     }
   }, 30_000);
+
+  it("compares measured serial control with same-workload V2 waves and observed lifecycle costs", async () => {
+    const serialControl = await runPairedMeasurementScenario(true);
+    const scheduledWaves = await runPairedMeasurementScenario(false);
+
+    const comparison = compareTaskKernelWaveDispatchV1(
+      serialControl,
+      scheduledWaves,
+    );
+
+    expect(comparison).toMatchObject({
+      schemaVersion: 1,
+      source: "paired-controlled-dispatch-wall-clock",
+      taskIds: [...MEASURED_TASK_IDS].sort(),
+      estimates: {
+        taskCostTotals: {
+          latencyMs: 20,
+          waitingMs: 60,
+          executionMs: 240,
+          integrationMs: 40,
+          reworkMs: 60,
+          reviewMs: 50,
+        },
+      },
+      observedLifecycleCosts: {
+        source: "task-kernel-dispatch-and-parent-task-map",
+      },
+    });
+    expect(comparison.measured.serialControlDispatchMs).toBeGreaterThan(
+      comparison.measured.scheduledWavesDispatchMs,
+    );
+    expect(comparison.measured.dispatchSavingsMs).toBeGreaterThan(0);
+    expect(Number.isFinite(comparison.measured.endToEndSavingsMs)).toBe(true);
+    expect(Number.isFinite(comparison.measured.endToEndSavingsRatio)).toBe(
+      true,
+    );
+    for (const field of [
+      "waitingMs",
+      "executionMs",
+      "integrationMs",
+      "reworkMs",
+      "reviewMs",
+    ] as const) {
+      for (const scenario of [
+        comparison.observedLifecycleCosts.serialControl,
+        comparison.observedLifecycleCosts.scheduledWaves,
+      ]) {
+        expect(scenario[field].totalMs).not.toBeNull();
+        expect(scenario[field].totalMs).toBeGreaterThan(0);
+        expect(scenario[field].observedTaskCount).toBe(2);
+        expect(scenario[field].evidenceRefs.length).toBeGreaterThan(0);
+      }
+    }
+  }, 120_000);
 
   it("rechecks the complete receipt before any provider starts when a Task revision goes stale", async () => {
     const root = makeGitRoot();
@@ -601,6 +922,7 @@ describe("Task Kernel V2 writer-wave dispatch", () => {
             taskIds: [first.taskId, second.taskId],
             approvedBy: "test-approver",
             authorizationRef: "approval:authorized-overlap",
+            integrationOwner: "parent-integrator",
             integrationPlan,
           },
         ],
@@ -641,6 +963,7 @@ describe("Task Kernel V2 writer-wave dispatch", () => {
       expect.objectContaining({
         approvedBy: "test-approver",
         authorizationRef: "approval:authorized-overlap",
+        integrationOwner: "parent-integrator",
         integrationPlan,
       }),
     ]);

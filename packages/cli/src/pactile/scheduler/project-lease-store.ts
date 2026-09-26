@@ -17,6 +17,7 @@ export interface ProjectWriteLeaseRecordV1 {
     taskIds: readonly [string, string];
     approvedBy: string;
     authorizationRef: string;
+    integrationOwner?: string;
     integrationPlan: string;
   }[];
   [key: string]: unknown;

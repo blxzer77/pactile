@@ -55,6 +55,8 @@ export interface TaskKernelWaveDispatchOptionsV1 {
   runner: TaskKernelWaveRunnerV1;
   runnerLabel: string;
   signal?: AbortSignal;
+  /** Execute tasks within each planned wave sequentially for a measured control run. */
+  serialControl?: boolean;
 }
 
 export interface TaskKernelWaveIntegrationTaskV1 {
@@ -127,13 +129,73 @@ export interface TaskKernelWaveDispatchTaskResultV1 {
   leaseReleased: boolean;
   evidenceRef: string | null;
   reasonCode: string | null;
+  waitingMs: number | null;
   elapsedMs: number | null;
 }
 
 export interface TaskKernelWaveMeasurementV1 {
   source: "dispatch-wall-clock";
+  mode: "serial-control" | "scheduled-waves";
   elapsedMs: number;
   waves: { sequence: number; taskIds: string[]; elapsedMs: number }[];
+}
+
+export interface TaskKernelWaveObservedCostTaskV1 {
+  taskId: string;
+  observedCosts: Record<keyof SchedulerCostVectorV1, number | null>;
+  evidenceRefs: string[];
+}
+
+export interface TaskKernelWaveObservedCostLedgerV1 {
+  source: "task-kernel-dispatch-and-parent-task-map";
+  tasks: TaskKernelWaveObservedCostTaskV1[];
+}
+
+export interface TaskKernelWaveScenarioMeasurementV1 {
+  dispatch: TaskKernelWaveDispatchResultV1;
+  /** Wall clock from planning through provider stop, Review, rework and integration observation. */
+  endToEndElapsedMs: number;
+  lifecycleCosts: TaskKernelWaveObservedCostLedgerV1;
+}
+
+export interface TaskKernelWaveDispatchCostTotalV1 {
+  totalMs: number | null;
+  observedTaskCount: number;
+  candidateTaskCount: number;
+  evidenceRefs: string[];
+}
+
+export interface TaskKernelWaveDispatchComparisonV1 {
+  schemaVersion: 1;
+  source: "paired-controlled-dispatch-wall-clock";
+  workloadFingerprint: string;
+  taskIds: string[];
+  estimates: {
+    serialEquivalentMs: number;
+    plannedWavesMs: number;
+    estimatedSavingsMs: number;
+    taskCostTotals: SchedulerCostVectorV1;
+  };
+  measured: {
+    serialControlDispatchMs: number;
+    scheduledWavesDispatchMs: number;
+    dispatchSavingsMs: number;
+    serialControlEndToEndMs: number;
+    scheduledWavesEndToEndMs: number;
+    endToEndSavingsMs: number;
+    endToEndSavingsRatio: number | null;
+  };
+  observedLifecycleCosts: {
+    source: "task-kernel-dispatch-and-parent-task-map";
+    serialControl: Record<
+      keyof SchedulerCostVectorV1,
+      TaskKernelWaveDispatchCostTotalV1
+    >;
+    scheduledWaves: Record<
+      keyof SchedulerCostVectorV1,
+      TaskKernelWaveDispatchCostTotalV1
+    >;
+  };
 }
 
 export interface TaskKernelWaveDispatchResultV1 {
@@ -165,11 +227,397 @@ interface PreparedTask {
   workspace: TaskRunV2["workspace"] | null;
   costs: TaskKernelWaveIntegrationTaskV1["costs"];
   worktree: TaskKernelWaveIntegrationTaskV1["worktree"];
+  queuedAtMs: number | null;
   blockedReason: string | null;
+}
+
+interface TaskKernelWaveRunCallResultV1 {
+  task: PreparedTask;
+  result: TaskKernelWaveRunResultV1 | null;
+  error: unknown | null;
+  waitingMs: number | null;
+  elapsedMs: number;
+}
+
+interface TaskKernelWaveDispatchWorkloadShapeV1 {
+  taskIds: string[];
+  policy: TaskKernelWaveIntegrationPlanV1["policy"];
+  tasks: {
+    taskId: string;
+    action: string;
+    reasonCodes: string[];
+    dependsOn: string[];
+    writeSet: string[] | null;
+    estimated: SchedulerCostVectorV1 | null;
+    estimateBasis: Record<keyof SchedulerCostVectorV1, string> | null;
+  }[];
+  waves: {
+    sequence: number;
+    taskIds: string[];
+    candidateTaskIds: string[];
+    decision: TaskScheduleWaveV1["decision"];
+    conflictAuthorizations: {
+      taskIds: string[];
+      approvedBy: string;
+      authorizationRef: string;
+      integrationOwner: string;
+      integrationPlan: string;
+    }[];
+  }[];
+  blockers: TaskKernelWaveIntegrationPlanV1["blockers"];
 }
 
 function stableEqual(left: unknown, right: unknown): boolean {
   return fingerprintTaskValue(left) === fingerprintTaskValue(right);
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function dispatchWorkloadShape(
+  dispatch: TaskKernelWaveDispatchResultV1,
+): TaskKernelWaveDispatchWorkloadShapeV1 {
+  return {
+    taskIds: [...dispatch.integrationPlan.tasks]
+      .filter((task) => task.action === "scheduled")
+      .map((task) => task.taskId)
+      .sort(compareText),
+    policy: dispatch.integrationPlan.policy,
+    tasks: [...dispatch.integrationPlan.tasks]
+      .filter((task) => task.action === "scheduled")
+      .map((task) => ({
+        taskId: task.taskId,
+        action: task.action,
+        reasonCodes: [...task.reasonCodes].sort(compareText),
+        dependsOn: [...task.dependsOn].sort(compareText),
+        writeSet: task.writeSet ? [...task.writeSet].sort(compareText) : null,
+        estimated: task.costs ? { ...task.costs.estimated } : null,
+        estimateBasis: task.costs ? { ...task.costs.estimateBasis } : null,
+      }))
+      .sort((left, right) => compareText(left.taskId, right.taskId)),
+    waves: dispatch.integrationPlan.waves.map((wave) => ({
+      sequence: wave.sequence,
+      taskIds: [...wave.taskIds].sort(compareText),
+      candidateTaskIds: [...wave.candidateTaskIds].sort(compareText),
+      decision: wave.decision,
+      conflictAuthorizations: wave.conflictAuthorizations
+        .map((authorization) => ({
+          taskIds: [...authorization.taskIds].sort(compareText),
+          approvedBy: authorization.approvedBy,
+          authorizationRef: authorization.authorizationRef,
+          integrationOwner: authorization.integrationOwner,
+          integrationPlan: authorization.integrationPlan,
+        }))
+        .sort((left, right) =>
+          compareText(left.taskIds.join("\0"), right.taskIds.join("\0")),
+        ),
+    })),
+    blockers: [...dispatch.integrationPlan.blockers]
+      .map((blocker) => ({
+        taskId: blocker.taskId,
+        reasonCodes: [...blocker.reasonCodes].sort(compareText),
+      }))
+      .sort((left, right) => compareText(left.taskId, right.taskId)),
+  };
+}
+
+function checkedDuration(value: number, label: string): number {
+  if (!Number.isFinite(value) || value < 0)
+    throw new Error(`${label} must be a finite non-negative duration`);
+  return Math.round(value);
+}
+
+function scenarioCandidateIds(
+  dispatch: TaskKernelWaveDispatchResultV1,
+): string[] {
+  return dispatch.integrationPlan.tasks
+    .filter((task) => task.action === "scheduled")
+    .map((task) => task.taskId)
+    .sort(compareText);
+}
+
+function measuredScenarioLedger(
+  scenario: TaskKernelWaveScenarioMeasurementV1,
+  candidateTaskIds: readonly string[],
+): TaskKernelWaveObservedCostLedgerV1 {
+  if (
+    scenario.lifecycleCosts.source !==
+    "task-kernel-dispatch-and-parent-task-map"
+  )
+    throw new Error("Observed lifecycle costs have an unsupported source");
+  const lifecycleByTask = new Map(
+    scenario.lifecycleCosts.tasks.map((task) => [task.taskId, task]),
+  );
+  const dispatchByTask = new Map(
+    scenario.dispatch.tasks.map((task) => [task.taskId, task]),
+  );
+  const candidateSet = new Set(candidateTaskIds);
+  if (
+    lifecycleByTask.size !== scenario.lifecycleCosts.tasks.length ||
+    scenario.lifecycleCosts.tasks.some(
+      (task) => !candidateSet.has(task.taskId),
+    ) ||
+    lifecycleByTask.size !== candidateSet.size
+  )
+    throw new Error(
+      "Observed lifecycle cost ledger task set does not match the candidate set",
+    );
+  return {
+    source: "task-kernel-dispatch-and-parent-task-map",
+    tasks: candidateTaskIds.map((taskId) => {
+      const observed = lifecycleByTask.get(taskId);
+      const dispatch = dispatchByTask.get(taskId);
+      if (!observed || !dispatch)
+        throw new Error(`Measured costs are missing for ${taskId}`);
+      if (
+        dispatch.status !== "provider-runs-settled" ||
+        !dispatch.evidenceRef ||
+        dispatch.waitingMs === null ||
+        dispatch.elapsedMs === null
+      )
+        throw new Error(`Verified dispatch timings are missing for ${taskId}`);
+      return {
+        taskId,
+        observedCosts: {
+          ...observed.observedCosts,
+          waitingMs: checkedDuration(dispatch.waitingMs, `${taskId}.waitingMs`),
+          executionMs: checkedDuration(
+            dispatch.elapsedMs,
+            `${taskId}.executionMs`,
+          ),
+        },
+        evidenceRefs: [
+          ...new Set([...observed.evidenceRefs, dispatch.evidenceRef]),
+        ].sort(compareText),
+      };
+    }),
+  };
+}
+
+function summarizeObservedCosts(
+  ledger: TaskKernelWaveObservedCostLedgerV1,
+  candidateTaskIds: readonly string[],
+): Record<keyof SchedulerCostVectorV1, TaskKernelWaveDispatchCostTotalV1> {
+  if (ledger.source !== "task-kernel-dispatch-and-parent-task-map")
+    throw new Error("Observed lifecycle costs have an unsupported source");
+  const candidateIds = new Set(candidateTaskIds);
+  const fields: (keyof SchedulerCostVectorV1)[] = [
+    "latencyMs",
+    "waitingMs",
+    "executionMs",
+    "integrationMs",
+    "reworkMs",
+    "reviewMs",
+  ];
+  const seen = new Set<string>();
+  for (const task of ledger.tasks) {
+    if (!candidateIds.has(task.taskId) || seen.has(task.taskId))
+      throw new Error(
+        "Observed lifecycle cost ledger task set does not match the candidate set",
+      );
+    seen.add(task.taskId);
+    if (
+      !Array.isArray(task.evidenceRefs) ||
+      !task.evidenceRefs.length ||
+      task.evidenceRefs.some((ref) => typeof ref !== "string" || !ref.trim())
+    )
+      throw new Error(
+        `Observed lifecycle cost evidence is missing for ${task.taskId}`,
+      );
+    if (
+      !task.observedCosts ||
+      fields.some((field) => !(field in task.observedCosts))
+    )
+      throw new Error(
+        `Observed lifecycle cost fields are incomplete for ${task.taskId}`,
+      );
+    for (const field of fields) {
+      const value = task.observedCosts[field];
+      if (value !== null) checkedDuration(value, `${task.taskId}.${field}`);
+    }
+  }
+  if (seen.size !== candidateIds.size)
+    throw new Error(
+      "Observed lifecycle cost ledger does not cover every scheduled candidate",
+    );
+
+  return Object.fromEntries(
+    fields.map((field) => {
+      const measured = ledger.tasks.filter(
+        (task) => task.observedCosts[field] !== null,
+      );
+      return [
+        field,
+        {
+          totalMs:
+            measured.length === candidateIds.size
+              ? measured.reduce(
+                  (sum, task) => sum + (task.observedCosts[field] ?? 0),
+                  0,
+                )
+              : null,
+          observedTaskCount: measured.length,
+          candidateTaskCount: candidateIds.size,
+          evidenceRefs: [
+            ...new Set(measured.flatMap((task) => task.evidenceRefs)),
+          ].sort(compareText),
+        },
+      ];
+    }),
+  ) as Record<keyof SchedulerCostVectorV1, TaskKernelWaveDispatchCostTotalV1>;
+}
+
+/** Compare paired, same-workload measurements; estimates and observations stay separate. */
+export function compareTaskKernelWaveDispatchV1(
+  serialControl: TaskKernelWaveScenarioMeasurementV1,
+  scheduledWaves: TaskKernelWaveScenarioMeasurementV1,
+): TaskKernelWaveDispatchComparisonV1 {
+  if (serialControl.dispatch.measurements.mode !== "serial-control")
+    throw new Error("First scenario must be a serial-control dispatch");
+  if (scheduledWaves.dispatch.measurements.mode !== "scheduled-waves")
+    throw new Error("Second scenario must be a scheduled-waves dispatch");
+  for (const [label, scenario] of [
+    ["serial-control", serialControl],
+    ["scheduled-waves", scheduledWaves],
+  ] as const) {
+    if (scenario.dispatch.status !== "provider-runs-complete")
+      throw new Error(
+        `${label} scenario did not complete every scheduled provider Run`,
+      );
+    checkedDuration(
+      scenario.dispatch.measurements.elapsedMs,
+      `${label} dispatch elapsedMs`,
+    );
+    checkedDuration(
+      scenario.endToEndElapsedMs,
+      `${label} end-to-end elapsedMs`,
+    );
+    if (scenario.endToEndElapsedMs < scenario.dispatch.measurements.elapsedMs)
+      throw new Error(
+        `${label} end-to-end time cannot be shorter than dispatch time`,
+      );
+  }
+  const serialShape = dispatchWorkloadShape(serialControl.dispatch);
+  const waveShape = dispatchWorkloadShape(scheduledWaves.dispatch);
+  if (!stableEqual(serialShape, waveShape))
+    throw new Error(
+      "Paired dispatch scenarios do not have the same scheduled workload and wave plan",
+    );
+  const taskIds = scenarioCandidateIds(serialControl.dispatch);
+  if (!taskIds.length)
+    throw new Error(
+      "Paired dispatch scenarios require at least one scheduled candidate",
+    );
+  const scheduledTaskIds = scenarioCandidateIds(scheduledWaves.dispatch);
+  const serialTaskResults = new Map(
+    serialControl.dispatch.tasks.map((task) => [task.taskId, task]),
+  );
+  const waveTaskResults = new Map(
+    scheduledWaves.dispatch.tasks.map((task) => [task.taskId, task]),
+  );
+  for (const taskId of taskIds) {
+    if (serialTaskResults.get(taskId)?.status !== "provider-runs-settled")
+      throw new Error(
+        `Serial-control candidate ${taskId} has no settled provider Run`,
+      );
+    if (waveTaskResults.get(taskId)?.status !== "provider-runs-settled")
+      throw new Error(
+        `Scheduled-wave candidate ${taskId} has no settled provider Run`,
+      );
+  }
+
+  const scheduledTasks = serialControl.dispatch.integrationPlan.tasks.filter(
+    (task) => task.action === "scheduled",
+  );
+  const estimateFields = [
+    "latencyMs",
+    "waitingMs",
+    "executionMs",
+    "integrationMs",
+    "reworkMs",
+    "reviewMs",
+  ] as const;
+  const estimates = estimateFields.reduce<SchedulerCostVectorV1>(
+    (totals, field) => {
+      totals[field] = scheduledTasks.reduce((sum, task) => {
+        const value = task.costs?.estimated[field];
+        if (typeof value !== "number")
+          throw new Error(`Estimated ${field} is missing for ${task.taskId}`);
+        return (
+          sum + checkedDuration(value, `${task.taskId}.estimated.${field}`)
+        );
+      }, 0);
+      return totals;
+    },
+    {
+      latencyMs: 0,
+      waitingMs: 0,
+      executionMs: 0,
+      integrationMs: 0,
+      reworkMs: 0,
+      reviewMs: 0,
+    },
+  );
+  const serialEquivalentMs =
+    serialControl.dispatch.integrationPlan.waves.reduce(
+      (sum, wave) => sum + wave.costEstimate.candidateSerialEquivalentMs,
+      0,
+    );
+  const plannedWavesMs = scheduledWaves.dispatch.integrationPlan.waves.reduce(
+    (sum, wave) => sum + wave.costEstimate.candidateParallelDurationMs,
+    0,
+  );
+  const serialControlDispatchMs = Math.round(
+    serialControl.dispatch.measurements.elapsedMs,
+  );
+  const scheduledWavesDispatchMs = Math.round(
+    scheduledWaves.dispatch.measurements.elapsedMs,
+  );
+  const serialControlEndToEndMs = checkedDuration(
+    serialControl.endToEndElapsedMs,
+    "serial-control end-to-end elapsedMs",
+  );
+  const scheduledWavesEndToEndMs = checkedDuration(
+    scheduledWaves.endToEndElapsedMs,
+    "scheduled-waves end-to-end elapsedMs",
+  );
+  const endToEndSavingsMs = serialControlEndToEndMs - scheduledWavesEndToEndMs;
+  return {
+    schemaVersion: 1,
+    source: "paired-controlled-dispatch-wall-clock",
+    workloadFingerprint: fingerprintTaskValue(serialShape),
+    taskIds,
+    estimates: {
+      serialEquivalentMs,
+      plannedWavesMs,
+      estimatedSavingsMs: serialEquivalentMs - plannedWavesMs,
+      taskCostTotals: estimates,
+    },
+    measured: {
+      serialControlDispatchMs,
+      scheduledWavesDispatchMs,
+      dispatchSavingsMs: serialControlDispatchMs - scheduledWavesDispatchMs,
+      serialControlEndToEndMs,
+      scheduledWavesEndToEndMs,
+      endToEndSavingsMs,
+      endToEndSavingsRatio:
+        serialControlEndToEndMs === 0
+          ? null
+          : endToEndSavingsMs / serialControlEndToEndMs,
+    },
+    observedLifecycleCosts: {
+      source: "task-kernel-dispatch-and-parent-task-map",
+      serialControl: summarizeObservedCosts(
+        measuredScenarioLedger(serialControl, taskIds),
+        taskIds,
+      ),
+      scheduledWaves: summarizeObservedCosts(
+        measuredScenarioLedger(scheduledWaves, scheduledTaskIds),
+        scheduledTaskIds,
+      ),
+    },
+  };
 }
 
 function plannedOptions(
@@ -274,6 +722,7 @@ function inspectTask(
       : null,
     workspace: null,
     worktree: null,
+    queuedAtMs: null,
     blockedReason: null,
   };
   if (!decision || !lifecycle) {
@@ -308,6 +757,11 @@ function inspectTask(
     defaults.blockedReason = "task-run-identity-mismatch";
     return defaults;
   }
+  const queuedAt = kernel.events.find(
+    (event) => event.entityId === run.id && event.type === "run.queued",
+  )?.at;
+  const queuedAtMs = queuedAt ? Date.parse(queuedAt) : Number.NaN;
+  defaults.queuedAtMs = Number.isFinite(queuedAtMs) ? queuedAtMs : null;
   if (
     kernel.revision !== receipt.taskKernelRevisions[taskId] ||
     kernel.revision !== lifecycle.kernelRevision
@@ -551,6 +1005,7 @@ function taskResult(
     leaseReleased: result?.leaseReleased ?? false,
     evidenceRef: result?.evidenceRef ?? null,
     reasonCode,
+    waitingMs: null,
     elapsedMs: null,
   };
 }
@@ -646,6 +1101,7 @@ export async function dispatchTaskKernelWaveV1(
           leaseReleased: false,
           evidenceRef: null,
           reasonCode: blocker.reasonCodes.join(","),
+          waitingMs: null,
           elapsedMs: null,
         };
       }
@@ -667,6 +1123,7 @@ export async function dispatchTaskKernelWaveV1(
       tasks,
       measurements: {
         source: "dispatch-wall-clock",
+        mode: options.serialControl ? "serial-control" : "scheduled-waves",
         elapsedMs: Math.max(
           0,
           Math.round(performance.now() - dispatchStartedAt),
@@ -790,52 +1247,57 @@ export async function dispatchTaskKernelWaveV1(
     );
     if (!eligibleTasks.length) continue;
     const waveStartedAt = performance.now();
-    const results = await Promise.all(
-      eligibleTasks.map(async (task) => {
-        const taskStartedAt = performance.now();
-        if (!task.runId) {
-          return {
-            task,
-            result: null,
-            error: new Error("task-run-missing"),
-            elapsedMs: Math.max(
-              0,
-              Math.round(performance.now() - taskStartedAt),
-            ),
-          };
-        }
-        try {
-          const result = await options.runner({
-            taskId: task.taskId,
-            taskDir: task.taskDir,
-            runId: task.runId,
-            scheduleReceiptFingerprint: fingerprint,
-            prompt: taskPrompt(receipt, task.taskId),
-            timeoutMs: options.timeoutMs,
-            signal,
-          });
-          return {
-            task,
-            result,
-            error: null,
-            elapsedMs: Math.max(
-              0,
-              Math.round(performance.now() - taskStartedAt),
-            ),
-          };
-        } catch (error) {
-          return {
-            task,
-            result: null,
-            error,
-            elapsedMs: Math.max(
-              0,
-              Math.round(performance.now() - taskStartedAt),
-            ),
-          };
-        }
-      }),
-    );
+    const runTask = async (
+      task: PreparedTask,
+    ): Promise<TaskKernelWaveRunCallResultV1> => {
+      const taskStartedAt = performance.now();
+      const taskStartedAtMs = Date.now();
+      const waitingMs =
+        task.queuedAtMs === null
+          ? null
+          : Math.max(0, taskStartedAtMs - task.queuedAtMs);
+      if (!task.runId) {
+        return {
+          task,
+          result: null,
+          error: new Error("task-run-missing"),
+          waitingMs,
+          elapsedMs: Math.max(0, Math.round(performance.now() - taskStartedAt)),
+        };
+      }
+      try {
+        const result = await options.runner({
+          taskId: task.taskId,
+          taskDir: task.taskDir,
+          runId: task.runId,
+          scheduleReceiptFingerprint: fingerprint,
+          prompt: taskPrompt(receipt, task.taskId),
+          timeoutMs: options.timeoutMs,
+          signal,
+        });
+        return {
+          task,
+          result,
+          error: null,
+          waitingMs,
+          elapsedMs: Math.max(0, Math.round(performance.now() - taskStartedAt)),
+        };
+      } catch (error) {
+        return {
+          task,
+          result: null,
+          error,
+          waitingMs,
+          elapsedMs: Math.max(0, Math.round(performance.now() - taskStartedAt)),
+        };
+      }
+    };
+    const results: TaskKernelWaveRunCallResultV1[] = [];
+    if (options.serialControl) {
+      for (const task of eligibleTasks) results.push(await runTask(task));
+    } else {
+      results.push(...(await Promise.all(eligibleTasks.map(runTask))));
+    }
     const waveElapsedMs = Math.max(
       0,
       Math.round(performance.now() - waveStartedAt),
@@ -858,19 +1320,21 @@ export async function dispatchTaskKernelWaveV1(
             "provider-run-failed",
             reason,
           ),
+          waitingMs: item.waitingMs,
           elapsedMs: item.elapsedMs,
         });
         stopLaterWaves = true;
         continue;
       }
       const verified = item.task.runId
-        ? await import("../pi/v2-dispatch.js").then(({ verifyPiV2RunSettlementV1 }) =>
-            verifyPiV2RunSettlementV1(
-              root,
-              item.task.taskId,
-              item.task.runId as string,
-              fingerprint,
-            ),
+        ? await import("../pi/v2-dispatch.js").then(
+            ({ verifyPiV2RunSettlementV1 }) =>
+              verifyPiV2RunSettlementV1(
+                root,
+                item.task.taskId,
+                item.task.runId as string,
+                fingerprint,
+              ),
           )
         : null;
       const status = verified
@@ -910,6 +1374,7 @@ export async function dispatchTaskKernelWaveV1(
           verifiedResult.reason,
           verifiedResult,
         ),
+        waitingMs: item.waitingMs,
         elapsedMs: item.elapsedMs,
       });
       if (
@@ -984,6 +1449,7 @@ export async function dispatchTaskKernelWaveV1(
     tasks,
     measurements: {
       source: "dispatch-wall-clock",
+      mode: options.serialControl ? "serial-control" : "scheduled-waves",
       elapsedMs: Math.max(0, Math.round(performance.now() - dispatchStartedAt)),
       waves: waveMeasurements,
     },

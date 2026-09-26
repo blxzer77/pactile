@@ -566,6 +566,7 @@ describe("scheduler-driven Parent dispatch", () => {
         task_ids: [children[0], children[2]],
         approved_by: "reviewer",
         authorization_ref: "approval/P37-overlap",
+        integration_owner: "parent-integrator",
         integration_plan:
           "Integrate alpha and gamma serially and resolve their shared src/alpha paths before review.",
       },
@@ -586,6 +587,7 @@ describe("scheduler-driven Parent dispatch", () => {
           conflictAuthorizations: {
             approvedBy: string;
             authorizationRef: string;
+            integrationOwner: string;
             integrationPlan: string;
           }[];
         }[];
@@ -596,6 +598,7 @@ describe("scheduler-driven Parent dispatch", () => {
       .find((item) => item.authorizationRef === "approval/P37-overlap");
     expect(authorization).toMatchObject({
       approvedBy: "reviewer",
+      integrationOwner: "parent-integrator",
       integrationPlan: expect.stringContaining("serially"),
     });
 

@@ -28,6 +28,8 @@ export interface ConflictParallelAuthorizationV1 {
   taskIds: readonly [string, string];
   approvedBy: string;
   authorizationRef: string;
+  /** Person or role accountable for integrating explicitly parallelized writers. */
+  integrationOwner: string;
   integrationPlan: string;
 }
 
@@ -472,6 +474,11 @@ function validateRequest(input: TaskScheduleRequestV1): {
       "authorizationRef",
       "invalid-conflict-authorization",
     );
+    const integrationOwner = nonEmptyText(
+      candidate.integrationOwner,
+      "integrationOwner",
+      "invalid-conflict-authorization",
+    );
     const integrationPlan = nonEmptyText(
       candidate.integrationPlan,
       "integrationPlan",
@@ -501,6 +508,7 @@ function validateRequest(input: TaskScheduleRequestV1): {
       taskIds: [first, second],
       approvedBy,
       authorizationRef,
+      integrationOwner,
       integrationPlan,
     });
   }

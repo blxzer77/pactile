@@ -38,11 +38,14 @@ Task Kernel records and do not need or create a Parent / Child map.
   POSIX filenames may retain colons. Empty legacy write sets are treated as
   unknown and conflict with every writer. A parent path overlaps each
   descendant. NFKC is not applied, so compatibility characters remain distinct.
-- Overlapping writers are serial by default. Parallel overlap requires an
-  exact Task pair, approver, authorization evidence reference, and non-empty
-  integration plan. The decision and active leases retain these references.
-  The caller remains responsible for verifying the authority behind the
-  recorded evidence.
+- Overlapping writers are serial by default. A new parallel-overlap
+  authorization requires an exact Task pair, approver, authorization evidence
+  reference, a named integration owner, and a non-empty integration plan. The
+  decision and active leases retain these references. The caller remains
+  responsible for verifying the authority behind the recorded evidence.
+  Historical authorization records without an integration owner remain
+  readable, but cannot authorize a newly planned or revalidated overlapping
+  dispatch; renew the authorization with an owner first.
 - There is no fixed numeric concurrency cap in the scheduler or active Parent
   dispatch path. The scheduler dispatches a compatible group together only
   when its estimate finishes sooner than the serial equivalent. Integration
@@ -52,6 +55,10 @@ Task Kernel records and do not need or create a Parent / Child map.
 - Optional Jev advice requires an evidence reference and only breaks ties
   between equal critical-path costs. It cannot make a blocked Task ready,
   satisfy a dependency, or permit a write-set conflict.
+- A persisted receipt fixes the task-to-wave assignment. Dispatch rechecks
+  Kernel state, hard dependencies, leases, and host-stop evidence before
+  progressing, but it does not adaptively reorder remaining work between
+  waves. Jev remains limited to its eligible first-wave tie-break.
 
 ## Jev scheduling advice and P37 boundary
 
@@ -323,3 +330,31 @@ execution time from Run start/completion events, and review time from Run
 completion to review. Integration and rework times are derived from recorded
 Parent task-map events. Missing or incomplete intervals remain `null`, with
 evidence references retained alongside each snapshot.
+
+`compareTaskKernelWaveDispatchV1` accepts a paired serial-control and scheduled
+wave result for the same Task/worktree workload. It rejects mismatched task
+sets, dependencies, write sets, estimates, conflict authorizations, or wave
+placement; both provider dispatches and every scheduled Run must be complete.
+Set `serialControl: true` only for the control measurement. It runs eligible
+Tasks sequentially inside each already-planned wave. Normal dispatch has no
+numeric concurrency cap and continues to execute each planned wave together.
+
+The comparison keeps three evidence classes separate:
+
+- `estimates` sums the scheduler's candidate serial and planned wave estimates.
+- `measured` records actual dispatch wall time and the caller-measured end-to-end
+  wall time. The end-to-end interval should begin just before plan creation and
+  end after the same Review, rework, and integration observation steps for both
+  scenarios.
+- `observedLifecycleCosts` measures waiting from the Kernel `run.queued` event
+  to dispatch runner start, execution from per-Run wall time through verified
+  host stop, Review from Task Kernel completion to the latest Review, and rework
+  / integration from Parent task-map events. Each field reports coverage and
+  evidence references; a partial field remains `null`. Review time is
+  completion-to-latest-Review and may include time spent in rework, so the
+  observed cost fields are not additive components of total elapsed time.
+
+The paired test uses the checked-in fake Pi RPC process and simulated Review /
+Parent lifecycle events. Its provider label and test report explicitly say
+simulation; it is a reproducible scheduler comparison, not a real Pi-provider
+speedup, production measurement, or provider-acceptance result.

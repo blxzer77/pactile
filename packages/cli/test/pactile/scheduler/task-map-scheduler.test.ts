@@ -7,10 +7,15 @@ import {
   emptyTaskRecord,
   recordTaskReview,
   recordTaskRunResult,
+  readTaskKernel,
   resumeTaskRun,
   startTaskRun,
   writeTaskRecord,
 } from "../../../src/core/task/index.js";
+import {
+  createTaskCandidateEntry,
+  observeTaskRunCandidate,
+} from "../../../src/core/task/task-candidate-observer.js";
 import {
   writeTaskMap,
   type ChildEntry,
@@ -268,6 +273,7 @@ describe("Parent Task Kernel schedule projection", () => {
           taskIds: ["scheduler-shared-a", "scheduler-shared-b"],
           approvedBy: "human-reviewer",
           authorizationRef: "approval/P37-1",
+          integrationOwner: "parent-integrator",
           integrationPlan:
             "Integrate scheduler-shared-a, then scheduler-shared-b, and resolve the shared file once.",
         },
@@ -277,7 +283,11 @@ describe("Parent Task Kernel schedule projection", () => {
       taskIds: ["scheduler-shared-a", "scheduler-shared-b"],
       decision: "parallel-time-saved",
       conflictAuthorizations: [
-        { approvedBy: "human-reviewer", authorizationRef: "approval/P37-1" },
+        {
+          approvedBy: "human-reviewer",
+          authorizationRef: "approval/P37-1",
+          integrationOwner: "parent-integrator",
+        },
       ],
     });
     expect(
@@ -291,6 +301,7 @@ describe("Parent Task Kernel schedule projection", () => {
             taskIds: ["scheduler-shared-a", "scheduler-shared-b"],
             approvedBy: "human-reviewer",
             authorizationRef: "approval/P37-1",
+            integrationOwner: "parent-integrator",
             integrationPlan: " ",
           },
         ],
@@ -382,26 +393,14 @@ describe("Parent Task Kernel schedule projection", () => {
 
   it("records measured Run wait, execution, review, integration, and rework intervals with evidence refs", () => {
     const root = makeRoot();
-    const taskDir = createV2Task(root, "scheduler-observed-costs");
-    makeParent(root, [child("scheduler-observed-costs")]);
-    const created = JSON.parse(
-      fs.readFileSync(path.join(taskDir, "kernel.json"), "utf8"),
-    ) as { revision: number; identity: { taskId: string } };
-    const queued = startTaskRun({
-      root,
-      taskDir,
-      expectedRevision: created.revision,
-      actor: "implementer",
-      idempotencyKey: "observed:queue",
-      input: { summary: "observe lifecycle", references: [] },
-      authorization: {
-        approvedBy: "approver",
-        approvedAt: "2026-09-26T00:00:00.000Z",
-        scope: "fixture",
-        evidenceRef: "approval.json",
-      },
-      initialState: "waiting",
+    const taskDir = createV2Task(root, "scheduler-observed-costs", [], {
+      state: "waiting",
+      writeSet: ["result.txt"],
     });
+    makeParent(root, [child("scheduler-observed-costs")]);
+    const queued = readTaskKernel({ root, taskDir, cwd: root });
+    if (queued.kind !== "task-kernel-v2")
+      throw new Error("Expected Task Kernel V2");
     const queuedRun = queued.kernel.runs[0];
     if (!queuedRun) throw new Error("waiting Run was not recorded");
     const runId = queuedRun.id;
@@ -413,6 +412,18 @@ describe("Parent Task Kernel schedule projection", () => {
       actor: "scheduler",
       idempotencyKey: "observed:start",
     });
+    const activeRun = started.kernel.runs.at(-1);
+    if (!activeRun) throw new Error("waiting Run was not resumed");
+    fs.writeFileSync(path.join(root, "result.txt"), "candidate ready\n");
+    const observation = observeTaskRunCandidate({
+      run: activeRun,
+      repositoryRoot: root,
+    });
+    const resultFile = observation.currentFiles.find(
+      (file) => file.path === "result.txt",
+    );
+    if (!resultFile?.sha256)
+      throw new Error("Run write-set result file was not observed");
     const completed = recordTaskRunResult({
       root,
       taskDir,
@@ -420,12 +431,16 @@ describe("Parent Task Kernel schedule projection", () => {
       runId,
       outcome: "completed",
       summary: "candidate ready",
-      candidateEntries: [{ ref: "result.txt", fingerprint: "a".repeat(64) }],
+      candidateEntries: [
+        { ref: resultFile.path, fingerprint: resultFile.sha256 },
+        createTaskCandidateEntry(observation),
+      ],
       actor: "implementer",
       idempotencyKey: "observed:complete",
     });
     const candidate = completed.kernel.runs[0]?.candidateSnapshot;
     if (!candidate) throw new Error("completed Run candidate was not recorded");
+    fs.writeFileSync(path.join(taskDir, "review.md"), "reviewed result\n");
     recordTaskReview({
       root,
       taskDir,

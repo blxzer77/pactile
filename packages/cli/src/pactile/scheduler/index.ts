@@ -69,13 +69,20 @@ export {
 } from "./task-kernel-admission.js";
 
 export {
+  compareTaskKernelWaveDispatchV1,
   dispatchTaskKernelWaveV1,
   type TaskKernelWaveDispatchOptionsV1,
   type TaskKernelWaveDispatchResultV1,
   type TaskKernelWaveDispatchTaskResultV1,
+  type TaskKernelWaveDispatchComparisonV1,
+  type TaskKernelWaveDispatchCostTotalV1,
   type TaskKernelWaveIntegrationPlanV1,
   type TaskKernelWaveIntegrationTaskV1,
   type TaskKernelWaveIntegrationWaveV1,
+  type TaskKernelWaveObservedCostLedgerV1,
+  type TaskKernelWaveObservedCostTaskV1,
+  type TaskKernelWaveScenarioMeasurementV1,
+  type TaskKernelWaveMeasurementV1,
   type TaskKernelWaveRunOutcomeV1,
   type TaskKernelWaveRunRequestV1,
   type TaskKernelWaveRunResultV1,
