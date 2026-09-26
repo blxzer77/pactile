@@ -132,7 +132,7 @@ const EXPLANATION: Readonly<Record<JevFallbackCodeV1, string>> = {
   "content-not-approved":
     "Outgoing content is not approved for this destination; continue locally.",
   "sensitive-content":
-    "A credential or sensitive-content marker was found; nothing was sent.",
+    "A credential, sensitive marker, or structured key/value field was found; nothing was sent.",
   "input-invalid":
     "The Jev request is not a supported plain-data request; continue locally.",
   "input-too-large":

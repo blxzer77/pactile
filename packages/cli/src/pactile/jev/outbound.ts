@@ -17,6 +17,15 @@ const MAX_SNIPPETS = 3;
 const MAX_SNIPPET_CHARS = 3_500;
 const MAX_SUMMARY_CHARS = 2_000;
 
+// Reject structured fragments instead of trying to enumerate application-specific secret names.
+// This intentionally favors a local fallback when task text contains assignments or JSON fields.
+const FREE_TEXT_ASSIGNMENT =
+  /\b[A-Za-z_][A-Za-z0-9_.-]{0,63}\s*=\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/u;
+const JSON_KEY_VALUE =
+  /["'][A-Za-z_][A-Za-z0-9_.-]{0,63}["']\s*:\s*(?:"[^"]*"|'[^']*'|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null|\{|\[)/iu;
+const SENSITIVE_FIELD_VALUE =
+  /\b[A-Z0-9_.-]*(?:API[_-]?KEY|ACCESS[_-]?(?:KEY|TOKEN)|AUTH(?:ORIZATION)?|TOKEN|COOKIE|SESSION[_-]?(?:COOKIE|ID|KEY|TOKEN)|SECRET|PASS(?:WORD|WD)?|CREDENTIALS?|PRIVATE[_-]?(?:KEY|TOKEN)|DATABASE[_-]?(?:URL|URI)|DB[_-]?(?:URL|URI)|CONNECTION[_-]?(?:STRING|URI|URL)|DSN)[A-Z0-9_.-]*\b["']?\s*(?:=|:)\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/iu;
+
 const CREDENTIAL_PATTERNS: readonly RegExp[] = [
   /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/iu,
   /\b(?:gh[pousr]_[A-Za-z0-9]{12,}|github_pat_[A-Za-z0-9_]{12,}|glpat-[A-Za-z0-9_-]{12,}|xox[baprs]-[A-Za-z0-9-]{12,})\b/u,
@@ -24,10 +33,12 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
   /\bsk-(?:live|test|proj)?[_-]?[A-Za-z0-9_-]{20,}\b/u,
   /\bsk_(?:live|test)_[A-Za-z0-9_-]{12,}\b/iu,
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/u,
-  /\b(?:[A-Z0-9_-]*(?:API[_-]?KEY|ACCESS[_-]?TOKEN|AUTH[_-]?TOKEN|REFRESH[_-]?TOKEN|CLIENT[_-]?SECRET|SECRET|PASSWORD|PASSWD|CREDENTIALS?)[A-Z0-9_-]*)\b\s*(?:=|:)\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/iu,
+  /\b[A-Z0-9_.-]*(?:API[_-]?KEY|ACCESS[_-]?(?:KEY|TOKEN)|AUTH(?:ORIZATION)?|TOKEN|SECRET|PASS(?:WORD|WD)?|CREDENTIALS?|PRIVATE[_-]?(?:KEY|TOKEN)|DATABASE[_-]?(?:URL|URI)|DB[_-]?(?:URL|URI)|CONNECTION[_-]?(?:STRING|URI|URL)|DSN)[A-Z0-9_.-]*\b["']?\s*(?:=|:)\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/iu,
   /\bBearer\s+[A-Za-z0-9._~+/-]{8,}={0,2}\b/iu,
   /\bhttps?:\/\/[^/\s:@]+:[^/\s@]+@/iu,
+  /\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/\s@?#]+@[^/\s?#]+/u,
   /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/iu,
+  SENSITIVE_FIELD_VALUE,
 ];
 const EXPLICIT_SENSITIVE_MARKERS: readonly RegExp[] = [
   /\bCONFIDENTIAL\b/iu,
@@ -55,6 +66,17 @@ function hasSensitive(text: string): boolean {
     EXPLICIT_SENSITIVE_MARKERS.some((pattern) => pattern.test(text))
   );
 }
+
+/** Detect known sensitive markers and structured fields without retaining their text. */
+export function containsJevSensitiveContentV1(text: string): boolean {
+  return hasSensitive(text);
+}
+
+/** Conservative Session-only check for arbitrary structured user text. */
+export function containsJevStructuredTextV1(text: string): boolean {
+  return FREE_TEXT_ASSIGNMENT.test(text) || JSON_KEY_VALUE.test(text);
+}
+
 function validateQuestion(name: string, raw: unknown): JevQuestionV1 | null {
   if (!QUESTION_ID.test(name)) return null;
   const q = snapshotPlainOwnDataRecordV3(raw);

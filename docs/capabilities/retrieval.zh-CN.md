@@ -22,3 +22,18 @@ pactile capability-smoke --json
 ## 隐私边界
 
 External intent 只能向选定 Provider 发送用户批准的 query 与允许的上下文。默认不要发送凭据、私有日志、隐藏推理或整个仓库。另见[Provider](providers.zh-CN.md)与[隐私与权限](privacy-and-permissions.zh-CN.md)。
+
+## 可选 Jev 规划建议
+
+异步 `pactile context --mode session --json` 路径在 V2 Session 存在 fact gap 且调用方没有显式指定 intents 时，可以询问 Jev 是否增加 semantic 或 structural 路由。它始终保留 `exact`。Jev 不能增加 `external`、授权 Provider 或改变 Kernel 策略。外发请求仅带本地生成的 V2 phase 与 fact-gap 摘要，不带用户控制的 Task 标题、交付物或源码片段。本地会检查有界 Task 文本中的已知凭据、assignment、JSON 字段、cookie/session/authorization 字段、含 user-info 的 URL 与敏感标记；命中时在 HTTP 前回退。结构化内容采用保守判断，可能触发安全回退；无法可靠识别任意未标记的秘密值，因此本入口始终不外发原始 Task 文本。
+
+可在项目配置中显式允许或拒绝这次规划外发：
+
+```yaml
+jev:
+  egress: deny
+```
+
+省略 `jev.egress` 时，有效或不存在的 `.pactile/config.yaml` 默认允许这次有界建议，但必须配置 `PACTILE_JEV_API_KEY`。`PACTILE_JEV_ENABLED=false` 会禁用建议。`egress: allow` 可显式记录默认值；`egress: deny` 会阻止请求。未知值、重复或有歧义的 Jev 配置、配置读取或解析不确定都会 fail closed，回退到确定性 exact 计划。密钥只从进程环境读取，不写入 Session receipt。
+
+此项目开关目前只管理 Jev 检索规划。Tile 选择 Session 建议仍使用现有 Task Run grant，后续再接入共享项目策略。

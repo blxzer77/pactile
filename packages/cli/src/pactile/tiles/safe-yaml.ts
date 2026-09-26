@@ -21,7 +21,15 @@ export function normalizeTileText(text: string): string {
 }
 
 /** JSON-shaped maps/lists/scalars; empty [] and {} are the only flow syntax. */
-export function parseTileYaml(text: string): unknown {
+export interface TileYamlParseOptions {
+  /** Keep legacy Pactile config values yes/no/on/off as strings. */
+  readonly allowLegacyBooleanStrings?: boolean;
+}
+
+export function parseTileYaml(
+  text: string,
+  options: TileYamlParseOptions = {},
+): unknown {
   if (Buffer.byteLength(text, "utf8") > MAX_TILE_TEXT_BYTES)
     throw new TileYamlError("yaml-size-limit", 1);
   const lines: Line[] = [];
@@ -79,7 +87,9 @@ export function parseTileYaml(text: string): unknown {
           }
           array.push(record);
         } else {
-          array.push(scalar(item, line.number));
+          array.push(
+            scalar(item, line.number, options.allowLegacyBooleanStrings),
+          );
         }
       } else {
         member(object, line.text, indent, depth, line.number);
@@ -113,7 +123,7 @@ export function parseTileYaml(text: string): unknown {
       throw new TileYamlError("yaml-duplicate-key", line);
     const rawValue = text.slice(split + 1).trim();
     const value = rawValue
-      ? scalar(rawValue, line)
+      ? scalar(rawValue, line, options.allowLegacyBooleanStrings)
       : nested(indent, depth, line);
     // defineProperty avoids the legacy __proto__ setter while keeping a plain JSON object.
     Object.defineProperty(record, key, {
@@ -177,7 +187,11 @@ function mappingSplit(text: string): number {
   return -1;
 }
 
-function scalar(text: string, line: number): unknown {
+function scalar(
+  text: string,
+  line: number,
+  allowLegacyBooleanStrings = false,
+): unknown {
   if (text === "[]") return [];
   if (text === "{}") return {};
   if (text.startsWith('"')) {
@@ -217,9 +231,10 @@ function scalar(text: string, line: number): unknown {
     return value;
   }
   if (
-    /^(?:true|false|null|yes|no|on|off|~|[+-]?\.(?:inf|nan))$/i.test(text) ||
-    /^\d{4}-\d\d-\d\d(?:$|[Tt ])/.test(text) ||
-    /^[+-]?(?:\d|\.\d)/.test(text)
+    (!allowLegacyBooleanStrings || !/^(?:yes|no|on|off)$/i.test(text)) &&
+    (/^(?:true|false|null|yes|no|on|off|~|[+-]?\.(?:inf|nan))$/i.test(text) ||
+      /^\d{4}-\d\d-\d\d(?:$|[Tt ])/.test(text) ||
+      /^[+-]?(?:\d|\.\d)/.test(text))
   ) {
     // Ambiguous implicit scalars must be explicitly quoted.
     throw new TileYamlError("yaml-implicit-scalar", line);
