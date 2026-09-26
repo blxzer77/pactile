@@ -85,15 +85,17 @@ export function compileSessionPack(root: string, factGap = false): Record<string
   const kernelRead = dir && fs.existsSync(path.join(dir, "kernel.json")) ? readTaskKernel({ root, taskDir: dir, cwd: root }) : null;
   const snapshot = kernelRead?.kind === "legacy-task-kernel-v1" ? kernelRead.kernel.kernel : null;
   const v2 = kernelRead?.kind === "task-kernel-v2" ? kernelRead.kernel : null;
-  const legacyRecord = dir && !kernelRead ? readJson(path.join(dir, "task.json")) : null;
+  const legacyRecord = dir && !kernelRead && fs.existsSync(path.join(dir, "task.json")) ? readJson(path.join(dir, "task.json")) : null;
+  const selectedLegacy = selected && !v2 && (snapshot !== null || legacyRecord !== null);
+  const unresolvedSelection = selected && !v2 && !selectedLegacy;
   const phase: KernelPhase = v2?.phase ?? snapshot?.phase ?? (legacyRecord ? phaseFromLegacyStatus(legacyRecord.status) : "open");
   const condition = v2?.condition ?? snapshot?.condition ?? "ready";
   const outcome = v2?.outcome ?? snapshot?.outcome ?? null;
   const extras = snapshot?.projection?.extras ?? {};
   const baselineActive = activeModules(extras, "baseline_modules", BASELINE).filter((id) => BASELINE.includes(id));
   const ondemandActive = activeModules(extras, "ondemand_modules");
-  const rigor = v2 ? "delivery-defined" : ((extras.required_controls as Record<string, unknown> | undefined)?.rigor === "full") ? "full" : "lite";
-  const topologyKind = v2 ? "hard-dependencies" : ((extras.topology as Record<string, unknown> | undefined)?.kind === "parent-child") ? "parent-child" : "single";
+  const rigor = v2 ? "delivery-defined" : selectedLegacy ? ((extras.required_controls as Record<string, unknown> | undefined)?.rigor === "full") ? "full" : "lite" : null;
+  const topologyKind = v2 ? "hard-dependencies" : selectedLegacy ? ((extras.topology as Record<string, unknown> | undefined)?.kind === "parent-child") ? "parent-child" : "single" : null;
   const layer2Ids: string[] = [];
   if (!selected) {
     if (baselineActive.includes("intake-basic")) layer2Ids.push("intake-basic");
@@ -101,7 +103,7 @@ export function compileSessionPack(root: string, factGap = false): Record<string
     for (const id of PHASE_BASELINE[phase]) if (baselineActive.includes(id)) layer2Ids.push(id);
     for (const id of ondemandActive) {
       if (NEVER_LAYER2.has(id) || !ONDEMAND_PHASE[id]?.includes(phase)) continue;
-      if (!v2 && rigor === "lite" && topologyKind === "single" && LITE_BLOCKED.has(id)) continue;
+      if (selectedLegacy && rigor === "lite" && topologyKind === "single" && LITE_BLOCKED.has(id)) continue;
       if (!layer2Ids.includes(id)) layer2Ids.push(id);
     }
   }
@@ -154,17 +156,42 @@ export function compileSessionPack(root: string, factGap = false): Record<string
     integrate: "Use the delivery-level evidence required by the Task contract.",
     close: "Task is closed in the Kernel; keep its Run and Review history readable.",
   };
-  const next = stale ? "Clear the stale selection with `pactile task exit`, then ask what to work on next." : !selected ? "Intake: answer directly, clarify whether there is work, or draft an Open Proposal. Do not create a task without Open approval." : stuck ? "Stop. Classify the stall before retrying the same hypothesis." : v2 ? v2Next[phase] : NEXT[phase];
-  const constraints = ["Do not treat `.pactile/workflow.md` or AGENTS longform as runtime SSOT.", "Modules absent from this pack are not installed.", v2 ? "Task model=deliverable Task with hard dependencies; no Lite/Full or Parent/Child preset." : `Rigor=${rigor}; topology=${topologyKind}.`, selected ? "Stay inside the selected task contract." : "No selected task: no task-directory dump; no Parent/Worker/VCS teaching."];
+  const next = stale
+    ? "Clear the stale selection with `pactile task exit`, then ask what to work on next."
+    : !selected
+      ? "Intake: answer directly, clarify whether there is work, or draft a V2 Task Proposal with a deliverable, measurable ACs, a delivery level, and known hard dependency Task IDs. Create the Task only after the user agrees; its lifecycle starts at Define."
+      : unresolvedSelection
+        ? "Stop. The selected Task format is not identified as a valid V1 or V2 Kernel; inspect it before continuing."
+        : stuck
+          ? "Stop. Classify the stall before retrying the same hypothesis."
+          : v2 ? v2Next[phase] : NEXT[phase];
+  const constraints = ["Do not treat `.pactile/workflow.md` or AGENTS longform as runtime SSOT.", "Modules absent from this pack are not installed."];
+  if (v2) constraints.push("Task model=V2 deliverable with hard dependencies.");
+  else if (selectedLegacy) constraints.push(`V1 legacy Task: Rigor=${rigor}; topology=${topologyKind}.`);
+  else if (unresolvedSelection) constraints.push("The selected Task schema is unresolved; do not infer lifecycle gates.");
+  else constraints.push("No Task selected: prepare a V2 Task Proposal only; no Task is created or execution authorized.");
+  if (selected) constraints.push("Stay inside the selected task contract.");
+  else constraints.push("No selected task: do not dump task-specific artifacts or add execution instructions.");
   if (condition === "blocked") constraints.push("Condition=blocked: do not silently retry.");
-  const layer1 = [`Phase: ${HUMAN[phase]} (${phase})`, `Condition: ${condition}`, `Outcome: ${outcome ?? "(none)"}`, "Constraints:", ...constraints, `Next: ${next}`].join("\n");
+  const layer1 = [
+    unresolvedSelection ? "Phase: Unknown (selected Task format needs inspection)"
+      : selected ? `Phase: ${HUMAN[phase]} (${phase})`
+        : stale ? "Phase: Intake (clear stale selection first)" : "Phase: Intake (no Task selected)",
+    ...(selected ? [`Condition: ${condition}`, `Outcome: ${outcome ?? "(none)"}`] : []),
+    "Constraints:", ...constraints, `Next: ${next}`,
+  ].join("\n");
   const layer4 = factGap ? "Fact gap: route with intents exact / semantic / structural / external. Do not bind Agent tool names. Ranking and retrieval-pack stay with `retrieval-extended`." : "";
   const layer5 = stuck ? "Deep diagnosis pointer only (not a layer-2 contract): `debug-recovery`. Stop homogeneous retries. Classify implementation / contract / environment / platform / process-loop. First failure is not break-loop." : "";
   return {
     version: 1, source: "context-progressive",
     activationSource: { kind: "profile-runtime", filter: "phase-intersect-active", baselineActive, ondemandActive, note: "Layer 2 is phase-needed intersect still-active. Unactivated modules are not installed." },
-    kernel: { taskId: v2?.identity.taskId ?? snapshot?.identity.taskId ?? legacyRecord?.id ?? null, schemaVersion: v2?.schemaVersion ?? (snapshot ? 1 : 0), revision: v2?.revision ?? snapshot?.revision ?? 0,
-      deliveryLevel: v2?.definition.deliveryLevel ?? null, phase, condition, outcome, humanPhase: HUMAN[phase], selected }, rigor, topologyKind,
+    kernel: { taskId: selected ? v2?.identity.taskId ?? snapshot?.identity.taskId ?? legacyRecord?.id ?? null : null,
+      schemaVersion: !selected ? null : v2?.schemaVersion ?? (snapshot ? 1 : selectedLegacy ? 0 : null),
+      revision: selected ? v2?.revision ?? snapshot?.revision ?? 0 : null,
+      deliveryLevel: v2?.definition.deliveryLevel ?? null, phase: selected ? phase : null,
+      condition: selected ? condition : null, outcome: selected ? outcome : null, humanPhase: selected ? HUMAN[phase] : null, selected },
+    ...(v2 || selectedLegacy ? { rigor, topologyKind } : {}),
+    ...(!selected && !stale ? { proposalModel: "task-kernel-v2" } : {}),
     ...(tileSelection ? { tileSelection } : {}),
     layers: [
       { n: 1, name: "resident-min", text: layer1 },

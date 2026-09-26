@@ -53,6 +53,7 @@ describe("Node context CLI", () => {
       const pack = compileSessionPack(root);
       const layers = pack.layers as Record<string, unknown>[];
       expect(pack.kernel).toMatchObject({ phase: "define", selected: true });
+      expect(pack).toMatchObject({ rigor: "lite", topologyKind: "single" });
       expect(layers[1].moduleIds).toEqual(["define-basic"]);
       expect(layers[2].items).toHaveLength(1);
       const selection = pack.tileSelection as { status: string; offer?: { candidates: { ref: string }[] } };

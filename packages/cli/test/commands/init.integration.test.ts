@@ -740,6 +740,18 @@ describe("init() integration", () => {
     await init({ yes: true });
     vi.stubEnv("PACTILE_CONTEXT_ID", "fresh_generated_v2");
 
+    const unselectedPack = compileSessionPack(tmpDir);
+    expect(unselectedPack).toMatchObject({ proposalModel: "task-kernel-v2" });
+    expect(unselectedPack.kernel).toMatchObject({ taskId: null, schemaVersion: null, revision: null, phase: null, condition: null, selected: false });
+    expect(unselectedPack).not.toHaveProperty("rigor");
+    expect(unselectedPack).not.toHaveProperty("topologyKind");
+    const unselectedLayers = unselectedPack.layers as { moduleIds?: string[]; text: string }[];
+    expect(unselectedLayers[0].text).toContain("Phase: Intake (no Task selected)");
+    expect(unselectedLayers[0].text).toContain("V2 Task Proposal");
+    expect(unselectedLayers[0].text).toContain("Create the Task only after the user agrees");
+    expect(unselectedLayers[1].moduleIds).toContain("intake-basic");
+    expect(JSON.stringify(unselectedPack)).not.toMatch(/Rigor=lite|topology=single|Open Proposal|Open approval|\bLite\b|\bFull\b|\bParent\b|\bChild\b/);
+
     expect(runTaskCli([
       "create", "Fresh generated V2", "--slug", "fresh-generated-v2", "--description", "Generated Session Pack acceptance",
       "--deliverable", "A reviewable local result", "--delivery-level", "local-result", "--accept", "AC-1=The result is testable",
