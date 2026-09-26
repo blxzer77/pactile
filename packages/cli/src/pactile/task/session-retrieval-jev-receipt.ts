@@ -1,6 +1,8 @@
 import { fingerprintPactileContractV1 } from "../../core/index.js";
 import type { PactileIntentV1 } from "../../core/index.js";
 import type { JevDecisionResultV1 } from "../jev/index.js";
+import type { JevConfidenceReceiptV1 } from "../jev/index.js";
+import { projectJevConfidenceReceiptV1 } from "../jev/response.js";
 import type { RetrievalJevPlanResultV1 } from "../retrieval/index.js";
 
 const RETRIEVAL_JEV_CANDIDATES = ["semantic", "structural"] as const;
@@ -39,6 +41,7 @@ export interface SessionRetrievalJevReceiptV1 {
   readonly inputTokens: number | null;
   readonly outputTokens: number | null;
   readonly estimatedInputCostMicrousd: number | null;
+  readonly confidence: JevConfidenceReceiptV1;
   readonly fallback: {
     readonly reasonCode: string;
     readonly explanation: string;
@@ -151,6 +154,10 @@ export function createSessionRetrievalJevReceiptV1(
     inputTokens: transport?.inputTokens ?? null,
     outputTokens: transport?.outputTokens ?? null,
     estimatedInputCostMicrousd: transport?.estimatedInputCostMicrousd ?? null,
+    confidence: projectJevConfidenceReceiptV1(
+      transport?.confidence,
+      RETRIEVAL_JEV_CANDIDATES,
+    ),
     fallback,
   };
 }

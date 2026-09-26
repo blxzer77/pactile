@@ -126,6 +126,8 @@ UTF-8 JSON manifest 上限为 32 KiB，只能包含 `impact` 和 `checks`。有�
 
 确定性计划完成后，Jev 最多建议一项额外的独立行为检查。项目 `jev.egress: deny`、无效策略、缺少凭证、传输失败或低置信度都会回退到本地计划。请求只发送有界的影响摘要和可选检查模式，不发送源码片段、检查标题、路径或密钥。`--adopt` 或 `--override` 记录调用方对建议的决定；采纳仍只是计划选择，不会执行检查、创建 Run/Review、声明 Review PASS 或授权 Close。
 
+建议回执保留 Provider 原样返回的 `additional_check` confidence；缺失或无效时显式标为 unavailable，不会从建议、fallback 或验证结果推导 confidence。
+
 仅当 `.pactile/.runtime/task-verification/plans/` 已被排除在 Git candidate observation 之外时，命令才会写入 `planned-only` 回执；否则只打印绑定后的计划，不持久化。该回执与 Run 执行回执分开，不修改 Kernel 生命周期状态。实际验证结果应进入 Run Evidence 与 Review；仓库 CI 仍须按原有策略执行。
 
 ## Parent 与 Child tasks

@@ -319,6 +319,10 @@ describe("Pactile session Jev route", () => {
       inputTokens: 45,
       outputTokens: 5,
       estimatedInputCostMicrousd: 2,
+      confidence: {
+        candidate0: { status: "unavailable", reasonCode: "not-provided" },
+        candidate1: { status: "unavailable", reasonCode: "not-provided" },
+      },
       application: "pending-explicit-decision",
       fallback: null,
     });
@@ -403,10 +407,42 @@ describe("Pactile session Jev route", () => {
         status: "fallback",
         outboundAttempted: false,
         attempts: 0,
+        confidence: {
+          candidate0: { status: "unavailable", reasonCode: "not-returned" },
+          candidate1: { status: "unavailable", reasonCode: "not-returned" },
+        },
         fallback: { reasonCode: "configuration-missing" },
       },
     });
     expect(result.stdout).not.toContain(API_KEY);
+  });
+
+  it("keeps a low-confidence Noul fallback in the redacted receipt", () => {
+    const { root } = createRoot(APPROVED_POLICY);
+    writeProjectConfig(root, "jev:\n  egress: allow\n");
+    const result = runCliProcess(root, {
+      apiKey: API_KEY,
+      preload: createPreload(),
+      response: "low-confidence",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const advice = parseOutput(result.stdout).tileSelection as {
+      jevAdvice: Record<string, unknown>;
+    };
+    expect(advice.jevAdvice).toMatchObject({
+      status: "fallback",
+      outboundAttempted: true,
+      attempts: 1,
+      application: "not-applied",
+      confidence: {
+        candidate0: { status: "unavailable", reasonCode: "not-provided" },
+        candidate1: { status: "unavailable", reasonCode: "not-provided" },
+      },
+      fallback: { reasonCode: "low-confidence" },
+    });
+    expect(JSON.stringify(advice.jevAdvice)).not.toContain(API_KEY);
+    expect(fs.existsSync(path.join(root, "fake-jev-capture.json"))).toBe(true);
   });
 
   it("allows configured project egress when the active Run grant also permits it", () => {

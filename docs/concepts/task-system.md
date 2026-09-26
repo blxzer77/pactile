@@ -126,6 +126,8 @@ The UTF-8 JSON manifest is limited to 32 KiB and contains only `impact` and `che
 
 Jev may suggest one additional independent behavior check after the deterministic plan. Project `jev.egress: deny`, invalid policy, missing credentials, transport failure, and low confidence fall back locally. The request contains only the bounded impact summary and optional check modes; it does not send source snippets, check titles, paths, or secrets. `--adopt` or `--override` records the caller's decision about the suggestion. Adoption is a planning choice only: it does not execute the check, create a Run or Review, claim Review PASS, or authorize Close.
 
+The advice receipt records the provider's `additional_check` confidence as returned. Missing or invalid values are marked unavailable; it does not derive confidence from a suggestion, fallback, or verification outcome.
+
 The command writes a `planned-only` receipt under `.pactile/.runtime/task-verification/plans/` only when the runtime path is excluded from Git candidate observation. Otherwise it prints the bound plan without persisting it. The receipt is separate from Run execution receipts and does not change Kernel lifecycle state. Actual validation outcomes belong in Run Evidence and Review; repository CI still must run under its normal policy.
 
 ## Parent and Child tasks

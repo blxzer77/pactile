@@ -102,6 +102,9 @@ function answeredFacade(
           inputTokens: 42,
           outputTokens: 5,
           estimatedInputCostMicrousd: 2,
+          confidence: {
+            additional_check: { status: "available", value: 0.98 },
+          },
         },
         budget: {
           maxDecisions: 1,
@@ -189,6 +192,9 @@ describe("P34 Jev verification advice", () => {
         latencyMs: 7,
         httpStatus: 200,
         model: "jev-test",
+        confidence: {
+          additional_check: { status: "available", value: 0.98 },
+        },
       },
     });
     expect(
@@ -254,7 +260,16 @@ describe("P34 Jev verification advice", () => {
       adoption: "not-applicable",
       suggestedCheckIds: [],
       sentRequestSnapshot: null,
-      transport: { attempts: 0, latencyMs: 0 },
+      transport: {
+        attempts: 0,
+        latencyMs: 0,
+        confidence: {
+          additional_check: {
+            status: "unavailable",
+            reasonCode: "not-returned",
+          },
+        },
+      },
     });
     expect(JSON.stringify(result.receipt)).not.toContain(
       "test-key-not-persisted",
@@ -327,6 +342,58 @@ describe("P34 Jev verification advice", () => {
         reason: "required-by-policy",
       }),
     );
+  });
+
+  it("keeps provider confidence in the durable low-confidence fallback receipt", async () => {
+    const baseline = createVerificationPlan({ impact, checks });
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            model: "jev-test",
+            answers: {
+              additional_check: {
+                type: "choice",
+                choice: "candidate-01",
+                confidence: 0.4,
+                probabilities: { "candidate-01": 0.6, none: 0.4 },
+              },
+            },
+            usage: { input_tokens: 42, output_tokens: 5 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    ) as unknown as typeof fetch;
+    const result = await adviseVerificationPlanWithJevV1({
+      impact,
+      checks,
+      jev: {
+        facade: createJevDecisionFacadeV1({
+          enabled: true,
+          transport: { apiKey: "test-key-not-persisted", fetchImpl },
+        }),
+        egress,
+      },
+    });
+
+    expect(result.plan).toEqual(baseline);
+    expect(result.receipt).toMatchObject({
+      status: "fallback",
+      reasonCode: "low-confidence",
+      suggestedCheckIds: [],
+      sentRequestSnapshot: {
+        candidateCheckIds: ["task.create.secondary"],
+      },
+      transport: {
+        attempts: 1,
+        httpStatus: 200,
+        confidence: {
+          additional_check: { status: "available", value: 0.4 },
+        },
+      },
+    });
+    expect(verifyJevVerificationAdviceReceiptV1(result.receipt)).toBe(true);
+    expect(JSON.stringify(result.receipt)).not.toContain("test-key-not-persisted");
   });
 
   it("supersedes advice when the local verification plan changes before caller adoption", async () => {

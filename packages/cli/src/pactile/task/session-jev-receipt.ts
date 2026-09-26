@@ -1,5 +1,7 @@
 import { fingerprintPactileContractV1 } from "../../core/index.js";
 import type { JevDecisionResultV1 } from "../jev/index.js";
+import type { JevConfidenceReceiptV1 } from "../jev/index.js";
+import { projectJevConfidenceReceiptV1 } from "../jev/response.js";
 import type { TileSelectionJevAdviceV1 } from "../tiles/jev-selection.js";
 import type {
   TileSelectionDecision,
@@ -36,6 +38,7 @@ export interface SessionJevReceiptV1 {
   readonly inputTokens: number | null;
   readonly outputTokens: number | null;
   readonly estimatedInputCostMicrousd: number | null;
+  readonly confidence: JevConfidenceReceiptV1;
   readonly fallback: {
     readonly reasonCode: string;
     readonly explanation: string;
@@ -135,6 +138,10 @@ export function createSessionJevReceiptV1(
     inputTokens: transport?.inputTokens ?? null,
     outputTokens: transport?.outputTokens ?? null,
     estimatedInputCostMicrousd: transport?.estimatedInputCostMicrousd ?? null,
+    confidence: projectJevConfidenceReceiptV1(
+      transport?.confidence,
+      candidateRefs.map((_ref, index) => `candidate${index}`),
+    ),
     fallback: advice.fallback,
   };
 }
@@ -167,6 +174,10 @@ export function createStaleSessionJevReceiptV1(
     inputTokens: transport?.inputTokens ?? null,
     outputTokens: transport?.outputTokens ?? null,
     estimatedInputCostMicrousd: transport?.estimatedInputCostMicrousd ?? null,
+    confidence: projectJevConfidenceReceiptV1(
+      transport?.confidence,
+      candidateRefs.map((_ref, index) => `candidate${index}`),
+    ),
     fallback: {
       reasonCode: beforeAdvice
         ? "session-changed-before-advice"

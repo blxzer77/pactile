@@ -5,6 +5,11 @@ import type {
   JevEgressAuthorizationV1,
   JevFallbackCodeV1,
 } from "./transport.js";
+import type { JevConfidenceReceiptV1 } from "./transport.js";
+import {
+  projectJevConfidenceReceiptV1,
+  unavailableJevConfidenceReceiptV1,
+} from "./response.js";
 import type {
   JevSchedulerAdviceV1,
   TaskScheduleReceiptV1,
@@ -85,6 +90,7 @@ export interface JevScheduleAdviceAuditV1 {
     readonly inputTokens: number | null;
     readonly outputTokens: number | null;
     readonly estimatedInputCostMicrousd: number | null;
+    readonly confidence: JevConfidenceReceiptV1;
   };
 }
 
@@ -122,6 +128,10 @@ function auditTransport(
     inputTokens: receipt.transport.inputTokens,
     outputTokens: receipt.transport.outputTokens,
     estimatedInputCostMicrousd: receipt.transport.estimatedInputCostMicrousd,
+    confidence: projectJevConfidenceReceiptV1(
+      receipt.transport.confidence,
+      ["first_task"],
+    ),
   };
 }
 
@@ -158,14 +168,18 @@ function baseAudit(input: {
     suggestedTaskIds: [...(input.suggestedTaskIds ?? [])],
     adoptedTaskIds: [...(input.adoptedTaskIds ?? [])],
     overriddenTaskIds: [...(input.overriddenTaskIds ?? [])],
-    transport: input.transport ?? {
-      latencyMs: 0,
-      attempts: 0,
-      httpStatus: null,
-      model: null,
-      inputTokens: null,
-      outputTokens: null,
-      estimatedInputCostMicrousd: null,
+    transport: {
+      latencyMs: input.transport?.latencyMs ?? 0,
+      attempts: input.transport?.attempts ?? 0,
+      httpStatus: input.transport?.httpStatus ?? null,
+      model: input.transport?.model ?? null,
+      inputTokens: input.transport?.inputTokens ?? null,
+      outputTokens: input.transport?.outputTokens ?? null,
+      estimatedInputCostMicrousd:
+        input.transport?.estimatedInputCostMicrousd ?? null,
+      confidence: input.transport
+        ? projectJevConfidenceReceiptV1(input.transport.confidence, ["first_task"])
+        : unavailableJevConfidenceReceiptV1(["first_task"]),
     },
   };
 }
@@ -323,6 +337,7 @@ export async function requestJevTaskScheduleAdviceV1(input: {
           inputTokens: null,
           outputTokens: null,
           estimatedInputCostMicrousd: null,
+          confidence: unavailableJevConfidenceReceiptV1(["first_task"]),
         },
       }),
     };

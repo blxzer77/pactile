@@ -86,7 +86,22 @@ export interface JevReceiptV1 {
   readonly inputTokens: number | null;
   readonly outputTokens: number | null;
   readonly estimatedInputCostMicrousd: number | null;
+  /** Provider-reported values only; unavailable entries are never inferred. */
+  readonly confidence: JevConfidenceReceiptV1;
 }
+export type JevConfidenceUnavailableReasonV1 =
+  | "not-returned"
+  | "not-provided"
+  | "invalid";
+export type JevConfidenceValueV1 =
+  | { readonly status: "available"; readonly value: number }
+  | {
+      readonly status: "unavailable";
+      readonly reasonCode: JevConfidenceUnavailableReasonV1;
+    };
+export type JevConfidenceReceiptV1 = Readonly<
+  Record<string, JevConfidenceValueV1>
+>;
 export type JevAnswerV1 =
   | { readonly type: "noul"; readonly noul: number }
   | {
@@ -171,6 +186,7 @@ export function fail(
     inputTokens: info.inputTokens ?? null,
     outputTokens: info.outputTokens ?? null,
     estimatedInputCostMicrousd: info.estimatedInputCostMicrousd ?? null,
+    confidence: info.confidence ?? Object.freeze({}),
   });
   return Object.freeze({
     status: "fallback" as const,

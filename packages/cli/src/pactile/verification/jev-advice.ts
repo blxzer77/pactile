@@ -2,9 +2,14 @@ import { createHash } from "node:crypto";
 
 import type {
   JevDecisionFacadeV1,
+  JevConfidenceReceiptV1,
   JevEgressAuthorizationV1,
   JevFallbackCodeV1,
 } from "../jev/index.js";
+import {
+  projectJevConfidenceReceiptV1,
+  unavailableJevConfidenceReceiptV1,
+} from "../jev/response.js";
 import {
   createVerificationPlan,
   type CreateVerificationPlanInput,
@@ -52,6 +57,7 @@ export interface JevVerificationAdviceTransportV1 {
   readonly inputTokens: number | null;
   readonly outputTokens: number | null;
   readonly estimatedInputCostMicrousd: number | null;
+  readonly confidence: JevConfidenceReceiptV1;
 }
 
 export type JevVerificationAdviceStatusV1 =
@@ -227,6 +233,7 @@ function emptyTransport(): JevVerificationAdviceTransportV1 {
     inputTokens: null,
     outputTokens: null,
     estimatedInputCostMicrousd: null,
+    confidence: unavailableJevConfidenceReceiptV1(["additional_check"]),
   };
 }
 
@@ -238,6 +245,7 @@ function transportFrom(receipt: {
   readonly inputTokens: number | null;
   readonly outputTokens: number | null;
   readonly estimatedInputCostMicrousd: number | null;
+  readonly confidence: JevConfidenceReceiptV1;
 }): JevVerificationAdviceTransportV1 {
   return {
     latencyMs: receipt.latencyMs,
@@ -247,6 +255,9 @@ function transportFrom(receipt: {
     inputTokens: receipt.inputTokens,
     outputTokens: receipt.outputTokens,
     estimatedInputCostMicrousd: receipt.estimatedInputCostMicrousd,
+    confidence: projectJevConfidenceReceiptV1(receipt.confidence, [
+      "additional_check",
+    ]),
   };
 }
 
