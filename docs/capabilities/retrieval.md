@@ -61,6 +61,15 @@ entries, or config read and parse uncertainty fail closed to the deterministic
 exact plan. The key stays in the process environment and is never written to
 the Session receipt.
 
+The Session pack keeps the deterministic `retrievalPlanning` fields and adds a
+redacted `retrievalPlanning.audit` receipt. It records the retrieval-planning
+node, a fingerprint of the bounded input summary, the semantic and structural
+candidate intents, Jev suggestions, deterministic intents, adopted or
+overridden intents, model, transport latency, attempts, usage, and estimated
+input cost. The receipt contains no summary text, source snippets, API key, or
+provider response body. A project deny, sensitive-content match, missing key,
+or transport failure records a fallback audit and keeps the exact plan.
+
 This project switch governs Jev retrieval planning and selected-Task Tile
 Session advice. For Tile advice, project denial or invalid configuration blocks
 Jev before HTTP even when a historical active Run grant allowed egress. Project

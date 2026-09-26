@@ -17,6 +17,11 @@ import { resolveJevProjectEgressPolicyV1 } from "../jev/project-policy.js";
 import { planRetrievalWithJevV1 } from "../retrieval/index.js";
 import { RETRIEVAL_INTENT_ORDER } from "../retrieval/types.js";
 import { resolveSelectedTask, resolveTaskDir } from "./session.js";
+import { compileSessionPack } from "./session-pack.js";
+import {
+  attachSessionRetrievalJevReceiptV1,
+  createSessionRetrievalJevReceiptV1,
+} from "./session-retrieval-jev-receipt.js";
 
 const SESSION_RETRIEVAL_JEV_DEADLINE_MS = 2_500;
 const SESSION_RETRIEVAL_JEV_MAX_RETRIES = 1;
@@ -150,7 +155,15 @@ function attachPlanningReceipt(
   input: {
     readonly source: "deterministic" | "jev-advised";
     readonly intents: readonly PactileIntentV1[];
+    readonly summary: string;
+    readonly deterministicIntents: readonly PactileIntentV1[];
+    readonly result?: Awaited<ReturnType<typeof planRetrievalWithJevV1>>;
+    readonly decision?: Awaited<
+      ReturnType<typeof planRetrievalWithJevV1>
+    >["decision"];
     readonly fallbackReasonCode?: string;
+    readonly fallbackExplanation?: string;
+    readonly stale?: boolean;
   },
 ): Record<string, unknown> {
   const intents = [...input.intents];
@@ -175,7 +188,7 @@ function attachPlanningReceipt(
         explanation: FALLBACK_EXPLANATION,
       }
     : null;
-  return {
+  const base = {
     ...pack,
     retrievalPlanning: {
       schemaVersion: 1,
@@ -185,6 +198,22 @@ function attachPlanningReceipt(
     },
     ...(Array.isArray(layers) ? { layers } : {}),
   };
+  const audit = createSessionRetrievalJevReceiptV1({
+    summary: input.summary,
+    deterministicIntents: input.deterministicIntents,
+    result: input.result,
+    decision: input.decision,
+    ...(input.fallbackReasonCode
+      ? {
+          fallbackReasonCode: input.fallbackReasonCode,
+          ...(input.fallbackExplanation
+            ? { fallbackExplanation: input.fallbackExplanation }
+            : {}),
+        }
+      : {}),
+    ...(input.stale ? { stale: true } : {}),
+  });
+  return attachSessionRetrievalJevReceiptV1(base, audit);
 }
 
 function jevEgressAuthorization(): JevEgressAuthorizationV1 {
@@ -223,6 +252,45 @@ function suggestedLocalIntents(
   return RETRIEVAL_INTENT_ORDER.filter((intent) => selected.has(intent));
 }
 
+function currentPlanningContext(
+  root: string,
+  factGap: boolean,
+  options: SessionRetrievalIntentOptionsV1,
+): {
+  readonly pack: Record<string, unknown>;
+  readonly summary: string;
+  readonly fallbackInput: {
+    readonly request: {
+      readonly query: string;
+      readonly intents?: readonly PactileIntentV1[];
+    };
+    readonly defaultToExactForUnspecifiedIntents: boolean;
+  };
+} {
+  const currentPack = compileSessionPack(root, factGap);
+  let current: CurrentV2SessionV1 | null = null;
+  try {
+    current = readCurrentV2Session(root);
+  } catch {
+    current = null;
+  }
+  const summary = current
+    ? safeSessionPlanningSummary(current.stamp.phase)
+    : "V2 Session fact gap. Decide whether semantic or structural local retrieval should supplement exact search.";
+  const request = {
+    query: summary,
+    ...(options.intents === undefined ? {} : { intents: [...options.intents] }),
+  };
+  return {
+    pack: currentPack,
+    summary,
+    fallbackInput: {
+      request,
+      defaultToExactForUnspecifiedIntents: options.intents === undefined,
+    },
+  };
+}
+
 /** Add optional local-route suggestions to a V2 Session fact-gap plan. */
 export async function compileSessionRetrievalPlanWithJevV1(
   root: string,
@@ -258,27 +326,67 @@ export async function compileSessionRetrievalPlanWithJevV1(
     request,
     defaultToExactForUnspecifiedIntents,
   };
+  const initialPlanningContext: ReturnType<typeof currentPlanningContext> = {
+    pack,
+    summary,
+    fallbackInput: {
+      request: {
+        query: request.query,
+        ...(options.intents === undefined
+          ? {}
+          : { intents: [...options.intents] }),
+      },
+      defaultToExactForUnspecifiedIntents,
+    },
+  };
 
   const deterministic = async (
     fallbackReasonCode?: string,
+    decision?: Awaited<ReturnType<typeof planRetrievalWithJevV1>>["decision"],
+    stale = false,
+    planningContext = initialPlanningContext,
+    auditContext?: {
+      readonly summary: string;
+      readonly deterministicIntents: readonly PactileIntentV1[];
+    },
   ): Promise<Record<string, unknown>> => {
+    const auditSummary = auditContext?.summary ?? planningContext.summary;
+    const auditDeterministicIntents = auditContext?.deterministicIntents;
     try {
-      const result = await planRetrievalWithJevV1(fallbackInput);
-      return attachPlanningReceipt(pack, {
+      const result = await planRetrievalWithJevV1(
+        planningContext.fallbackInput,
+      );
+      return attachPlanningReceipt(planningContext.pack, {
         source: "deterministic",
         intents: result.plan.intents,
+        summary: auditSummary,
+        deterministicIntents: auditDeterministicIntents ?? result.plan.intents,
+        result,
+        decision,
         ...(fallbackReasonCode ? { fallbackReasonCode } : {}),
+        ...(stale ? { stale: true } : {}),
       });
     } catch {
-      return attachPlanningReceipt(pack, {
+      return attachPlanningReceipt(planningContext.pack, {
         source: "deterministic",
         intents: options.intents ?? ["exact"],
+        summary: auditSummary,
+        deterministicIntents: auditDeterministicIntents ??
+          options.intents ?? ["exact"],
+        decision,
         fallbackReasonCode: fallbackReasonCode ?? "planner-unavailable",
+        ...(stale ? { stale: true } : {}),
       });
     }
   };
 
-  if (!matchedSession) return deterministic("session-changed");
+  if (!matchedSession)
+    return deterministic(
+      "session-changed",
+      undefined,
+      true,
+      currentPlanningContext(root, true, options),
+    );
   if (options.intents !== undefined) return deterministic();
   if (
     containsJevSensitiveContentV1(matchedSession.summary) ||
@@ -314,18 +422,45 @@ export async function compileSessionRetrievalPlanWithJevV1(
     } catch {
       current = null;
     }
-    if (!sameStamp(matchedSession.stamp, current?.stamp ?? null))
-      return deterministic("session-changed");
+    if (!sameStamp(matchedSession.stamp, current?.stamp ?? null)) {
+      const currentContext = currentPlanningContext(root, true, options);
+      const staleDeterministicIntents: readonly PactileIntentV1[] =
+        await planRetrievalWithJevV1(fallbackInput)
+          .then((result) => result.plan.intents)
+          .catch(() => options.intents ?? (["exact"] as const));
+      return deterministic(
+        "session-changed",
+        advised.decision,
+        true,
+        currentContext,
+        {
+          summary,
+          deterministicIntents: staleDeterministicIntents,
+        },
+      );
+    }
+
+    const projectEgressAfter = resolveJevProjectEgressPolicyV1(root);
+    if (!projectEgressAfter.allowed)
+      return deterministic(projectEgressAfter.reasonCode, advised.decision);
 
     const intents = suggestedLocalIntents(advised.plan.intents);
+    const deterministicResult = await planRetrievalWithJevV1(fallbackInput);
     return attachPlanningReceipt(pack, {
       source:
         advised.source === "jev-advised" && intents.length > 1
           ? "jev-advised"
           : "deterministic",
       intents,
+      summary,
+      deterministicIntents: deterministicResult.plan.intents,
+      result: advised,
+      decision: advised.decision,
       ...(advised.decision?.status === "fallback"
-        ? { fallbackReasonCode: advised.decision.fallback.reasonCode }
+        ? {
+            fallbackReasonCode: advised.decision.fallback.reasonCode,
+            fallbackExplanation: advised.decision.fallback.explanation,
+          }
         : {}),
     });
   } catch {

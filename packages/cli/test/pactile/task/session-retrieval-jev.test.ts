@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runContextCliAsync } from "../../../src/commands/context.js";
 import { runTaskCli } from "../../../src/commands/task.js";
+import { fingerprintPactileContractV1 } from "../../../src/core/index.js";
 import { resolveJevProjectEgressPolicyV1 } from "../../../src/pactile/jev/project-policy.js";
 import { compileSessionPack } from "../../../src/pactile/task/session-pack.js";
 import { compileSessionRetrievalPlanWithJevV1 } from "../../../src/pactile/task/session-retrieval-jev.js";
@@ -237,11 +238,30 @@ describe("V2 Session Jev retrieval planning", () => {
       source: "jev-advised",
       intents: ["exact", "semantic"],
       fallback: null,
+      audit: {
+        schemaVersion: 1,
+        status: "answered",
+        node: "retrieval-planning",
+        candidateIntents: ["semantic", "structural"],
+        suggestedIntents: ["semantic"],
+        deterministicIntents: ["exact"],
+        adoptedIntents: ["semantic"],
+        overriddenIntents: [],
+        application: "adopted",
+        outboundAttempted: true,
+        model: "jev-test-model",
+        inputTokens: 20,
+        outputTokens: 2,
+        estimatedInputCostMicrousd: 1,
+      },
     });
     expect(
       (pack.retrievalPlanning as { intents: string[] }).intents,
     ).not.toContain("external");
-    expect(pack).not.toHaveProperty("retrievalPlan.audit");
+    expect(
+      (pack.retrievalPlanning as { audit: { inputFingerprint: string } }).audit
+        .inputFingerprint,
+    ).toMatch(/^sha256:[a-f0-9]{64}$/u);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const retrievalCapture = captures[0] as
@@ -281,6 +301,22 @@ describe("V2 Session Jev retrieval planning", () => {
         reasonCode: "configuration-missing",
         explanation: expect.any(String),
       },
+      audit: {
+        status: "fallback",
+        node: "retrieval-planning",
+        candidateIntents: ["semantic", "structural"],
+        suggestedIntents: [],
+        deterministicIntents: ["exact"],
+        adoptedIntents: [],
+        overriddenIntents: [],
+        application: "not-applied",
+        outboundAttempted: false,
+        model: null,
+        fallback: {
+          reasonCode: "configuration-missing",
+          explanation: expect.any(String),
+        },
+      },
     });
   });
 
@@ -300,6 +336,16 @@ describe("V2 Session Jev retrieval planning", () => {
       fallback: {
         reasonCode: "egress-denied",
         explanation: expect.any(String),
+      },
+      audit: {
+        status: "fallback",
+        application: "not-applied",
+        outboundAttempted: false,
+        model: null,
+        fallback: {
+          reasonCode: "egress-denied",
+          explanation: expect.any(String),
+        },
       },
     });
   });
@@ -402,6 +448,16 @@ describe("V2 Session Jev retrieval planning", () => {
           reasonCode: "sensitive-content",
           explanation: expect.any(String),
         },
+        audit: {
+          status: "fallback",
+          application: "not-applied",
+          outboundAttempted: false,
+          model: null,
+          fallback: {
+            reasonCode: "sensitive-content",
+            explanation: expect.any(String),
+          },
+        },
       });
       expect(JSON.stringify(planned.retrievalPlanning)).not.toContain(
         sensitiveValue,
@@ -448,6 +504,10 @@ describe("V2 Session Jev retrieval planning", () => {
         explanation: expect.any(String),
       },
     });
+    const currentPack = compileSessionPack(root, true);
+    expect((planned.kernel as { taskId: string }).taskId).toBe(
+      (currentPack.kernel as { taskId: string }).taskId,
+    );
   });
 
   it("discards Jev advice when the selected Task changes in flight", async () => {
@@ -489,6 +549,155 @@ describe("V2 Session Jev retrieval planning", () => {
       fallback: {
         reasonCode: "session-changed",
         explanation: expect.any(String),
+      },
+      audit: {
+        status: "discarded-stale",
+        application: "discarded",
+        suggestedIntents: ["semantic"],
+        overriddenIntents: ["semantic"],
+        outboundAttempted: true,
+        model: "jev-test-model",
+      },
+    });
+    const currentPack = compileSessionPack(root, true);
+    expect((planned.kernel as { taskId: string }).taskId).toBe(
+      (currentPack.kernel as { taskId: string }).taskId,
+    );
+  });
+
+  it("keeps the stale Jev audit tied to the old phase while returning the current pack", async () => {
+    const root = createRoot();
+    createTask(root, "session-retrieval-second", "Second retrieval task");
+    vi.stubEnv("PACTILE_JEV_API_KEY", API_KEY);
+    const captures: Record<string, unknown>[] = [];
+    const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        questions?: Record<string, unknown>;
+        state?: { taskSummary?: string };
+      };
+      captures.push(body as Record<string, unknown>);
+      runTask(root, ["select", "session-retrieval-second"]);
+      runTask(root, [
+        "run-start",
+        "session-retrieval-second",
+        "--approved-by",
+        "test",
+        "--authorization-scope",
+        "test-session",
+        "--authorization-evidence",
+        "test-evidence",
+        "--input-summary",
+        "test input",
+      ]);
+      const answers = Object.fromEntries(
+        Object.keys(body.questions ?? {}).map((name) => [
+          name,
+          choice(name === "semantic" ? "include" : "exclude"),
+        ]),
+      );
+      return new Response(
+        JSON.stringify({
+          model: "jev-test-model",
+          answers,
+          usage: { input_tokens: 20, output_tokens: 2 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const pack = compileSessionPack(root, true);
+
+    const planned = await compileSessionRetrievalPlanWithJevV1(root, pack);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(captures[0]?.state).toMatchObject({
+      taskSummary:
+        "V2 Session fact gap in phase define. Decide whether semantic or structural local retrieval should supplement exact search.",
+    });
+    expect(planned.kernel).toMatchObject({ phase: "execute" });
+    expect(planned.retrievalPlanning).toMatchObject({
+      source: "deterministic",
+      intents: ["exact"],
+      fallback: {
+        reasonCode: "session-changed",
+        explanation: expect.any(String),
+      },
+      audit: {
+        status: "discarded-stale",
+        application: "discarded",
+        deterministicIntents: ["exact"],
+        suggestedIntents: ["semantic"],
+        overriddenIntents: ["semantic"],
+      },
+    });
+    const audit = (
+      planned.retrievalPlanning as {
+        audit: { inputFingerprint: string };
+      }
+    ).audit;
+    expect(audit.inputFingerprint).toBe(
+      fingerprintPactileContractV1({
+        schemaVersion: 1,
+        kind: "pactile.session.retrieval-jev-input",
+        summary:
+          "V2 Session fact gap in phase define. Decide whether semantic or structural local retrieval should supplement exact search.",
+        candidateIntents: ["semantic", "structural"],
+        deterministicIntents: ["exact"],
+      }),
+    );
+  });
+
+  it("drops Jev advice when project egress is denied after the response", async () => {
+    const root = createRoot("jev:\n  egress: allow\n");
+    vi.stubEnv("PACTILE_JEV_API_KEY", API_KEY);
+    const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        questions?: Record<string, unknown>;
+      };
+      fs.writeFileSync(
+        path.join(root, ".pactile", "config.yaml"),
+        "jev:\n  egress: deny\n",
+      );
+      const answers = Object.fromEntries(
+        Object.keys(body.questions ?? {}).map((name) => [
+          name,
+          choice(name === "semantic" ? "include" : "exclude"),
+        ]),
+      );
+      return new Response(
+        JSON.stringify({
+          model: "jev-test-model",
+          answers,
+          usage: { input_tokens: 20, output_tokens: 2 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const pack = compileSessionPack(root, true);
+
+    const planned = await compileSessionRetrievalPlanWithJevV1(root, pack);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(planned.retrievalPlanning).toMatchObject({
+      source: "deterministic",
+      intents: ["exact"],
+      fallback: {
+        reasonCode: "egress-denied",
+        explanation: expect.any(String),
+      },
+      audit: {
+        status: "fallback",
+        application: "overridden",
+        suggestedIntents: ["semantic"],
+        adoptedIntents: [],
+        overriddenIntents: ["semantic"],
+        outboundAttempted: true,
+        model: "jev-test-model",
+        fallback: {
+          reasonCode: "egress-denied",
+          explanation: expect.any(String),
+        },
       },
     });
   });

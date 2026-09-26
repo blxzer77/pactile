@@ -36,4 +36,11 @@ jev:
 
 省略 `jev.egress` 时，有效或不存在的 `.pactile/config.yaml` 默认允许这次有界建议，但必须配置 `PACTILE_JEV_API_KEY`。`PACTILE_JEV_ENABLED=false` 会禁用建议。`egress: allow` 可显式记录默认值；`egress: deny` 会阻止请求。未知值、重复或有歧义的 Jev 配置、配置读取或解析不确定都会 fail closed，回退到确定性 exact 计划。密钥只从进程环境读取，不写入 Session receipt。
 
+Session pack 会保留原有的 `retrievalPlanning` 字段，并增加脱敏的
+`retrievalPlanning.audit` 回执。回执记录 retrieval-planning 节点、有界输入摘要的
+指纹、semantic 与 structural 候选 intent、Jev 建议、确定性 intent、已采用或被覆盖
+的 intent、模型、传输延迟、尝试次数、usage 与预计输入成本。回执不包含摘要正文、源码
+片段、API key 或 Provider 响应正文。项目 deny、敏感内容命中、密钥缺失或传输失败都会
+记录 fallback 审计，并保留 exact 计划。
+
 此项目开关同时管理 Jev 检索规划与 selected Task 的 Tile Session 建议。Tile 建议遇到项目 deny 或无效配置时，会在 HTTP 前阻止 Jev，即使历史 active Run grant 曾允许外发。项目 allow 只是额外一道门：当前 active Run grant 仍须独立允许目标地址和其他 Jev 策略条件。
