@@ -89,9 +89,9 @@ facade, `sentRequestSnapshot` only when transport reports an HTTP attempt, and
 the final receipt. A fallback or superseded answer therefore retains the
 request-time candidates and digest even when the final eligible set changed.
 The audit also records suggested/adopted/overridden order, the change flag,
-reason code, and available latency/transport metrics. It does not store the
-provider-reported `first_task` confidence, marked unavailable when omitted or
-invalid. It does not infer confidence from the selected order, request text,
+reason code, available latency/transport metrics, and the provider-reported
+`first_task` confidence when valid. Omitted or invalid confidence is marked
+unavailable. It does not infer confidence from the selected order, request text,
 provider key, raw errors, or request ID. If approval, worktree,
 dependencies, conflicts, leases, or the candidate group changes during the
 request, the answer is marked superseded and the final receipt uses the
