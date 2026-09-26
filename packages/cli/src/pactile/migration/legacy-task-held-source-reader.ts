@@ -31,11 +31,19 @@ export interface LegacyTaskHeldSourceFile {
 export interface LegacyTaskHeldSourceView {
   readonly taskPath: string;
   readonly status: "held-source-read-only";
-  readonly migrationStatus: "needs-definition" | "needs-coordination";
+  readonly migrationStatus:
+    | "needs-definition"
+    | "needs-coordination"
+    | "archived-historical-only";
   readonly legacyTaskId: string;
+  readonly archived: boolean;
+  readonly missingDefinitionFields: readonly string[];
+  readonly coordinationReasons: readonly string[];
   readonly runnable: false;
   readonly lifecyclePolicy: "source-only-no-v2-run-review-or-close";
   readonly sourceFingerprint: string;
+  readonly legacySourceMetadata?: LegacyTaskImportRecord["legacySourceMetadata"];
+  readonly legacyHistoryDiagnostics?: readonly string[];
   readonly files: readonly LegacyTaskHeldSourceFile[];
 }
 
@@ -67,11 +75,16 @@ function heldTaskRelativePath(value: string): string {
   const relative = value.startsWith(`${SOURCE_PATH_PREFIX}`)
     ? value.slice(SOURCE_PATH_PREFIX.length)
     : value;
+  const parts = relative.split("/");
+  const archived = parts[0]?.toLowerCase() === "archive";
   if (
     !validRelativePath(relative) ||
     relative.length > 2048 ||
-    relative.split("/").length > 32 ||
-    relative.split("/").some((part) => part.toLowerCase() === "archive")
+    parts.length > 32 ||
+    parts.some(
+      (part, index) =>
+        part.toLowerCase() === "archive" && !(archived && index === 0),
+    )
   ) {
     throw new Error("legacy-task-held-history-path-invalid");
   }
@@ -270,7 +283,8 @@ export function readLegacyTaskHeldSource(
   if (
     record.taskPath !== canonicalTaskPath ||
     (record.status !== "needs-definition" &&
-      record.status !== "needs-coordination")
+      record.status !== "needs-coordination" &&
+      record.status !== "archived-historical-only")
   ) {
     throw new Error("legacy-task-held-history-task-not-held");
   }
@@ -304,7 +318,8 @@ export function readLegacyTaskHeldSource(
   }
   if (
     !scannedTask ||
-    scannedTask.archivedByPath ||
+    scannedTask?.archivedByPath !==
+      (record.status === "archived-historical-only") ||
     scannedTask.preflight !== "clear-to-review" ||
     !scannedTask.sourceFingerprint ||
     !scannedFacts ||
@@ -332,9 +347,18 @@ export function readLegacyTaskHeldSource(
     status: "held-source-read-only",
     migrationStatus: record.status,
     legacyTaskId: record.legacyTaskId,
+    archived: record.status === "archived-historical-only",
+    missingDefinitionFields: record.missingDefinitionFields,
+    coordinationReasons: record.coordinationReasons,
     runnable: false,
     lifecyclePolicy: "source-only-no-v2-run-review-or-close",
     sourceFingerprint: view.authority.sourceFingerprint,
+    ...(record.legacySourceMetadata
+      ? { legacySourceMetadata: record.legacySourceMetadata }
+      : {}),
+    ...(record.legacyHistoryDiagnostics
+      ? { legacyHistoryDiagnostics: record.legacyHistoryDiagnostics }
+      : {}),
     files,
   };
 }

@@ -31,8 +31,19 @@ describe("legacy Task source migration preflight", () => {
   });
 
   it("preserves v0.5-shaped Task, Kernel, task-map, and document source without writes", () => {
-    const original = scanLegacyTaskMigration({ projectRoot: FIXTURE_ROOT });
-    const repeated = scanLegacyTaskMigration({ projectRoot: FIXTURE_ROOT });
+    const runtimePath = path.join(".pactile", "runtime");
+    fs.cpSync(FIXTURE_ROOT, tmp, {
+      recursive: true,
+      filter(source) {
+        const relative = path.relative(FIXTURE_ROOT, source);
+        return (
+          relative !== runtimePath &&
+          !relative.startsWith(`${runtimePath}${path.sep}`)
+        );
+      },
+    });
+    const original = scanLegacyTaskMigration({ projectRoot: tmp });
+    const repeated = scanLegacyTaskMigration({ projectRoot: tmp });
 
     expect(original.readOnly).toBe(true);
     expect(original.wrote).toBe(false);
@@ -41,11 +52,11 @@ describe("legacy Task source migration preflight", () => {
       targetWriter: "P35 Task/Run/Review",
       writesPlanned: false,
     });
-    expect(original.preflight.status).toBe("blocked");
+    expect(original.preflight.status).toBe("clear-to-review");
     expect(original.findings).toContainEqual(
       expect.objectContaining({
         code: "invalid-kernel-json",
-        severity: "blocker",
+        severity: "warning",
         sourcePath: ".pactile/tasks/08-23-interrupted/kernel.json",
       }),
     );
@@ -116,7 +127,7 @@ describe("legacy Task source migration preflight", () => {
 
     for (const task of original.tasks) {
       for (const source of task.files) {
-        const diskBytes = fs.readFileSync(path.join(FIXTURE_ROOT, source.path));
+        const diskBytes = fs.readFileSync(path.join(tmp, source.path));
         const plannedBytes =
           source.encoding === "utf8"
             ? Buffer.from(source.content, "utf8")
@@ -172,6 +183,33 @@ describe("legacy Task source migration preflight", () => {
     ).toEqual(before);
     expect(fs.existsSync(path.join(orphan, "task.json"))).toBe(false);
   });
+
+  it.each(["design.md", "implement.md", "handoff.md"])(
+    "fails closed when %s is the only file in an orphan source directory",
+    (name) => {
+      const orphan = path.join(tmp, ".pactile", "tasks", `orphan-${name}`);
+      fs.mkdirSync(orphan, { recursive: true });
+      fs.writeFileSync(
+        path.join(orphan, name),
+        "legacy source bytes\n",
+        "utf8",
+      );
+
+      const plan = scanLegacyTaskMigration({ projectRoot: tmp });
+
+      expect(plan.preflight.status).toBe("blocked");
+      expect(plan.findings).toContainEqual(
+        expect.objectContaining({
+          code: "orphan-task-artifacts",
+          severity: "blocker",
+          sourcePath: `.pactile/tasks/orphan-${name}`,
+        }),
+      );
+      expect(fs.readFileSync(path.join(orphan, name), "utf8")).toBe(
+        "legacy source bytes\n",
+      );
+    },
+  );
 
   it("returns an empty read-only plan when no legacy tasks root exists", () => {
     const plan = scanLegacyTaskMigration({ projectRoot: tmp });

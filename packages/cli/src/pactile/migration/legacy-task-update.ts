@@ -12,6 +12,7 @@ import { assertLegacyTaskMigrationAuthorityOrCleanStore } from "../../core/task/
 import { assertLegacyTaskKernelMigrationOverlaysIntact } from "../../core/task/task-kernel-store-v2.js";
 import {
   canResumeLegacyTaskBatchWithoutAuthority,
+  legacyTaskBatchTaskIdConflict,
   readPreparedLegacyTaskBatch,
   runLegacyTaskBatch,
   type LegacyTaskBatchResult,
@@ -61,6 +62,18 @@ function inspectWithCurrentSource(
     }
   }
   if (active) assertLegacyTaskKernelMigrationOverlaysIntact(projectRoot);
+  if (!active) {
+    const taskIdConflict = legacyTaskBatchTaskIdConflict(projectRoot, imported.targets);
+    if (taskIdConflict) {
+      return {
+        status: "blocked",
+        plan,
+        import: imported,
+        activeBatchId: null,
+        reason: taskIdConflict,
+      };
+    }
+  }
   if (active) {
     if (
       plan.preflight.status !== "clear-to-review" ||

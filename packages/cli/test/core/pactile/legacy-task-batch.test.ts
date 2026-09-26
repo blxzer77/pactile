@@ -584,12 +584,49 @@ describe("legacy Task batch staging transaction", () => {
       process.cwd(),
       "test/fixtures/pactile/p36-legacy-task-source/input",
     );
-    const blockedRequest = requestFor(blockedFixture);
+    const blockedCopy = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pactile-p36-batch-blocked-"),
+    );
+    temporaryRoots.push(blockedCopy);
+    const runtimePath = path.join(".pactile", "runtime");
+    fs.cpSync(blockedFixture, blockedCopy, {
+      recursive: true,
+      filter(source) {
+        const relative = path.relative(blockedFixture, source);
+        return (
+          relative !== runtimePath &&
+          !relative.startsWith(`${runtimePath}${path.sep}`)
+        );
+      },
+    });
+    const orphanDir = path.join(
+      blockedCopy,
+      ".pactile",
+      "tasks",
+      "orphan-design-only",
+    );
+    fs.mkdirSync(orphanDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(orphanDir, "design.md"),
+      "A real unindexed legacy artifact.\n",
+      "utf8",
+    );
+    const blockedRequest = requestFor(blockedCopy);
+    expect(blockedRequest.plan.preflight.status).toBe("blocked");
+    expect(blockedRequest.plan.findings).toContainEqual(
+      expect.objectContaining({
+        code: "orphan-task-artifacts",
+        sourcePath: ".pactile/tasks/orphan-design-only",
+      }),
+    );
     const blocked = await runLegacyTaskBatch(blockedRequest, {
       approved: true,
     });
     expect(blocked).toMatchObject({ status: "blocked", wrote: false });
-    expect(fs.existsSync(storePath(blockedFixture))).toBe(false);
+    expect(fs.existsSync(storePath(blockedCopy))).toBe(false);
+    expect(fs.readFileSync(path.join(orphanDir, "design.md"), "utf8")).toBe(
+      "A real unindexed legacy artifact.\n",
+    );
   });
 
   it("reports stable byte fingerprints for immutable backups", async () => {

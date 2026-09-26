@@ -32,6 +32,7 @@ import {
   readLegacyTaskImportRecord,
   readLegacyTaskMigrationFile,
   readLegacyTaskMigrationView,
+  assertValidatedLegacyTaskMigrationView,
   type LegacyTaskImportRecord,
   type LegacyTaskMigrationView,
 } from "./legacy-task-migration-reader.js";
@@ -69,7 +70,11 @@ interface LegacyTaskKernelOverlayJournalEntry {
   readonly kernelFingerprint: string;
 }
 
-export function readTaskKernel(options: { root: string; taskDir: string; cwd?: string }): AnyTaskKernelReadResult {
+export function readTaskKernel(options: {
+  root: string;
+  taskDir: string;
+  cwd?: string;
+}): AnyTaskKernelReadResult {
   const root = canonicalProjectRoot(options.root, options.cwd);
   const taskDir = resolveInsideTasksRoot(root, options.taskDir, options.cwd);
   let migrationView: ReturnType<typeof readLegacyTaskMigrationView>;
@@ -78,6 +83,30 @@ export function readTaskKernel(options: { root: string; taskDir: string; cwd?: s
   } catch (error) {
     throw new KernelError("CORRUPT_STATE", error instanceof Error ? error.message : String(error));
   }
+  return readTaskKernelUsingMigrationView(root, taskDir, options.cwd, migrationView);
+}
+
+/** Internal migration transaction seam; callers cannot supply a fabricated view. */
+export function readTaskKernelWithValidatedMigrationView(
+  options: { root: string; taskDir: string; cwd?: string },
+  migrationView: LegacyTaskMigrationView,
+): AnyTaskKernelReadResult {
+  try {
+    assertValidatedLegacyTaskMigrationView(migrationView);
+  } catch (error) {
+    throw new KernelError("CORRUPT_STATE", error instanceof Error ? error.message : String(error));
+  }
+  const root = canonicalProjectRoot(options.root, options.cwd);
+  const taskDir = resolveInsideTasksRoot(root, options.taskDir, options.cwd);
+  return readTaskKernelUsingMigrationView(root, taskDir, options.cwd, migrationView);
+}
+
+function readTaskKernelUsingMigrationView(
+  root: string,
+  taskDir: string,
+  cwd: string | undefined,
+  migrationView: LegacyTaskMigrationView | null,
+): AnyTaskKernelReadResult {
   const importRecord = readLegacyTaskImportRecord(root, taskDir, migrationView);
   if (importRecord?.status === "needs-definition") {
     throw new KernelError(
@@ -99,7 +128,7 @@ export function readTaskKernel(options: { root: string; taskDir: string; cwd?: s
       taskDir,
       record: importRecord,
       view: migrationView,
-      cwd: options.cwd,
+      cwd,
     });
     if (overlayBytes) {
       let overlayDocument: unknown;
@@ -120,7 +149,7 @@ export function readTaskKernel(options: { root: string; taskDir: string; cwd?: s
     }
     return { kind: "task-kernel-v2", kernel: parseTaskKernelSnapshotV2(document) };
   }
-  const document = withKernelStateLock(taskDir, options.cwd, (dir) => readKernelStateDocument(dir));
+  const document = withKernelStateLock(taskDir, cwd, (dir) => readKernelStateDocument(dir));
   if (isPlainObject(document) && document.schemaVersion === TASK_KERNEL_SCHEMA_VERSION) {
     return {
       kind: "task-kernel-v2",
@@ -129,7 +158,7 @@ export function readTaskKernel(options: { root: string; taskDir: string; cwd?: s
   }
   return {
     kind: "legacy-task-kernel-v1",
-    kernel: readKernel({ taskDir, cwd: options.cwd }),
+    kernel: readKernel({ taskDir, cwd }),
   };
 }
 
@@ -221,15 +250,29 @@ export function listTaskKernelSnapshots(root: string): { taskDir: string; kernel
 /** Refuse mutations when an active imported Task overlay has lost integrity. */
 export function assertLegacyTaskKernelMigrationOverlaysIntact(
   root: string,
-  validatedView?: LegacyTaskMigrationView | null,
 ): void {
   const canonicalRoot = canonicalProjectRoot(root);
-  // A caller may pass a base view read and verified by the migration reader
-  // when the reconciliation pointer is absent but exact precommit recovery is
-  // otherwise allowed. Never make this checker reconstruct a missing view.
-  const migrationView = validatedView === undefined
-    ? readLegacyTaskMigrationView(canonicalRoot)
-    : validatedView;
+  const migrationView = readLegacyTaskMigrationView(canonicalRoot);
+  assertLegacyTaskKernelMigrationOverlaysIntactUsingView(canonicalRoot, migrationView);
+}
+
+/** Internal reconciliation seam for a reader-validated precommit snapshot. */
+export function assertLegacyTaskKernelMigrationOverlaysIntactWithValidatedMigrationView(
+  root: string,
+  migrationView: LegacyTaskMigrationView,
+): void {
+  try {
+    assertValidatedLegacyTaskMigrationView(migrationView);
+  } catch (error) {
+    throw new KernelError("CORRUPT_STATE", error instanceof Error ? error.message : String(error));
+  }
+  assertLegacyTaskKernelMigrationOverlaysIntactUsingView(canonicalProjectRoot(root), migrationView);
+}
+
+function assertLegacyTaskKernelMigrationOverlaysIntactUsingView(
+  canonicalRoot: string,
+  migrationView: LegacyTaskMigrationView | null,
+): void {
   if (!migrationView) return;
   for (const taskDir of listLegacyTaskMigrationDirectories(canonicalRoot, migrationView)) {
     const record = readLegacyTaskImportRecord(canonicalRoot, taskDir, migrationView);

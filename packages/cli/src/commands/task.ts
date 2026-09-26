@@ -1878,6 +1878,19 @@ function listTasks(args: string[], root: string): void {
   };
   const requiredPhase = status ? (phaseForStatus[status] ?? status) : undefined;
   const migrationRecords = listLegacyTaskImportRecords(root);
+  const restoredSourcePaths = new Set(
+    migrationRecords.flatMap(({ record }) => {
+      if (record.status !== "imported") return [];
+      const taskJsonPath =
+        record.legacySourceMetadata?.fileReferences.taskJson?.path;
+      if (!taskJsonPath?.startsWith(".pactile/tasks/") || !taskJsonPath.endsWith("/task.json"))
+        return [];
+      const sourceTaskPath = taskJsonPath.slice(0, -"/task.json".length);
+      return sourceTaskPath === record.taskPath
+        ? []
+        : [sourceTaskPath.slice(".pactile/tasks/".length)];
+    }),
+  );
   const migrationByDirectory = new Map(
     migrationRecords.map((item) => [path.resolve(item.taskDir), item.record]),
   );
@@ -1888,7 +1901,13 @@ function listTasks(args: string[], root: string): void {
       (!status || record.status === status),
   );
   const pendingImports = migrationRecords.filter(({ taskDir, record }) => {
-    if (record.status === "imported") return false;
+    if (
+      record.status === "imported" ||
+      record.status === "archived-historical-only" ||
+      restoredSourcePaths.has(
+        path.relative(path.join(root, ".pactile", "tasks"), taskDir).replaceAll("\\", "/"),
+      )
+    ) return false;
     const raw = taskRecord(taskDir);
     return (
       (!assignee || raw?.assignee === assignee) &&

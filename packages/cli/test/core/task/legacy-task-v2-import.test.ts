@@ -10,7 +10,10 @@ import { runTaskCli } from "../../../src/commands/task.js";
 import { runContextCli } from "../../../src/commands/context.js";
 import { buildLegacyTaskV2Import } from "../../../src/core/task/legacy-task-v2-import.js";
 import { scanLegacyTaskMigration } from "../../../src/core/task/legacy-task-migration.js";
-import { legacyTaskMigrationOverlayPath } from "../../../src/core/task/legacy-task-migration-reader.js";
+import {
+  legacyTaskMigrationOverlayPath,
+  readLegacyTaskImportRecord,
+} from "../../../src/core/task/legacy-task-migration-reader.js";
 import {
   listTaskKernelSnapshots,
   readTaskKernel,
@@ -25,6 +28,15 @@ const RELEASE_WRITER_FIXTURE_ROOT = fileURLToPath(
 const RELEASE_WRITER_PROVENANCE = fileURLToPath(
   new URL(
     "../../fixtures/legacy-v050-task-source/provenance.json",
+    import.meta.url,
+  ),
+);
+const FULL_RELEASE_WRITER_FIXTURE_ROOT = fileURLToPath(
+  new URL("../../fixtures/legacy-v050-full-task-source/input", import.meta.url),
+);
+const FULL_RELEASE_WRITER_PROVENANCE = fileURLToPath(
+  new URL(
+    "../../fixtures/legacy-v050-full-task-source/provenance.json",
     import.meta.url,
   ),
 );
@@ -585,6 +597,69 @@ describe("legacy Task to V2 import mapping", () => {
     expect(fs.existsSync(path.join(child, "kernel.json"))).toBe(false);
   });
 
+  it("parses a multiline root Task Map dependency list and retains warn as historical", () => {
+    const root = makeRoot();
+    const blocking = addLegacyTask(root, {
+      id: "root-block-owner",
+      directory: "01-root-block",
+      prd: prd(),
+    });
+    const advisory = addLegacyTask(root, {
+      id: "root-warn-owner",
+      directory: "02-root-warn",
+      prd: prd(),
+    });
+    addLegacyTask(root, {
+      id: "root-prerequisite",
+      directory: "03-root-prerequisite",
+      prd: prd(),
+    });
+    fs.writeFileSync(
+      path.join(blocking, "task-map.md"),
+      `---\ndepends_mode: block\ndepends_on:\n  - root-prerequisite\n---\n`,
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(advisory, "task-map.md"),
+      `---\ndepends_mode: warn\ndepends_on:\n  - missing-advisory-target\n---\n`,
+      "utf8",
+    );
+
+    const { plan, imported } = importPlan(root);
+
+    expect(plan.preflight.status).toBe("clear-to-review");
+    expect(imported).toMatchObject({
+      imported: 3,
+      needsCoordination: 0,
+      needsDefinition: 0,
+    });
+    const blockingKernel = JSON.parse(
+      requiredTarget(
+        imported.targets,
+        ".pactile/tasks/01-root-block/kernel.json",
+      ).bytes.toString("utf8"),
+    ) as { definition: { dependencies: string[] } };
+    const advisoryKernel = JSON.parse(
+      requiredTarget(
+        imported.targets,
+        ".pactile/tasks/02-root-warn/kernel.json",
+      ).bytes.toString("utf8"),
+    ) as { definition: { dependencies: string[] } };
+    expect(blockingKernel.definition.dependencies).toEqual([
+      "root-prerequisite",
+    ]);
+    expect(advisoryKernel.definition.dependencies).toEqual([]);
+    const advisoryRecord = JSON.parse(
+      requiredTarget(
+        imported.targets,
+        ".pactile/tasks/02-root-warn/legacy-import.json",
+      ).bytes.toString("utf8"),
+    ) as { dependencyFacts: { diagnostics: string[] } };
+    expect(advisoryRecord.dependencyFacts.diagnostics.join(" ")).toContain(
+      "warn-mode-preserved:",
+    );
+  });
+
   it("holds an explicitly blocking Task Map edge when its reference list cannot be parsed", () => {
     const root = makeRoot();
     const parent = addLegacyTask(root, {
@@ -718,7 +793,32 @@ describe("legacy Task to V2 import mapping", () => {
     }
   });
 
-  it("blocks the entire source set for a damaged legacy Kernel before preparing any V2 target", () => {
+  it("parses populated Chinese 验收标准 with the same semantics as Acceptance Criteria", () => {
+    const root = makeRoot();
+    addLegacyTask(root, {
+      id: "chinese-criteria-task",
+      directory: "01-chinese-criteria",
+      prd: "# 需求\n\n## 验收标准\n\n- 输出保持原始编码与内容。\n",
+    });
+
+    const { imported } = importPlan(root);
+    const kernel = JSON.parse(
+      requiredTarget(
+        imported.targets,
+        ".pactile/tasks/01-chinese-criteria/kernel.json",
+      ).bytes.toString("utf8"),
+    ) as {
+      phase: string;
+      definition: { acceptanceCriteria: { description: string }[] };
+    };
+    expect(imported).toMatchObject({ imported: 1, needsDefinition: 0 });
+    expect(kernel.phase).toBe("define");
+    expect(kernel.definition.acceptanceCriteria).toMatchObject([
+      { description: "输出保持原始编码与内容。" },
+    ]);
+  });
+
+  it("keeps a damaged legacy Kernel available as a held history gap without blocking other sources", async () => {
     const root = makeRoot();
     addLegacyTask(root, {
       id: "valid-task",
@@ -731,17 +831,44 @@ describe("legacy Task to V2 import mapping", () => {
       prd: prd(),
       kernel: "{ broken legacy kernel\n",
     });
+    const damagedKernelBytes = fs.readFileSync(
+      path.join(root, ".pactile", "tasks", "02-damaged", "kernel.json"),
+    );
     const { plan, imported } = importPlan(root);
-    expect(plan.preflight.status).toBe("blocked");
+    expect(plan.preflight.status).toBe("clear-to-review");
     expect(
       plan.findings.some((finding) => finding.code === "invalid-kernel-json"),
     ).toBe(true);
-    expect(imported.targets).toEqual([]);
+    expect(imported).toMatchObject({ imported: 1, needsDefinition: 1 });
+    const interruptedRecord = JSON.parse(
+      requiredTarget(
+        imported.targets,
+        ".pactile/tasks/02-damaged/legacy-import.json",
+      ).bytes.toString("utf8"),
+    ) as {
+      status: string;
+      missingDefinitionFields: string[];
+      legacyHistoryDiagnostics: string[];
+    };
+    expect(interruptedRecord).toMatchObject({
+      status: "needs-definition",
+      missingDefinitionFields: ["legacyHistoryGap"],
+      legacyHistoryDiagnostics: [
+        "legacy-kernel-unparsed:.pactile/tasks/02-damaged/kernel.json",
+      ],
+    });
+    await commitImport(root);
     expect(
-      fs.existsSync(
-        path.join(root, ".pactile", "runtime", "legacy-task-migrations"),
+      fs.readFileSync(
+        path.join(root, ".pactile", "tasks", "02-damaged", "kernel.json"),
       ),
-    ).toBe(false);
+    ).toEqual(damagedKernelBytes);
+    expect(
+      readLegacyTaskImportRecord(
+        root,
+        path.join(root, ".pactile", "tasks", "02-damaged"),
+      ),
+    ).toMatchObject({ status: "needs-definition" });
   });
 
   it("preserves a tagged v0.5.0 writer-generated Task byte-for-byte as needs-definition", async () => {
@@ -852,5 +979,201 @@ describe("legacy Task to V2 import mapping", () => {
     expect(kernelError).toMatchObject({
       code: "LEGACY_TASK_REQUIRES_DEFINITION",
     });
+  });
+
+  it("preserves the tagged v0.5.0 Full writer facts as queryable source metadata without inventing a V2 level", async () => {
+    const provenance = JSON.parse(
+      fs.readFileSync(FULL_RELEASE_WRITER_PROVENANCE, "utf8"),
+    ) as {
+      provenance: { ref: string; commit: string; invocation: string };
+      files: { path: string; sha256: string }[];
+    };
+    expect(provenance.provenance).toMatchObject({
+      ref: "pactile-v0.5.0",
+      commit: "ad98139610b71822c23293894aabb3e99d149bdd",
+      invocation: "op=create with extras.required_controls.rigor=full",
+    });
+    for (const file of provenance.files) {
+      const source = fs.readFileSync(
+        path.join(FULL_RELEASE_WRITER_FIXTURE_ROOT, ...file.path.split("/")),
+      );
+      expect(createHash("sha256").update(source).digest("hex")).toBe(
+        file.sha256,
+      );
+    }
+
+    const root = makeRoot();
+    fs.cpSync(FULL_RELEASE_WRITER_FIXTURE_ROOT, root, { recursive: true });
+    const taskDir = path.join(root, ".pactile", "tasks", "full-probe");
+    const sourceBytes = new Map(
+      fs
+        .readdirSync(taskDir)
+        .map((name) => [name, fs.readFileSync(path.join(taskDir, name))]),
+    );
+    const { plan, imported, result } = await commitImport(root);
+    expect(plan.preflight.status).toBe("clear-to-review");
+    expect(imported).toMatchObject({
+      imported: 0,
+      needsDefinition: 1,
+      needsCoordination: 0,
+    });
+    const record = readLegacyTaskImportRecord(root, taskDir);
+    expect(record).toMatchObject({
+      status: "needs-definition",
+      legacySourceMetadata: {
+        parent: { present: true, value: null },
+        children: { present: true, value: [] },
+        typeMarkers: {
+          requiredControls: {
+            present: true,
+            value: { rigor: "full" },
+          },
+          topology: {
+            present: true,
+            value: { kind: "single", parent_id: null, children: [] },
+          },
+        },
+        fileReferences: {
+          taskJson: {
+            path: ".pactile/tasks/full-probe/task.json",
+            fingerprint: "sha256:7e4644a64a17b0e00df26ab995a097477a0ffd7be60c8d94883a26c8cc0b951d",
+          },
+        },
+      },
+      missingDefinitionFields: expect.arrayContaining([
+        "deliverable",
+        "deliveryLevel",
+        "acceptanceCriteria",
+      ]),
+    });
+    expect(
+      imported.targets.some(
+        (target) => target.path === ".pactile/tasks/full-probe/kernel.json",
+      ),
+    ).toBe(false);
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("Full fixture import failed");
+    for (const [name, bytes] of sourceBytes) {
+      expect(fs.readFileSync(path.join(taskDir, name))).toEqual(bytes);
+      const backup = path.join(
+        root,
+        ".pactile",
+        "runtime",
+        "legacy-task-migrations",
+        "sources",
+        result.sourceFingerprint.slice("sha256:".length),
+        "files",
+        ".pactile",
+        "tasks",
+        "full-probe",
+        name,
+      );
+      expect(fs.readFileSync(backup)).toEqual(bytes);
+    }
+  });
+
+  it("keeps synthetic Parent and Child facts queryable as source metadata", async () => {
+    const root = makeRoot();
+    const parentDir = addLegacyTask(root, {
+      id: "legacy-parent",
+      directory: "parent-probe",
+      deliverable: "TBD",
+      extra: {
+        parent: null,
+        children: ["legacy-child"],
+        task_kind: "parent",
+        meta: { classification: "parent-child" },
+        required_controls: { rigor: "full" },
+        topology: {
+          kind: "parent",
+          parent_id: null,
+          children: ["legacy-child"],
+        },
+      },
+    });
+    const childDir = addLegacyTask(root, {
+      id: "legacy-child",
+      directory: "child-probe",
+      deliveryLevel: "TBD",
+      extra: {
+        parent: "legacy-parent",
+        children: [],
+        task_type: "child",
+        topology: {
+          kind: "child",
+          parent_id: "legacy-parent",
+          children: [],
+        },
+      },
+    });
+    const parentBytes = fs.readFileSync(path.join(parentDir, "task.json"));
+    const childBytes = fs.readFileSync(path.join(childDir, "task.json"));
+
+    const { imported } = await commitImport(root);
+
+    expect(imported).toMatchObject({
+      imported: 0,
+      needsDefinition: 2,
+      needsCoordination: 0,
+    });
+    expect(
+      imported.targets.some((target) => target.path.endsWith("/kernel.json")),
+    ).toBe(false);
+    expect(readLegacyTaskImportRecord(root, parentDir)).toMatchObject({
+      status: "needs-definition",
+      legacySourceMetadata: {
+        parent: { present: true, value: null },
+        children: { present: true, value: ["legacy-child"] },
+        typeMarkers: {
+          topLevel: { task_kind: "parent" },
+          meta: { classification: "parent-child" },
+          requiredControls: { present: true, value: { rigor: "full" } },
+          topology: {
+            present: true,
+            value: {
+              kind: "parent",
+              parent_id: null,
+              children: ["legacy-child"],
+            },
+          },
+        },
+        fileReferences: {
+          taskJson: {
+            path: ".pactile/tasks/parent-probe/task.json",
+            fingerprint: `sha256:${createHash("sha256").update(parentBytes).digest("hex")}`,
+          },
+        },
+      },
+    });
+    expect(readLegacyTaskImportRecord(root, childDir)).toMatchObject({
+      status: "needs-definition",
+      legacySourceMetadata: {
+        parent: { present: true, value: "legacy-parent" },
+        children: { present: true, value: [] },
+        typeMarkers: {
+          topLevel: { task_type: "child" },
+          topology: {
+            present: true,
+            value: {
+              kind: "child",
+              parent_id: "legacy-parent",
+              children: [],
+            },
+          },
+        },
+        fileReferences: {
+          taskJson: {
+            path: ".pactile/tasks/child-probe/task.json",
+            fingerprint: `sha256:${createHash("sha256").update(childBytes).digest("hex")}`,
+          },
+        },
+      },
+    });
+    expect(fs.readFileSync(path.join(parentDir, "task.json"))).toEqual(
+      parentBytes,
+    );
+    expect(fs.readFileSync(path.join(childDir, "task.json"))).toEqual(
+      childBytes,
+    );
   });
 });

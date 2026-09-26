@@ -1,0 +1,3 @@
+input/** -text
+input/.pactile/tasks/p36-parent/task-map.md text eol=crlf
+provenance.json text eol=lf

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "legacy-v050-parent-child-source",
+  "provenance": {
+    "kind": "release-writer-generated",
+    "ref": "pactile-v0.5.0",
+    "commit": "ad98139610b71822c23293894aabb3e99d149bdd",
+    "writerPath": "pactile kernel --json op=create and task.py add-subtask",
+    "derivation": "A disposable P36 Temp project was generated with the locally tagged v0.5.0 writer. Only the generated parent/child Task, Kernel, and parent Task Map files are retained byte-for-byte for migration tests.",
+    "sourceFingerprint": "sha256:bd0b0994fbfbaafe80482a7ba6c2fec0b13296014f3056174c25eaadf7381637",
+    "isolation": "The source Temp project, D:\\MyHarness dogfood, tagged checkout, Git configuration, and remote state are outside this product fixture and were not changed.",
+    "limitations": "Synthetic writer evidence only. Task Map content remains exact source bytes; this fixture does not claim the Task Map's orchestration semantics are parsed or migrated. Parent/Child, required controls, rigor, and topology remain source metadata and do not become V2 model levels."
+  },
+  "files": [
+    {
+      "path": ".pactile/tasks/p36-child/kernel.json",
+      "sha256": "7745578e3f797d393e1e7cdafc295949355829f56395f0e6d2bf473dfc824bcb"
+    },
+    {
+      "path": ".pactile/tasks/p36-child/task.json",
+      "sha256": "b5a8c1d3769d52ec80b04022c6c1ecfcf35ecb14e05ca81ea6452e07db332bd5"
+    },
+    {
+      "path": ".pactile/tasks/p36-parent/kernel.json",
+      "sha256": "ddccc1ae6f1eb3180a1214270007d55fc27a90586e998531f757a5c7e557bbb0"
+    },
+    {
+      "path": ".pactile/tasks/p36-parent/task-map.md",
+      "sha256": "3cd2b0ab493fdb06b77d8a24842db9628c56a5d31cc3d6134a1c9d3ac86618d9"
+    },
+    {
+      "path": ".pactile/tasks/p36-parent/task.json",
+      "sha256": "1ebf1930b2dbd5aa7fd6c192162da1b732f529581c0cb5513ba17e35dc1652d9"
+    }
+  ]
+}

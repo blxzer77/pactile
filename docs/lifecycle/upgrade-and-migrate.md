@@ -86,6 +86,21 @@ inspect `pactile task list` and the source state before deciding whether to
 retry. For the structured Task artifact read pattern, see the
 [Chinese structured Task artifacts guide](../capabilities/structured-task-artifacts.zh-CN.md).
 
+Archived Tasks receive a verifiable historical-only index during `update`; the
+archive tree remains byte-for-byte unchanged and never receives a V2 Kernel.
+Read one with `pactile legacy-task history archive/<month>/<directory> --json`.
+To restore it as a new active Task, reconcile with an explicit `--target-path`
+and the missing definition fields. The new target starts in Define and does not
+inherit historical Run, Review, or Close state.
+
+A malformed or truncated legacy `kernel.json` is retained as an explicit
+`legacyHistoryGap` on a held Task. Read it with
+`pactile legacy-task history held/<task-path> --json`. After completing the
+definition and reviewing the gap, continue into a separate active target with
+`--acknowledge-history-gap --target-path <active-task-path> --approved`. This
+acknowledges only that the old lifecycle bytes cannot be parsed; it does not
+repair or reinterpret them, and the new V2 Task starts in Define.
+
 ## Existing installations moving to the Node entry (v0.6.0)
 
 Run these commands from each installed project's root after installing the

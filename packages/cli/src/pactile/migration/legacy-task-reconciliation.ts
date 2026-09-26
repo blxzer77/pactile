@@ -9,6 +9,7 @@ import {
   readLegacyTaskImportRecord,
   readLegacyTaskMigrationBaseView,
   readLegacyTaskMigrationView,
+  legacyTaskMigrationOverlayPath,
   type LegacyTaskImportRecord,
   type LegacyTaskMigrationFile,
   type LegacyTaskMigrationView,
@@ -19,7 +20,17 @@ import {
   type LegacyTaskReconciliationAuthority,
 } from "../../core/task/legacy-task-reconciliation-reader.js";
 import { readTaskKernel } from "../../core/task/task-kernel.js";
-import { assertLegacyTaskKernelMigrationOverlaysIntact } from "../../core/task/task-kernel-store-v2.js";
+import {
+  assertNoDependencyCycleWithValidatedMigrationView,
+  assertUniqueTaskIdWithValidatedMigrationView,
+  resolveTaskDirectoryByIdWithValidatedMigrationView,
+} from "../../core/task/task-kernel-paths.js";
+import { parseTaskKernelSnapshotV2 } from "../../core/task/task-kernel-schema.js";
+import {
+  assertLegacyTaskKernelMigrationOverlaysIntact,
+  assertLegacyTaskKernelMigrationOverlaysIntactWithValidatedMigrationView,
+  readTaskKernelWithValidatedMigrationView,
+} from "../../core/task/task-kernel-store-v2.js";
 import { assertCanonicalWriteTarget } from "../runtime/paths.js";
 import {
   atomicReplace,
@@ -89,6 +100,8 @@ interface ReconciliationManifest {
     readonly fingerprint: string;
   }[];
   readonly createdAt: string;
+  readonly sourceTaskPath?: string;
+  readonly targetTaskPath?: string;
 }
 
 interface ReconciliationJournal {
@@ -132,7 +145,7 @@ function journalPath(root: string, generationId: string): string {
   return storagePath(root, "reconciliations", "journals", `${generationId}.json`);
 }
 
-function canonicalTaskPath(value: string): string {
+function canonicalTaskPath(value: string, allowArchived = false): string {
   if (
     !value ||
     value.length > 2048 ||
@@ -150,7 +163,10 @@ function canonicalTaskPath(value: string): string {
     taskParts.length > 32 ||
     taskParts.some((part) => part.length > 255) ||
     parts.some((part) => part === "" || part === "." || part === "..") ||
-    taskParts.some((part) => part.toLowerCase() === "archive")
+    taskParts.some(
+      (part, index) =>
+        part.toLowerCase() === "archive" && !(allowArchived && index === 0),
+    )
   ) throw new Error("legacy-task-reconciliation-task-path-invalid");
   return `.pactile/tasks/${taskParts.join("/")}`;
 }
@@ -237,6 +253,8 @@ function stageGeneration(
     expectedAuthorityFingerprint: authority.expectedAuthorityFingerprint,
     files: files.map((file) => ({ path: file.path, byteLength: file.bytes.byteLength, fingerprint: file.fingerprint })),
     createdAt,
+    sourceTaskPath: authority.sourceTaskPath,
+    targetTaskPath: authority.targetTaskPath,
   };
   writeExclusive(root, path.join(directory, "manifest.json"), jsonBytes(manifest));
   verifyLegacyTaskReconciliationGeneration(root, authority, baseFiles);
@@ -302,9 +320,12 @@ function requestFingerprint(
     baseGenerationId: authority.generationId,
     sourceFingerprint: authority.sourceFingerprint,
     taskPath: input.taskPath,
+    targetTaskPath: input.targetTaskPath ?? input.taskPath,
+    targetTaskId: input.targetTaskId ?? null,
     idempotencyKey: input.idempotencyKey,
     activationAt: input.activationAt,
     definition: input.definition ?? {},
+    acknowledgeLegacyHistoryGap: input.acknowledgeLegacyHistoryGap === true,
     dependencyResolutions: [...(input.dependencyResolutions ?? [])].map((item) => ({ reference: item.reference.trim(), taskId: item.taskId })).sort((a, b) => {
       const left = `${a.reference}\0${a.taskId}`;
       const right = `${b.reference}\0${b.taskId}`;
@@ -330,6 +351,89 @@ function readBaseImportRecord(view: LegacyTaskMigrationView, taskPath: string): 
     return JSON.parse(file.bytes.toString("utf8")) as LegacyTaskImportRecord;
   } catch {
     throw new Error("legacy-task-migration-record-invalid");
+  }
+}
+
+function assertRestoreTargetDirectoryAvailable(root: string, taskPath: string): void {
+  const taskDir = path.join(root, ...taskPath.split("/"));
+  const safeTarget = assertCanonicalWriteTarget(root, taskDir);
+  try {
+    const stat = fs.lstatSync(safeTarget);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || fs.readdirSync(safeTarget).length > 0)
+      throw new Error("legacy-task-reconciliation-target-occupied");
+  } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function assertRestoreTargetAvailable(
+  root: string,
+  taskPath: string,
+  sourceTaskPath: string,
+  baseView: LegacyTaskMigrationView,
+  currentView: LegacyTaskMigrationView | null,
+): void {
+  if (taskPath === sourceTaskPath) return;
+  assertRestoreTargetDirectoryAvailable(root, taskPath);
+  const targetPrefix = `${taskPath}/`;
+  if ([baseView.baseFiles, ...(currentView ? [currentView.reconciliationFiles] : [])].some((files) =>
+    [...files.keys()].some((filePath) => filePath.startsWith(targetPrefix))))
+    throw new Error("legacy-task-reconciliation-target-occupied");
+  const targetDir = path.join(root, ...taskPath.split("/"));
+  const overlayPath = legacyTaskMigrationOverlayPath(root, targetDir);
+  if (overlayPath) {
+    try {
+      fs.lstatSync(overlayPath);
+      throw new Error("legacy-task-reconciliation-target-overlay-occupied");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
+
+function assertReconciliationTaskIdAvailable(
+  root: string,
+  targetTaskPath: string,
+  sourceTaskPath: string,
+  files: readonly { readonly path: string; readonly bytes: Uint8Array }[],
+  validatedView: LegacyTaskMigrationView,
+): ReturnType<typeof parseTaskKernelSnapshotV2> {
+  const kernelFile = files.find((file) => file.path === `${targetTaskPath}/kernel.json`);
+  if (!kernelFile) throw new Error("legacy-task-reconciliation-kernel-missing");
+  let kernel: ReturnType<typeof parseTaskKernelSnapshotV2>;
+  try {
+    kernel = parseTaskKernelSnapshotV2(JSON.parse(Buffer.from(kernelFile.bytes).toString("utf8")) as unknown);
+  } catch {
+    throw new Error("legacy-task-reconciliation-kernel-invalid");
+  }
+  assertUniqueTaskIdWithValidatedMigrationView(root, kernel.identity.taskId, path.join(root, ...sourceTaskPath.split("/")), validatedView);
+  return kernel;
+}
+
+/**
+ * Check the proposed Task against the current V2 dependency graph before it
+ * becomes visible. Traversing from the candidate's outgoing hard edges catches
+ * any existing Task path that would close a cycle back to this candidate ID.
+ */
+function assertReconciliationDependencyGraphAcyclic(
+  root: string,
+  sourceTaskPath: string,
+  kernel: ReturnType<typeof parseTaskKernelSnapshotV2>,
+  validatedView: LegacyTaskMigrationView,
+): string {
+  try {
+    return assertNoDependencyCycleWithValidatedMigrationView(
+      root,
+      kernel.identity.taskId,
+      kernel.definition.dependencies,
+      path.join(root, ...sourceTaskPath.split("/")),
+      validatedView,
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (reason.startsWith("hard dependency cycle reaches "))
+      throw new Error(`legacy-task-reconciliation-hard-dependency-cycle:${kernel.identity.taskId}`);
+    throw error;
   }
 }
 
@@ -423,6 +527,7 @@ export async function runLegacyTaskReconciliation(
   options: LegacyTaskReconciliationOptions = {},
 ): Promise<LegacyTaskReconciliationResult> {
   const root = path.resolve(request.projectRoot);
+  let sourceTaskPath = request.input.taskPath;
   let taskPath = request.input.taskPath;
   let input: LegacyTaskV2ReconciliationInput = request.input;
   let wrote = false;
@@ -430,8 +535,30 @@ export async function runLegacyTaskReconciliation(
   let committedHere = false;
   let fingerprint: string | null = null;
   try {
-    taskPath = canonicalTaskPath(taskPath);
-    input = { ...request.input, taskPath };
+    sourceTaskPath = canonicalTaskPath(sourceTaskPath, true);
+    const sourceRelative = sourceTaskPath.slice(".pactile/tasks/".length);
+    const archivedSource = sourceRelative.split("/")[0]?.toLowerCase() === "archive";
+    const interruptedSource = Boolean(
+      request.plan.tasks.find((task) => task.directory === sourceTaskPath)
+        ?.kernelJson?.parseError,
+    );
+    const requiresSeparateTarget =
+      archivedSource ||
+      interruptedSource && request.input.acknowledgeLegacyHistoryGap === true;
+    taskPath = request.input.targetTaskPath
+      ? canonicalTaskPath(request.input.targetTaskPath)
+      : sourceTaskPath;
+    if (
+      requiresSeparateTarget && !request.input.targetTaskPath ||
+      !requiresSeparateTarget && taskPath !== sourceTaskPath ||
+      interruptedSource && request.input.acknowledgeLegacyHistoryGap !== true &&
+        request.input.targetTaskPath !== undefined
+    ) throw new Error("legacy-task-reconciliation-target-path-invalid");
+    input = {
+      ...request.input,
+      taskPath: sourceTaskPath,
+      ...(requiresSeparateTarget ? { targetTaskPath: taskPath } : {}),
+    };
     if (
       !path.isAbsolute(request.projectRoot) ||
       path.resolve(request.plan.projectRoot) !== root ||
@@ -479,25 +606,70 @@ export async function runLegacyTaskReconciliation(
       : null;
     const activeMetadata = activeImport ? parseReconciliationMetadata(activeImport) : null;
     if (activeImport?.status === "imported") {
-      visible = true;
       if (activeMetadata?.idempotencyKey === input.idempotencyKey && activeMetadata.requestFingerprint === fingerprint) {
+        visible = true;
         if (!currentView?.reconciliationAuthority)
           throw new Error("legacy-task-reconciliation-authority-invalid");
         const result = reconcileResultFromActive(root, taskPath, currentView.reconciliationAuthority.generationId, fingerprint, input.idempotencyKey, true);
         return finalizedPriorJournal && result.status === "completed" ? { ...result, wrote: true } : result;
       }
+      const activeSourcePath = activeImport.legacySourceMetadata?.fileReferences.taskJson?.path;
+      if (requiresSeparateTarget && activeSourcePath !== `${sourceTaskPath}/task.json`)
+        throw new Error("legacy-task-reconciliation-target-occupied");
+      visible = true;
       throw new Error("legacy-task-reconciliation-task-already-active");
     }
-    const baseRecord = readBaseImportRecord(baseView, taskPath);
+    if (requiresSeparateTarget) assertRestoreTargetDirectoryAvailable(root, taskPath);
+    if (archivedSource || interruptedSource) {
+      const sourceTaskJsonPath = `${sourceTaskPath}/task.json`;
+      for (const file of currentView?.reconciliationFiles.values() ?? []) {
+        if (!file.path.endsWith("/legacy-import.json")) continue;
+        let restored: LegacyTaskImportRecord;
+        try {
+          restored = JSON.parse(file.bytes.toString("utf8")) as LegacyTaskImportRecord;
+        } catch {
+          throw new Error("legacy-task-reconciliation-record-invalid");
+        }
+        if (
+          restored.status === "imported" &&
+          restored.taskPath !== taskPath &&
+          restored.legacySourceMetadata?.fileReferences.taskJson?.path === sourceTaskJsonPath
+        ) throw new Error("legacy-task-reconciliation-source-already-restored");
+      }
+    }
+    const baseRecord = readBaseImportRecord(baseView, sourceTaskPath);
     if (
-      baseRecord?.taskPath !== taskPath ||
+      baseRecord?.taskPath !== sourceTaskPath ||
       baseRecord.sourceFingerprint !== baseView.authority.sourceFingerprint ||
-      (baseRecord.status !== "needs-definition" && baseRecord.status !== "needs-coordination")
+      (baseRecord.status !== "needs-definition" &&
+        baseRecord.status !== "needs-coordination" &&
+        baseRecord.status !== "archived-historical-only")
     )
       throw new Error("legacy-task-reconciliation-task-not-held");
 
     const buildInput: LegacyTaskV2ReconciliationInput = { ...input, requestFingerprint: fingerprint };
-    const built = buildLegacyTaskV2Reconciliation(currentScan, buildInput);
+    if (requiresSeparateTarget)
+      assertRestoreTargetAvailable(root, taskPath, sourceTaskPath, baseView, currentView);
+    const externalDependencyIds = new Set<string>();
+    for (const resolution of input.dependencyResolutions ?? []) {
+      const legacyTargets = currentScan.tasks.filter((task) => !task.archivedByPath && task.legacyTaskId.value === resolution.taskId);
+      if (legacyTargets.length) continue;
+      const validatedView = currentView ?? baseView;
+      const dependencyDir = resolveTaskDirectoryByIdWithValidatedMigrationView(root, resolution.taskId, validatedView);
+      if (!dependencyDir) throw new Error(`legacy-task-reconciliation-dependency-target-not-unique:${resolution.taskId}`);
+      const dependency = readTaskKernelWithValidatedMigrationView({ root, taskDir: dependencyDir, cwd: root }, validatedView);
+      if (dependency.kind !== "task-kernel-v2")
+        throw new Error(`legacy-task-reconciliation-dependency-target-not-v2:${resolution.taskId}`);
+      externalDependencyIds.add(resolution.taskId);
+    }
+    const built = buildLegacyTaskV2Reconciliation(currentScan, buildInput, { externalDependencyIds });
+    const candidateKernel = assertReconciliationTaskIdAvailable(root, taskPath, sourceTaskPath, built.targets, currentView ?? baseView);
+    const dependencyGraphSnapshot = assertReconciliationDependencyGraphAcyclic(
+      root,
+      sourceTaskPath,
+      candidateKernel,
+      currentView ?? baseView,
+    );
     const effectiveView = currentView;
     const expectedAuthorityFingerprint = orphanRecovery ? null : readCurrentAuthorityFingerprint(root);
     const previousGenerationId = effectiveView?.reconciliationAuthority?.generationId ?? null;
@@ -520,6 +692,8 @@ export async function runLegacyTaskReconciliation(
     const authority: LegacyTaskReconciliationAuthority = {
       schemaVersion: 1,
       kind: "legacy-task-reconciliation-authority",
+      sourceTaskPath,
+      targetTaskPath: taskPath,
       baseGenerationId: baseView.authority.generationId,
       sourceFingerprint: baseView.authority.sourceFingerprint,
       generationId,
@@ -543,12 +717,11 @@ export async function runLegacyTaskReconciliation(
       assertOnlyRecoveryArtifacts(root, generationId);
     }
 
+    const overlayCheckView = currentView ?? baseView;
+    assertLegacyTaskKernelMigrationOverlaysIntactWithValidatedMigrationView(root, overlayCheckView);
     if (options.dryRun) return { status: "dry-run", taskPath, requestFingerprint: fingerprint, wrote: false, visible: false };
     if (options.cancelled || options.approved !== true)
       return { status: "cancelled", taskPath, requestFingerprint: fingerprint, wrote: false, visible: false };
-
-    const overlayCheckView = currentView ?? baseView;
-    assertLegacyTaskKernelMigrationOverlaysIntact(root, overlayCheckView);
     const occurred = occurredAt;
     stageGeneration(root, authority, baseView.baseFiles, stagedFiles, occurred, occurred);
     wrote = true;
@@ -574,7 +747,19 @@ export async function runLegacyTaskReconciliation(
       verifyLegacyTaskReconciliationGeneration(root, authority, baseView.baseFiles);
       // Recheck every previously active imported overlay after staging and
       // under the authority CAS lock, immediately before making this generation visible.
-      assertLegacyTaskKernelMigrationOverlaysIntact(root, overlayCheckView);
+      assertLegacyTaskKernelMigrationOverlaysIntactWithValidatedMigrationView(root, overlayCheckView);
+      if (requiresSeparateTarget) {
+        assertRestoreTargetAvailable(root, taskPath, sourceTaskPath, baseView, currentView);
+      }
+      const currentCandidateKernel = assertReconciliationTaskIdAvailable(root, taskPath, sourceTaskPath, built.targets, currentView ?? baseView);
+      const currentDependencyGraphSnapshot = assertReconciliationDependencyGraphAcyclic(
+        root,
+        sourceTaskPath,
+        currentCandidateKernel,
+        currentView ?? baseView,
+      );
+      if (currentDependencyGraphSnapshot !== dependencyGraphSnapshot)
+        throw new Error("legacy-task-reconciliation-dependency-graph-changed");
       setJournalState(root, authority, "committing", occurred);
       atomicReplace(root, pointerPath, jsonBytes(authority));
       visible = true;
