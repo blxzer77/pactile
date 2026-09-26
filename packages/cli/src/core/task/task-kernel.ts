@@ -18,6 +18,9 @@ export type {
   TaskRunDurations,
   TaskRunMeasurementRefs,
   TaskRunResult,
+  TaskRunEvidenceSource,
+  TaskRunEvidenceItemV1,
+  TaskRunEvidenceVerificationV1,
   TaskRunFailure,
   TaskRunWorkspaceBinding,
   TaskRunWorkspaceManagerBinding,
@@ -27,6 +30,9 @@ export type {
   TaskRunHostStopReceipt,
   TaskRunV2,
   TaskReviewDecision,
+  TaskReviewEvidenceSource,
+  TaskReviewEvidenceItemV1,
+  TaskReviewEvidenceVerificationV1,
   TaskReviewV2,
   TaskDeliveryEvidence,
   TaskClosureV2,
@@ -73,7 +79,11 @@ export {
   listTaskKernelSnapshots,
 } from "./task-kernel-store-v2.js";
 export { addTaskDependency } from "./task-kernel-dependencies.js";
-export { startTaskRun, resumeTaskRun, recordTaskRunResult } from "./task-kernel-runs.js";
+export {
+  startTaskRun,
+  resumeTaskRun,
+  recordTaskRunResult,
+} from "./task-kernel-runs.js";
 export {
   bindTaskRunHostReceipt,
   appendTaskRunHostSettlementRefs,
@@ -87,4 +97,12 @@ export {
   recordTaskRunWorkspaceCleanupRefusal,
 } from "./task-kernel-workspaces.js";
 export { recordTaskReview } from "./task-kernel-reviews.js";
+export {
+  resolveTaskReviewEvidenceV1,
+  verifyTaskReviewEvidenceV1,
+} from "./task-review-evidence.js";
+export type {
+  ResolveTaskReviewEvidenceV1Request,
+  VerifyTaskReviewEvidenceV1Request,
+} from "./task-review-evidence.js";
 export { checkTaskClose, closeTaskKernel } from "./task-kernel-close.js";

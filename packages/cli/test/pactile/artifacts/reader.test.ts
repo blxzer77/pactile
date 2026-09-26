@@ -277,8 +277,14 @@ describe("Task Kernel structured artifact reader", () => {
         scope: "the selected behavior",
         evidenceRef: "approval.json",
       },
+      writeSetSnapshot: ["src/behavior.ts"],
     });
     const runId = must(started.kernel.runs.at(-1), "started Run").id;
+    const behaviorPath = path.join(root, "src", "behavior.ts");
+    fs.mkdirSync(path.dirname(behaviorPath), { recursive: true });
+    const behaviorSource = "export const selectedBehavior = true;\n";
+    fs.writeFileSync(behaviorPath, behaviorSource, "utf8");
+    fs.writeFileSync(path.join(taskDir, "test-output.txt"), "tests passed\n", "utf8");
     recordTaskRunResult({
       root,
       taskDir,
@@ -287,7 +293,10 @@ describe("Task Kernel structured artifact reader", () => {
       outcome: "completed",
       summary: "The fix is implemented",
       candidateEntries: [
-        { ref: "src/behavior.ts", fingerprint: "a".repeat(64) },
+        {
+          ref: "src/behavior.ts",
+          fingerprint: createHash("sha256").update(behaviorSource).digest("hex"),
+        },
       ],
       evidenceRefs: ["test-output.txt"],
       actor: "implementer",
@@ -311,6 +320,7 @@ describe("Task Kernel structured artifact reader", () => {
       kernel.runs.at(-1)?.candidateSnapshot,
       "candidate snapshot",
     );
+    fs.writeFileSync(path.join(taskDir, "review.md"), "Review passed.\n", "utf8");
     recordTaskReview({
       root,
       taskDir,
@@ -362,6 +372,17 @@ describe("Task Kernel structured artifact reader", () => {
       idempotencyKey: "close:small-fix",
     });
     kernel = readKernel(root, taskDir);
+    const closedCandidateObservation = must(
+      kernel.closure?.candidateObservation,
+      "candidate-bound closure observation",
+    );
+    expect(closedCandidateObservation).toMatchObject({
+      snapshotId: candidateSnapshot.id,
+      fingerprint: candidateSnapshot.fingerprint,
+      observedBy: "pactile-core-task-close",
+      source: "project-files-v1",
+      evidenceRef: "pactile:verification:project-files-v1",
+    });
     envelope = projectTaskKernelArtifactsV1(kernel);
     const finalIndex = projectTaskArtifactsForAgentV1(envelope);
     expect(finalIndex.stages.map(({ stage }) => stage)).toEqual([
@@ -386,7 +407,7 @@ describe("Task Kernel structured artifact reader", () => {
       status: "accepted",
       candidateFreshness: {
         freshness: "fresh",
-        checkedAt: closedAt,
+        checkedAt: closedCandidateObservation.observedAt,
         evidenceRef:
           "artifact://tasks/small-fix/kernel/closure/candidate-observation",
       },
@@ -406,7 +427,12 @@ describe("Task Kernel structured artifact reader", () => {
       human.match(new RegExp(`### \`${requirement.id}\``, "gu")),
     ).toHaveLength(1);
     expect(fs.readFileSync(prdPath, "utf8")).toBe(authoredPrd);
-    expect(fs.readdirSync(taskDir).sort()).toEqual(["kernel.json", "prd.md"]);
+    expect(fs.readdirSync(taskDir).sort()).toEqual([
+      "kernel.json",
+      "prd.md",
+      "review.md",
+      "test-output.txt",
+    ]);
   });
 
   it("resolves tagged v0.5 migration facts and transitional docs through the Kernel overlay", async () => {
@@ -717,8 +743,21 @@ describe("Task Kernel structured artifact reader", () => {
         scope: "structured document indexing",
         evidenceRef: "approval.json",
       },
+      writeSetSnapshot: ["packages/cli/src/pactile/artifacts/reader.ts"],
     });
     const runId = must(started.kernel.runs.at(-1), "heavy Task Run").id;
+    const candidatePath = path.join(
+      root,
+      "packages",
+      "cli",
+      "src",
+      "pactile",
+      "artifacts",
+      "reader.ts",
+    );
+    fs.mkdirSync(path.dirname(candidatePath), { recursive: true });
+    const candidateSource = "export const artifactReader = true;\n";
+    fs.writeFileSync(candidatePath, candidateSource, "utf8");
     recordTaskRunResult({
       root,
       taskDir,
@@ -728,11 +767,11 @@ describe("Task Kernel structured artifact reader", () => {
       summary: "The document index and selected reader are implemented",
       candidateEntries: [
         {
-          ref: "packages/cli/src/pactile/artifacts",
-          fingerprint: "c".repeat(64),
+          ref: "packages/cli/src/pactile/artifacts/reader.ts",
+          fingerprint: createHash("sha256").update(candidateSource).digest("hex"),
         },
       ],
-      evidenceRefs: ["verify.md#validation", "verify.md#validation"],
+      evidenceRefs: ["verify.md", "implement.md"],
       actor: "implementer",
       idempotencyKey: "run-result:heavy-feature",
     });
@@ -751,13 +790,13 @@ describe("Task Kernel structured artifact reader", () => {
       reviewer: "independent-reviewer",
       decision: "fail",
       evidenceRefs: [
-        "review/decision.md#decision",
-        "review/decision.md#decision",
+        "review/decision.md",
+        "review/decision.md",
       ],
       acceptanceEvidence: {
         "AC-1": [
-          "packages/cli/src/pactile/artifacts",
-          "packages/cli/src/pactile/artifacts",
+          "packages/cli/src/pactile/artifacts/reader.ts",
+          "packages/cli/src/pactile/artifacts/reader.ts",
         ],
       },
       actor: "independent-reviewer",
@@ -886,7 +925,7 @@ describe("Task Kernel structured artifact reader", () => {
         envelope,
         verifyEvidenceFacts.map(({ id }) => id),
       ).map(({ value }) => value),
-    ).toEqual(["verify.md#validation", "verify.md#validation"]);
+    ).toEqual(["verify.md", "implement.md"]);
     const reviewFact = must(
       envelope.facts.find((fact) => fact.kind === "finding"),
       "Review decision fact",
@@ -907,8 +946,8 @@ describe("Task Kernel structured artifact reader", () => {
     expect(selectedReviewDecision?.value).toMatchObject({
       decision: "fail",
       evidenceRefs: [
-        "review/decision.md#decision",
-        "review/decision.md#decision",
+        "review/decision.md",
+        "review/decision.md",
       ],
     });
     const reviewEvidenceFacts = envelope.facts.filter(
@@ -938,7 +977,7 @@ describe("Task Kernel structured artifact reader", () => {
         envelope,
         reviewEvidenceFacts.map(({ id }) => id),
       ).map(({ value }) => value),
-    ).toEqual(["review/decision.md#decision", "review/decision.md#decision"]);
+    ).toEqual(["review/decision.md", "review/decision.md"]);
     const acceptanceEvidenceFacts = envelope.facts.filter(
       (fact) =>
         fact.kind === "evidence" &&
@@ -960,8 +999,8 @@ describe("Task Kernel structured artifact reader", () => {
         acceptanceEvidenceFacts.map(({ id }) => id),
       ).map(({ value }) => value),
     ).toEqual([
-      "packages/cli/src/pactile/artifacts",
-      "packages/cli/src/pactile/artifacts",
+      "packages/cli/src/pactile/artifacts/reader.ts",
+      "packages/cli/src/pactile/artifacts/reader.ts",
     ]);
 
     const documents = readTaskArtifactDocumentIndexV1(

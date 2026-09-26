@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -90,7 +91,7 @@ function prepareIntegratedRun(input: { root: string; baseSha: string; taskId: st
     root, taskDir, expectedRevision: created.kernel.revision, actor: runActor, idempotencyKey: `start:${taskId}`,
     input: { summary: "Implement the feature", references: ["test task"] },
     authorization: { approvedBy: approver, approvedAt: "2026-09-26T00:00:00.000Z", scope: "src", evidenceRef: "approval:test" },
-    writeSetSnapshot: ["src"],
+    writeSetSnapshot: ["src/"],
   });
   const runId = started.kernel.runs.at(-1)?.id;
   if (!runId) throw new Error("Started Run is missing");
@@ -122,15 +123,17 @@ function prepareIntegratedRun(input: { root: string; baseSha: string; taskId: st
   });
 
   const featurePath = path.join(workspace.canonicalPath, "src", "feature.ts");
-  fs.writeFileSync(featurePath, "export const feature = true;\n");
+  const featureBytes = "export const feature = true;\n";
+  fs.writeFileSync(featurePath, featureBytes);
   git(workspace.canonicalPath, "add", "--", "src/feature.ts");
   git(workspace.canonicalPath, "commit", "-q", "-m", "Run feature");
   git(root, "merge", "--no-ff", "--no-edit", workspace.branch);
 
   kernel = readKernel(root, taskDir);
+  fs.writeFileSync(path.join(taskDir, "run-result.json"), JSON.stringify({ taskId, runId, status: "completed" }) + "\n");
   const completed = recordTaskRunResult({
     root, taskDir, expectedRevision: kernel.revision, runId, outcome: "completed", summary: "Feature implemented",
-    candidateEntries: [{ ref: "src/feature.ts", fingerprint: "a".repeat(64) }], evidenceRefs: [`run-result:${taskId}`],
+    candidateEntries: [{ ref: "src/feature.ts", fingerprint: createHash("sha256").update(featureBytes).digest("hex") }], evidenceRefs: ["run-result.json"],
     actor: runActor, idempotencyKey: `run-result:${taskId}`,
   });
   const candidate = completed.kernel.runs.at(-1)?.candidateSnapshot;
@@ -139,9 +142,10 @@ function prepareIntegratedRun(input: { root: string; baseSha: string; taskId: st
     integrateTaskRunWorktree({ repoRoot: root, taskDir, runId, targetRef: "main", actor: runActor, idempotencyKey: `integrate:${taskId}` });
   }
   kernel = readKernel(root, taskDir);
+  fs.writeFileSync(path.join(taskDir, "review.json"), JSON.stringify({ taskId, runId, candidate: candidate.fingerprint }) + "\n");
   recordTaskReview({
     root, taskDir, expectedRevision: kernel.revision, runId, candidateSnapshotId: candidate.id,
-    candidateFingerprint: candidate.fingerprint, reviewer, decision: "pass", evidenceRefs: [`review:${taskId}`],
+    candidateFingerprint: candidate.fingerprint, reviewer, decision: "pass", evidenceRefs: ["review.json"],
     acceptanceEvidence: { "AC-1": ["src/feature.ts"] }, actor: reviewer, idempotencyKey: `review:${taskId}`,
   });
   if (input.close) {
