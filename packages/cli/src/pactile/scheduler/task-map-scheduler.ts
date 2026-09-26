@@ -17,7 +17,14 @@ import {
 import { approvedTask, piWorkdir } from "../pi/bridge.js";
 import { resolveTaskDir } from "../task/session.js";
 import { readTaskMap, type ChildEntry } from "../task/task-map.js";
+import { inspectRunWorktree } from "../worktree/manager.js";
 import {
+  resolveJevProjectEgressPolicyV1,
+  type JevProjectEgressPolicyV1,
+} from "../jev/project-policy.js";
+import type { JevFallbackCodeV1 } from "../jev/transport.js";
+import {
+  applyJevTaskScheduleEgressFallbackV1,
   finalizeJevTaskScheduleAdviceV1,
   finalizeJevTaskScheduleEligibilityV1,
   requestJevTaskScheduleAdviceV1,
@@ -26,6 +33,8 @@ import {
   type JevScheduleAdviceOptionsV1,
   type JevScheduleCandidateFilterV1,
   type JevScheduleCandidateV1,
+  type JevScheduleProjectEgressAuditV1,
+  type JevScheduleProjectEgressStatusV1,
 } from "../jev/scheduler-advice.js";
 import {
   listProjectWriteLeases,
@@ -111,6 +120,11 @@ export type TaskKernelScheduleOptionsV1 = Omit<
   "candidateTaskIds"
 >;
 
+export type JevTaskKernelScheduleOptionsV1 = Omit<
+  TaskKernelScheduleOptionsV1,
+  "jevAdvice"
+>;
+
 export interface TaskKernelScheduleDecisionReceiptV1 {
   schemaVersion: 1;
   scope: "task-kernel-v2";
@@ -125,6 +139,7 @@ export interface TaskKernelScheduleDecisionReceiptV1 {
   request: TaskScheduleRequestV1;
   plan: TaskScheduleReceiptV1;
   lifecycle: TaskScheduleLifecycleSnapshotV1[];
+  jevAdviceAudit?: JevScheduleAdviceAuditV1;
 }
 
 export interface PersistedTaskKernelScheduleV1 {
@@ -1475,6 +1490,255 @@ function buildTaskKernelGraphSnapshot(
   };
 }
 
+function verifyJevTaskKernelScheduleCandidates(
+  root: string,
+  snapshot: ReturnType<typeof buildTaskKernelGraphSnapshot>,
+  candidates: readonly JevScheduleCandidateV1[],
+): {
+  candidates: JevScheduleCandidateV1[];
+  filteredCandidates: JevScheduleCandidateFilterV1[];
+  approvalPassedTaskIds: string[];
+  worktreePassedTaskIds: string[];
+  activeLeaseCheckAt: string | null;
+} {
+  let activeLeases: ReturnType<typeof listProjectWriteLeases> | null = null;
+  let activeLeaseCheckAt: string | null = null;
+  try {
+    activeLeases = withProjectSchedulerMutex(root, () =>
+      listProjectWriteLeases(root),
+    );
+    activeLeaseCheckAt = new Date().toISOString();
+  } catch {
+    // An unreadable lease set is not safe input for an external advice request.
+  }
+
+  const byTaskId = new Map(
+    snapshot.lifecycle.map((item) => [item.taskId, item]),
+  );
+  const eligible: JevScheduleCandidateV1[] = [];
+  const filteredCandidates: JevScheduleCandidateFilterV1[] = [];
+  const approvalPassedTaskIds: string[] = [];
+  const worktreePassedTaskIds: string[] = [];
+  for (const candidate of candidates) {
+    const lifecycle = byTaskId.get(candidate.taskId);
+    if (lifecycle?.sourceKind !== "task-kernel-v2") {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode: "candidate-identity-unavailable",
+      });
+      continue;
+    }
+    let kernel: TaskKernelSnapshotV2;
+    try {
+      const read = readTaskKernel({
+        root,
+        taskDir: resolveTaskDir(root, lifecycle.taskDir),
+      });
+      if (
+        read.kind !== "task-kernel-v2" ||
+        read.kernel.identity.taskId !== candidate.taskId
+      ) {
+        filteredCandidates.push({
+          taskId: candidate.taskId,
+          reasonCode: "candidate-identity-unavailable",
+        });
+        continue;
+      }
+      kernel = read.kernel;
+    } catch {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode: "candidate-identity-unavailable",
+      });
+      continue;
+    }
+    if (
+      kernel.revision !== snapshot.taskKernelRevisions[candidate.taskId] ||
+      kernel.revision !== lifecycle.kernelRevision
+    ) {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode: "task-kernel-revision-changed",
+      });
+      continue;
+    }
+    const run = kernel.runs.at(-1) ?? null;
+    const projected = projectTaskKernelLifecycle(kernel);
+    if (run === null) {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode: "run-not-eligible",
+      });
+      continue;
+    }
+    if (
+      run.id !== lifecycle.runId ||
+      run.taskId !== candidate.taskId ||
+      run.state !== "waiting" ||
+      !!run.host ||
+      !!run.candidateSnapshot ||
+      !projected.gateSnapshot.runStart.phaseAllowsRun ||
+      projected.gateSnapshot.runStart.activeRunId !== run.id
+    ) {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode: "run-not-eligible",
+      });
+      continue;
+    }
+    const authorization = run.authorization;
+    if (
+      typeof authorization?.approvedBy !== "string" ||
+      !authorization.approvedBy.trim() ||
+      typeof authorization.approvedAt !== "string" ||
+      !Number.isFinite(Date.parse(authorization.approvedAt)) ||
+      typeof authorization.scope !== "string" ||
+      !authorization.scope.trim() ||
+      typeof authorization.evidenceRef !== "string" ||
+      !authorization.evidenceRef.trim()
+    ) {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode: "approval-rejected",
+      });
+      continue;
+    }
+    approvalPassedTaskIds.push(candidate.taskId);
+
+    if (
+      lifecycle.writeSet === null ||
+      !run.writeSetSnapshot.length ||
+      !run.workspace?.manager ||
+      run.workspace.ownerRunId !== run.id
+    ) {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode:
+          lifecycle.writeSet === null || !run.writeSetSnapshot.length
+            ? "write-set-unavailable"
+            : "worktree-rejected",
+      });
+      continue;
+    }
+    if (
+      !sameTaskIds(
+        [...run.writeSetSnapshot].sort(compareText),
+        [...run.workspace.writeSet].sort(compareText),
+      )
+    ) {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode: "worktree-rejected",
+      });
+      continue;
+    }
+    let inspection: ReturnType<typeof inspectRunWorktree>;
+    try {
+      inspection = inspectRunWorktree({
+        repoRoot: root,
+        runId: run.id,
+        runState: run.state,
+        binding: run.workspace,
+        knownOwners: [],
+      });
+    } catch {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode: "worktree-rejected",
+      });
+      continue;
+    }
+    if (
+      inspection.issues.some((issue) => issue !== "unintegrated") ||
+      inspection.state !== "unintegrated" ||
+      inspection.dirty ||
+      inspection.headSha?.toLowerCase() !== run.workspace.baseSha.toLowerCase() ||
+      !inspection.actualPath
+    ) {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode: "worktree-rejected",
+      });
+      continue;
+    }
+    worktreePassedTaskIds.push(candidate.taskId);
+
+    if (activeLeases === null) {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode: "lease-state-unavailable",
+      });
+      continue;
+    }
+    if (
+      activeLeases.some(({ lease }) =>
+        projectWriteSetsConflict(lifecycle.writeSet ?? [], lease.touches),
+      )
+    ) {
+      filteredCandidates.push({
+        taskId: candidate.taskId,
+        reasonCode: "active-write-lease-conflict",
+      });
+      continue;
+    }
+    eligible.push(candidate);
+  }
+  return {
+    candidates: eligible,
+    filteredCandidates,
+    approvalPassedTaskIds,
+    worktreePassedTaskIds,
+    activeLeaseCheckAt,
+  };
+}
+
+function taskKernelScheduleSnapshotFingerprint(
+  snapshot: ReturnType<typeof buildTaskKernelGraphSnapshot>,
+): string {
+  return fingerprintTaskValue({
+    candidateTaskIds: snapshot.candidateTaskIds,
+    taskKernelRevisions: snapshot.taskKernelRevisions,
+    request: snapshot.request,
+    lifecycle: snapshot.lifecycle,
+  });
+}
+
+function taskKernelEligibilityFingerprint(
+  eligibility: ReturnType<typeof verifyJevTaskKernelScheduleCandidates>,
+): string {
+  return fingerprintTaskValue({
+    candidateTaskIds: eligibility.candidates.map(({ taskId }) => taskId),
+    filteredCandidates: eligibility.filteredCandidates.map(
+      ({ taskId, reasonCode }) => ({ taskId, reasonCode }),
+    ),
+    approvalPassedTaskIds: eligibility.approvalPassedTaskIds,
+    worktreePassedTaskIds: eligibility.worktreePassedTaskIds,
+    leaseStateAvailable: eligibility.activeLeaseCheckAt !== null,
+  });
+}
+
+function projectEgressStatus(
+  policy: JevProjectEgressPolicyV1,
+): JevScheduleProjectEgressStatusV1 {
+  return policy.allowed ? "allowed" : policy.reasonCode;
+}
+
+function projectEgressAudit(
+  atScheduleStart: JevProjectEgressPolicyV1,
+  beforeAdviceRequest: JevProjectEgressPolicyV1,
+  afterAdviceResponse: JevProjectEgressPolicyV1,
+): JevScheduleProjectEgressAuditV1 {
+  const startStatus = projectEgressStatus(atScheduleStart);
+  const beforeStatus = projectEgressStatus(beforeAdviceRequest);
+  const afterStatus = projectEgressStatus(afterAdviceResponse);
+  return {
+    atScheduleStart: startStatus,
+    beforeAdviceRequest: beforeStatus,
+    afterAdviceResponse: afterStatus,
+    changed: startStatus !== beforeStatus || startStatus !== afterStatus,
+  };
+}
+
 /**
  * Plans a Task Kernel v2 dependency graph directly. It does not read or create
  * a Parent Task Map and never mutates Task or Run state.
@@ -1692,6 +1956,139 @@ export function scheduleTaskKernelGraph(
     request: snapshot.request,
     plan: planTaskScheduleV1(snapshot.request),
     lifecycle: snapshot.lifecycle,
+  };
+  const stored = persistTaskKernelReceipt(root, receiptBase);
+  return { ...stored, receiptFile: relativeTaskDir(root, stored.receiptFile) };
+}
+
+/**
+ * Plans a V2 Task graph with optional Jev advice after the deterministic first
+ * wave, approved waiting Run, manager-owned worktree, write-set, and lease gates.
+ * The advice can only reorder the bounded equal-critical-path candidate set.
+ */
+export async function scheduleTaskKernelGraphWithJevV1(
+  rootValue: string,
+  candidateTaskIds: readonly string[],
+  options: JevTaskKernelScheduleOptionsV1 = {},
+  jev?: JevScheduleAdviceOptionsV1,
+  fallbackReasonCode?: JevFallbackCodeV1,
+): Promise<PersistedTaskKernelScheduleV1> {
+  const root = path.resolve(rootValue);
+  const policyAtScheduleStart = resolveJevProjectEgressPolicyV1(root);
+  const planningOptions: TaskKernelScheduleOptionsV1 = { ...options };
+  delete planningOptions.jevAdvice;
+
+  const previewSnapshot = buildTaskKernelGraphSnapshot(
+    root,
+    candidateTaskIds,
+    planningOptions,
+  );
+  const structuralCandidates = firstCriticalPathCandidates(
+    planTaskScheduleV1(previewSnapshot.request),
+  );
+  const initialEligibility = verifyJevTaskKernelScheduleCandidates(
+    root,
+    previewSnapshot,
+    structuralCandidates,
+  );
+  const policyBeforeAdviceRequest = resolveJevProjectEgressPolicyV1(root);
+  const projectPolicyFallbackReasonCode = !policyAtScheduleStart.allowed
+    ? policyAtScheduleStart.reasonCode
+    : !policyBeforeAdviceRequest.allowed
+      ? policyBeforeAdviceRequest.reasonCode
+      : undefined;
+  const requested = await requestJevTaskScheduleAdviceV1({
+    candidates: initialEligibility.candidates,
+    filteredCandidates: initialEligibility.filteredCandidates,
+    eligibility: {
+      approvalPassedTaskIds: initialEligibility.approvalPassedTaskIds,
+      worktreePassedTaskIds: initialEligibility.worktreePassedTaskIds,
+      activeLeaseCheckAt: initialEligibility.activeLeaseCheckAt,
+    },
+    options: jev,
+    fallbackReasonCode: projectPolicyFallbackReasonCode ?? fallbackReasonCode,
+  });
+
+  const finalSnapshot = buildTaskKernelGraphSnapshot(
+    root,
+    candidateTaskIds,
+    planningOptions,
+  );
+  const finalStructuralCandidates = firstCriticalPathCandidates(
+    planTaskScheduleV1(finalSnapshot.request),
+  );
+  const finalEligibility = verifyJevTaskKernelScheduleCandidates(
+    root,
+    finalSnapshot,
+    finalStructuralCandidates,
+  );
+  const policyAfterAdviceResponse = resolveJevProjectEgressPolicyV1(root);
+  let finalRequest = finalSnapshot.request;
+  const advice = requested.advice;
+  const requestStateStable =
+    taskKernelScheduleSnapshotFingerprint(previewSnapshot) ===
+      taskKernelScheduleSnapshotFingerprint(finalSnapshot) &&
+    sameTaskIds(
+      structuralCandidates.map(({ taskId }) => taskId),
+      finalStructuralCandidates.map(({ taskId }) => taskId),
+    ) &&
+    taskKernelEligibilityFingerprint(initialEligibility) ===
+      taskKernelEligibilityFingerprint(finalEligibility);
+  const adviceMatchesFinalCandidates =
+    advice === null ||
+    sameTaskIdSet(
+      advice.taskOrder,
+      finalEligibility.candidates.map(({ taskId }) => taskId),
+    );
+  const eligibilityChanged = !requestStateStable || !adviceMatchesFinalCandidates;
+  let audit = finalizeJevTaskScheduleEligibilityV1(
+    requested.audit,
+    finalEligibility.candidates,
+    finalEligibility.filteredCandidates,
+    {
+      approvalPassedTaskIds: finalEligibility.approvalPassedTaskIds,
+      worktreePassedTaskIds: finalEligibility.worktreePassedTaskIds,
+      activeLeaseCheckAt: finalEligibility.activeLeaseCheckAt,
+    },
+    eligibilityChanged,
+  );
+  audit = {
+    ...audit,
+    projectEgressPolicy: projectEgressAudit(
+      policyAtScheduleStart,
+      policyBeforeAdviceRequest,
+      policyAfterAdviceResponse,
+    ),
+  };
+
+  if (advice) {
+    if (!eligibilityChanged && policyAfterAdviceResponse.allowed) {
+      finalRequest = { ...finalSnapshot.request, jevAdvice: advice };
+      audit = finalizeJevTaskScheduleAdviceV1(
+        audit,
+        planTaskScheduleV1(finalRequest),
+      );
+    } else {
+      audit = supersedeJevTaskScheduleAdviceV1(audit);
+    }
+  }
+  if (!policyAfterAdviceResponse.allowed) {
+    audit = applyJevTaskScheduleEgressFallbackV1(
+      audit,
+      policyAfterAdviceResponse.reasonCode,
+    );
+  }
+
+  const receiptBase: Omit<
+    TaskKernelScheduleDecisionReceiptV1,
+    "schemaVersion" | "scope" | "receiptFingerprint" | "createdAt"
+  > = {
+    candidateTaskIds: finalSnapshot.candidateTaskIds,
+    taskKernelRevisions: finalSnapshot.taskKernelRevisions,
+    request: finalRequest,
+    plan: planTaskScheduleV1(finalRequest),
+    lifecycle: finalSnapshot.lifecycle,
+    jevAdviceAudit: audit,
   };
   const stored = persistTaskKernelReceipt(root, receiptBase);
   return { ...stored, receiptFile: relativeTaskDir(root, stored.receiptFile) };

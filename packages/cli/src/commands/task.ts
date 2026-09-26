@@ -52,6 +52,7 @@ import { createTaskWithArtifacts } from "../pactile/task/creation.js";
 import { readPactileConfig } from "../pactile/task/config.js";
 import {
   runTaskScheduleCli,
+  runTaskScheduleCliAsync,
   runTaskScheduleDispatchCli,
   type TaskScheduleDispatchCliOptionsV1,
 } from "./task-schedule.js";
@@ -2924,6 +2925,19 @@ export async function runTaskCliAsync(
         args,
         root,
         scheduleDispatchOptions,
+      );
+    } catch (error) {
+      console.error(
+        `Error: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return 1;
+    }
+  }
+  if (command === "schedule") {
+    try {
+      return await runTaskScheduleCliAsync(
+        [operation ?? "", ...args],
+        root,
       );
     } catch (error) {
       console.error(

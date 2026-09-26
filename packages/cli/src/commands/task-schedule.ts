@@ -2,11 +2,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { listTaskKernelSnapshots } from "../core/task/index.js";
 import {
+  scheduleTaskKernelGraphWithJevV1,
   readTaskKernelScheduleReceiptV1,
   scheduleTaskKernelGraph,
   type ConflictParallelAuthorizationV1,
+  type JevScheduleAdviceOptionsV1,
   type TaskKernelScheduleDecisionReceiptV1,
 } from "../pactile/scheduler/index.js";
+import {
+  createJevDecisionFacadeV1,
+  type JevEgressAuthorizationV1,
+} from "../pactile/jev/index.js";
+import { JEV_ORIGIN_V1 } from "../pactile/jev/contracts.js";
 import {
   dispatchTaskKernelWaveV1,
   type TaskKernelWaveDispatchOptionsV1,
@@ -416,10 +423,19 @@ function scheduleTaskList(args: string[], root: string): number {
   console.log(
     "Plan explicitly with: pactile task schedule plan <task-id> [task-id ...] [--conflict-authorizations-file <project-relative-json>]",
   );
+  console.log(
+    "Plan may use bounded Jev advice only to break a first-wave equal-critical-path tie; it does not authorize or dispatch Runs.",
+  );
   return 0;
 }
 
-function scheduleTaskPlan(args: string[], root: string): number {
+function parseTaskSchedulePlanArgs(
+  args: string[],
+  root: string,
+): {
+  candidateTaskIds: string[];
+  conflictParallelizations: ConflictParallelAuthorizationV1[] | undefined;
+} {
   const candidateTaskIds: string[] = [];
   let conflictAuthorizationFile: string | undefined;
   for (let index = 0; index < args.length; index += 1) {
@@ -453,9 +469,12 @@ function scheduleTaskPlan(args: string[], root: string): number {
         candidateTaskIds,
       )
     : undefined;
-  const result = scheduleTaskKernelGraph(root, candidateTaskIds, {
-    ...(conflictParallelizations ? { conflictParallelizations } : {}),
-  });
+  return { candidateTaskIds, conflictParallelizations };
+}
+
+function printTaskSchedulePlan(
+  result: ReturnType<typeof scheduleTaskKernelGraph>,
+): void {
   const display = receiptDisplay(result.receipt);
   console.log(
     JSON.stringify(
@@ -473,6 +492,57 @@ function scheduleTaskPlan(args: string[], root: string): number {
       2,
     ),
   );
+}
+
+function scheduleTaskPlan(args: string[], root: string): number {
+  const { candidateTaskIds, conflictParallelizations } =
+    parseTaskSchedulePlanArgs(args, root);
+  const result = scheduleTaskKernelGraph(root, candidateTaskIds, {
+    ...(conflictParallelizations ? { conflictParallelizations } : {}),
+  });
+  printTaskSchedulePlan(result);
+  return 0;
+}
+
+function createTaskScheduleJevOptions(): JevScheduleAdviceOptionsV1 {
+  const enabledValue = process.env.PACTILE_JEV_ENABLED?.trim().toLowerCase();
+  const explicitlyDisabled = enabledValue === "false";
+  const deadlineMs = 2_500;
+  const facade = createJevDecisionFacadeV1({
+    ...(explicitlyDisabled ? { enabled: false } : {}),
+    maxDecisions: 1,
+    maxDeadlineMs: deadlineMs,
+    transport: {
+      apiKey: process.env.PACTILE_JEV_API_KEY,
+      deadlineMs,
+      maxRetries: 1,
+    },
+  });
+  const egress: JevEgressAuthorizationV1 = {
+    network: "project-authorized",
+    privacy: "project-approved-egress",
+    credentials: "project-authorized",
+    destination: JEV_ORIGIN_V1,
+    egressDestinations: [JEV_ORIGIN_V1],
+    contentDecision: "task-summary-approved",
+  };
+  return { facade, egress };
+}
+
+async function scheduleTaskPlanWithJev(
+  args: string[],
+  root: string,
+): Promise<number> {
+  const { candidateTaskIds, conflictParallelizations } =
+    parseTaskSchedulePlanArgs(args, root);
+  const jevOptions = createTaskScheduleJevOptions();
+  const result = await scheduleTaskKernelGraphWithJevV1(
+    root,
+    candidateTaskIds,
+    { ...(conflictParallelizations ? { conflictParallelizations } : {}) },
+    jevOptions,
+  );
+  printTaskSchedulePlan(result);
   return 0;
 }
 
@@ -527,4 +597,22 @@ export function runTaskScheduleCli(
         "Use `pactile task schedule list|plan|show`; this command plans V2 Task Kernel DAGs and does not dispatch Runs.",
       );
   }
+}
+
+/** Promise-aware V2 plan entry for task CLI wrappers that can await Jev advice. */
+export function runTaskSchedulePlanCliAsync(
+  args: string[],
+  root = process.cwd(),
+): Promise<number> {
+  return scheduleTaskPlanWithJev(args, root);
+}
+
+/** Async-compatible schedule entry; list and show retain their synchronous path. */
+export async function runTaskScheduleCliAsync(
+  args: string[],
+  root = process.cwd(),
+): Promise<number> {
+  const [operation, ...rest] = args;
+  if (operation === "plan") return runTaskSchedulePlanCliAsync(rest, root);
+  return runTaskScheduleCli(args, root);
 }

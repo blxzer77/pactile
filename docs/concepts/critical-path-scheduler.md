@@ -96,6 +96,46 @@ the final receipt and re-read the Kernel, hard dependencies, approvals, and
 active leases immediately before dispatch. A persisted receipt or lease is
 never rewritten after that point.
 
+## Standalone V2 Task scheduling advice
+
+`scheduleTaskKernelGraphWithJevV1` applies the existing Jev tie-break to a
+standalone Task Kernel v2 plan. It builds the deterministic plan first, then
+offers Jev only the eligible Run candidates in the first wave that share the
+highest critical-path value. A candidate must still be the current Task Kernel
+revision, have its latest Run waiting with valid authorization evidence, pass
+the Run-start lifecycle gate, carry a known Run write set, have a clean manager-owned
+Run worktree at its recorded base, and have no active project write-lease
+conflict. The planner remains authoritative for hard dependencies, write-set
+conflicts, and wave placement; Jev can only suggest an order within that
+eligible first-wave tie. Tasks assigned to later waves, including tasks held
+behind dependencies or overlapping writers, are outside the Jev candidate set
+even when their modeled critical paths tie.
+
+The V2 request uses the shared Jev `task-scheduling` node with at most 16
+anonymous labels and numeric cost values. Task IDs, paths, Run evidence, and
+Task-authored text are not sent. The request digest and candidate binding are
+kept in the V2 receipt, together with prepared/sent snapshots, final eligibility,
+the suggestion, adopted or overridden order, and bounded transport metrics.
+The receipt envelope fingerprint binds this audit to the plan. Project
+`.pactile/config.yaml` `jev.egress: deny`, invalid YAML, or an invalid `jev`
+egress setting is checked by the public scheduler API before advice is requested
+and again after its asynchronous response. A denied or invalid policy before a
+request short-circuits before transport; a policy that changes to denied or
+invalid while Jev is responding rejects the answer and retains the deterministic
+plan. The receipt keeps the bounded policy states at schedule start, before the
+advice request, and after the response. A missing `jev.egress` setting keeps the
+existing project-policy default. Missing/disabled Jev configuration, timeout,
+provider failure, invalid response, or low confidence likewise leaves the local
+deterministic order in force.
+
+The asynchronous V2 plan entry point is `runTaskSchedulePlanCliAsync(args,
+root)` from the task-schedule command module. The synchronous
+`scheduleTaskKernelGraph` and `runTaskScheduleCli` interfaces remain available
+for existing callers. Jev advice does not start a Run, weaken approval or
+dispatch eligibility, authorize a write-set overlap, or perform Review or Close;
+P37 admission must still re-read current Task Kernels, dependencies,
+authorizations, and leases immediately before dispatch.
+
 ## Node API and decision receipts
 
 ```ts
@@ -172,9 +212,11 @@ receipt authorizes the pair.
 
 | P34 surface | Status in this slice |
 | --- | --- |
-| Public async API, same-critical-path tie-break, immutable final receipt and audit | Implemented and covered by focused tests. |
-| Approval, configured worktree, active lease, and post-response eligibility recheck | Implemented with existing validators and covered by positive/negative tests. |
-| No-key, denied-egress, timeout, service error, low-confidence, and privacy-safe input fallback | Covered with facade/transport stubs; drift tests preserve request-time snapshots separately from final eligibility; no live Jev service call was made. |
+| Parent V1 async API, same-critical-path tie-break, immutable final receipt and audit | Implemented and covered by focused tests. |
+| Parent V1 approval, configured worktree, active lease, and post-response eligibility recheck | Implemented with existing validators and covered by positive/negative tests. |
+| Standalone V2 waiting-Run, authorization, manager-owned worktree, write-set, active lease, and post-response snapshot recheck | Implemented in `scheduleTaskKernelGraphWithJevV1`; covered by focused positive/negative tests. |
+| Project `jev.egress` deny/invalid zero-transport fallback, post-response drift rejection, and bounded fingerprint-bound V2 receipts | Implemented and covered by direct-library and CLI/scheduler tests; no live Jev service call was made. |
+| No-key, timeout, service error, low-confidence, and privacy-safe input fallback | Parent V1 is covered with facade/transport stubs; the shared V2 advice API uses the same transport and bounded summary contract. |
 | `parallel run` / Pi / Codex Host dispatch wiring before P37 admission | Not connected. The current CLI batch path still calls synchronous `scheduleParentTaskGraph`; Host wiring remains a separate P34 node and was intentionally kept outside this slice. |
 | Jev execution-role recommendation | Not implemented here. This slice only breaks equal critical-path ordering ties. |
 

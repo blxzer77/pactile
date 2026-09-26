@@ -20,6 +20,7 @@ export {
   scheduleParentTaskGraphWithJevV1,
   planTaskKernelGraphV1,
   scheduleTaskKernelGraph,
+  scheduleTaskKernelGraphWithJevV1,
   readTaskKernelScheduleReceiptV1,
   type PersistedTaskScheduleV1,
   type PersistedTaskKernelScheduleV1,
@@ -28,6 +29,7 @@ export {
   type TaskMapScheduleOptionsV1,
   type JevParentScheduleOptionsV1,
   type TaskKernelScheduleOptionsV1,
+  type JevTaskKernelScheduleOptionsV1,
   type TaskScheduleDecisionReceiptV1,
   type TaskKernelScheduleDecisionReceiptV1,
   type TaskScheduleLifecycleSnapshotV1,
@@ -37,6 +39,8 @@ export type {
   JevScheduleAdviceAuditV1,
   JevScheduleAdviceOptionsV1,
   JevScheduleFinalEligibleCandidatesV1,
+  JevScheduleProjectEgressAuditV1,
+  JevScheduleProjectEgressStatusV1,
   JevScheduleRequestSnapshotV1,
 } from "../jev/scheduler-advice.js";
 
