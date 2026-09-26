@@ -105,6 +105,33 @@ function addLegacyTask(
   return taskDir;
 }
 
+function addLegacyV1NeedsDefinitionTask(root: string, taskId: string): string {
+  const taskDir = path.join(root, ".pactile", "tasks", taskId);
+  applyKernelCreate({
+    taskDir,
+    cwd: root,
+    actor: "legacy-test-author",
+    idempotencyKey: `legacy-v1-create:${taskId}`,
+    record: emptyTaskRecord({
+      id: taskId,
+      name: taskId,
+      title: `Legacy ${taskId}`,
+      description: "A P36 legacy V1 source record with an incomplete definition.",
+      status: "in_progress",
+      creator: "legacy-test-author",
+      assignee: "legacy-test-owner",
+      createdAt: "2026-09-26",
+    }),
+    evidence: "P36 needs-definition migration fixture",
+  });
+  fs.writeFileSync(
+    path.join(taskDir, "prd.md"),
+    "# Legacy task\n\nThe original task has no completed acceptance criteria section.\n",
+    "utf8",
+  );
+  return taskDir;
+}
+
 function createV2Task(
   root: string,
   taskId: string,
@@ -185,18 +212,26 @@ describe("V2 Task graph indexing with P36 reconciliation records", () => {
 
     await init({ yes: true, user: "p37-fixture", skipReadiness: true });
 
-    const bootstrapTask = JSON.parse(
-      fs.readFileSync(
-        path.join(
-          root,
-          ".pactile",
-          "tasks",
-          "00-bootstrap-guidelines",
-          "task.json",
-        ),
-        "utf8",
-      ),
-    ) as { id: string };
+    const bootstrapTaskDir = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      "00-bootstrap-guidelines",
+    );
+    const bootstrapKernel = readTaskKernel({
+      root,
+      taskDir: bootstrapTaskDir,
+      cwd: root,
+    });
+    expect(bootstrapKernel.kind).toBe("task-kernel-v2");
+    const needsDefinitionTaskId = "p37-legacy-needs-definition";
+    const needsDefinitionTaskDir = addLegacyV1NeedsDefinitionTask(
+      root,
+      needsDefinitionTaskId,
+    );
+    expect(
+      readTaskKernel({ root, taskDir: needsDefinitionTaskDir, cwd: root }).kind,
+    ).toBe("legacy-task-kernel-v1");
     const blockedLegacyTaskId = "p37-blocked-legacy-task";
     addLegacyTask(root, blockedLegacyTaskId, {
       blockingDependency: "p37-missing-block-target",
@@ -205,29 +240,26 @@ describe("V2 Task graph indexing with P36 reconciliation records", () => {
     const independent = createV2Task(root, "p37-independent-task", [], true);
     if (!independent.runId) throw new Error("V2 Run is missing");
     attachManagedWorktree(root, independent);
-    const definitionDependent = createV2Task(root, "p37-definition-dependent", [
-      bootstrapTask.id,
-    ]);
+    const definitionDependent = createV2Task(
+      root,
+      "p37-definition-dependent",
+      [needsDefinitionTaskId],
+    );
     const coordinationDependent = createV2Task(
       root,
       "p37-coordination-dependent",
       [blockedLegacyTaskId],
     );
 
-    // A fresh V1 init seed remains compatible until P36 migration is applied.
+    // Fresh init's V2 bootstrap remains outside the legacy V1 import set.
     const beforeUpdate = scheduleTaskKernelGraph(root, [independent.taskId]);
     expect(beforeUpdate.receipt.scope).toBe("task-kernel-v2");
-    const legacySeed = readTaskKernel({
-      root,
-      taskDir: path.join(root, ".pactile", "tasks", "00-bootstrap-guidelines"),
-    });
-    expect(legacySeed.kind).toBe("legacy-task-kernel-v1");
 
     const updated = await applyLegacyTaskUpdate(root);
     expect(updated.status).toBe("completed");
-    expect(updated.import.needsDefinition).toBeGreaterThan(0);
-    expect(updated.import.needsCoordination).toBeGreaterThan(0);
-    expect(migrationRecord(root, bootstrapTask.id).record.status).toBe(
+    expect(updated.import.needsDefinition).toBe(1);
+    expect(updated.import.needsCoordination).toBe(1);
+    expect(migrationRecord(root, needsDefinitionTaskId).record.status).toBe(
       "needs-definition",
     );
     expect(migrationRecord(root, blockedLegacyTaskId).record.status).toBe(
@@ -250,13 +282,13 @@ describe("V2 Task graph indexing with P36 reconciliation records", () => {
     expect(dispatch.leaseId).toBeTruthy();
 
     expect(() =>
-      preparePiV2RunDispatch(root, bootstrapTask.id, "missing-run"),
+      preparePiV2RunDispatch(root, needsDefinitionTaskId, "missing-run"),
     ).toThrow(/needs definition fields/u);
     expect(() =>
       preparePiV2RunDispatch(root, blockedLegacyTaskId, "missing-run"),
     ).toThrow(/unresolved blocking legacy dependencies/u);
 
-    expect(() => scheduleTaskKernelGraph(root, [bootstrapTask.id])).toThrow(
+    expect(() => scheduleTaskKernelGraph(root, [needsDefinitionTaskId])).toThrow(
       /Task candidate .*needs-definition.*missing definition fields/u,
     );
     expect(() => scheduleTaskKernelGraph(root, [blockedLegacyTaskId])).toThrow(

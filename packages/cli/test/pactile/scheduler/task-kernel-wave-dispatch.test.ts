@@ -5,8 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  applyKernelCreate,
   closeTaskKernel,
   createTaskKernel,
+  emptyTaskRecord,
   recordTaskReview,
   recordTaskRunResult,
   readTaskKernel,
@@ -67,6 +69,33 @@ function makeGitRoot(): string {
   git(root, "add", "README.md", ".gitignore", "src/base.ts");
   git(root, "commit", "-q", "-m", "fixture base");
   return root;
+}
+
+function addLegacyV1NeedsDefinitionTask(root: string, taskId: string): string {
+  const taskDir = path.join(root, ".pactile", "tasks", taskId);
+  applyKernelCreate({
+    taskDir,
+    cwd: root,
+    actor: "legacy-test-author",
+    idempotencyKey: `legacy-v1-create:${taskId}`,
+    record: emptyTaskRecord({
+      id: taskId,
+      name: taskId,
+      title: `Legacy ${taskId}`,
+      description: "A P36 legacy V1 source record with an incomplete definition.",
+      status: "in_progress",
+      creator: "legacy-test-author",
+      assignee: "legacy-test-owner",
+      createdAt: "2026-09-26",
+    }),
+    evidence: "P36 needs-definition migration fixture",
+  });
+  fs.writeFileSync(
+    path.join(taskDir, "prd.md"),
+    "# Legacy task\n\nThe original task has no completed acceptance criteria section.\n",
+    "utf8",
+  );
+  return taskDir;
 }
 
 function makeTask(
@@ -864,30 +893,23 @@ describe("Task Kernel V2 writer-wave dispatch", () => {
     expect(runner).not.toHaveBeenCalled();
   });
 
-  it("keeps P36 needs-definition records outside V2 writer dispatch", async () => {
+  it("keeps P36 needs-definition legacy V1 records outside V2 writer dispatch", async () => {
     const root = makeGitRoot();
     vi.spyOn(process, "cwd").mockReturnValue(root);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     await init({ yes: true, user: "p37-wave-fixture", skipReadiness: true });
-    const bootstrapTask = JSON.parse(
-      fs.readFileSync(
-        path.join(
-          root,
-          ".pactile",
-          "tasks",
-          "00-bootstrap-guidelines",
-          "task.json",
-        ),
-        "utf8",
-      ),
-    ) as { id: string };
+    const legacyTaskId = "p37-wave-legacy-needs-definition";
+    const legacyTaskDir = addLegacyV1NeedsDefinitionTask(root, legacyTaskId);
+    expect(
+      readTaskKernel({ root, taskDir: legacyTaskDir, cwd: root }).kind,
+    ).toBe("legacy-task-kernel-v1");
     const updated = await applyLegacyTaskUpdate(root);
     expect(updated.status).toBe("completed");
-    expect(updated.import.needsDefinition).toBeGreaterThan(0);
+    expect(updated.import.needsDefinition).toBe(1);
 
-    expect(() => scheduleTaskKernelGraph(root, [bootstrapTask.id])).toThrow(
+    expect(() => scheduleTaskKernelGraph(root, [legacyTaskId])).toThrow(
       /needs-definition.*missing definition fields/u,
     );
   }, 120_000);
