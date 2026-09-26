@@ -2,7 +2,7 @@
 
 ## Non-Negotiable Interview Contract
 
-Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
+Ask only about unresolved **blocking** product decisions that could change the requirements or acceptance criteria. Use repository evidence for factual questions, give a recommendation for each blocking question, and stop asking once no blocking questions remain.
 
 Ask the questions one at a time.
 
@@ -119,7 +119,7 @@ When PRD Grill is selected as useful (often within a triggered `define-extended`
 
 ## Phase B — Micro-grill unresolved
 
-For each **blocking** open question after the checklist, embed the **`pactile-micro-grill` contract**:
+Use the **`pactile-micro-grill` contract** for every **blocking** open question identified during repository evidence, PRD drafting, or an optional PRD Grill pass. This applies whether or not PRD Grill runs:
 
 - exactly **one** question per message
 - **Simplified Chinese** for user-facing text
@@ -181,7 +181,7 @@ Your recommended answer defaults to Occam's Razor: the **minimal sufficient** op
 - **Development Strategy Contract** (`execution_mode`, `isolation`, …): choose the execution and isolation strategy from the actual scope, then record the approved YAML block in `implement.md`.
 - follow-up checks before `pactile task start-execution --check`
 
-Lightweight tasks may have only `prd.md`. Complex tasks must have `prd.md`, `design.md`, and `implement.md` before `pactile task start-execution --check`.
+Lightweight tasks may have only `prd.md`. Complex tasks must have `prd.md` and `implement.md` before `pactile task start-execution --check`; include `design.md` only when Risk/Policy or `verification_profile: architecture` requires it.
 
 `implement.md` is not a replacement for `implement.jsonl`. Use JSONL files only for manifest-style spec and research references when the task needs them.
 
@@ -191,7 +191,7 @@ Planning is ready for the execution gate when all baseline criteria hold:
 
 - **No blocking** open questions in `prd.md`
 - Acceptance criteria are testable; out of scope is explicit
-- Complex tasks: `design.md` and `implement.md` present
+- Complex tasks: `implement.md` present; `design.md` only when Risk/Policy or `verification_profile: architecture` requires it
 - User reviewed artifacts or explicitly approved proceeding
 
 If PRD Grill ran, also require:

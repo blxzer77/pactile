@@ -161,7 +161,7 @@ const SKILL_DESCRIPTIONS: Record<string, string> = {
   "before-dev":
     "Discovers and injects project-specific coding guidelines from .pactile/spec/ before implementation begins. Reads spec indexes, pre-development checklists, and shared thinking guides for the target package. Use when starting a new coding task, before writing any code, switching to a different package, or needing to refresh project conventions and standards.",
   brainstorm:
-    "Guides collaborative requirements discovery before implementation: Discovery Before Questions, PRD draft, then PRD Grill (document pass + micro-grill for blocking business questions). Use when requirements are unclear, multiple valid approaches exist, or the user describes a new feature or complex task.",
+    "Guides collaborative requirements discovery before implementation: Discovery Before Questions and PRD draft, with optional PRD Grill when useful. Resolve blocking business questions with `pactile-micro-grill` whether or not the Grill pass runs. Use when requirements are unclear, multiple valid approaches exist, or the user describes a new feature or complex task.",
   check:
     "Comprehensive quality verification on two axes — Standards (spec compliance, lint, type-check, tests, code smells, cross-layer data flow) and Spec (prd fidelity, scope, learning/spec-sync). Use when code is written and needs quality verification, before committing changes, or to catch context drift during long sessions.",
   "break-loop":
