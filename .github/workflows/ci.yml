@@ -121,5 +121,16 @@ jobs:
       - name: Build the single release package
         run: pnpm build
 
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Vite 7 requires >=20.19; Node 20.0.0 uses the compiled package acceptance below.
+      - name: Test Node-only and package release contracts
+        if: ${{ matrix.node != '20.0.0' }}
+        run: >-
+          pnpm --filter @blxzer/pactile exec vitest run --maxWorkers=2
+          test/release-guard.test.ts
+          test/assert-no-python-on-path.test.ts
+
       - name: Verify default lifecycle install with no Python on PATH and V2 Task smoke
         run: node packages/cli/.tmp/p31-script-build/release-conformance.js
