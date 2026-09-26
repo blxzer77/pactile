@@ -267,7 +267,7 @@ describe("init() joiner onboarding", () => {
       if (String(filePath) === developerFile) {
         intentExistedWhenIdentityWasWritten =
           fs.readFileSync(marker, "utf8") ===
-          "Task creation was interrupted; retry pactile init.\n";
+          'Task creation was interrupted; retry pactile init.\njoiner:v1:"bob"\n';
       }
       return originalWriteFileSync(filePath, data, options);
     }) as typeof fs.writeFileSync);
@@ -452,6 +452,57 @@ describe("init() joiner onboarding", () => {
     }
   });
 
+  it("recovers the bounded joiner identity when interrupted before identity was written", async () => {
+    simulateExistingCheckout();
+    const marker = path.join(
+      tmpDir,
+      PATHS.TASKS,
+      ".pending-00-join-tao-su",
+    );
+    const developerFile = path.join(tmpDir, PATHS.DEVELOPER_FILE);
+    const joinerPath = path.join(tmpDir, PATHS.TASKS, "00-join-tao-su");
+    fs.writeFileSync(
+      marker,
+      'Task creation was interrupted; retry pactile init.\njoiner:v1:"Tao Su"\n',
+      "utf8",
+    );
+
+    await init({ yes: true });
+
+    expect(fs.readFileSync(developerFile, "utf8")).toContain("name=Tao Su");
+    expect(fs.existsSync(joinerPath)).toBe(true);
+    expect(fs.existsSync(marker)).toBe(false);
+    const kernel = readTaskKernel({ root: tmpDir, taskDir: joinerPath, cwd: tmpDir });
+    expect(kernel.kind).toBe("task-kernel-v2");
+    if (kernel.kind === "task-kernel-v2") {
+      expect(kernel.kernel.definition.createdBy).toContain("Tao Su");
+      expect(kernel.kernel.phase).toBe("define");
+      expect(kernel.kernel.runs).toEqual([]);
+      expect(kernel.kernel.reviews).toEqual([]);
+      expect(kernel.kernel.closure).toBeNull();
+    }
+  });
+
+  it("preserves a joiner marker whose identity does not match its task slug", async () => {
+    simulateExistingCheckout();
+    const marker = path.join(
+      tmpDir,
+      PATHS.TASKS,
+      ".pending-00-join-dave",
+    );
+    const markerContent =
+      'Task creation was interrupted; retry pactile init.\njoiner:v1:"Eve"\n';
+    fs.writeFileSync(marker, markerContent, "utf8");
+
+    await init({ yes: true });
+
+    expect(fs.readFileSync(marker, "utf8")).toBe(markerContent);
+    expect(fs.existsSync(path.join(tmpDir, PATHS.DEVELOPER_FILE))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, PATHS.TASKS, "00-join-eve"))).toBe(
+      false,
+    );
+  });
+
   it("#5a developer name with spaces → filesystem-safe slug", async () => {
     simulateExistingCheckout();
 
@@ -624,6 +675,63 @@ describe("init() joiner onboarding", () => {
     ).toBe(true);
   });
 
+  it("rejects an external tasks symlink before marker or staging writes", async () => {
+    simulateExistingCheckout();
+    const outsideRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pactile-joiner-outside-"),
+    );
+    const outsideNote = path.join(outsideRoot, "user-note.md");
+    const tasksRoot = path.join(tmpDir, PATHS.TASKS);
+    fs.writeFileSync(outsideNote, "Keep outside data.\n", "utf8");
+    fs.rmSync(tasksRoot, { recursive: true, force: true });
+    fs.symlinkSync(
+      outsideRoot,
+      tasksRoot,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const outsideWrites: string[] = [];
+    const isOutsidePath = (value: unknown): boolean => {
+      const candidate = path.resolve(String(value));
+      const relative = path.relative(outsideRoot, candidate);
+      return (
+        relative === "" ||
+        (!relative.startsWith("..") && !path.isAbsolute(relative))
+      );
+    };
+    const originalMkdirSync = fs.mkdirSync;
+    const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation((...args) => {
+      if (isOutsidePath(args[0])) outsideWrites.push(`mkdir:${String(args[0])}`);
+      return originalMkdirSync(...args);
+    });
+    const originalWriteFileSync = fs.writeFileSync;
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(((
+      filePath: fs.PathOrFileDescriptor,
+      data: string | NodeJS.ArrayBufferView,
+      options?: fs.WriteFileOptions,
+    ) => {
+      if (isOutsidePath(filePath))
+        outsideWrites.push(`write:${String(filePath)}`);
+      return originalWriteFileSync(filePath, data, options);
+    }) as typeof fs.writeFileSync);
+
+    try {
+      await expect(
+        init({ yes: true, user: "bob" }),
+      ).resolves.toBeUndefined();
+      expect(outsideWrites).toEqual([]);
+      expect(fs.readdirSync(outsideRoot)).toEqual(["user-note.md"]);
+      expect(fs.readFileSync(outsideNote, "utf8")).toBe("Keep outside data.\n");
+      expect(
+        fs.existsSync(path.join(tmpDir, PATHS.DEVELOPER_FILE)),
+      ).toBe(false);
+    } finally {
+      writeSpy.mockRestore();
+      mkdirSpy.mockRestore();
+      fs.rmSync(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
   // Tests #7/#8 cover the handleReinit path — the default flow when .pactile/
   // already exists and neither --force nor --skip-existing is passed. init()
   // routes through handleReinit() instead of the main dispatch, so joiner
@@ -648,7 +756,7 @@ describe("init() joiner onboarding", () => {
       if (String(filePath) === developerFile) {
         intentExistedWhenIdentityWasWritten =
           fs.readFileSync(marker, "utf8") ===
-          "Task creation was interrupted; retry pactile init.\n";
+          'Task creation was interrupted; retry pactile init.\njoiner:v1:"frank"\n';
       }
       return originalWriteFileSync(filePath, data, options);
     }) as typeof fs.writeFileSync);
