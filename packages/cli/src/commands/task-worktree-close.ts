@@ -5,6 +5,7 @@ import { reclaimRunWorktree } from "../pactile/worktree/index.js";
 import { readDeveloper } from "../utils/developer.js";
 import { runTaskCliAsync } from "./task.js";
 import type { TaskScheduleDispatchCliOptionsV1 } from "./task-schedule.js";
+import { runTaskVerifyPlanCli } from "./task-verify-plan.js";
 
 function option(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -25,6 +26,9 @@ export async function runTaskCliWithWorkspaceReclaim(
   cwd = process.cwd(),
   scheduleDispatchOptions: TaskScheduleDispatchCliOptionsV1 = {},
 ): Promise<number> {
+  if (argv[0] === "verify-plan")
+    return runTaskVerifyPlanCli(argv.slice(1), cwd);
+
   const closeCode = await runTaskCliAsync(argv, cwd, scheduleDispatchOptions);
   if (closeCode !== 0 || argv[0] !== "close" || argv.includes("--check"))
     return closeCode;
