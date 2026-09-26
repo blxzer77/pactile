@@ -109,6 +109,27 @@ function samePathIndex(index: CanonicalPathOwnershipIndex, provenance: ManagerPr
     && index.branch === provenance.branch;
 }
 
+function samePathIndexExceptGitDir(index: CanonicalPathOwnershipIndex, provenance: ManagerProvenance): boolean {
+  return samePathIndex({ ...index, gitDir: provenance.gitDir }, provenance);
+}
+
+function sameManagerProvenanceExceptGitDir(left: ManagerProvenance, right: ManagerProvenance): boolean {
+  return left.version === right.version
+    && left.credentialId === right.credentialId
+    && left.ownerRunId === right.ownerRunId
+    && pathKey(left.canonicalPath) === pathKey(right.canonicalPath)
+    && pathKey(left.projectRoot) === pathKey(right.projectRoot)
+    && pathKey(left.commonDir) === pathKey(right.commonDir)
+    && left.branch === right.branch
+    && left.baseSha.toLowerCase() === right.baseSha.toLowerCase()
+    && left.writeSet.length === right.writeSet.length
+    && left.writeSet.every((item, index) => item === right.writeSet[index])
+    && left.source === right.source
+    && left.recordedAt === right.recordedAt
+    && left.ownershipProtocol === right.ownershipProtocol
+    && JSON.stringify(left.adoption ?? null) === JSON.stringify(right.adoption ?? null);
+}
+
 function writeExclusiveJson(file: string, value: unknown): void {
   let descriptor: number | undefined;
   try {
@@ -165,7 +186,7 @@ function validManagerProvenance(value: unknown): value is ManagerProvenance {
     && (record.ownershipProtocol === undefined || record.ownershipProtocol === OWNERSHIP_PROTOCOL);
 }
 
-export function readAllManagerProvenance(identity: GitIdentity): ManagerProvenance[] {
+function readManagerProvenanceRecords(identity: GitIdentity, allowGitDirMismatchForRun?: string): ManagerProvenance[] {
   const root = provenanceRoot(identity, false);
   if (!root) return [];
   const records = fs.readdirSync(root).filter((name) => name.endsWith(".json")).map((name) => {
@@ -186,7 +207,9 @@ export function readAllManagerProvenance(identity: GitIdentity): ManagerProvenan
     }
     if (parsed.ownershipProtocol === OWNERSHIP_PROTOCOL) {
       const index = readPathIndex(identity, parsed.canonicalPath);
-      if (!index || !samePathIndex(index, parsed)) {
+      const matches = index && (samePathIndex(index, parsed)
+        || (parsed.ownerRunId === allowGitDirMismatchForRun && samePathIndexExceptGitDir(index, parsed)));
+      if (!matches) {
         throw new WorktreeManagerError("manager-provenance-invalid", "Run provenance does not match its canonical-path ownership index", file);
       }
     }
@@ -208,6 +231,115 @@ export function readAllManagerProvenance(identity: GitIdentity): ManagerProvenan
     ownersByPath.set(key, record);
   }
   return records;
+}
+
+export function readAllManagerProvenance(identity: GitIdentity): ManagerProvenance[] {
+  return readManagerProvenanceRecords(identity);
+}
+
+function writeReplacementJson(file: string, value: unknown): void {
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(temporary, "wx", 0o600);
+    fs.writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    fs.renameSync(temporary, file);
+  } catch {
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor); } catch { /* preserve the replacement failure */ }
+      descriptor = undefined;
+    }
+    try { fs.unlinkSync(temporary); } catch { /* keep any uncertain registry state fail-closed */ }
+    throw new WorktreeManagerError("manager-provenance-write-failed", "Could not persist recovered worktree Git-directory evidence", file);
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
+function replaceManagerProvenancePair(
+  identity: GitIdentity,
+  updated: ManagerProvenance,
+  allowedGitDirs: readonly string[],
+): void {
+  const root = provenanceRoot(identity, false);
+  if (!root) throw new WorktreeManagerError("manager-provenance-invalid", "Manager provenance directory is unavailable");
+  const records = readManagerProvenanceRecords(identity, updated.ownerRunId);
+  const matches = records.filter((record) => record.ownerRunId === updated.ownerRunId);
+  const old = matches[0];
+  if (matches.length !== 1 || !old || !sameManagerProvenanceExceptGitDir(old, updated)) {
+    throw new WorktreeManagerError("manager-provenance-invalid", "Recovered manager provenance no longer matches the same Run and credential", updated.canonicalPath);
+  }
+  const indexRoot = pathIndexRoot(identity, false);
+  const index = readPathIndex(identity, old.canonicalPath);
+  if (!indexRoot || !index || !samePathIndexExceptGitDir(index, old)) {
+    throw new WorktreeManagerError("manager-provenance-invalid", "Recovered manager path index no longer matches its Run provenance", old.canonicalPath);
+  }
+  const allowed = new Set(allowedGitDirs.map((value) => pathKey(value)));
+  if (!allowed.has(pathKey(old.gitDir)) || !allowed.has(pathKey(index.gitDir)) || !allowed.has(pathKey(updated.gitDir))) {
+    throw new WorktreeManagerError("manager-provenance-invalid", "Recovered Git-directory change does not match the recorded Run state", old.canonicalPath);
+  }
+  const ownerFile = path.join(root, `${updated.ownerRunId}.json`);
+  const ownerStat = fs.lstatSync(ownerFile, { throwIfNoEntry: false });
+  if (!ownerStat?.isFile() || ownerStat.isSymbolicLink() || pathKey(fs.realpathSync(ownerFile)) !== pathKey(ownerFile)) {
+    throw new WorktreeManagerError("manager-provenance-invalid", "Existing Run provenance file is not safe to update", ownerFile);
+  }
+  const indexFile = path.join(indexRoot, `${pathHash(updated.canonicalPath)}.json`);
+  const indexStat = fs.lstatSync(indexFile, { throwIfNoEntry: false });
+  if (!indexStat?.isFile() || indexStat.isSymbolicLink() || pathKey(fs.realpathSync(indexFile)) !== pathKey(indexFile)) {
+    throw new WorktreeManagerError("manager-provenance-invalid", "Existing canonical-path index is not safe to update", indexFile);
+  }
+
+  // Replace the index first. If a process stops before the owner file follows,
+  // the recovery reader can prove and complete this one-field Git-directory transition.
+  writeReplacementJson(indexFile, pathIndexFor(updated));
+  writeReplacementJson(ownerFile, updated);
+  const readBack = readAllManagerProvenance(identity).find((record) => record.ownerRunId === updated.ownerRunId);
+  if (!readBack || !sameManagerProvenanceExceptGitDir(readBack, updated) || pathKey(readBack.gitDir) !== pathKey(updated.gitDir)) {
+    throw new WorktreeManagerError("manager-provenance-write-failed", "Recovered manager ownership pair failed read-back verification", updated.canonicalPath);
+  }
+}
+
+/**
+ * Reconcile the manager owner and canonical-path records after Git recreates a
+ * linked checkout with a different administrative Git directory. A partial
+ * index-first replacement can be retried only while both records still bind the
+ * same Run credential and the changed Git directory is either the Run's prior
+ * value or the currently verified linked directory.
+ */
+export function synchronizeManagerProvenanceGitDir(input: {
+  identity: GitIdentity;
+  ownerRunId: string;
+  credentialId: string;
+  priorGitDir: string;
+  actualGitDir: string;
+}): ManagerProvenance {
+  const records = readManagerProvenanceRecords(input.identity, input.ownerRunId);
+  const matches = records.filter((record) => record.ownerRunId === input.ownerRunId);
+  const owner = matches[0];
+  if (matches.length !== 1 || owner?.credentialId !== input.credentialId) {
+    throw new WorktreeManagerError("manager-provenance-invalid", "Recovered manager provenance does not match this Run credential");
+  }
+  const index = readPathIndex(input.identity, owner.canonicalPath);
+  if (!index || !samePathIndexExceptGitDir(index, owner)) {
+    throw new WorktreeManagerError("manager-provenance-invalid", "Recovered manager path index does not match this Run");
+  }
+  const allowedGitDirs = [input.priorGitDir, input.actualGitDir];
+  const allowed = new Set(allowedGitDirs.map((value) => pathKey(value)));
+  if (!allowed.has(pathKey(owner.gitDir)) || !allowed.has(pathKey(index.gitDir))) {
+    throw new WorktreeManagerError("manager-provenance-invalid", "Recovered Git-directory records changed outside the verified restoration");
+  }
+  const updated = { ...owner, gitDir: input.actualGitDir };
+  if (pathKey(owner.gitDir) !== pathKey(updated.gitDir) || pathKey(index.gitDir) !== pathKey(updated.gitDir)) {
+    replaceManagerProvenancePair(input.identity, updated, allowedGitDirs);
+  }
+  const readBack = readAllManagerProvenance(input.identity).find((record) => record.ownerRunId === input.ownerRunId);
+  if (readBack?.credentialId !== input.credentialId || pathKey(readBack.gitDir) !== pathKey(input.actualGitDir)) {
+    throw new WorktreeManagerError("manager-provenance-write-failed", "Recovered manager Git-directory records are not synchronized");
+  }
+  return readBack;
 }
 
 export function persistManagerProvenance(identity: GitIdentity, provenance: ManagerProvenance): void {

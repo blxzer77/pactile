@@ -181,7 +181,11 @@ export function finishTaskRunWorkspaceCleanup(request: FinishTaskRunWorkspaceCle
     const workspace = run.workspace;
     const manager = workspace?.manager;
     const lease = workspace?.cleanupLease;
-    if (!manager || lease?.state !== "held" || lease.leaseId !== leaseId) {
+    const recoveryBindingUpdate = lease?.state === "recovery-required"
+      && request.result === "recovery-required"
+      && !!request.updatedManagerBinding;
+    if (!manager || lease?.leaseId !== leaseId
+      || (lease.state !== "held" && !recoveryBindingUpdate)) {
       throw new KernelError("INVALID_TRANSITION", "Cleanup result does not match the currently held Run workspace lease");
     }
     if (request.updatedManagerBinding) {
@@ -227,6 +231,8 @@ const WORKSPACE_CLAIM_REFUSAL_REASONS: Readonly<Record<TaskRunWorkspaceClaimErro
   "invalid-run-id": "The Run identifier failed workspace ownership validation.",
   "invalid-write-set": "The Run write set failed workspace validation.",
   "invalid-ref": "The Git reference could not be verified for this workspace claim.",
+  "candidate-baseline-mismatch": "The requested Git base does not match the commit captured when the Run started.",
+  "candidate-baseline-unavailable": "The Run has no frozen Git baseline for a managed checkout.",
   "path-anomaly": "The workspace path failed canonical location checks.",
   "invalid-repository": "The repository identity could not be verified.",
   "adoption-not-authorized": "Recorded adoption authorization is missing or invalid.",
@@ -238,14 +244,15 @@ const WORKSPACE_CLAIM_REFUSAL_REASONS: Readonly<Record<TaskRunWorkspaceClaimErro
   "manager-provenance-write-failed": "Manager ownership evidence could not be recorded.",
   "worktree-create-failed": "Git could not create and register the requested checkout.",
   "post-create-verification-failed": "The created checkout failed verification; preserve it for recovery.",
+  "workspace-kernel-bind-failed": "The checkout was preserved, but its Task Kernel owner binding could not be recorded; reconcile the Run before dispatch.",
   "claim-failed": "The workspace claim did not pass manager validation or persistence.",
 };
 
-/** Persist a redacted create/adopt refusal without changing Run or workspace ownership. */
+/** Persist a redacted create/adopt/reconcile refusal without changing Run or workspace ownership. */
 export function recordTaskRunWorkspaceClaimRefusal(request: RecordTaskRunWorkspaceClaimRefusalRequest): TaskKernelMutationResult {
   const actor = requireNonEmptyString(request.actor, "actor");
   const runId = requireNonEmptyString(request.runId, "runId");
-  if (request.operation !== "create" && request.operation !== "adopt") {
+  if (request.operation !== "create" && request.operation !== "adopt" && request.operation !== "reconcile") {
     throw new KernelError("INVALID_REQUEST", "Workspace claim operation is invalid");
   }
   if (!(TASK_RUN_WORKSPACE_CLAIM_ERROR_CODES as readonly string[]).includes(request.errorCode)) {
