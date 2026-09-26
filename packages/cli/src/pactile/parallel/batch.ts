@@ -33,6 +33,8 @@ export interface BatchManifest {
     task_ids: [string, string];
     approved_by: string;
     authorization_ref: string;
+    /** Required for new authorizations; optional only in readable legacy manifests. */
+    integration_owner?: string;
     integration_plan: string;
   }[];
   jev_advice?: { task_order: string[]; evidence_ref: string };
@@ -140,15 +142,25 @@ function scheduleOptionsForManifest(
     ...(manifest.conflict_parallelizations
       ? {
           conflictParallelizations: manifest.conflict_parallelizations.map(
-            (authorization) => ({
-              taskIds: [
-                resolveTaskId(authorization.task_ids[0]),
-                resolveTaskId(authorization.task_ids[1]),
-              ] as [string, string],
-              approvedBy: authorization.approved_by,
-              authorizationRef: authorization.authorization_ref,
-              integrationPlan: authorization.integration_plan,
-            }),
+            (authorization) => {
+              if (
+                typeof authorization.integration_owner !== "string" ||
+                !authorization.integration_owner.trim()
+              )
+                throw new Error(
+                  "Conflict parallelization requires integration_owner",
+                );
+              return {
+                taskIds: [
+                  resolveTaskId(authorization.task_ids[0]),
+                  resolveTaskId(authorization.task_ids[1]),
+                ] as [string, string],
+                approvedBy: authorization.approved_by,
+                authorizationRef: authorization.authorization_ref,
+                integrationOwner: authorization.integration_owner,
+                integrationPlan: authorization.integration_plan,
+              };
+            },
           ),
         }
       : {}),

@@ -1306,6 +1306,7 @@ export function acquireTaskKernelRunDispatchV1(
       projectWriteSetsConflict(lease.touches, checked.writeSet),
     );
     const conflictingLeaseIds: string[] = [];
+    const missingIntegrationOwnerLeaseIds: string[] = [];
     const authorizedConflicts: NonNullable<
       ProjectWriteLeaseRecordV1["authorized_conflicts"]
     > = [];
@@ -1316,13 +1317,24 @@ export function acquireTaskKernelRunDispatchV1(
         lease,
       );
       if (!authorization) conflictingLeaseIds.push(lease.id);
-      else authorizedConflicts.push(authorization);
+      else if (!nonEmptyString(authorization.integrationOwner)) {
+        missingIntegrationOwnerLeaseIds.push(lease.id);
+        conflictingLeaseIds.push(lease.id);
+      } else authorizedConflicts.push(authorization);
     }
     if (conflictingLeaseIds.length) {
+      const reasonCodes = [
+        ...(conflictingLeaseIds.length > missingIntegrationOwnerLeaseIds.length
+          ? ["project-write-set-conflict"]
+          : []),
+        ...(missingIntegrationOwnerLeaseIds.length
+          ? ["project-write-set-conflict-integration-owner-missing"]
+          : []),
+      ];
       return persistRejected(
         root,
         request,
-        ["project-write-set-conflict"],
+        reasonCodes,
         checked.kernel.revision,
         checked.dependencyKernelRevisions,
         checked.writeSet,

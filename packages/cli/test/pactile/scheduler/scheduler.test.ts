@@ -76,6 +76,7 @@ describe("Pactile Task scheduler V1 validation", () => {
       taskIds: ["a", "b"],
       approvedBy: "owner",
       authorizationRef: "approval:p37",
+      integrationOwner: "parent",
       integrationPlan: "  ",
     } as unknown as NonNullable<
       TaskScheduleRequestV1["conflictParallelizations"]
@@ -89,6 +90,30 @@ describe("Pactile Task scheduler V1 validation", () => {
               task("b", { writeSet: ["src/shared/child.ts"] }),
             ],
             { conflictParallelizations: [invalidAuthorization] },
+          ),
+        ),
+      "invalid-conflict-authorization",
+    );
+  });
+
+  it("requires an integration owner for a new overlapping-writer authorization", () => {
+    const authorization = {
+      taskIds: ["a", "b"],
+      approvedBy: "owner",
+      authorizationRef: "approval:p37",
+      integrationPlan: "Integrate a before b.",
+    } as unknown as NonNullable<
+      TaskScheduleRequestV1["conflictParallelizations"]
+    >[number];
+    expectSchedulerError(
+      () =>
+        planTaskScheduleV1(
+          request(
+            [
+              task("a", { writeSet: ["src/shared"] }),
+              task("b", { writeSet: ["src/shared/child.ts"] }),
+            ],
+            { conflictParallelizations: [authorization] },
           ),
         ),
       "invalid-conflict-authorization",
@@ -110,6 +135,7 @@ describe("Pactile Task scheduler V1 validation", () => {
                   taskIds: ["a", "b"],
                   approvedBy: "owner",
                   authorizationRef: "approval:p37",
+                  integrationOwner: "parent",
                   integrationPlan: "Integrate a before b.",
                 },
               ],
@@ -263,6 +289,7 @@ describe("Pactile Task scheduler V1 plan", () => {
       taskIds: ["a", "b"] as const,
       approvedBy: "task-owner",
       authorizationRef: "approval:p37-conflict-1",
+      integrationOwner: "parent-integrator",
       integrationPlan:
         "Apply a, resolve the shared file, then apply b and run the shared checks.",
     };

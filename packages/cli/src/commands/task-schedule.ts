@@ -184,6 +184,7 @@ function parseConflictParallelizations(
     const expectedKeys = [
       "approvedBy",
       "authorizationRef",
+      "integrationOwner",
       "integrationPlan",
       "taskIds",
     ];
@@ -192,7 +193,7 @@ function parseConflictParallelizations(
       Object.keys(record).some((key) => !expectedKeys.includes(key))
     )
       throw new Error(
-        `conflict authorization entry ${index + 1} must contain only taskIds, approvedBy, authorizationRef, and integrationPlan`,
+        `conflict authorization entry ${index + 1} must contain only taskIds, approvedBy, authorizationRef, integrationOwner, and integrationPlan`,
       );
     if (
       !Array.isArray(record.taskIds) ||
@@ -221,7 +222,11 @@ function parseConflictParallelizations(
     seenPairs.add(pairKey);
 
     const boundedString = (
-      key: "approvedBy" | "authorizationRef" | "integrationPlan",
+      key:
+        | "approvedBy"
+        | "authorizationRef"
+        | "integrationOwner"
+        | "integrationPlan",
       maxLength: number,
     ): string => {
       const value = record[key];
@@ -240,6 +245,7 @@ function parseConflictParallelizations(
       taskIds: [left, right],
       approvedBy: boundedString("approvedBy", 200),
       authorizationRef: boundedString("authorizationRef", 512),
+      integrationOwner: boundedString("integrationOwner", 200),
       integrationPlan: boundedString("integrationPlan", 4096),
     };
   });

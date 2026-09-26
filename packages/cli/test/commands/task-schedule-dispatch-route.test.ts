@@ -120,6 +120,7 @@ describe("task schedule async CLI route", () => {
       taskIds,
       approvedBy: "release-owner",
       authorizationRef: "approval:parallel-write:42",
+      integrationOwner: "parent-integrator",
       integrationPlan:
         "Review both isolated worktrees, resolve src/shared.ts conflicts, then integrate left before right.",
     };
@@ -259,6 +260,7 @@ describe("task schedule async CLI route", () => {
           taskIds: ["untrusted-candidate", "another-candidate"],
           approvedBy: "owner",
           authorizationRef: "approval:1",
+          integrationOwner: "parent-integrator",
           integrationPlan: "Review before merge.",
           dispatch: true,
         },
@@ -306,6 +308,7 @@ describe("task schedule async CLI route", () => {
           taskIds: ["untrusted-candidate", "another-candidate"],
           approvedBy: "owner",
           authorizationRef: "approval:1",
+          integrationOwner: "parent-integrator",
           integrationPlan: "Review before merge.",
         },
       ]),
