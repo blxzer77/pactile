@@ -49,8 +49,16 @@ describe("structured task artifacts help and guide", () => {
     expect(guide).toContain("--actor implementer");
     expect(guide).toContain("`--write-set <path>`");
     expect(guide).toContain("`--candidate <path>=<sha256>`");
-    expect(guide).toContain("Run 写入范围内的普通文件");
-    expect(guide).toContain("P41 Core 会重新检查项目状态");
+    expect(guide).toContain("Run 写入范围内受观察的普通文件");
+    expect(guide).toContain("#p41-run-observer-boundary");
+    expect(guide).toContain(
+      "观察范围内内容变化或观察器报告的写入范围外改动会阻止关闭",
+    );
+    expect(guide).toContain("project-file-observer.ts");
+    expect(guide).toContain(
+      '--document "document:review@<current-review-fingerprint>"',
+    );
+    expect(guide).toContain("run-result` 前存在");
     expect(guide).toContain(
       "packages/cli/src/pactile/artifacts/reader.ts=<actual-reader-file-sha256>",
     );

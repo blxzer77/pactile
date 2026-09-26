@@ -76,7 +76,11 @@ describe("structured artifact Task walkthrough", () => {
     const taskDir = path.join(root, ".pactile", "tasks", taskDirectory);
     const candidateContents = "reviewed result\n";
     const evidenceContents = "AC-1 passed\n";
-    fs.writeFileSync(path.join(root, "result.txt"), "baseline result\n");
+    fs.mkdirSync(path.join(taskDir, "evidence"), { recursive: true });
+    fs.writeFileSync(
+      path.join(taskDir, "evidence", "approval.md"),
+      "Requester approved the declared walkthrough result.\n",
+    );
     fs.mkdirSync(path.join(root, "tests"), { recursive: true });
     fs.writeFileSync(path.join(root, "tests", "result.txt"), "baseline test\n");
 
@@ -219,6 +223,13 @@ describe("structured artifact Task walkthrough", () => {
       candidateFingerprint: candidate.fingerprint,
     });
 
+    fs.writeFileSync(
+      path.join(taskDir, "evidence", "current-candidate.json"),
+      JSON.stringify({
+        snapshotId: candidate.id,
+        fingerprint: candidate.fingerprint,
+      }),
+    );
     const closeArgs = [
       "close",
       "artifact-walkthrough",
