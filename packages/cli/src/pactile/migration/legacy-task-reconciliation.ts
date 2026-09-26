@@ -20,7 +20,7 @@ import {
   type LegacyTaskReconciliationAuthority,
 } from "../../core/task/legacy-task-reconciliation-reader.js";
 import { readTaskKernel } from "../../core/task/task-kernel.js";
-import { assertUniqueTaskId, resolveTaskDirectoryById } from "../../core/task/task-kernel-paths.js";
+import { assertNoDependencyCycle, assertUniqueTaskId, resolveTaskDirectoryById } from "../../core/task/task-kernel-paths.js";
 import { parseTaskKernelSnapshotV2 } from "../../core/task/task-kernel-schema.js";
 import { assertLegacyTaskKernelMigrationOverlaysIntact } from "../../core/task/task-kernel-store-v2.js";
 import { assertCanonicalWriteTarget } from "../runtime/paths.js";
@@ -389,7 +389,7 @@ function assertReconciliationTaskIdAvailable(
   sourceTaskPath: string,
   files: readonly { readonly path: string; readonly bytes: Uint8Array }[],
   validatedView: LegacyTaskMigrationView | null,
-): void {
+): ReturnType<typeof parseTaskKernelSnapshotV2> {
   const kernelFile = files.find((file) => file.path === `${targetTaskPath}/kernel.json`);
   if (!kernelFile) throw new Error("legacy-task-reconciliation-kernel-missing");
   let kernel: ReturnType<typeof parseTaskKernelSnapshotV2>;
@@ -399,6 +399,34 @@ function assertReconciliationTaskIdAvailable(
     throw new Error("legacy-task-reconciliation-kernel-invalid");
   }
   assertUniqueTaskId(root, kernel.identity.taskId, path.join(root, ...sourceTaskPath.split("/")), validatedView);
+  return kernel;
+}
+
+/**
+ * Check the proposed Task against the current V2 dependency graph before it
+ * becomes visible. Traversing from the candidate's outgoing hard edges catches
+ * any existing Task path that would close a cycle back to this candidate ID.
+ */
+function assertReconciliationDependencyGraphAcyclic(
+  root: string,
+  sourceTaskPath: string,
+  kernel: ReturnType<typeof parseTaskKernelSnapshotV2>,
+  validatedView: LegacyTaskMigrationView | null,
+): string {
+  try {
+    return assertNoDependencyCycle(
+      root,
+      kernel.identity.taskId,
+      kernel.definition.dependencies,
+      path.join(root, ...sourceTaskPath.split("/")),
+      validatedView,
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (reason.startsWith("hard dependency cycle reaches "))
+      throw new Error(`legacy-task-reconciliation-hard-dependency-cycle:${kernel.identity.taskId}`);
+    throw error;
+  }
 }
 
 function currentReconciliationFiles(view: LegacyTaskMigrationView): StagedFile[] {
@@ -626,7 +654,13 @@ export async function runLegacyTaskReconciliation(
       externalDependencyIds.add(resolution.taskId);
     }
     const built = buildLegacyTaskV2Reconciliation(currentScan, buildInput, { externalDependencyIds });
-    assertReconciliationTaskIdAvailable(root, taskPath, sourceTaskPath, built.targets, currentView ?? baseView);
+    const candidateKernel = assertReconciliationTaskIdAvailable(root, taskPath, sourceTaskPath, built.targets, currentView ?? baseView);
+    const dependencyGraphSnapshot = assertReconciliationDependencyGraphAcyclic(
+      root,
+      sourceTaskPath,
+      candidateKernel,
+      currentView ?? baseView,
+    );
     const effectiveView = currentView;
     const expectedAuthorityFingerprint = orphanRecovery ? null : readCurrentAuthorityFingerprint(root);
     const previousGenerationId = effectiveView?.reconciliationAuthority?.generationId ?? null;
@@ -708,7 +742,15 @@ export async function runLegacyTaskReconciliation(
       if (requiresSeparateTarget) {
         assertRestoreTargetAvailable(root, taskPath, sourceTaskPath, baseView, currentView);
       }
-      assertReconciliationTaskIdAvailable(root, taskPath, sourceTaskPath, built.targets, currentView ?? baseView);
+      const currentCandidateKernel = assertReconciliationTaskIdAvailable(root, taskPath, sourceTaskPath, built.targets, currentView ?? baseView);
+      const currentDependencyGraphSnapshot = assertReconciliationDependencyGraphAcyclic(
+        root,
+        sourceTaskPath,
+        currentCandidateKernel,
+        currentView ?? baseView,
+      );
+      if (currentDependencyGraphSnapshot !== dependencyGraphSnapshot)
+        throw new Error("legacy-task-reconciliation-dependency-graph-changed");
       setJournalState(root, authority, "committing", occurred);
       atomicReplace(root, pointerPath, jsonBytes(authority));
       visible = true;

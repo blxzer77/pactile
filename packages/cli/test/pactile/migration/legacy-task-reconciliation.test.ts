@@ -22,6 +22,8 @@ import {
   recordTaskRunResult,
   startTaskRun,
 } from "../../../src/core/task/task-kernel.js";
+import { fingerprintTaskValue } from "../../../src/core/task/task-kernel-schema.js";
+import { appendMutation } from "../../../src/core/task/task-kernel-store-v2.js";
 import { planTaskKernelGraphV1 } from "../../../src/pactile/scheduler/index.js";
 import { resolveTaskDirectoryById } from "../../../src/core/task/task-kernel-paths.js";
 import { runLegacyTaskBatch } from "../../../src/pactile/migration/legacy-task-batch.js";
@@ -569,6 +571,154 @@ describe("P36 explicit legacy Task reconciliation", () => {
       authorization: { approvedBy: "approver", approvedAt: "2026-09-26T15:41:00.000Z", scope: "dependent task", evidenceRef: "approval.json" },
     });
     expect(openDependentRun.kernel.runs).toHaveLength(1);
+  });
+
+  it.each(["two-node", "three-node"] as const)(
+    "blocks %s hard dependency cycles consistently in CLI check and approved modes",
+    async (cycleShape) => {
+      const root = makeRoot();
+      const heldDir = addLegacyTask(root, {
+        id: "cycle-b",
+        directory: "02-cycle-b",
+        dependsOn: ["missing-ref"],
+        dependsMode: "block",
+      });
+      const heldTaskJsonPath = path.join(heldDir, "task.json");
+      const heldTaskJson = JSON.parse(fs.readFileSync(heldTaskJsonPath, "utf8")) as Record<string, unknown>;
+      delete heldTaskJson.deliverable;
+      delete heldTaskJson.deliveryLevel;
+      writeJson(heldTaskJsonPath, heldTaskJson);
+      fs.writeFileSync(path.join(heldDir, "prd.md"), "# cycle-b\n\nDefinition is intentionally held for explicit reconciliation.\n", "utf8");
+      await importRoot(root);
+
+      const v2Dirs = cycleShape === "two-node"
+        ? [addV2Task(root, "01-cycle-a", "cycle-a", ["cycle-b"])]
+        : [
+            addV2Task(root, "01-cycle-c", "cycle-c", ["cycle-b"]),
+            addV2Task(root, "03-cycle-a", "cycle-a", ["cycle-c"]),
+          ];
+      const heldBytes = new Map(fs.readdirSync(heldDir).map((name) => [name, fs.readFileSync(path.join(heldDir, name))]));
+      const kernelBytes = new Map(v2Dirs.map((dir) => [dir, fs.readFileSync(path.join(dir, "kernel.json"))]));
+      const migrationAuthority = path.join(root, ".pactile", "runtime", "legacy-task-migrations", "authority.json");
+      const migrationAuthorityBefore = fs.readFileSync(migrationAuthority);
+      const reconciliationAuthority = path.join(root, ".pactile", "runtime", "legacy-task-migrations", "reconciliations", "authority.json");
+      const args = [
+        "reconcile",
+        "02-cycle-b",
+        "--idempotency-key",
+        `check-cycle-${cycleShape}`,
+        "--activation-at",
+        "2026-09-26T17:00:00.000Z",
+        "--deliverable",
+        "A defined result with an acyclic dependency graph.",
+        "--delivery-level",
+        "local-result",
+        "--accept",
+        "The explicit hard dependency graph remains acyclic.",
+        "--resolve-dependency",
+        "missing-ref=cycle-a",
+      ];
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const checkCode = await runLegacyTaskCli([...args, "--check"], root);
+        const checkResult = JSON.parse(String(log.mock.lastCall?.[0])) as { reason: string; status: string; wrote: boolean; visible: boolean };
+        expect(checkCode).toBe(1);
+        expect(checkResult).toMatchObject({
+          status: "blocked",
+          reason: "legacy-task-reconciliation-hard-dependency-cycle:cycle-b",
+          wrote: false,
+          visible: false,
+        });
+
+        const approvedCode = await runLegacyTaskCli([...args, "--approved"], root);
+        const approvedResult = JSON.parse(String(log.mock.lastCall?.[0])) as { reason: string; status: string; wrote: boolean; visible: boolean };
+        expect(approvedCode).toBe(1);
+        expect(approvedResult).toEqual(checkResult);
+      } finally {
+        log.mockRestore();
+        error.mockRestore();
+      }
+
+      expect(readLegacyTaskImportRecord(root, heldDir)?.status).toBe("needs-coordination");
+      expect(listTaskKernelSnapshots(root).map(({ kernel }) => kernel.identity.taskId)).not.toContain("cycle-b");
+      expect(fs.existsSync(reconciliationAuthority)).toBe(false);
+      expect(fs.readFileSync(migrationAuthority)).toEqual(migrationAuthorityBefore);
+      for (const [name, bytes] of heldBytes) expect(fs.readFileSync(path.join(heldDir, name))).toEqual(bytes);
+      for (const [dir, bytes] of kernelBytes) expect(fs.readFileSync(path.join(dir, "kernel.json"))).toEqual(bytes);
+    },
+  );
+
+  it("rechecks the live V2 dependency graph under the authority CAS lock", async () => {
+    const root = makeRoot();
+    const heldDir = addLegacyTask(root, {
+      id: "cas-cycle-b",
+      directory: "02-cas-cycle-b",
+      dependsOn: ["missing-ref"],
+      dependsMode: "block",
+    });
+    const heldTaskJsonPath = path.join(heldDir, "task.json");
+    const heldTaskJson = JSON.parse(fs.readFileSync(heldTaskJsonPath, "utf8")) as Record<string, unknown>;
+    delete heldTaskJson.deliverable;
+    delete heldTaskJson.deliveryLevel;
+    writeJson(heldTaskJsonPath, heldTaskJson);
+    fs.writeFileSync(path.join(heldDir, "prd.md"), "# cas-cycle-b\n\nDefinition is intentionally held.\n", "utf8");
+    await importRoot(root);
+
+    const existingTaskDir = addV2Task(root, "01-cas-cycle-a", "cas-cycle-a");
+    const existingRead = readTaskKernel({ root, taskDir: existingTaskDir, cwd: root });
+    if (existingRead.kind !== "task-kernel-v2") throw new Error("expected existing V2 Task");
+    const sourceBytes = new Map(fs.readdirSync(heldDir).map((name) => [name, fs.readFileSync(path.join(heldDir, name))]));
+    const migrationAuthority = path.join(root, ".pactile", "runtime", "legacy-task-migrations", "authority.json");
+    const migrationAuthorityBefore = fs.readFileSync(migrationAuthority);
+    const reconciliationAuthority = path.join(root, ".pactile", "runtime", "legacy-task-migrations", "reconciliations", "authority.json");
+    const nextDefinition = { ...existingRead.kernel.definition, dependencies: ["cas-cycle-b"] };
+    const changedKernel = appendMutation(
+      existingRead.kernel,
+      "concurrent-v2-writer",
+      "add-cas-cycle-edge",
+      "task.dependency-added",
+      "cas-cycle-b",
+      fingerprintTaskValue({ dependencyId: "cas-cycle-b" }),
+      { definition: nextDefinition },
+      "A concurrent writer adds a hard dependency after reconciliation preflight.",
+    );
+    const request = {
+      projectRoot: root,
+      plan: scanLegacyTaskMigration({ projectRoot: root }),
+      input: {
+        taskPath: "02-cas-cycle-b",
+        idempotencyKey: "block-cas-cycle",
+        activationAt: "2026-09-26T17:30:00.000Z",
+        definition: {
+          deliverable: "A defined result with a valid dependency graph.",
+          deliveryLevel: "local-result",
+          acceptanceCriteria: ["The concurrent V2 dependency graph is checked before activation."],
+        },
+        dependencyResolutions: [{ reference: "missing-ref", taskId: "cas-cycle-a" }],
+      },
+    };
+    const result = await runLegacyTaskReconciliation(request, {
+      approved: true,
+      onPhase: (phase) => {
+        if (phase === "generation-staged")
+          fs.writeFileSync(path.join(existingTaskDir, "kernel.json"), `${JSON.stringify(changedKernel, null, 2)}\n`, "utf8");
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "blocked",
+      reason: "legacy-task-reconciliation-hard-dependency-cycle:cas-cycle-b",
+      wrote: true,
+      visible: false,
+    });
+    expect(fs.existsSync(reconciliationAuthority)).toBe(false);
+    expect(fs.readFileSync(migrationAuthority)).toEqual(migrationAuthorityBefore);
+    for (const [name, bytes] of sourceBytes) expect(fs.readFileSync(path.join(heldDir, name))).toEqual(bytes);
+    const liveKernel = JSON.parse(fs.readFileSync(path.join(existingTaskDir, "kernel.json"), "utf8")) as {
+      definition: { dependencies: string[] };
+    };
+    expect(liveKernel.definition.dependencies).toEqual(["cas-cycle-b"]);
   });
 
   it("keeps dry-run, cancel, placeholder, source-field override, and bad delivery level at zero visible writes", async () => {

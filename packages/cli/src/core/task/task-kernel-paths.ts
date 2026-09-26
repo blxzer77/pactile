@@ -33,15 +33,26 @@ export function assertDependenciesResolvable(root: string, taskId: string, depen
   }
 }
 
-export function assertNoDependencyCycle(root: string, taskId: string, dependencies: readonly string[], ignoredDir: string): void {
+export function assertNoDependencyCycle(
+  root: string,
+  taskId: string,
+  dependencies: readonly string[],
+  ignoredDir: string,
+  validatedView?: LegacyTaskMigrationView | null,
+): string {
   const canonicalRoot = canonicalProjectRoot(root);
   const visiting = new Set<string>();
   const visited = new Set<string>();
+  const graph = new Map<string, { readonly taskDir: string | null; readonly dependencies: readonly string[] }>();
   const visit = (currentId: string): void => {
     if (currentId === taskId) throw new KernelError("INVALID_REQUEST", `hard dependency cycle reaches ${taskId}`);
     if (visited.has(currentId) || visiting.has(currentId)) return;
     visiting.add(currentId);
-    const located = findTaskById(canonicalRoot, currentId, ignoredDir);
+    const located = findTaskById(canonicalRoot, currentId, ignoredDir, validatedView);
+    graph.set(currentId, {
+      taskDir: located ? path.resolve(located.taskDir) : null,
+      dependencies: located ? [...new Set(located.dependencies)].sort() : [],
+    });
     if (located && path.resolve(located.taskDir) !== path.resolve(ignoredDir)) {
       for (const dependency of located.dependencies) visit(dependency);
     }
@@ -49,6 +60,11 @@ export function assertNoDependencyCycle(root: string, taskId: string, dependenci
     visited.add(currentId);
   };
   for (const dependency of dependencies) visit(dependency);
+  return JSON.stringify(
+    [...graph.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([id, node]) => ({ id, ...node })),
+  );
 }
 
 export function assertHardDependenciesSatisfied(root: string, dependencies: readonly string[], ignoredDir?: string): void {
