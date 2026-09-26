@@ -71,9 +71,13 @@ describe("Node context CLI", () => {
     roots.push(root);
     const tasksDir = path.join(root, ".pactile", "tasks");
     const sessionsDir = path.join(root, ".pactile", ".runtime", "sessions");
+    const modulesDir = path.join(root, ".pactile", "modules");
     fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.mkdirSync(path.join(modulesDir, "define-basic"), { recursive: true });
+    fs.writeFileSync(path.join(modulesDir, "index.json"), JSON.stringify({ modules: [{ id: "define-basic", contract: "define-basic/contract.md" }] }));
+    fs.writeFileSync(path.join(modulesDir, "define-basic", "contract.md"), "V1 phase contract that must not be exposed for an unresolved Task.");
     try {
-      for (const taskId of ["malformed-json", "malformed-kernel", "unknown-task"]) {
+      for (const taskId of ["malformed-json", "malformed-kernel", "orphan-task-json", "unknown-task"]) {
         const taskDir = path.join(tasksDir, taskId);
         fs.mkdirSync(taskDir, { recursive: true });
         if (taskId === "malformed-json") fs.writeFileSync(path.join(taskDir, "task.json"), "{ invalid json\n");
@@ -81,6 +85,7 @@ describe("Node context CLI", () => {
           fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(emptyTaskRecord({ id: taskId, name: taskId, title: taskId })));
           fs.writeFileSync(path.join(taskDir, "kernel.json"), "{ invalid kernel json\n");
         }
+        if (taskId === "orphan-task-json") fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(emptyTaskRecord({ id: taskId, name: taskId, title: taskId })));
         fs.writeFileSync(path.join(sessionsDir, "unresolved_selection.json"), JSON.stringify({ selected_task: `.pactile/tasks/${taskId}` }));
         vi.stubEnv("PACTILE_CONTEXT_ID", "unresolved_selection");
 
@@ -88,9 +93,11 @@ describe("Node context CLI", () => {
         expect(pack.kernel).toMatchObject({ taskId: null, schemaVersion: null, phase: null, condition: null, selected: true });
         expect(pack).not.toHaveProperty("rigor");
         expect(pack).not.toHaveProperty("topologyKind");
-        const layers = pack.layers as { text: string }[];
+        const layers = pack.layers as { moduleIds?: string[]; text: string }[];
         expect(layers[0].text).toContain("Phase: Unknown (selected Task format needs inspection)");
         expect(layers[0].text).toContain("selected Task format is not identified");
+        expect(layers[1].moduleIds).toEqual([]);
+        expect(JSON.stringify(pack)).not.toContain("V1 phase contract that must not be exposed");
         expect(JSON.stringify(pack)).not.toMatch(/Rigor=lite|topology=single|Open Proposal|Open approval/);
       }
     } finally { vi.unstubAllEnvs(); }

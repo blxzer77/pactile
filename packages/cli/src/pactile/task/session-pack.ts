@@ -81,7 +81,7 @@ export function compileSessionPack(root: string, factGap = false): Record<string
   }
   const snapshot = kernelRead?.kind === "legacy-task-kernel-v1" ? kernelRead.kernel.kernel : null;
   const v2 = kernelRead?.kind === "task-kernel-v2" ? kernelRead.kernel : null;
-  const selectedLegacy = selected && kernelRead?.kind === "legacy-task-kernel-v1";
+  const selectedLegacy = selected && kernelRead?.kind === "legacy-task-kernel-v1" && kernelRead.kernel.persisted === true;
   const unresolvedSelection = selected && !v2 && !selectedLegacy;
   const resolvedSelection = selected && !unresolvedSelection;
   const phase: KernelPhase = v2?.phase ?? snapshot?.phase ?? "open";
@@ -95,7 +95,7 @@ export function compileSessionPack(root: string, factGap = false): Record<string
   const layer2Ids: string[] = [];
   if (!selected) {
     if (baselineActive.includes("intake-basic")) layer2Ids.push("intake-basic");
-  } else {
+  } else if (resolvedSelection) {
     for (const id of PHASE_BASELINE[phase]) if (baselineActive.includes(id)) layer2Ids.push(id);
     for (const id of ondemandActive) {
       if (NEVER_LAYER2.has(id) || !ONDEMAND_PHASE[id]?.includes(phase)) continue;
@@ -137,7 +137,7 @@ export function compileSessionPack(root: string, factGap = false): Record<string
   }
   const contracts = kept.filter((item) => item.kind === "contract");
   const artifacts = kept.filter((item) => item.kind === "artifact");
-  const taskId = v2?.identity.taskId ?? snapshot?.identity.taskId ?? null;
+  const taskId = resolvedSelection ? v2?.identity.taskId ?? snapshot?.identity.taskId ?? null : null;
   const revision = v2?.revision ?? snapshot?.revision ?? 0;
   const tileSelection = dir && selected && !stale && taskId
     ? taskTileOffer(root, taskId, phase, revision)
