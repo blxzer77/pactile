@@ -17,6 +17,7 @@ import {
   recordTaskRunResult,
   resumeTaskRun,
   startTaskRun,
+  type TaskDeliveryLevel,
   type TaskKernelSnapshotV2,
 } from "../../../src/core/task/index.js";
 import { compileSessionPack } from "../../../src/pactile/task/session-pack.js";
@@ -52,13 +53,14 @@ function createKernelTask(
   taskId: string,
   dependencies: string[] = [],
   acceptanceCriteria = [{ id: "AC-1", description: "produces the required result" }],
+  deliveryLevel: TaskDeliveryLevel = "local-result",
 ): { dir: string; kernel: TaskKernelSnapshotV2 } {
   const dir = path.join(root, ".pactile", "tasks", taskId);
   const result = createTaskKernel({
     root, taskDir: dir, actor: "author", idempotencyKey: `create:${taskId}`,
     definition: {
       taskId, title: taskId, description: "test task", deliverable: "a reviewable local result",
-      deliveryLevel: "local-result", acceptanceCriteria,
+      deliveryLevel, acceptanceCriteria,
       dependencies,
     },
   });
@@ -262,6 +264,80 @@ describe("Task Kernel v2", () => {
     const deliveryEvidence = { level: "local-result" as const, reference: "result", summary: "present" };
     expect(checkTaskClose({ root, taskDir: dir, expectedRevision: kernel.revision, runId, reviewId: review.id, candidateObservation: { ...observation, fingerprint: "d".repeat(64) }, deliveryEvidence }).join("\n")).toContain("current candidate observation");
     expect(checkTaskClose({ root, taskDir: dir, expectedRevision: kernel.revision, runId, reviewId: review.id, candidateObservation: observation, deliveryEvidence })).toEqual([]);
+  });
+
+  it("requires the latest Review verdict for the exact candidate before Close", () => {
+    const root = makeRoot();
+    const task = createKernelTask(root, "latest-review-only");
+    const started = startTaskRun({
+      root, taskDir: task.dir, expectedRevision: task.kernel.revision, actor: "implementer", idempotencyKey: "latest-review-run",
+      input: { summary: "work", references: [] }, authorization: { approvedBy: "approver", approvedAt: "now", scope: "scope", evidenceRef: "approval" },
+    });
+    const runId = must(started.kernel.runs.at(-1), "Run").id;
+    const result = recordTaskRunResult({
+      root, taskDir: task.dir, expectedRevision: started.kernel.revision, runId, outcome: "completed", summary: "done",
+      candidateEntries: [{ ref: "result.txt", fingerprint: "c".repeat(64) }], actor: "implementer", idempotencyKey: "latest-review-result",
+    });
+    const candidate = must(must(result.kernel.runs.at(-1), "completed Run").candidateSnapshot, "candidate");
+    const first = recordTaskReview({
+      root, taskDir: task.dir, expectedRevision: result.kernel.revision, runId, candidateSnapshotId: candidate.id,
+      candidateFingerprint: candidate.fingerprint, reviewer: "reviewer", decision: "needs-changes", evidenceRefs: ["review-1.md"],
+      acceptanceEvidence: {}, actor: "reviewer", idempotencyKey: "latest-review-first",
+    });
+    const later = recordTaskReview({
+      root, taskDir: task.dir, expectedRevision: first.kernel.revision, runId, candidateSnapshotId: candidate.id,
+      candidateFingerprint: candidate.fingerprint, reviewer: "reviewer", decision: "pass", evidenceRefs: ["review-2.md"],
+      acceptanceEvidence: { "AC-1": ["result.txt"] }, actor: "reviewer", idempotencyKey: "latest-review-second",
+    });
+    const earlierReview = must(first.kernel.reviews.at(-1), "earlier Review");
+    const latestReview = must(later.kernel.reviews.at(-1), "latest Review");
+    const observation = { snapshotId: candidate.id, fingerprint: candidate.fingerprint, observedBy: "closer", observedAt: "now", source: "caller", evidenceRef: "observation.json" };
+    const deliveryEvidence = { level: "local-result" as const, reference: "result.txt", summary: "present" };
+
+    expect(checkTaskClose({
+      root, taskDir: task.dir, expectedRevision: later.kernel.revision, runId, reviewId: earlierReview.id,
+      candidateObservation: observation, deliveryEvidence,
+    }).join("\n")).toContain("the latest Review for the selected candidate must be used");
+    expect(checkTaskClose({
+      root, taskDir: task.dir, expectedRevision: later.kernel.revision, runId, reviewId: latestReview.id,
+      candidateObservation: observation, deliveryEvidence,
+    })).toEqual([]);
+    expect(closeTaskKernel({
+      root, taskDir: task.dir, expectedRevision: later.kernel.revision, runId, reviewId: latestReview.id,
+      candidateObservation: observation, deliveryEvidence, actor: "closer", idempotencyKey: "latest-review-close",
+    }).kernel.closure?.reviewId).toBe(latestReview.id);
+  });
+
+  it("accepts only delivery evidence matching each of the four Task delivery levels", () => {
+    const cases: { level: TaskDeliveryLevel; reference: string; mismatch: TaskDeliveryLevel }[] = [
+      { level: "local-result", reference: "dist/result.txt", mismatch: "documentation" },
+      { level: "pull-request", reference: "https://example.test/review/17", mismatch: "local-result" },
+      { level: "merged-result", reference: "https://example.test/commit/abc123", mismatch: "pull-request" },
+      { level: "documentation", reference: "docs/guide.md", mismatch: "merged-result" },
+    ];
+
+    for (const { level, reference, mismatch } of cases) {
+      const root = makeRoot();
+      const task = createKernelTask(root, `delivery-${level}`, [], undefined, level);
+      const prepared = prepareReviewableTask(root, task.dir, task.kernel.identity.taskId);
+      const observation = { snapshotId: prepared.candidate.id, fingerprint: prepared.candidate.fingerprint, observedBy: "closer", observedAt: "now", source: "caller", evidenceRef: "observation.json" };
+      const matching = { level, reference, summary: "required deliverable is present" };
+      const wrong = { ...matching, level: mismatch };
+
+      expect(checkTaskClose({
+        root, taskDir: task.dir, expectedRevision: prepared.kernel.revision, runId: prepared.run.id, reviewId: prepared.review.id,
+        candidateObservation: observation, deliveryEvidence: wrong,
+      }).join("\n")).toContain(`Task requires delivery level ${level}, got ${mismatch}`);
+      expect(checkTaskClose({
+        root, taskDir: task.dir, expectedRevision: prepared.kernel.revision, runId: prepared.run.id, reviewId: prepared.review.id,
+        candidateObservation: observation, deliveryEvidence: matching,
+      })).toEqual([]);
+      const closed = closeTaskKernel({
+        root, taskDir: task.dir, expectedRevision: prepared.kernel.revision, runId: prepared.run.id, reviewId: prepared.review.id,
+        candidateObservation: observation, deliveryEvidence: matching, actor: "closer", idempotencyKey: `delivery-close:${level}`,
+      });
+      expect(closed.kernel.closure?.deliveryEvidence).toEqual(matching);
+    }
   });
 
   it("binds reads and every lifecycle mutation to the canonical project root", () => {

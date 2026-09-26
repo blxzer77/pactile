@@ -135,6 +135,8 @@ jobs:
           version: 10.32.1
       - name: Install locked tooling without lifecycle scripts
         run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build TypeScript promotion tooling
+        run: pnpm --filter @blxzer/pactile run build:script-artifacts
       - name: Verify main ancestry and the exact package version
         env:
           VERSION: ${{ inputs.version }}
@@ -153,7 +155,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm dist-tag add "@blxzer/pactile@$VERSION" latest
-      - name: Verify latest, remove candidate, and verify readback
+      - name: Verify latest and remove candidate
         env:
           VERSION: ${{ inputs.version }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -163,30 +165,20 @@ jobs:
           candidate="$(npm view @blxzer/pactile@candidate version --json)"
           [[ "$candidate" == "\"$VERSION\"" || "$candidate" == "$VERSION" ]] || exit 1
           npm dist-tag rm @blxzer/pactile candidate
-          node --input-type=module - <<'NODE'
-          const tags = await fetch("https://registry.npmjs.org/-/package/%40blxzer%2Fpactile/dist-tags")
-            .then((response) => { if (!response.ok) throw new Error(`Registry HTTP ${response.status}`); return response.json(); });
-          if (tags.latest !== process.env.VERSION || Object.hasOwn(tags, "candidate")) {
-            throw new Error("Registry readback did not confirm latest promotion and candidate removal.");
-          }
-          NODE
+      - name: Verify npm tag readback without publish credentials
+        env:
+          VERSION: ${{ inputs.version }}
+        run: node packages/cli/.tmp/p31-script-build/verify-promotion-readback.js
+      - name: Prepare GitHub release notes
+        env:
+          VERSION: ${{ inputs.version }}
+        run: node packages/cli/.tmp/p31-script-build/create-release-notes.js "${RUNNER_TEMP}/pactile-release-notes.md"
       - name: Create GitHub Latest Release last
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
         run: |
           notes_file="${RUNNER_TEMP}/pactile-release-notes.md"
-          node - "$notes_file" <<'NODE'
-          const fs = require("node:fs");
-          const output = process.argv[2];
-          const version = JSON.parse(fs.readFileSync("packages/cli/package.json", "utf8")).version;
-          const text = fs.readFileSync("packages/cli/CHANGELOG.md", "utf8");
-          const start = text.indexOf(`## [${version}]`);
-          if (start < 0) throw new Error(`CHANGELOG.md has no ## [${version}] section`);
-          const rest = text.slice(start);
-          const next = rest.indexOf("\n## [", 1);
-          fs.writeFileSync(output, `${(next < 0 ? rest : rest.slice(0, next)).trim()}\n`);
-          NODE
           if gh release view "pactile-v${VERSION}" >/dev/null 2>&1; then
             gh release edit "pactile-v${VERSION}" \
               --title "$VERSION" --notes-file "$notes_file" --latest

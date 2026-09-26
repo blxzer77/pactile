@@ -4,35 +4,27 @@ P29 表名：`execute-agent`（不得改名）。层：baseline。
 
 ## 职责
 
-生命周期的 Execute 槽。把**平台无关的执行要求**交给 Adapter 去绑：是否允许委派、是否必须隔离、写入边界、必须停在已批合同内。个人默认绑定是**主 Agent、当前会话、inline**。不点名 Subagent、不点名 worktree、不点名某个模型。真正绑到 Cursor Agent / Task / worktree 是 Adapter + 按需模块的事。
+按已记录的 Task Definition 执行一个获授权的 V2 Run。一个 Task 可以保留多个 Run；每次尝试和结果都要留在历史中。前一次结束后重试应新建 Run，不覆盖先前记录。每个成功 Run 都有独立冻结的候选快照供后续 Review。
+
+写入前遵守 Run 的授权范围和 `writeSetSnapshot`。记录可获得的等待、执行、Review 时长估算及实测引用，供后续调度评估成本。估算本身不能证明工作已开始或完成。
 
 ## 触发/披露
 
-仅 Phase=Execute，且实际 binding 为 inline（或 Worker 不可用而诚实降级为此）时加载本块短契约。Define / Open / 无任务时看不见「去改代码」。Execute 结束后教战从常驻包拿掉。
+只有在取得该 Run 的人类授权、且 Kernel 校验 Task 硬依赖后才执行。一个 Task 同时最多有一个 active 或 waiting Run。使用平台 Adapter 的真实执行绑定；未发生隔离或委派时不得声称已发生。
 
-Agent 看见：
-
-1. 已批 Definition / AC /（Full 时）执行与验证契约是边界；实现缺陷留在 Execute 修。
-2. 范围、AC、执行契约、验证策略、capability/runtime、Parent 边界变化 → 停手，Return-to-Define，再走 Execute 门。不得边改 PRD 边假装仍在 Execute。
-3. 不得因本块去 spawn `pactile-implement` / `pactile-check`；那只在 `worker-orchestration` 激活且合同要求 worker 时出现。
-4. 不得因本块去 integrate-child 或建 Child。
-5. Adapter 可将本阶段绑到 Cursor Agent；Plan/Debug 不是本块说明书。
-
-用户看见：阶段名 Execute。Lite：主会话在已同意的范围内改东西。不默认看到并行工人、worktree、检查 Agent。
-
-渐进：非 Execute 阶段不加载本块。
+不同 Task 的 Run 只有经过派工协调器准入后才可并发。硬依赖必须先成功 Close。写集重叠默认串行；显式允许重叠时，必须记录授权与集成计划。仅有 worker 请求或本合同本身不构成并行许可。
 
 ## 停止条件
 
-- 输入：Execute 门已过；Definition 有效；Kernel Phase=Execute。
-- 输出：合同内的工作结果（代码/配置/文档 diff）。Evidence 角色仍归 `verify-basic` 收。
-- 停止：契约变更；未批准的写入；把 Verify/Close 提前做完并宣称完成。
-- 降级：平台绑不上 Worker/隔离时，记 assurance，走 inline，不得假装隔离已发生。
+- 工作不得超出交付物、AC、已批范围和 Run 写集。
+- 成功时记录候选条目和证据；失败、取消或阻塞时如实记录该 Run 的终态。
+- 实现发现定义或授权不正确时停止，在获支持的定义/授权更新后再继续。
+- 不得把计划中的 Run 报告为已完成工作。
 
 ## 关掉必须消失
 
-没有「主 Agent 在合同内执行」这条默认路径。没有本槽则 Profile 预检应拒绝启动生命周期（Execute 是必需槽）。
+Intake、Define、Review 和 Close 阶段不加载实现教战。保留 Run 历史和候选身份供后续生命周期使用。
 
 ## 不得带走
 
-类型化 Agent 派工（`worker-orchestration`）；Child 拓扑与集成（`parent-child`）；AC 怎么写（`define-basic`）；假绿判定（`verify-basic`）；Git（`vcs-integration`）。
+Task 定义和 AC（`define-basic`）；人类授权（`approval-personal`）；派工/准入政策；候选 Review（`verify-basic`）；交付验收（`close-basic`）。
