@@ -56,6 +56,9 @@ export type {
   AcquireTaskRunWorkspaceCleanupLeaseRequest,
   FinishTaskRunWorkspaceCleanupRequest,
   RecordTaskRunWorkspaceCleanupRefusalRequest,
+  RecordTaskRunWorkspaceClaimRefusalRequest,
+  TaskRunWorkspaceClaimOperation,
+  TaskRunWorkspaceClaimErrorCode,
   TaskKernelReadResult,
   LegacyTaskKernelReadResult,
   AnyTaskKernelReadResult,
@@ -65,6 +68,7 @@ export type {
 export {
   TASK_KERNEL_SCHEMA_VERSION,
   TASK_DELIVERY_LEVELS,
+  TASK_RUN_WORKSPACE_CLAIM_ERROR_CODES,
 } from "./task-kernel-types.js";
 export {
   isTaskDeliveryLevel,
@@ -95,6 +99,7 @@ export {
   acquireTaskRunWorkspaceCleanupLease,
   finishTaskRunWorkspaceCleanup,
   recordTaskRunWorkspaceCleanupRefusal,
+  recordTaskRunWorkspaceClaimRefusal,
 } from "./task-kernel-workspaces.js";
 export { recordTaskReview } from "./task-kernel-reviews.js";
 export {

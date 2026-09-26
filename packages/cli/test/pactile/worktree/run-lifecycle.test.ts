@@ -200,7 +200,316 @@ function hasRegisteredWorktree(root: string, target: string): boolean {
     .some((line) => path.resolve(line.slice("worktree ".length)).replaceAll("\\", "/").toLowerCase() === expected);
 }
 
+function startActiveTaskRun(root: string, taskId: string): { taskDir: string; runId: string } {
+  const taskDir = path.join(root, ".pactile", "tasks", taskId);
+  const created = createTaskKernel({
+    root, taskDir, actor: "author", idempotencyKey: `create:${taskId}`,
+    definition: {
+      taskId, title: "Worktree claim audit", description: "", deliverable: "an isolated checkout",
+      deliveryLevel: "local-result", acceptanceCriteria: [{ id: "AC-1", description: "Run claim is auditable" }], dependencies: [],
+    },
+  });
+  const started = startTaskRun({
+    root, taskDir, expectedRevision: created.kernel.revision, actor: runActor, idempotencyKey: `start:${taskId}`,
+    input: { summary: "Claim an isolated checkout", references: [] },
+    authorization: { approvedBy: approver, approvedAt: "2026-09-26T00:00:00.000Z", scope: "src", evidenceRef: `approval:${taskId}` },
+    writeSetSnapshot: ["src"],
+  });
+  const runId = started.kernel.runs.at(-1)?.id;
+  if (!runId) throw new Error("Started Run is missing");
+  return { taskDir, runId };
+}
+
+function snapshotFiles(root: string): Record<string, string> {
+  const snapshot: Record<string, string> = {};
+  const visit = (directory: string, relative = ""): void => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+      const childRelative = relative ? path.join(relative, entry.name) : entry.name;
+      const child = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) snapshot[childRelative] = `symlink:${fs.readlinkSync(child)}`;
+      else if (entry.isDirectory()) visit(child, childRelative);
+      else if (entry.isFile()) snapshot[childRelative] = fs.readFileSync(child).toString("base64");
+      else snapshot[childRelative] = `other:${entry.mode}`;
+    }
+  };
+  visit(root);
+  return snapshot;
+}
+
 describe("managed Run worktree reclamation", () => {
+  it("persists Run B adoption conflicts and retries idempotently without changing Run A ownership", () => {
+    const { root, baseSha } = fixture();
+    const ownerA = startActiveTaskRun(root, "claim-owner-a");
+    const ownerB = startActiveTaskRun(root, "claim-owner-b");
+    const workspaceA = createTaskRunWorktree({
+      repoRoot: root, taskDir: ownerA.taskDir, runId: ownerA.runId, branch: "feat/claim-owner-a", baseRef: baseSha,
+      actor: runActor, idempotencyKey: "owner-a-create",
+    }).binding;
+    const ownerAKernelBefore = readKernel(root, ownerA.taskDir);
+    const commonDir = path.resolve(root, git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"));
+    const registry = path.join(commonDir, "pactile-run-workspaces-v1");
+    const managerFilesBefore = snapshotFiles(registry);
+    const checkoutFilesBefore = snapshotFiles(workspaceA.canonicalPath);
+    const gitRegistrationsBefore = git(root, "worktree", "list", "--porcelain");
+    const refusalKey = "owner-b-adopt-conflict-secret-key";
+    const adopt = () => adoptTaskRunWorktree({
+      repoRoot: root,
+      taskDir: ownerB.taskDir,
+      runId: ownerB.runId,
+      canonicalPath: workspaceA.canonicalPath,
+      branch: workspaceA.branch,
+      baseSha,
+      authorization: { approvedBy: approver, approvedAt: "2026-09-26T00:01:00.000Z", evidenceRef: "adoption:owner-b" },
+      actor: runActor,
+      idempotencyKey: refusalKey,
+    });
+
+    let firstError: unknown;
+    try { adopt(); } catch (error) { firstError = error; }
+    expect(firstError).toMatchObject({ code: "owner-conflict" });
+    const ownerBKernelAfterFirstRefusal = readKernel(root, ownerB.taskDir);
+    const refusal = ownerBKernelAfterFirstRefusal.events.find(
+      (event) => event.type === "run.workspace-claim-refused" && event.entityId === ownerB.runId,
+    );
+    const refusalAudit = ownerBKernelAfterFirstRefusal.audit.find((entry) => entry.idempotencyKey === refusal?.idempotencyKey);
+    expect(refusal).toMatchObject({ type: "run.workspace-claim-refused", entityId: ownerB.runId });
+    expect(refusal?.requestFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(refusal?.idempotencyKey).toMatch(/^workspace-claim-refused:[a-f0-9]{64}$/);
+    expect(refusal?.idempotencyKey).not.toContain(refusalKey);
+    expect(refusalAudit?.evidence).toContain("Workspace adopt claim refused [owner-conflict]:");
+    expect(refusalAudit?.evidence).not.toContain(workspaceA.canonicalPath);
+    expect(refusalAudit?.evidence).not.toContain(workspaceA.manager?.credentialId);
+    expect(ownerBKernelAfterFirstRefusal.runs.find((run) => run.id === ownerB.runId)?.workspace).toBeNull();
+
+    let retryError: unknown;
+    try { adopt(); } catch (error) { retryError = error; }
+    expect(retryError).toMatchObject({ code: "owner-conflict" });
+    const ownerBKernelAfterRetry = readKernel(root, ownerB.taskDir);
+    expect(ownerBKernelAfterRetry.revision).toBe(ownerBKernelAfterFirstRefusal.revision);
+    expect(ownerBKernelAfterRetry.events.filter(
+      (event) => event.type === "run.workspace-claim-refused" && event.entityId === ownerB.runId,
+    )).toHaveLength(1);
+
+    expect(readKernel(root, ownerA.taskDir)).toEqual(ownerAKernelBefore);
+    expect(snapshotFiles(registry)).toEqual(managerFilesBefore);
+    expect(snapshotFiles(workspaceA.canonicalPath)).toEqual(checkoutFilesBefore);
+    expect(git(root, "worktree", "list", "--porcelain")).toBe(gitRegistrationsBefore);
+    expect(hasRegisteredWorktree(root, workspaceA.canonicalPath)).toBe(true);
+  });
+
+  it("persists an occupied create-path refusal without touching the path", () => {
+    const { root, baseSha } = fixture();
+    const task = startActiveTaskRun(root, "claim-create-occupied");
+    const canonicalPath = path.join(root, ".pactile", "worktrees", task.runId);
+    const marker = path.join(canonicalPath, "keep-user-file.txt");
+    fs.mkdirSync(canonicalPath, { recursive: true });
+    fs.writeFileSync(marker, "user-owned contents\n");
+
+    let error: unknown;
+    try {
+      createTaskRunWorktree({
+        repoRoot: root, taskDir: task.taskDir, runId: task.runId, branch: "feat/claim-create-occupied", baseRef: baseSha,
+        actor: runActor, idempotencyKey: "create-refusal-sensitive-key",
+      });
+    } catch (caught) { error = caught; }
+
+    expect(error).toMatchObject({ code: "path-exists" });
+    const kernel = readKernel(root, task.taskDir);
+    const refusal = kernel.events.find((event) => event.type === "run.workspace-claim-refused");
+    const refusalAudit = kernel.audit.find((entry) => entry.idempotencyKey === refusal?.idempotencyKey);
+    expect(refusal).toMatchObject({ entityId: task.runId, requestFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(refusal?.idempotencyKey).not.toContain("create-refusal-sensitive-key");
+    expect(refusalAudit?.evidence).toContain("Workspace create claim refused [path-exists]:");
+    expect(refusalAudit?.evidence).not.toContain(canonicalPath);
+    expect(fs.readFileSync(marker, "utf8")).toBe("user-owned contents\n");
+    expect(kernel.runs.find((run) => run.id === task.runId)?.workspace).toBeNull();
+    expect(hasRegisteredWorktree(root, canonicalPath)).toBe(false);
+  });
+
+  it("keeps unsafe adoption classified separately from ownership conflicts", () => {
+    const { root, baseSha } = fixture();
+    const task = startActiveTaskRun(root, "claim-adopt-unsafe");
+    const canonicalPath = path.join(root, ".pactile", "worktrees", "preexisting-unsafe");
+    fs.mkdirSync(path.dirname(canonicalPath), { recursive: true });
+    git(root, "worktree", "add", "--no-track", "-b", "feat/claim-adopt-unsafe", canonicalPath, baseSha);
+    const userFile = path.join(canonicalPath, "src", "user-change.ts");
+    fs.writeFileSync(userFile, "export const userChange = true;\n");
+
+    let error: unknown;
+    try {
+      adoptTaskRunWorktree({
+        repoRoot: root, taskDir: task.taskDir, runId: task.runId, canonicalPath,
+        branch: "feat/claim-adopt-unsafe", baseSha,
+        authorization: { approvedBy: approver, approvedAt: "2026-09-26T00:01:00.000Z", evidenceRef: "adoption:unsafe" },
+        actor: runActor, idempotencyKey: "claim-adopt-unsafe",
+      });
+    } catch (caught) { error = caught; }
+
+    expect(error).toMatchObject({ code: "adoption-not-safe" });
+    const kernel = readKernel(root, task.taskDir);
+    const refusal = kernel.events.find((event) => event.type === "run.workspace-claim-refused");
+    const refusalAudit = kernel.audit.find((entry) => entry.idempotencyKey === refusal?.idempotencyKey);
+    expect(refusal).toMatchObject({ entityId: task.runId });
+    expect(refusalAudit?.evidence).toContain("Workspace adopt claim refused [adoption-not-safe]:");
+    expect(refusalAudit?.evidence).not.toContain(canonicalPath);
+    expect(fs.readFileSync(userFile, "utf8")).toBe("export const userChange = true;\n");
+    expect(hasRegisteredWorktree(root, canonicalPath)).toBe(true);
+    expect(kernel.runs.find((run) => run.id === task.runId)?.workspace).toBeNull();
+  });
+
+  it("binds the successful create claimant after a competing create refusal advances the Kernel", () => {
+    const { root, baseSha } = fixture();
+    const task = startActiveTaskRun(root, "claim-create-race");
+    const canonicalPath = path.join(root, ".pactile", "worktrees", task.runId);
+    const commonDir = path.resolve(root, git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"));
+    const registry = path.join(commonDir, "pactile-run-workspaces-v1");
+    const originalBind = taskKernelApi.bindTaskRunWorkspace;
+    let injected = false;
+    let loserError: unknown;
+    let managerFilesBeforeLoser: Record<string, string> | null = null;
+    let checkoutFilesBeforeLoser: Record<string, string> | null = null;
+    let gitRegistrationsBeforeLoser: string | null = null;
+    vi.spyOn(taskKernelApi, "bindTaskRunWorkspace").mockImplementation((request) => {
+      if (!injected) {
+        injected = true;
+        managerFilesBeforeLoser = snapshotFiles(registry);
+        checkoutFilesBeforeLoser = snapshotFiles(canonicalPath);
+        gitRegistrationsBeforeLoser = git(root, "worktree", "list", "--porcelain");
+        try {
+          createTaskRunWorktree({
+            repoRoot: root, taskDir: task.taskDir, runId: task.runId,
+            branch: "feat/claim-create-race", baseRef: baseSha,
+            actor: runActor, idempotencyKey: "claim-create-race-loser",
+          });
+        } catch (error) { loserError = error; }
+      }
+      return originalBind(request);
+    });
+
+    const winner = createTaskRunWorktree({
+      repoRoot: root, taskDir: task.taskDir, runId: task.runId,
+      branch: "feat/claim-create-race", baseRef: baseSha,
+      actor: runActor, idempotencyKey: "claim-create-race-winner",
+    });
+
+    expect(injected).toBe(true);
+    expect(loserError).toMatchObject({ code: "path-exists" });
+    expect(managerFilesBeforeLoser).not.toBeNull();
+    expect(checkoutFilesBeforeLoser).not.toBeNull();
+    expect(gitRegistrationsBeforeLoser).not.toBeNull();
+    const kernel = readKernel(root, task.taskDir);
+    const run = kernel.runs.find((item) => item.id === task.runId);
+    const refusalIndex = kernel.events.findIndex((event) => event.type === "run.workspace-claim-refused" && event.entityId === task.runId);
+    const boundIndex = kernel.events.findIndex((event) => event.type === "run.workspace-bound" && event.entityId === task.runId);
+    expect(refusalIndex).toBeGreaterThanOrEqual(0);
+    expect(boundIndex).toBeGreaterThan(refusalIndex);
+    expect(run?.workspace).toMatchObject({
+      ownerRunId: task.runId,
+      canonicalPath: winner.binding.canonicalPath,
+      manager: { credentialId: winner.binding.manager?.credentialId, source: "created" },
+    });
+    expect(snapshotFiles(registry)).toEqual(managerFilesBeforeLoser);
+    expect(snapshotFiles(canonicalPath)).toEqual(checkoutFilesBeforeLoser);
+    expect(git(root, "worktree", "list", "--porcelain")).toBe(gitRegistrationsBeforeLoser);
+    expect(hasRegisteredWorktree(root, canonicalPath)).toBe(true);
+  });
+
+  it("binds the successful adoption after a competing adoption refusal advances the Kernel", () => {
+    const { root, baseSha } = fixture();
+    const task = startActiveTaskRun(root, "claim-adopt-race");
+    const canonicalPath = path.join(root, ".pactile", "worktrees", "claim-adopt-race-checkout");
+    fs.mkdirSync(path.dirname(canonicalPath), { recursive: true });
+    git(root, "worktree", "add", "--no-track", "-b", "feat/claim-adopt-race", canonicalPath, baseSha);
+    const commonDir = path.resolve(root, git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"));
+    const registry = path.join(commonDir, "pactile-run-workspaces-v1");
+    const authorization = { approvedBy: approver, approvedAt: "2026-09-26T00:01:00.000Z", evidenceRef: "adoption:claim-race" };
+    const originalBind = taskKernelApi.bindTaskRunWorkspace;
+    let injected = false;
+    let loserError: unknown;
+    let managerFilesBeforeLoser: Record<string, string> | null = null;
+    let checkoutFilesBeforeLoser: Record<string, string> | null = null;
+    let gitRegistrationsBeforeLoser: string | null = null;
+    vi.spyOn(taskKernelApi, "bindTaskRunWorkspace").mockImplementation((request) => {
+      if (!injected) {
+        injected = true;
+        managerFilesBeforeLoser = snapshotFiles(registry);
+        checkoutFilesBeforeLoser = snapshotFiles(canonicalPath);
+        gitRegistrationsBeforeLoser = git(root, "worktree", "list", "--porcelain");
+        try {
+          adoptTaskRunWorktree({
+            repoRoot: root, taskDir: task.taskDir, runId: task.runId, canonicalPath,
+            branch: "feat/claim-adopt-race", baseSha, authorization,
+            actor: runActor, idempotencyKey: "claim-adopt-race-loser",
+          });
+        } catch (error) { loserError = error; }
+      }
+      return originalBind(request);
+    });
+
+    const winner = adoptTaskRunWorktree({
+      repoRoot: root, taskDir: task.taskDir, runId: task.runId, canonicalPath,
+      branch: "feat/claim-adopt-race", baseSha, authorization,
+      actor: runActor, idempotencyKey: "claim-adopt-race-winner",
+    });
+
+    expect(injected).toBe(true);
+    expect(loserError).toMatchObject({ code: "owner-conflict" });
+    expect(managerFilesBeforeLoser).not.toBeNull();
+    expect(checkoutFilesBeforeLoser).not.toBeNull();
+    expect(gitRegistrationsBeforeLoser).not.toBeNull();
+    const kernel = readKernel(root, task.taskDir);
+    const run = kernel.runs.find((item) => item.id === task.runId);
+    const refusalIndex = kernel.events.findIndex((event) => event.type === "run.workspace-claim-refused" && event.entityId === task.runId);
+    const boundIndex = kernel.events.findIndex((event) => event.type === "run.workspace-bound" && event.entityId === task.runId);
+    expect(refusalIndex).toBeGreaterThanOrEqual(0);
+    expect(boundIndex).toBeGreaterThan(refusalIndex);
+    expect(run?.workspace).toMatchObject({
+      ownerRunId: task.runId,
+      canonicalPath: winner.binding.canonicalPath,
+      manager: { credentialId: winner.binding.manager?.credentialId, source: "adopted" },
+    });
+    expect(snapshotFiles(registry)).toEqual(managerFilesBeforeLoser);
+    expect(snapshotFiles(canonicalPath)).toEqual(checkoutFilesBeforeLoser);
+    expect(git(root, "worktree", "list", "--porcelain")).toBe(gitRegistrationsBeforeLoser);
+    expect(hasRegisteredWorktree(root, canonicalPath)).toBe(true);
+  });
+
+  it("returns an explicit unrecorded refusal when the Kernel cannot append the claim event", () => {
+    const { root, baseSha } = fixture();
+    const ownerA = startActiveTaskRun(root, "claim-unrecorded-owner-a");
+    const ownerB = startActiveTaskRun(root, "claim-unrecorded-owner-b");
+    const workspaceA = createTaskRunWorktree({
+      repoRoot: root, taskDir: ownerA.taskDir, runId: ownerA.runId, branch: "feat/claim-unrecorded-a", baseRef: baseSha,
+      actor: runActor, idempotencyKey: "claim-unrecorded-owner-a:create",
+    }).binding;
+    const ownerAKernelBefore = readKernel(root, ownerA.taskDir);
+    const managerFilesBefore = snapshotFiles(path.join(path.resolve(root, git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")), "pactile-run-workspaces-v1"));
+    const gitRegistrationsBefore = git(root, "worktree", "list", "--porcelain");
+    vi.spyOn(taskKernelApi, "recordTaskRunWorkspaceClaimRefusal").mockImplementation(() => {
+      throw new Error("simulated Kernel write failure");
+    });
+
+    let error: unknown;
+    try {
+      adoptTaskRunWorktree({
+        repoRoot: root, taskDir: ownerB.taskDir, runId: ownerB.runId, canonicalPath: workspaceA.canonicalPath,
+        branch: workspaceA.branch, baseSha,
+        authorization: { approvedBy: approver, approvedAt: "2026-09-26T00:01:00.000Z", evidenceRef: "adoption:unrecorded" },
+        actor: runActor, idempotencyKey: "claim-unrecorded-adopt",
+      });
+    } catch (caught) { error = caught; }
+
+    expect(error).toMatchObject({ code: "workspace-claim-refusal-unrecorded" });
+    expect((error as Error).message).toContain("refusal could not be persisted");
+    const ownerBKernel = readKernel(root, ownerB.taskDir);
+    expect(ownerBKernel.events.some((event) => event.type === "run.workspace-claim-refused")).toBe(false);
+    expect(ownerBKernel.runs.find((run) => run.id === ownerB.runId)?.workspace).toBeNull();
+    expect(readKernel(root, ownerA.taskDir)).toEqual(ownerAKernelBefore);
+    expect(snapshotFiles(path.join(path.resolve(root, git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")), "pactile-run-workspaces-v1"))).toEqual(managerFilesBefore);
+    expect(git(root, "worktree", "list", "--porcelain")).toBe(gitRegistrationsBefore);
+    expect(hasRegisteredWorktree(root, workspaceA.canonicalPath)).toBe(true);
+  });
+
   it("adopts only a clean registered checkout after explicit approval and binds its owner to the Task Run", () => {
     const { root, baseSha } = fixture();
     const taskId = "cleanup-adopted";

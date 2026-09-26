@@ -6,10 +6,15 @@ import { verifyWorktreeIntegration, type WorktreeIntegrationReceipt } from "./in
 import { WorktreeManagerError, type RunWorkspaceBinding } from "./manager-types.js";
 import {
   bindTaskRunWorkspace,
+  fingerprintTaskValue,
   readTaskKernel,
+  recordTaskRunWorkspaceClaimRefusal,
   recordTaskRunWorkspaceIntegration,
+  TASK_RUN_WORKSPACE_CLAIM_ERROR_CODES,
   type TaskKernelMutationResult,
   type TaskKernelSnapshotV2,
+  type TaskRunWorkspaceClaimErrorCode,
+  type TaskRunWorkspaceClaimOperation,
   type TaskRunV2,
 } from "../../core/task/task-kernel.js";
 export interface StoredTaskRun {
@@ -23,6 +28,87 @@ export function readStoredTaskRun(root: string, taskDir: string, runId: string):
   const run = read.kernel.runs.find((item) => item.id === runId);
   if (!run) throw new WorktreeManagerError("run-not-found", `Task Kernel has no Run ${runId}`);
   return { kernel: read.kernel, run };
+}
+
+function rawErrorCode(error: unknown): string | null {
+  if (typeof error !== "object" || error === null || !("code" in error)) return null;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
+}
+
+function normalizeClaimErrorCode(error: unknown): TaskRunWorkspaceClaimErrorCode {
+  const code = rawErrorCode(error)?.toLowerCase().replaceAll("_", "-");
+  return code && (TASK_RUN_WORKSPACE_CLAIM_ERROR_CODES as readonly string[]).includes(code)
+    ? code as TaskRunWorkspaceClaimErrorCode
+    : "claim-failed";
+}
+
+function isRevisionConflict(error: unknown): boolean {
+  return rawErrorCode(error)?.toUpperCase() === "REVISION_CONFLICT";
+}
+
+function recordWorkspaceClaimRefusal(
+  input: CreateTaskRunWorktreeInput | AdoptTaskRunWorktreeInput,
+  operation: TaskRunWorkspaceClaimOperation,
+  claimError: unknown,
+): void {
+  const errorCode = normalizeClaimErrorCode(claimError);
+  const requestKeyFingerprint = fingerprintTaskValue(input.idempotencyKey);
+  const idempotencyKey = `workspace-claim-refused:${fingerprintTaskValue({
+    runId: input.runId,
+    operation,
+    requestKeyFingerprint,
+    errorCode,
+  })}`;
+  const unrecorded = (): WorktreeManagerError => new WorktreeManagerError(
+    "workspace-claim-refusal-unrecorded",
+    `The ${operation} claim was refused (${errorCode}), but its refusal could not be persisted; reconcile the Run before retrying.`,
+  );
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const latest = readStoredTaskRun(input.repoRoot, input.taskDir, input.runId);
+      recordTaskRunWorkspaceClaimRefusal({
+        root: input.repoRoot,
+        taskDir: input.taskDir,
+        expectedRevision: latest.kernel.revision,
+        runId: input.runId,
+        operation,
+        errorCode,
+        actor: input.actor,
+        idempotencyKey,
+      });
+      return;
+    } catch (error) {
+      if (attempt === 0 && isRevisionConflict(error)) continue;
+      throw unrecorded();
+    }
+  }
+  throw unrecorded();
+}
+
+function bindWorkspaceAtLatestRevision(
+  input: CreateTaskRunWorktreeInput | AdoptTaskRunWorktreeInput,
+  binding: RunWorkspaceBinding,
+): TaskKernelMutationResult {
+  const maxAttempts = 3;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const latest = readStoredTaskRun(input.repoRoot, input.taskDir, input.runId);
+    try {
+      return bindTaskRunWorkspace({
+        root: input.repoRoot,
+        taskDir: input.taskDir,
+        expectedRevision: latest.kernel.revision,
+        runId: input.runId,
+        workspace: binding,
+        actor: input.actor,
+        idempotencyKey: input.idempotencyKey,
+      });
+    } catch (error) {
+      if (!isRevisionConflict(error) || attempt === maxAttempts - 1) throw error;
+    }
+  }
+  throw new WorktreeManagerError("workspace-kernel-bind-failed", "Task Kernel revision kept changing while binding the workspace; the checkout is preserved for reconciliation");
 }
 
 export interface CreateTaskRunWorktreeInput {
@@ -44,23 +130,21 @@ export function createTaskRunWorktree(input: CreateTaskRunWorktreeInput): {
     throw new WorktreeManagerError("run-not-active", "Only the latest waiting or running Run can receive a managed worktree");
   }
   if (stored.run.workspace) throw new WorktreeManagerError("workspace-already-bound", "Run already has a workspace binding; inspect it instead of replacing it");
-  const binding = createRunWorktree({
-    repoRoot: input.repoRoot,
-    runId: input.runId,
-    branch: input.branch,
-    baseRef: input.baseRef,
-    writeSet: stored.run.writeSetSnapshot,
-  });
+  let binding: RunWorkspaceBinding;
   try {
-    const mutation = bindTaskRunWorkspace({
-      root: input.repoRoot,
-      taskDir: input.taskDir,
-      expectedRevision: stored.kernel.revision,
+    binding = createRunWorktree({
+      repoRoot: input.repoRoot,
       runId: input.runId,
-      workspace: binding,
-      actor: input.actor,
-      idempotencyKey: input.idempotencyKey,
+      branch: input.branch,
+      baseRef: input.baseRef,
+      writeSet: stored.run.writeSetSnapshot,
     });
+  } catch (error) {
+    recordWorkspaceClaimRefusal(input, "create", error);
+    throw error;
+  }
+  try {
+    const mutation = bindWorkspaceAtLatestRevision(input, binding);
     return { binding, mutation };
   } catch {
     throw new WorktreeManagerError("workspace-kernel-bind-failed", "The created checkout is preserved, but its Task Kernel bind failed; do not dispatch work until it is reconciled", binding.canonicalPath);
@@ -88,26 +172,24 @@ export function adoptTaskRunWorktree(input: AdoptTaskRunWorktreeInput): {
     throw new WorktreeManagerError("run-not-active", "Only the latest waiting or running Run can adopt a managed worktree");
   }
   if (stored.run.workspace) throw new WorktreeManagerError("workspace-already-bound", "Run already has a workspace binding; inspect it instead of adopting another path");
-  const binding = adoptRunWorktree({
-    repoRoot: input.repoRoot,
-    runId: input.runId,
-    runState: stored.run.state,
-    canonicalPath: input.canonicalPath,
-    branch: input.branch,
-    baseSha: input.baseSha,
-    writeSet: stored.run.writeSetSnapshot,
-    authorization: input.authorization,
-  });
+  let binding: RunWorkspaceBinding;
   try {
-    const mutation = bindTaskRunWorkspace({
-      root: input.repoRoot,
-      taskDir: input.taskDir,
-      expectedRevision: stored.kernel.revision,
+    binding = adoptRunWorktree({
+      repoRoot: input.repoRoot,
       runId: input.runId,
-      workspace: binding,
-      actor: input.actor,
-      idempotencyKey: input.idempotencyKey,
+      runState: stored.run.state,
+      canonicalPath: input.canonicalPath,
+      branch: input.branch,
+      baseSha: input.baseSha,
+      writeSet: stored.run.writeSetSnapshot,
+      authorization: input.authorization,
     });
+  } catch (error) {
+    recordWorkspaceClaimRefusal(input, "adopt", error);
+    throw error;
+  }
+  try {
+    const mutation = bindWorkspaceAtLatestRevision(input, binding);
     return { binding, mutation };
   } catch {
     throw new WorktreeManagerError("workspace-kernel-bind-failed", "The adopted checkout is preserved, but its Task Kernel bind failed; do not dispatch work until it is reconciled", binding.canonicalPath);

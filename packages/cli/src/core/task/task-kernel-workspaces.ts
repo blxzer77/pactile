@@ -14,13 +14,15 @@ import type {
   BindTaskRunWorkspaceRequest,
   FinishTaskRunWorkspaceCleanupRequest,
   RecordTaskRunWorkspaceIntegrationRequest,
+  RecordTaskRunWorkspaceClaimRefusalRequest,
   RecordTaskRunWorkspaceCleanupRefusalRequest,
   TaskKernelMutationResult,
   TaskKernelSnapshotV2,
   TaskRunV2,
   TaskRunWorkspaceBinding,
+  TaskRunWorkspaceClaimErrorCode,
 } from "./task-kernel-types.js";
-import { TASK_RUN_WORKSPACE_CLEANUP_RISK_DISCLOSURE } from "./task-kernel-types.js";
+import { TASK_RUN_WORKSPACE_CLEANUP_RISK_DISCLOSURE, TASK_RUN_WORKSPACE_CLAIM_ERROR_CODES } from "./task-kernel-types.js";
 
 function runAt(current: TaskKernelSnapshotV2, runId: string): { run: TaskRunV2; index: number } {
   const index = current.runs.findIndex((item) => item.id === runId);
@@ -216,5 +218,53 @@ export function recordTaskRunWorkspaceCleanupRefusal(request: RecordTaskRunWorks
     const { run } = runAt(current, runId);
     return appendMutation(current, actor, request.idempotencyKey, "run.workspace-cleanup-refused", run.id,
       fingerprint, {}, `Workspace cleanup refused: ${reason}`);
+  });
+}
+
+const WORKSPACE_CLAIM_REFUSAL_REASONS: Readonly<Record<TaskRunWorkspaceClaimErrorCode, string>> = {
+  "owner-conflict": "Existing Run ownership prevents this workspace claim.",
+  "path-exists": "The requested workspace location already exists.",
+  "invalid-run-id": "The Run identifier failed workspace ownership validation.",
+  "invalid-write-set": "The Run write set failed workspace validation.",
+  "invalid-ref": "The Git reference could not be verified for this workspace claim.",
+  "path-anomaly": "The workspace path failed canonical location checks.",
+  "invalid-repository": "The repository identity could not be verified.",
+  "adoption-not-authorized": "Recorded adoption authorization is missing or invalid.",
+  "adoption-not-safe": "The existing checkout failed adoption safety checks.",
+  "git-command-failed": "Git could not complete the workspace claim checks.",
+  "git-path-unrepresentable": "The Git path could not be verified safely.",
+  "gitdir-mismatch": "The Git registration did not match the workspace path.",
+  "manager-provenance-invalid": "Existing manager ownership evidence is invalid.",
+  "manager-provenance-write-failed": "Manager ownership evidence could not be recorded.",
+  "worktree-create-failed": "Git could not create and register the requested checkout.",
+  "post-create-verification-failed": "The created checkout failed verification; preserve it for recovery.",
+  "claim-failed": "The workspace claim did not pass manager validation or persistence.",
+};
+
+/** Persist a redacted create/adopt refusal without changing Run or workspace ownership. */
+export function recordTaskRunWorkspaceClaimRefusal(request: RecordTaskRunWorkspaceClaimRefusalRequest): TaskKernelMutationResult {
+  const actor = requireNonEmptyString(request.actor, "actor");
+  const runId = requireNonEmptyString(request.runId, "runId");
+  if (request.operation !== "create" && request.operation !== "adopt") {
+    throw new KernelError("INVALID_REQUEST", "Workspace claim operation is invalid");
+  }
+  if (!(TASK_RUN_WORKSPACE_CLAIM_ERROR_CODES as readonly string[]).includes(request.errorCode)) {
+    throw new KernelError("INVALID_REQUEST", "Workspace claim refusal code is invalid");
+  }
+  const reason = WORKSPACE_CLAIM_REFUSAL_REASONS[request.errorCode];
+  if (!reason) throw new KernelError("INVALID_REQUEST", "Workspace claim refusal code is invalid");
+  const fingerprint = fingerprintTaskValue({ runId, operation: request.operation, errorCode: request.errorCode, reason });
+  return mutateTaskKernel(request.root, request.taskDir, request.expectedRevision, actor, request.idempotencyKey, fingerprint, request.cwd, (current) => {
+    const { run } = runAt(current, runId);
+    return appendMutation(
+      current,
+      actor,
+      request.idempotencyKey,
+      "run.workspace-claim-refused",
+      run.id,
+      fingerprint,
+      {},
+      `Workspace ${request.operation} claim refused [${request.errorCode}]: ${reason}`,
+    );
   });
 }
