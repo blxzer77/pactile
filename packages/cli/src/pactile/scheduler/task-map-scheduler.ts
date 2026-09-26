@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   fingerprintTaskValue,
+  listTaskKernelSnapshots,
   projectTaskKernelLifecycle,
   readTaskKernel,
   type AnyTaskKernelReadResult,
@@ -110,6 +111,10 @@ export interface TaskKernelScheduleDecisionReceiptV1 {
   scope: "task-kernel-v2";
   receiptFingerprint: string;
   createdAt: string;
+  /** Version 2 protects the full receipt envelope, including createdAt. */
+  integrityVersion?: 2;
+  /** Stable request identity used only to preserve idempotent receipt reuse. */
+  scheduleKey?: string;
   candidateTaskIds: string[];
   taskKernelRevisions: Record<string, number>;
   request: TaskScheduleRequestV1;
@@ -121,6 +126,11 @@ export interface PersistedTaskKernelScheduleV1 {
   receipt: TaskKernelScheduleDecisionReceiptV1;
   receiptFile: string;
   created: boolean;
+}
+
+export interface ReadTaskKernelScheduleReceiptV1 {
+  receipt: TaskKernelScheduleDecisionReceiptV1;
+  integrity: "fingerprint-verified" | "legacy-fingerprint-excludes-createdAt";
 }
 
 interface IndexedTask {
@@ -170,9 +180,11 @@ function activeTaskDirectories(root: string): string[] {
 function indexTasks(root: string): {
   byId: Map<string, IndexedTask>;
   byDir: Map<string, IndexedTask>;
+  byArchivedId: Map<string, IndexedTask>;
 } {
   const byId = new Map<string, IndexedTask>();
   const byDir = new Map<string, IndexedTask>();
+  const byArchivedId = new Map<string, IndexedTask>();
   for (const dir of activeTaskDirectories(root)) {
     const read = readTaskKernel({ root, taskDir: dir });
     const taskId =
@@ -190,7 +202,21 @@ function indexTasks(root: string): {
     byId.set(taskId, indexed);
     byDir.set(canonicalFilePath(dir), indexed);
   }
-  return { byId, byDir };
+  const archivePrefix = `${path.resolve(root, ".pactile", "tasks", "archive")}${path.sep}`.toLowerCase();
+  for (const { taskDir, kernel } of listTaskKernelSnapshots(root)) {
+    const dir = path.resolve(taskDir);
+    if (!dir.toLowerCase().startsWith(archivePrefix)) continue;
+    const taskId = kernel.identity.taskId;
+    if (byId.has(taskId) || byArchivedId.has(taskId))
+      throw new Error(`Duplicate active or archived Task identity: ${taskId}`);
+    byArchivedId.set(taskId, {
+      dir,
+      taskId,
+      read: { kind: "task-kernel-v2", kernel },
+      kernel,
+    });
+  }
+  return { byId, byDir, byArchivedId };
 }
 
 function resolveChildDependency(
@@ -1195,7 +1221,7 @@ function buildTaskKernelGraphSnapshot(
   if (candidateSet.size !== candidateTaskIds.length)
     throw new Error("candidateTaskIds contains duplicates");
 
-  const { byId } = indexTasks(root);
+  const { byId, byArchivedId } = indexTasks(root);
   const unknownCandidates = [...candidateSet].filter(
     (taskId) => !byId.has(taskId),
   );
@@ -1219,7 +1245,9 @@ function buildTaskKernelGraphSnapshot(
   ): void => {
     if (graphNodes.has(taskId)) return;
     if (visiting.has(taskId)) return;
-    const indexed = byId.get(taskId);
+    const activeIndexed = byId.get(taskId);
+    const archivedIndexed = byArchivedId.get(taskId);
+    const indexed = activeIndexed ?? archivedIndexed;
     if (!indexed) throw new Error(`Missing hard Task dependency: ${taskId}`);
     if (!indexed.kernel)
       throw new Error(
@@ -1229,6 +1257,10 @@ function buildTaskKernelGraphSnapshot(
     const completed =
       projectTaskKernelLifecycle(kernel).closed &&
       projectTaskKernelLifecycle(kernel).outcome === "completed";
+    if (archivedIndexed && !completed)
+      throw new Error(
+        `Archived hard Task dependency is not closed with completed outcome: ${taskId}`,
+      );
     const dependencies = completed ? [] : [...kernel.definition.dependencies];
     graphNodes.set(taskId, { indexed, dependencies, external });
     const nextVisiting = new Set(visiting);
@@ -1344,12 +1376,24 @@ export function planTaskKernelGraphV1(
 }
 
 function taskKernelReceiptFingerprint(
-  receipt: Omit<
-    TaskKernelScheduleDecisionReceiptV1,
-    "schemaVersion" | "scope" | "receiptFingerprint" | "createdAt"
-  >,
+  receipt: Omit<TaskKernelScheduleDecisionReceiptV1, "receiptFingerprint">,
 ): string {
   return fingerprintTaskValue(receipt);
+}
+
+function taskKernelScheduleRequestFingerprint(
+  receipt: TaskKernelScheduleDecisionReceiptV1,
+): string {
+  const {
+    schemaVersion: _schemaVersion,
+    scope: _scope,
+    receiptFingerprint: _receiptFingerprint,
+    createdAt: _createdAt,
+    integrityVersion: _integrityVersion,
+    scheduleKey: _scheduleKey,
+    ...request
+  } = receipt;
+  return fingerprintTaskValue(request);
 }
 
 function readExistingTaskKernelReceipt(
@@ -1364,14 +1408,23 @@ function readExistingTaskKernelReceipt(
     schemaVersion,
     scope,
     receiptFingerprint: storedFingerprint,
-    createdAt: _createdAt,
-    ...base
+    createdAt,
+    integrityVersion,
+    ...legacyBase
   } = receipt;
+  const { receiptFingerprint: _excludedFingerprint, ...fullEnvelope } = receipt;
+  const legacyFingerprint =
+    integrityVersion === undefined && fingerprintTaskValue(legacyBase) === fingerprint;
+  const fullFingerprint =
+    integrityVersion === 2 &&
+    typeof createdAt === "string" &&
+    fingerprintTaskValue(fullEnvelope) === fingerprint;
   if (
     schemaVersion !== RECEIPT_SCHEMA_VERSION ||
     scope !== "task-kernel-v2" ||
     storedFingerprint !== fingerprint ||
-    fingerprintTaskValue(base) !== fingerprint
+    typeof createdAt !== "string" ||
+    (!fullFingerprint && !legacyFingerprint)
   ) {
     throw new Error(
       `Task Kernel schedule receipt fingerprint does not match its contents: ${file}`,
@@ -1380,56 +1433,119 @@ function readExistingTaskKernelReceipt(
   return receipt;
 }
 
-function persistTaskKernelReceipt(
-  root: string,
-  receiptBase: Omit<
-    TaskKernelScheduleDecisionReceiptV1,
-    "schemaVersion" | "scope" | "receiptFingerprint" | "createdAt"
-  >,
-): PersistedTaskKernelScheduleV1 {
-  const fingerprint = taskKernelReceiptFingerprint(receiptBase);
-  const folder = path.join(
-    root,
+/** Reads a V2 schedule receipt and reports when a legacy digest excludes createdAt. */
+export function readTaskKernelScheduleReceiptV1(
+  rootValue: string,
+  fingerprint: string,
+): ReadTaskKernelScheduleReceiptV1 {
+  if (!/^[a-f0-9]{64}$/u.test(fingerprint))
+    throw new Error("Task Kernel schedule receipt fingerprint must be a lowercase SHA-256 digest");
+  const file = path.join(
+    path.resolve(rootValue),
     ".pactile",
     ".runtime",
     "scheduler",
     "receipts",
+    `${fingerprint}.json`,
   );
-  const file = path.join(folder, `${fingerprint}.json`);
-  fs.mkdirSync(folder, { recursive: true });
-  if (fs.existsSync(file))
-    return {
-      receipt: readExistingTaskKernelReceipt(file, fingerprint),
-      receiptFile: file,
-      created: false,
-    };
-  const receipt: TaskKernelScheduleDecisionReceiptV1 = {
-    ...receiptBase,
-    schemaVersion: RECEIPT_SCHEMA_VERSION,
-    scope: "task-kernel-v2",
-    receiptFingerprint: fingerprint,
-    createdAt: new Date().toISOString(),
+  if (!fs.existsSync(file))
+    throw new Error(`Task Kernel schedule receipt not found: ${fingerprint}`);
+  const receipt = readExistingTaskKernelReceipt(file, fingerprint);
+  return {
+    receipt,
+    integrity:
+      receipt.integrityVersion === 2
+        ? "fingerprint-verified"
+        : "legacy-fingerprint-excludes-createdAt",
   };
-  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    fs.writeFileSync(temporary, `${JSON.stringify(receipt, null, 2)}\n`, {
-      flag: "wx",
-      mode: 0o600,
-    });
-    try {
-      fs.copyFileSync(temporary, file, fs.constants.COPYFILE_EXCL);
-      return { receipt, receiptFile: file, created: true };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      return {
-        receipt: readExistingTaskKernelReceipt(file, fingerprint),
-        receiptFile: file,
-        created: false,
-      };
+}
+
+function persistTaskKernelReceipt(
+  root: string,
+  receiptBase: Omit<
+    TaskKernelScheduleDecisionReceiptV1,
+    | "schemaVersion"
+    | "scope"
+    | "receiptFingerprint"
+    | "createdAt"
+    | "integrityVersion"
+  >,
+): PersistedTaskKernelScheduleV1 {
+  const requestFingerprint = fingerprintTaskValue(receiptBase);
+  const folder = path.join(root, ".pactile", ".runtime", "scheduler", "receipts");
+  return withProjectSchedulerMutex(root, () => {
+    fs.mkdirSync(folder, { recursive: true });
+    const legacyFile = path.join(folder, `${requestFingerprint}.json`);
+    if (fs.existsSync(legacyFile)) {
+      const receipt = readExistingTaskKernelReceipt(legacyFile, requestFingerprint);
+      if (taskKernelScheduleRequestFingerprint(receipt) !== requestFingerprint)
+        throw new Error(`Task Kernel schedule receipt request does not match its content: ${legacyFile}`);
+      return { receipt, receiptFile: legacyFile, created: false };
     }
-  } finally {
-    fs.rmSync(temporary, { force: true });
-  }
+
+    for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      const fingerprint = entry.name.slice(0, -".json".length);
+      if (!/^[a-f0-9]{64}$/u.test(fingerprint)) continue;
+      const file = path.join(folder, entry.name);
+      let value: unknown;
+      try {
+        value = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
+      } catch {
+        continue;
+      }
+      if (
+        !value ||
+        typeof value !== "object" ||
+        Array.isArray(value) ||
+        (value as { scheduleKey?: unknown }).scheduleKey !== requestFingerprint
+      )
+        continue;
+      const receipt = readExistingTaskKernelReceipt(file, fingerprint);
+      if (taskKernelScheduleRequestFingerprint(receipt) !== requestFingerprint)
+        throw new Error(`Task Kernel schedule receipt request does not match its content: ${file}`);
+      if (receipt.integrityVersion === 2)
+        return { receipt, receiptFile: file, created: false };
+    }
+
+    const unsignedReceipt: Omit<
+      TaskKernelScheduleDecisionReceiptV1,
+      "receiptFingerprint"
+    > = {
+      ...receiptBase,
+      schemaVersion: RECEIPT_SCHEMA_VERSION,
+      scope: "task-kernel-v2",
+      createdAt: new Date().toISOString(),
+      integrityVersion: 2,
+      scheduleKey: requestFingerprint,
+    };
+    const fingerprint = taskKernelReceiptFingerprint(unsignedReceipt);
+    const file = path.join(folder, `${fingerprint}.json`);
+    const receipt: TaskKernelScheduleDecisionReceiptV1 = {
+      ...unsignedReceipt,
+      receiptFingerprint: fingerprint,
+    };
+    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      fs.writeFileSync(temporary, `${JSON.stringify(receipt, null, 2)}\n`, {
+        flag: "wx",
+        mode: 0o600,
+      });
+      try {
+        fs.copyFileSync(temporary, file, fs.constants.COPYFILE_EXCL);
+        return { receipt, receiptFile: file, created: true };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        return {
+          receipt: readExistingTaskKernelReceipt(file, fingerprint),
+          receiptFile: file,
+          created: false,
+        };
+      }
+    } finally {
+      fs.rmSync(temporary, { force: true });
+    }
+  });
 }
 
 /** Stores an idempotent Task/Run DAG decision receipt under project runtime state. */

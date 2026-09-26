@@ -8,11 +8,13 @@ import {
   type TaskKernelSnapshotV2,
   type TaskRunV2,
 } from "../../core/task/index.js";
+import { resolveTaskDirectoryById } from "../../core/task/task-kernel-paths.js";
 import { resolveTaskDir } from "../task/session.js";
 import type { ConflictParallelAuthorizationV1 } from "./scheduler.js";
-import type {
-  TaskKernelScheduleDecisionReceiptV1,
-  TaskScheduleLifecycleSnapshotV1,
+import {
+  readTaskKernelScheduleReceiptV1,
+  type TaskKernelScheduleDecisionReceiptV1,
+  type TaskScheduleLifecycleSnapshotV1,
 } from "./task-map-scheduler.js";
 import {
   listProjectWriteLeases,
@@ -280,34 +282,16 @@ function readTaskKernelScheduleReceipt(
 ): TaskKernelScheduleDecisionReceiptV1 {
   if (!/^[a-f0-9]{64}$/.test(fingerprint))
     throw new Error("invalid-schedule-receipt-fingerprint");
-  const file = path.join(
-    root,
-    ".pactile",
-    ".runtime",
-    "scheduler",
-    "receipts",
-    `${fingerprint}.json`,
-  );
-  const value: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
-  if (!value || typeof value !== "object" || Array.isArray(value))
+  try {
+    return readTaskKernelScheduleReceiptV1(root, fingerprint).receipt;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("fingerprint does not match"))
+      throw new Error("schedule-receipt-integrity-failed");
+    if (message.includes("not found"))
+      throw new Error("schedule-receipt-not-found");
     throw new Error("invalid-schedule-receipt");
-  const receipt = value as TaskKernelScheduleDecisionReceiptV1;
-  const {
-    schemaVersion,
-    scope,
-    receiptFingerprint,
-    createdAt: _createdAt,
-    ...base
-  } = receipt;
-  if (
-    schemaVersion !== 1 ||
-    scope !== "task-kernel-v2" ||
-    receiptFingerprint !== fingerprint ||
-    fingerprintTaskValue(base) !== fingerprint
-  ) {
-    throw new Error("schedule-receipt-integrity-failed");
   }
-  return receipt;
 }
 
 function lifecycleFor(
@@ -1123,7 +1107,12 @@ function inspectTaskRun(
 
   const dependencyKernelRevisions: Record<string, number | null> = {};
   for (const dependencyId of dependencyIds) {
-    const dependencyDir = resolveTaskDir(root, dependencyId);
+    const dependencyDir = resolveTaskDirectoryById(root, dependencyId);
+    if (!dependencyDir) {
+      dependencyKernelRevisions[dependencyId] = null;
+      reasons.push(`hard-dependency-missing-or-invalid:${dependencyId}`);
+      continue;
+    }
     const dependency = readTaskKernel({ root, taskDir: dependencyDir });
     if (dependency.kind !== "task-kernel-v2") {
       dependencyKernelRevisions[dependencyId] = null;
@@ -1882,9 +1871,12 @@ function assertTaskKernelRunDispatchLeaseInternal(
       for (const dependencyId of dependencies) {
         let dependency: ReturnType<typeof readTaskKernel>;
         try {
+          const dependencyDir = resolveTaskDirectoryById(root, dependencyId);
+          if (!dependencyDir)
+            return empty(`hard-dependency-missing-or-invalid:${dependencyId}`);
           dependency = readTaskKernel({
             root,
-            taskDir: resolveTaskDir(root, dependencyId),
+            taskDir: dependencyDir,
           });
         } catch {
           return empty(`hard-dependency-missing-or-invalid:${dependencyId}`);
