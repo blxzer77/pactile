@@ -18,6 +18,7 @@ import {
   startTaskRun,
 } from "../../src/core/task/task-kernel.js";
 import { runLegacyTaskBatch } from "../../src/pactile/migration/legacy-task-batch.js";
+import { compileSessionPack } from "../../src/pactile/task/session-pack.js";
 import { initializeDeveloper } from "../../src/utils/developer.js";
 
 const roots: string[] = [];
@@ -179,6 +180,88 @@ describe("session add with selected legacy Task migrations", () => {
       expectJournalUnchanged(root, before);
     },
   );
+
+  it.each([
+    ["needs-definition", { needsDefinition: true }],
+    ["needs-coordination", { needsCoordination: true }],
+  ] as const)(
+    "keeps %s selected Task visible but non-runnable in the Session Pack",
+    async (status, options) => {
+      const root = makeRoot();
+      const taskDir = addLegacyTask(root, {
+        id: `legacy-pack-${status}`,
+        directory: `01-pack-${status}`,
+        ...options,
+      });
+      const modules = path.join(root, ".pactile", "modules");
+      fs.mkdirSync(path.join(modules, "define-basic"), { recursive: true });
+      writeJson(path.join(modules, "index.json"), {
+        modules: [{ id: "define-basic", contract: "define-basic/contract.md" }],
+      });
+      fs.writeFileSync(
+        path.join(modules, "define-basic", "contract.md"),
+        "Migration-only define contract must not be emitted as an active Task contract.",
+        "utf8",
+      );
+
+      await importTasks(root);
+      selectTask(root, taskDir);
+      const pack = compileSessionPack(root);
+      const layers = pack.layers as { moduleIds: string[]; items: unknown[]; text: string }[];
+
+      expect(pack.kernel).toMatchObject({
+        taskId: `legacy-pack-${status}`,
+        schemaVersion: 0,
+        phase: "define",
+        condition: "blocked",
+        selected: true,
+        migrationStatus: status,
+        runnable: false,
+      });
+      expect(pack.kernel).toHaveProperty(
+        status === "needs-definition" ? "missingDefinitionFields" : "coordinationReasons",
+      );
+      expect(pack).not.toHaveProperty("rigor");
+      expect(pack).not.toHaveProperty("topologyKind");
+      expect(pack).not.toHaveProperty("tileSelection");
+      expect(layers[0]?.text).toContain(`Migration ${status}:`);
+      expect(layers[1]?.moduleIds).toEqual([]);
+      expect(layers[2]?.items).toEqual([]);
+      expect(JSON.stringify(pack)).not.toContain("Migration-only define contract");
+      expect(JSON.stringify(pack)).not.toMatch(/Rigor=lite|topology=single|Open Proposal|Open approval/);
+    },
+  );
+
+  it("does not project a selected Task as V1 when migration authority is missing", async () => {
+    const root = makeRoot();
+    const taskDir = addLegacyTask(root, {
+      id: "legacy-missing-authority-pack",
+      directory: "01-missing-authority-pack",
+    });
+    await importTasks(root);
+    selectTask(root, taskDir);
+    fs.rmSync(
+      path.join(root, ".pactile", "runtime", "legacy-task-migrations", "authority.json"),
+    );
+
+    const pack = compileSessionPack(root);
+    const layers = pack.layers as { moduleIds: string[]; text: string }[];
+
+    expect(pack.kernel).toMatchObject({
+      taskId: null,
+      schemaVersion: null,
+      phase: null,
+      condition: null,
+      selected: true,
+    });
+    expect(pack).not.toHaveProperty("rigor");
+    expect(pack).not.toHaveProperty("topologyKind");
+    expect(pack).not.toHaveProperty("tileSelection");
+    expect(layers[0]?.text).toContain("Legacy migration authority could not be validated");
+    expect(layers[0]?.text).toContain("do not fall back to legacy files");
+    expect(layers[1]?.moduleIds).toEqual([]);
+    expect(JSON.stringify(pack)).not.toMatch(/Rigor=lite|topology=single|V1 legacy Task:/);
+  });
 
   it("fails closed on a corrupt selected overlay without writing the journal", async () => {
     const root = makeRoot();

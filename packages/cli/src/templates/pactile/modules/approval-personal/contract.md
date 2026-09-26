@@ -4,40 +4,28 @@ P29 表名：`approval-personal`（不得改名）。层：baseline。
 
 ## 职责
 
-Human Attention 的三道人门，不是 Kernel 状态机本身。Kernel 校验「能不能转」；本块决定「人有没有点头」。
+区分人类授权、Kernel 校验和执行记录。
 
-1. **Open**：同意建立 Task 并批准 Rigor×Topology。不授权改代码、不授权 Execute。
-2. **Execute**：Define 完成后，同意进入实现。`--check` 只是 CLI 预检（指纹/槽位/契约在不在），**不得**写成「已评审通过」。
-3. **Finalize**：需要人类权威时合并询问——Git commit、远程推送、最终业务验收等。可与 Close 收尾并成一次，不拆成逐步确认。
+1. **创建 Task：**先取得用户对交付物、AC、交付层级和已知硬依赖的明确同意。V2 Kernel 从 Define 开始；不要在 Kernel 中虚构 Open 阶段。
+2. **授权 Run：**开始执行前取得对指定范围的授权。V2 Run 会记录 `approvedBy`、`approvedAt`、`scope` 和证据引用；这些字段保留调用者声明和证据指针，本身不验证身份。
+3. **授权外部动作：**按需取得 commit、远程推送、合并、发布或其他重要外部动作的人类授权。Close 是独立的 Kernel 转换。
 
 ## 触发/披露
 
-不到门不进 Prompt、不进用户视野。Define 进行中不反复问「是否同意」。无硬 Risk 的 Lite：Open 之后可在用户**预先启用** Auto-Approve 时不再问 Execute；仍必须写审计，不是跳过 Approve 里程碑。Full / Parent / 硬 Risk：默认 Open + Execute；Finalize 在有人类权威动作时出现。异常才打断：范围或契约变、Policy 豁免、Secret、不可逆或远程副作用、平台底线不满足、真实 blocker、新高风险权限。
-
-Agent 看见：
-
-1. 未过 Open：不得 `pactile task create`（Intake 只出 Proposal）。
-2. 未过 Execute：不得把 Phase 推进到 Execute、不得 `--approved`、不得开始改产品代码。
-3. 预检 PASS 只可用来**请求** Execute 门，不可宣称已批准。
-4. 日常「ok / 开始 / 确认」若不是在回答明确的门，不得当成 Execute 授权。
-5. Return-to-Define 之后，旧 Execute 批准失效，必须再过门。
-
-用户看见：很少的关键问句。Lite 常常只有一次 Open。Full 通常 Open + Execute。有 commit/远程时再并一次 Finalize。不是每个 Phase 点一次。
-
-渐进：过门后从常驻包拿掉本块教战，只留「本任务已过哪些门」。
+在决策边界提问，不在每个阶段反复询问。创建 Task 的请求不授权超出 Proposal 交付物的工作。Run 授权只适用于已记录范围和契约。
 
 ## 停止条件
 
-- 三门各自授权什么、不授权什么（见职责）。
-- `--check` ≠ 人批；`--approved` 只记录调用者对人批的声明、来源、任务和工件指纹，不验证身份。真实批准仍应能追溯到何时、哪一扇门及其沟通证据。
-- Auto-Approve 边界：仅预启用 + 无硬 Risk + Policy 允许；仍留痕迹。
-- 升级打断清单与上列异常一致；同一 frontier 可批量问，避免一题一轮。
-- 不得把预检 PASS 写成已批准；不得把日常确认当成 Execute 授权。
+- 用户未同意 Task Proposal，不创建 Task。
+- 没有明确 Run 授权，不开始实现 Run。
+- Kernel 预检 PASS 只表示记录的门看起来满足，不代表人已批准。
+- V2 `--approved-by` 与授权证据字段是调用者提供的记录，不是身份验证。V1 的 `--approved` 也不得教成身份或授权证明。
+- 交付物、AC、交付层级、依赖或授权范围发生实质变化时，继续执行前必须重新取得人类审查。
 
 ## 关掉必须消失
 
-没有人点头路径。不得静默 create / `--approved` / 把 commit 当已 Finalize。Kernel 仍可拒绝非法转换，但不能冒充人已批。
+决策记录继续保留审计。不得把日常状态回复或一次 commit 当作隐式授权。
 
 ## 不得带走
 
-契约正文与 AC（`define-basic`）；指纹算法与合法边（Kernel）；是否真的 git commit（`vcs-integration`）；物理归档（`retention-storage`）。
+Kernel 转换和依赖校验；定义内容（`define-basic`）；执行方式（`execute-agent`）；证据是否满足 AC（`verify-basic`）；外部系统是否真实完成动作。
