@@ -172,6 +172,42 @@ function listInternalFiles(
   return output.sort();
 }
 
+/** Fail closed when migration artifacts survive without their authority pointer. */
+export function assertLegacyTaskMigrationStoreEmptyWithoutAuthority(
+  projectRoot: string,
+): void {
+  const root = path.resolve(projectRoot);
+  const storePath = path.join(
+    root,
+    ...LEGACY_TASK_MIGRATION_STORE.split("/"),
+  );
+  try {
+    const stat = fs.lstatSync(storePath);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error("legacy-task-migration-store-invalid");
+    }
+    if (fs.readdirSync(storePath).length > 0) {
+      throw new Error(
+        "legacy-task-migration-authority-missing-with-residual-state",
+      );
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+/** Validate pointer absence without interfering with an in-flight batch writer. */
+export function assertLegacyTaskMigrationAuthorityOrCleanStore(
+  projectRoot: string,
+): void {
+  const root = path.resolve(projectRoot);
+  const authority = readInternalFile(
+    root,
+    `${LEGACY_TASK_MIGRATION_STORE}/authority.json`,
+  );
+  if (!authority) assertLegacyTaskMigrationStoreEmptyWithoutAuthority(root);
+}
+
 function parseAuthority(value: unknown): LegacyTaskMigrationCommit {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("legacy-task-migration-authority-invalid");
@@ -361,7 +397,10 @@ export function readLegacyTaskMigrationView(
   const root = path.resolve(projectRoot);
   const authorityPath = `${LEGACY_TASK_MIGRATION_STORE}/authority.json`;
   const authorityBytes = readInternalFile(root, authorityPath);
-  if (!authorityBytes) return null;
+  if (!authorityBytes) {
+    assertLegacyTaskMigrationStoreEmptyWithoutAuthority(root);
+    return null;
+  }
   let authority: LegacyTaskMigrationCommit;
   try {
     authority = parseAuthority(

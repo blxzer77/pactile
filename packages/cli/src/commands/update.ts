@@ -2882,8 +2882,13 @@ export async function update(options: UpdateOptions): Promise<void> {
       taskUpgrade.status === "blocked" ||
       taskUpgrade.status === "interrupted"
     ) {
+      const retryGuidance = taskUpgrade.reason?.includes(
+        "authority-missing-with-residual-state",
+      )
+        ? "Reconcile the missing authority against the preserved migration evidence before retrying."
+        : "Re-run 'pactile update' to recover the journal.";
       throw new Error(
-        `Legacy Task migration did not commit; update stopped before template writes (${taskUpgrade.reason ?? taskUpgrade.status}). Re-run 'pactile update' to recover the journal.`,
+        `Legacy Task migration did not commit; update stopped before template writes (${taskUpgrade.reason ?? taskUpgrade.status}). ${retryGuidance}`,
       );
     }
     if (taskUpgrade.status === "completed") {

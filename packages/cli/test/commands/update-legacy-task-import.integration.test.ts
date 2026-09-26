@@ -232,6 +232,64 @@ describe("pactile update legacy Task import", () => {
     );
   });
 
+  it("rejects pre-commit recovery when overlay mutation evidence exists", async () => {
+    const taskDir = addLegacyTask();
+    const sourceBytes = fs.readFileSync(path.join(taskDir, "task.json"));
+    const plan = scanLegacyTaskMigration({ projectRoot: root });
+    const candidate = buildLegacyTaskV2Import(plan);
+    const interrupted = await runLegacyTaskBatch(
+      { projectRoot: root, plan, targets: candidate.targets },
+      {
+        approved: true,
+        onPhase(phase) {
+          if (phase === "targets-validated")
+            throw new Error("simulated-precommit-interruption");
+        },
+      },
+    );
+    expect(interrupted.status).toBe("interrupted");
+
+    const mutationEvidence = projectFile(
+      ".pactile",
+      "runtime",
+      "legacy-task-migrations",
+      "overlay-journal",
+    );
+    fs.mkdirSync(mutationEvidence, { recursive: true });
+
+    await expect(
+      update({
+        force: true,
+        skipReadiness: true,
+        skipPostUpdateSmoke: true,
+      }),
+    ).rejects.toThrow(/authority-missing-with-residual-state/);
+    expect(
+      fs.readFileSync(path.join(taskDir, "task.json")).equals(sourceBytes),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        projectFile(
+          ".pactile",
+          "runtime",
+          "legacy-task-migrations",
+          "authority.json",
+        ),
+      ),
+    ).toBe(false);
+    expect(fs.existsSync(mutationEvidence)).toBe(true);
+    expect(
+      fs.readdirSync(
+        projectFile(
+          ".pactile",
+          "runtime",
+          "legacy-task-migrations",
+          "generations",
+        ),
+      ),
+    ).not.toHaveLength(0);
+  });
+
   it("refuses a damaged legacy Kernel before update writes an authority pointer", async () => {
     const taskDir = addLegacyTask({ damagedKernel: true });
     const sourceBytes = fs.readFileSync(path.join(taskDir, "task.json"));
@@ -302,5 +360,51 @@ describe("pactile update legacy Task import", () => {
     expect(() => readTaskKernel({ root, taskDir, cwd: root })).toThrow(
       /overlay kernel-missing/,
     );
+  });
+
+  it("fails closed on update retry when only the migration authority pointer is missing", async () => {
+    const taskDir = addLegacyTask();
+    const sourceBytes = fs.readFileSync(path.join(taskDir, "task.json"));
+    await update({
+      force: true,
+      skipReadiness: true,
+      skipPostUpdateSmoke: true,
+    });
+    const authorityPath = projectFile(
+      ".pactile",
+      "runtime",
+      "legacy-task-migrations",
+      "authority.json",
+    );
+    const generationsPath = projectFile(
+      ".pactile",
+      "runtime",
+      "legacy-task-migrations",
+      "generations",
+    );
+    const backupPath = projectFile(
+      ".pactile",
+      "runtime",
+      "legacy-task-migrations",
+      "sources",
+    );
+    expect(fs.readdirSync(generationsPath)).not.toHaveLength(0);
+    expect(fs.readdirSync(backupPath)).not.toHaveLength(0);
+    fs.rmSync(authorityPath);
+
+    await expect(
+      update({
+        force: true,
+        skipReadiness: true,
+        skipPostUpdateSmoke: true,
+      }),
+    ).rejects.toThrow(/authority-missing-with-residual-state/);
+    expect(() => readTaskKernel({ root, taskDir, cwd: root })).toThrow(
+      /authority-missing-with-residual-state/,
+    );
+    expect(fs.readFileSync(path.join(taskDir, "task.json")).equals(sourceBytes)).toBe(true);
+    expect(fs.existsSync(authorityPath)).toBe(false);
+    expect(fs.readdirSync(generationsPath)).not.toHaveLength(0);
+    expect(fs.readdirSync(backupPath)).not.toHaveLength(0);
   });
 });

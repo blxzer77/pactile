@@ -1,4 +1,5 @@
 export {
+  canResumeLegacyTaskBatchWithoutAuthority,
   readPreparedLegacyTaskBatch,
   runLegacyTaskBatch,
 } from "./legacy-task-batch-orchestrator.js";

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runTaskCli } from "../../../src/commands/task.js";
+import { runContextCli } from "../../../src/commands/context.js";
 import { buildLegacyTaskV2Import } from "../../../src/core/task/legacy-task-v2-import.js";
 import { scanLegacyTaskMigration } from "../../../src/core/task/legacy-task-migration.js";
 import { legacyTaskMigrationOverlayPath } from "../../../src/core/task/legacy-task-migration-reader.js";
@@ -129,6 +130,8 @@ function v2At(root: string, taskDir: string) {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   for (const root of roots.splice(0))
     fs.rmSync(root, { recursive: true, force: true });
 });
@@ -142,6 +145,8 @@ describe("legacy Task to V2 import mapping", () => {
       prd: prd(),
     });
     await commitImport(root);
+    vi.stubEnv("PACTILE_CONTEXT_ID", "codex_overlay_integrity");
+    expect(runTaskCli(["select", path.basename(taskDir)], root)).toBe(0);
     const initial = v2At(root, taskDir);
     const request = {
       root,
@@ -174,8 +179,10 @@ describe("legacy Task to V2 import mapping", () => {
     });
     expect(runTaskCli(["show", path.basename(taskDir)], root)).toBe(1);
     expect(runTaskCli(["list"], root)).toBe(1);
+    expect(runContextCli(["--mode", "record", "--json"], root)).toBe(1);
+    expect(runContextCli(["--mode", "lite", "--json"], root)).toBe(1);
+    expect(runContextCli(["--mode", "session", "--json"], root)).toBe(1);
     expect(errorOutput.join("\n")).toMatch(/overlay hash-mismatch/);
-    errorSpy.mockRestore();
     expect(() => startTaskRun(request)).toThrow(/overlay hash-mismatch/);
 
     fs.rmSync(overlayDir, { recursive: true, force: true });
@@ -184,6 +191,82 @@ describe("legacy Task to V2 import mapping", () => {
     );
     expect(() => startTaskRun(request)).toThrow(/overlay kernel-missing/);
     expect(() => listTaskKernelSnapshots(root)).toThrow(/overlay kernel-missing/);
+    expect(runContextCli(["--mode", "record", "--json"], root)).toBe(1);
+    expect(runContextCli(["--mode", "lite", "--json"], root)).toBe(1);
+    expect(runContextCli(["--mode", "session", "--json"], root)).toBe(1);
+    expect(errorOutput.join("\n")).toMatch(/overlay kernel-missing/);
+    errorSpy.mockRestore();
+  });
+
+  it("shows needs-definition and needs-coordination as selected, visible, and non-runnable", async () => {
+    const root = makeRoot();
+    addLegacyTask(root, {
+      id: "needs-definition-task",
+      directory: "01-needs-definition",
+      deliveryLevel: "TBD",
+      prd: prd("TBD"),
+    });
+    addLegacyTask(root, {
+      id: "needs-coordination-task",
+      directory: "02-needs-coordination",
+      dependsOn: ["missing-block-target"],
+      dependsMode: "block",
+      prd: prd(),
+    });
+    const { imported } = await commitImport(root);
+    expect(imported).toMatchObject({ needsDefinition: 1, needsCoordination: 1 });
+    vi.stubEnv("PACTILE_CONTEXT_ID", "codex_legacy_reconciliation");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      for (const [directory, status] of [
+        ["01-needs-definition", "needs-definition"],
+        ["02-needs-coordination", "needs-coordination"],
+      ] as const) {
+        expect(runTaskCli(["select", directory], root)).toBe(0);
+        expect(runTaskCli(["selected", "--json"], root)).toBe(0);
+        expect(JSON.parse(String(logSpy.mock.lastCall?.[0]))).toMatchObject({
+          migrationStatus: status,
+          runnable: false,
+          kernelVersion: null,
+        });
+
+        expect(runContextCli(["--mode", "record", "--json"], root)).toBe(0);
+        expect(JSON.parse(String(logSpy.mock.lastCall?.[0])).selectedTask).toMatchObject({
+          status,
+          migrationStatus: status,
+          runnable: false,
+          kernelVersion: null,
+        });
+
+        expect(runContextCli(["--mode", "lite", "--json"], root)).toBe(0);
+        expect(JSON.parse(String(logSpy.mock.lastCall?.[0]))).toMatchObject({
+          phase: "define",
+          migrationStatus: status,
+          runnable: false,
+        });
+        expect(String(logSpy.mock.lastCall?.[0])).toContain(
+          "V2 Run is unavailable until reconciliation",
+        );
+
+        expect(runContextCli(["--mode", "session", "--json"], root)).toBe(0);
+        expect(JSON.parse(String(logSpy.mock.lastCall?.[0])).kernel).toMatchObject({
+          phase: "define",
+          migrationStatus: status,
+          runnable: false,
+          schemaVersion: 0,
+        });
+        expect(String(logSpy.mock.lastCall?.[0])).toContain(
+          "before any V2 Run",
+        );
+
+        expect(runContextCli([], root)).toBe(0);
+        expect(String(logSpy.mock.lastCall?.[0])).toContain(`(${status})`);
+      }
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 
   it("maps only explicit block edges and never treats a completed legacy record as a completed V2 dependency", async () => {

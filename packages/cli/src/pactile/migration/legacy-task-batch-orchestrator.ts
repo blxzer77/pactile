@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 
 import {
@@ -22,6 +23,7 @@ import {
 import {
   assertSourceUnchanged,
   validatePlanAtRoot,
+  verifySourceBackup,
   writeSourceBackup,
 } from "./legacy-task-batch-source.js";
 import {
@@ -150,6 +152,66 @@ export function readPreparedLegacyTaskBatch(
 ): LegacyTaskBatchAuthority | null {
   const root = path.resolve(projectRoot);
   return readAuthoritySnapshot(root)?.authority ?? null;
+}
+
+/**
+ * A missing pointer may be retried only for a matching, pre-commit journal
+ * whose backup/staged generation verifies and which has no post-commit overlay.
+ */
+export function canResumeLegacyTaskBatchWithoutAuthority(
+  request: LegacyTaskBatchRequest,
+): boolean {
+  const normalized = normalizeRequest(request);
+  if (
+    !normalized ||
+    !validatePlanAtRoot(normalized.projectRoot, normalized.plan)
+  ) return false;
+  try {
+    if (readAuthoritySnapshot(normalized.projectRoot)) return false;
+    const snapshot = readJournal(normalized.projectRoot, normalized.batchId);
+    if (!snapshot) return false;
+    const journal = snapshot.journal;
+    const finalEvent = journal.events.at(-1)?.event;
+    const stateEvent: Partial<Record<LegacyTaskBatchJournal["state"], string>> = {
+      planned: "planned",
+      "backed-up": "source-backed-up",
+      staged: "targets-staged",
+      validated: "targets-validated",
+    };
+    if (
+      !stateEvent[journal.state] ||
+      finalEvent !== stateEvent[journal.state] ||
+      journal.batchId !== normalized.batchId ||
+      journal.generationId !== normalized.generationId ||
+      journal.sourceFingerprint !== normalized.sourceFingerprint ||
+      journal.targetFingerprint !== normalized.targetFingerprint ||
+      journal.planFingerprint !== normalized.planFingerprint ||
+      journal.expectedAuthorityFingerprint !== null
+    ) return false;
+
+    for (const relative of [
+      ".pactile/runtime/legacy-task-migrations/overlay-journal",
+      ".pactile/runtime/legacy-task-migrations/overrides",
+    ]) {
+      try {
+        fs.lstatSync(path.join(normalized.projectRoot, relative));
+        return false;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false;
+      }
+    }
+    if (journal.state !== "planned")
+      verifySourceBackup(normalized.projectRoot, normalized.sourceFingerprint);
+    if (journal.state === "staged" || journal.state === "validated")
+      verifyGeneration(normalized.projectRoot, normalized.generationId, {
+        batchId: normalized.batchId,
+        sourceFingerprint: normalized.sourceFingerprint,
+        targetFingerprint: normalized.targetFingerprint,
+      });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

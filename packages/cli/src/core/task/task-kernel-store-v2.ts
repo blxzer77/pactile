@@ -22,6 +22,10 @@ import {
 import { isPlainObject } from "./schema.js";
 import { parseDefinition, parseTaskKernelSnapshotV2, fingerprintTaskValue, requireArrayEntry } from "./task-kernel-schema.js";
 import {
+  appendLegacyTaskOverlayJournalLine,
+  writeLegacyTaskOverlayKernel,
+} from "./legacy-task-overlay-durable-io.js";
+import {
   LEGACY_TASK_MIGRATION_STORE,
   legacyTaskMigrationOverlayPath,
   listLegacyTaskMigrationDirectories,
@@ -317,15 +321,18 @@ export function mutateTaskKernel(
     const audit = requireArrayEntry(next.audit.at(-1), "Kernel audit event");
     const event = requireArrayEntry(next.events.at(-1), "Kernel event");
     if (overlayDir && importRecord?.status === "imported" && migrationView && currentBytes) {
+      const nextBytes = serializeKernelState(next);
       appendLegacyTaskKernelOverlayJournal({
         root: canonicalRoot,
         record: importRecord,
         view: migrationView,
         previousBytes: currentBytes,
-        nextBytes: serializeKernelState(next),
+        nextBytes,
       });
+      writeLegacyTaskOverlayKernel(path.join(dir, "kernel.json"), nextBytes);
+    } else {
+      writeKernelStateDocument(dir, next);
     }
-    writeKernelStateDocument(dir, next);
     return { kernel: next, idempotent: false, audit, event };
   });
 }
@@ -581,13 +588,10 @@ function appendLegacyTaskKernelOverlayJournal(options: {
   };
   if (entry.revision <= entry.previousRevision)
     throw overlayIntegrityError(options.root, options.record, journalPath, "revision-transition-invalid");
-  const fd = fs.openSync(journalPath, "a");
-  try {
-    fs.writeSync(fd, `${JSON.stringify(entry)}\n`, undefined, "utf8");
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
+  appendLegacyTaskOverlayJournalLine(
+    journalPath,
+    `${JSON.stringify(entry)}\n`,
+  );
 }
 
 export function appendMutation(

@@ -91,14 +91,58 @@ function activeTasks(root: string): (JsonRecord & { dir: string })[] {
         entry.isDirectory() &&
         !["archive", "locale", "templates"].includes(entry.name),
     )
-    .flatMap((entry) => {
+    .flatMap((entry): (JsonRecord & { dir: string })[] => {
+      const taskDir = path.join(tasksRoot, entry.name);
+      const importRecord = readLegacyTaskImportRecord(root, taskDir);
+      if (importRecord && importRecord.status !== "imported") {
+        let legacy: JsonRecord = {};
+        try {
+          const value: unknown = JSON.parse(
+            fs.readFileSync(path.join(taskDir, "task.json"), "utf8"),
+          );
+          if (value && typeof value === "object" && !Array.isArray(value))
+            legacy = value as JsonRecord;
+        } catch {
+          // The source id and migration record remain sufficient to show the
+          // task's non-runnable reconciliation state.
+        }
+        return [{
+          id: importRecord.legacyTaskId,
+          name: legacy.title ?? legacy.name ?? importRecord.legacyTaskId,
+          title: legacy.title ?? legacy.name ?? importRecord.legacyTaskId,
+          status: importRecord.status,
+          phase: "define",
+          migrationStatus: importRecord.status,
+          runnable: false,
+          missingDefinitionFields: importRecord.missingDefinitionFields,
+          coordinationReasons: importRecord.coordinationReasons,
+          dir: entry.name,
+          kernelVersion: null,
+        }];
+      }
+      if (importRecord?.status === "imported") {
+        const read = readTaskKernel({ root, taskDir, cwd: root });
+        if (read.kind !== "task-kernel-v2")
+          throw new Error("legacy-task-imported-kernel-unavailable");
+        const kernel = read.kernel;
+        return [{
+          id: kernel.identity.taskId,
+          name: kernel.definition.title,
+          title: kernel.definition.title,
+          status: kernel.phase === "close" ? "closed" : kernel.phase,
+          phase: kernel.phase,
+          assignee: kernel.definition.createdBy,
+          createdBy: kernel.definition.createdBy,
+          deliveryLevel: kernel.definition.deliveryLevel,
+          dependencies: kernel.definition.dependencies,
+          acceptanceCriteria: kernel.definition.acceptanceCriteria,
+          dir: entry.name,
+          kernelVersion: 2,
+        }];
+      }
       try {
-        const taskDir = path.join(tasksRoot, entry.name);
         const kernelFile = path.join(taskDir, "kernel.json");
-        if (
-          fs.existsSync(kernelFile) ||
-          fs.existsSync(path.join(taskDir, "task.json"))
-        ) {
+        if (fs.existsSync(kernelFile)) {
           const read = readTaskKernel({ root, taskDir, cwd: root });
           if (read.kind === "task-kernel-v2") {
             const kernel = read.kernel;
@@ -147,6 +191,40 @@ function selectedTask(root: string): JsonRecord | null {
   const selected = resolveSelectedTask(root);
   if (!selected.taskPath || selected.stale) return null;
   const dir = resolveTaskDir(root, selected.taskPath);
+  const importRecord = readLegacyTaskImportRecord(root, dir);
+  if (importRecord && importRecord.status !== "imported") {
+    return {
+      path: selected.taskPath,
+      taskId: importRecord.legacyTaskId,
+      name: importRecord.legacyTaskId,
+      status: importRecord.status,
+      phase: "define",
+      migrationStatus: importRecord.status,
+      runnable: false,
+      missingDefinitionFields: importRecord.missingDefinitionFields,
+      coordinationReasons: importRecord.coordinationReasons,
+      kernelVersion: null,
+      source: selected.source,
+      contextKey: selected.contextKey,
+    };
+  }
+  if (importRecord?.status === "imported") {
+    const read = readTaskKernel({ root, taskDir: dir, cwd: root });
+    if (read.kind !== "task-kernel-v2")
+      throw new Error("legacy-task-imported-kernel-unavailable");
+    return {
+      path: selected.taskPath,
+      taskId: read.kernel.identity.taskId,
+      name: read.kernel.definition.title,
+      status: read.kernel.phase === "close" ? "closed" : read.kernel.phase,
+      phase: read.kernel.phase,
+      condition: read.kernel.condition,
+      revision: read.kernel.revision,
+      kernelVersion: 2,
+      source: selected.source,
+      contextKey: selected.contextKey,
+    };
+  }
   try {
     if (
       fs.existsSync(path.join(dir, "kernel.json")) ||
@@ -390,9 +468,30 @@ function liteContext(root: string): ReturnType<typeof buildLiteContextPack> {
   if (!selected.taskPath || selected.stale)
     return buildLiteContextPack({ phase: "open" });
   const dir = resolveTaskDir(root, selected.taskPath);
+  const importRecord = readLegacyTaskImportRecord(root, dir);
+  if (importRecord && importRecord.status !== "imported") {
+    const pack = buildLiteContextPack({ phase: "define" }) as ReturnType<
+      typeof buildLiteContextPack
+    > & {
+      migrationStatus: string;
+      runnable: false;
+      missingDefinitionFields?: readonly string[];
+      coordinationReasons?: readonly string[];
+    };
+    pack.migrationStatus = importRecord.status;
+    pack.runnable = false;
+    if (importRecord.status === "needs-definition")
+      pack.missingDefinitionFields = importRecord.missingDefinitionFields;
+    if (importRecord.status === "needs-coordination")
+      pack.coordinationReasons = importRecord.coordinationReasons;
+    pack.warnings.push(
+      `Legacy migration status=${importRecord.status}; V2 Run is unavailable until reconciliation.`,
+    );
+    return pack;
+  }
   const read =
     fs.existsSync(path.join(dir, "kernel.json")) ||
-    readLegacyTaskImportRecord(root, dir)
+    importRecord
       ? readTaskKernel({ root, taskDir: dir, cwd: root })
       : null;
   const legacy =

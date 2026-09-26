@@ -8,8 +8,10 @@ import {
   scanLegacyTaskMigration,
   type LegacyTaskMigrationPlan,
 } from "../../core/task/legacy-task-migration.js";
+import { assertLegacyTaskMigrationAuthorityOrCleanStore } from "../../core/task/legacy-task-migration-reader.js";
 import { assertLegacyTaskKernelMigrationOverlaysIntact } from "../../core/task/task-kernel-store-v2.js";
 import {
+  canResumeLegacyTaskBatchWithoutAuthority,
   readPreparedLegacyTaskBatch,
   runLegacyTaskBatch,
   type LegacyTaskBatchResult,
@@ -40,9 +42,20 @@ function inspectWithCurrentSource(
   projectRoot: string,
 ): LegacyTaskUpdateInspection {
   const active = readPreparedLegacyTaskBatch(projectRoot);
-  if (active) assertLegacyTaskKernelMigrationOverlaysIntact(projectRoot);
   const plan = scanLegacyTaskMigration({ projectRoot });
   const imported = buildLegacyTaskV2Import(plan);
+  if (!active) {
+    try {
+      assertLegacyTaskMigrationAuthorityOrCleanStore(projectRoot);
+    } catch (error) {
+      if (!canResumeLegacyTaskBatchWithoutAuthority({
+        projectRoot,
+        plan,
+        targets: imported.targets,
+      })) throw error;
+    }
+  }
+  if (active) assertLegacyTaskKernelMigrationOverlaysIntact(projectRoot);
   if (active) {
     if (
       plan.preflight.status !== "clear-to-review" ||

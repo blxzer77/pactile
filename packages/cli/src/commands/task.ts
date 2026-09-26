@@ -2401,6 +2401,7 @@ export function runTaskCli(argv: string[], root = process.cwd()): number {
                   source: chosen.source,
                   taskId: imported.legacyTaskId,
                   migrationStatus: imported.status,
+                  runnable: false,
                   missingDefinitionFields: imported.missingDefinitionFields,
                   coordinationReasons: imported.coordinationReasons,
                   kernelVersion: null,
