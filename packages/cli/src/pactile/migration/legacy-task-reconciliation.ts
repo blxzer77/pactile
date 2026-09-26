@@ -547,7 +547,7 @@ export async function runLegacyTaskReconciliation(
     if (options.cancelled || options.approved !== true)
       return { status: "cancelled", taskPath, requestFingerprint: fingerprint, wrote: false, visible: false };
 
-    if (!orphanRecovery) assertLegacyTaskKernelMigrationOverlaysIntact(root);
+    assertLegacyTaskKernelMigrationOverlaysIntact(root, orphanRecovery ? baseView : undefined);
     const occurred = occurredAt;
     stageGeneration(root, authority, baseView.baseFiles, stagedFiles, occurred, occurred);
     wrote = true;
