@@ -29,4 +29,30 @@ describe("structured task artifacts help and guide", () => {
     expect(guide).toContain("migration generation/overlay");
     expect(guide).toContain("`task-map.md` 和 `handoff.md`");
   });
+
+  it("covers light and heavy Task reads with resolvable lifecycle and P36 links", () => {
+    const guidePath = path.join(
+      repositoryRoot,
+      "docs/capabilities/structured-task-artifacts.zh-CN.md",
+    );
+    const guide = fs.readFileSync(guidePath, "utf8");
+
+    expect(guide).toContain("## 轻量 Task");
+    expect(guide).toContain("## 重型 Task");
+    expect(guide).toContain("section:design:decision");
+    expect(guide).toContain("section:prd:legacy-task-map:scope");
+    expect(guide).toContain("pactile update --dry-run");
+    expect(guide).toContain("pactile update`");
+
+    const links = [...guide.matchAll(/\[[^\]]+\]\(([^)]+)\)/gu)];
+    expect(links.length).toBeGreaterThanOrEqual(2);
+    for (const [, destination] of links) {
+      if (!destination) throw new Error("Markdown link has no destination");
+      const relativePath = destination.split("#", 1)[0];
+      expect(
+        fs.existsSync(path.resolve(path.dirname(guidePath), relativePath)),
+        destination,
+      ).toBe(true);
+    }
+  });
 });
