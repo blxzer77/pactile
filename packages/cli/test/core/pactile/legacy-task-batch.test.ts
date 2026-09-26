@@ -250,6 +250,113 @@ describe("legacy Task batch staging transaction", () => {
     expect(recovered.journal.state).toBe("committed");
   });
 
+  it.each(["overlay-journal", "overrides"] as const)(
+    "blocks direct API recovery from a validated journal when %s evidence exists",
+    async (artifact) => {
+      const root = tempProject();
+      const request = requestFor(root);
+      const sourcePath = path.join(
+        root,
+        ".pactile",
+        "tasks",
+        "09-26-legacy",
+        "task.json",
+      );
+      const sourceBefore = fs.readFileSync(sourcePath);
+      const interrupted = await runLegacyTaskBatch(request, {
+        approved: true,
+        onPhase(phase) {
+          if (phase === "targets-validated")
+            throw new Error("simulated-process-interruption-before-pointer");
+        },
+      });
+      expect(interrupted).toMatchObject({
+        status: "interrupted",
+        journal: { state: "validated" },
+      });
+      if (!interrupted.batchId || !interrupted.generationId)
+        throw new Error("expected persisted batch identity");
+      const journalFile = storePath(
+        root,
+        "journals",
+        `${interrupted.batchId}.json`,
+      );
+      const stagedFile = storePath(
+        root,
+        "generations",
+        interrupted.generationId,
+        "files",
+        "prepared",
+        "source-index.json",
+      );
+      const journalBefore = fs.readFileSync(journalFile);
+      const stagedBefore = fs.readFileSync(stagedFile);
+      const overlayEvidence = storePath(root, artifact);
+      fs.mkdirSync(overlayEvidence, { recursive: true });
+
+      const retry = await runLegacyTaskBatch(request, { approved: true });
+
+      expect(retry).toMatchObject({
+        status: "review",
+        reason: "legacy-task-migration-authority-missing-with-residual-state",
+        wrote: false,
+      });
+      expect(
+        fs.existsSync(storePath(root, "authority.json")),
+      ).toBe(false);
+      expect(fs.readFileSync(sourcePath).equals(sourceBefore)).toBe(true);
+      expect(fs.readFileSync(journalFile).equals(journalBefore)).toBe(true);
+      expect(fs.readFileSync(stagedFile).equals(stagedBefore)).toBe(true);
+      expect(fs.existsSync(overlayEvidence)).toBe(true);
+    },
+  );
+
+  it("blocks direct API replay of a committed journal when its authority pointer is missing", async () => {
+    const root = tempProject();
+    const request = requestFor(root);
+    const sourcePath = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      "09-26-legacy",
+      "task.json",
+    );
+    const sourceBefore = fs.readFileSync(sourcePath);
+    const committed = await runLegacyTaskBatch(request, { approved: true });
+    expect(committed.status).toBe("completed");
+    if (committed.status !== "completed")
+      throw new Error("expected a committed batch");
+    const journalFile = storePath(
+      root,
+      "journals",
+      `${committed.batchId}.json`,
+    );
+    const stagedFile = storePath(
+      root,
+      "generations",
+      committed.generationId,
+      "files",
+      "prepared",
+      "source-index.json",
+    );
+    const journalBefore = fs.readFileSync(journalFile);
+    const stagedBefore = fs.readFileSync(stagedFile);
+    const authorityPath = storePath(root, "authority.json");
+    fs.rmSync(authorityPath);
+
+    const retry = await runLegacyTaskBatch(request, { approved: true });
+
+    expect(retry).toMatchObject({
+      status: "review",
+      reason: "legacy-task-migration-authority-missing-with-residual-state",
+      wrote: false,
+    });
+    expect(fs.existsSync(authorityPath)).toBe(false);
+    expect(fs.readFileSync(sourcePath).equals(sourceBefore)).toBe(true);
+    expect(fs.readFileSync(journalFile).equals(journalBefore)).toBe(true);
+    expect(fs.readFileSync(stagedFile).equals(stagedBefore)).toBe(true);
+  });
+
   it("does not commit a batch that fails staged validation", async () => {
     const root = tempProject();
     const request = requestFor(root);
@@ -324,7 +431,7 @@ describe("legacy Task batch staging transaction", () => {
     expect(readPreparedLegacyTaskBatch(root)?.batchId).toBe(result.batchId);
   });
 
-  it("uses pointer CAS so a racing batch cannot publish a partial generation", async () => {
+  it("blocks a competing batch while a validated generation lacks its authority pointer", async () => {
     const root = tempProject();
     const request = requestFor(root);
     let competitorResult: Awaited<
@@ -348,16 +455,27 @@ describe("legacy Task batch staging transaction", () => {
         );
       },
     });
-    expect(competitorResult?.status).toBe("completed");
-    expect(result).toMatchObject({
+    expect(competitorResult).toMatchObject({
       status: "review",
-      reason: "migration-authority-cas-mismatch",
+      reason: "legacy-task-migration-authority-missing-with-residual-state",
+      wrote: false,
     });
-    expect(readPreparedLegacyTaskBatch(root)?.batchId).toBe(
-      competitorResult && competitorResult.status === "completed"
-        ? competitorResult.batchId
-        : null,
-    );
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed")
+      throw new Error("expected the original staged batch to commit");
+    expect(readPreparedLegacyTaskBatch(root)?.batchId).toBe(result.batchId);
+    expect(
+      fs.existsSync(
+        storePath(
+          root,
+          "generations",
+          result.generationId,
+          "files",
+          "prepared",
+          "competitor.json",
+        ),
+      ),
+    ).toBe(false);
   });
 
   it("reclaims a journal lock only when its recorded process is confirmed dead", async () => {

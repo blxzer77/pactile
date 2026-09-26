@@ -27,4 +27,7 @@ mutation 证据。已提交或含糊的 journal、fingerprint
 都需要根据保留的迁移存储进行协调。不要删除该存储，也不要对已变化的旧输入
 重跑以消除错误。
 
+如果残留仅是该 batch 对应的 lock file，可进入锁检查；Pactile 只会在确认记录的
+进程已退出后删除它。仍存活、格式损坏或无法验证的 lock 会继续阻断操作。
+
 不要靠删除 `.pactile/`、重写 legacy 源或把 secret 复制进模板修复。只收集最少命令输出，并使用[支持](../governance/index.zh-CN.md)提交受治理 issue。

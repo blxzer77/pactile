@@ -48,11 +48,16 @@ function inspectWithCurrentSource(
     try {
       assertLegacyTaskMigrationAuthorityOrCleanStore(projectRoot);
     } catch (error) {
-      if (!canResumeLegacyTaskBatchWithoutAuthority({
-        projectRoot,
-        plan,
-        targets: imported.targets,
-      })) throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      if (
+        reason !==
+          "legacy-task-migration-authority-missing-with-residual-state" ||
+        !canResumeLegacyTaskBatchWithoutAuthority({
+          projectRoot,
+          plan,
+          targets: imported.targets,
+        })
+      ) throw error;
     }
   }
   if (active) assertLegacyTaskKernelMigrationOverlaysIntact(projectRoot);

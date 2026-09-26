@@ -5,6 +5,7 @@ import {
   scanLegacyTaskMigration,
   type LegacyTaskMigrationPlan,
 } from "../../core/task/legacy-task-migration.js";
+import { assertLegacyTaskMigrationAuthorityOrCleanStore } from "../../core/task/legacy-task-migration-reader.js";
 import {
   JOURNAL_EVENTS,
   digest,
@@ -154,9 +155,44 @@ export function readPreparedLegacyTaskBatch(
   return readAuthoritySnapshot(root)?.authority ?? null;
 }
 
+function hasOnlyExpectedJournalLock(
+  projectRoot: string,
+  batchId: string,
+): boolean {
+  const store = path.join(
+    projectRoot,
+    ".pactile",
+    "runtime",
+    "legacy-task-migrations",
+  );
+  const journalDirectory = path.join(store, "journals");
+  const lockPath = path.join(journalDirectory, `${batchId}.json.lock`);
+  try {
+    const storeEntries = fs.readdirSync(store);
+    const journalDirectoryStat = fs.lstatSync(journalDirectory);
+    const journalEntries = fs.readdirSync(journalDirectory);
+    const lockStat = fs.lstatSync(lockPath);
+    return (
+      storeEntries.length === 1 &&
+      storeEntries[0] === "journals" &&
+      journalDirectoryStat.isDirectory() &&
+      !journalDirectoryStat.isSymbolicLink() &&
+      journalEntries.length === 1 &&
+      journalEntries[0] === `${batchId}.json.lock` &&
+      lockStat.isFile() &&
+      !lockStat.isSymbolicLink() &&
+      lockStat.nlink === 1
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * A missing pointer may be retried only for a matching, pre-commit journal
  * whose backup/staged generation verifies and which has no post-commit overlay.
+ * A lone lock for this exact batch may also reach `withLock`, which only reclaims
+ * it after confirming that its recorded process is dead.
  */
 export function canResumeLegacyTaskBatchWithoutAuthority(
   request: LegacyTaskBatchRequest,
@@ -169,7 +205,11 @@ export function canResumeLegacyTaskBatchWithoutAuthority(
   try {
     if (readAuthoritySnapshot(normalized.projectRoot)) return false;
     const snapshot = readJournal(normalized.projectRoot, normalized.batchId);
-    if (!snapshot) return false;
+    if (!snapshot)
+      return hasOnlyExpectedJournalLock(
+        normalized.projectRoot,
+        normalized.batchId,
+      );
     const journal = snapshot.journal;
     const finalEvent = journal.events.at(-1)?.event;
     const stateEvent: Partial<Record<LegacyTaskBatchJournal["state"], string>> = {
@@ -320,6 +360,24 @@ export async function runLegacyTaskBatch(
       wrote: false,
       journal: null,
     };
+  }
+
+  if (!authorityAtStart) {
+    try {
+      assertLegacyTaskMigrationAuthorityOrCleanStore(
+        normalized.projectRoot,
+      );
+    } catch (error) {
+      const reason =
+        error instanceof Error ? error.message : String(error);
+      const recoverableMissingAuthority =
+        reason ===
+          "legacy-task-migration-authority-missing-with-residual-state" &&
+        canResumeLegacyTaskBatchWithoutAuthority(request);
+      if (!recoverableMissingAuthority) {
+        return makeResult("review", reason, normalized, false, null);
+      }
+    }
   }
 
   const occurredAt = options.occurredAt ?? new Date().toISOString();

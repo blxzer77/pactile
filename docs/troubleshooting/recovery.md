@@ -30,6 +30,10 @@ or any overlay journal/override evidence requires reconciliation from the
 preserved migration store. Do not delete that store or rerun against changed
 legacy inputs to clear the error.
 
+A lone lock file for the exact batch can proceed to the lock check; Pactile
+removes it only when the recorded process is confirmed dead. A live, malformed,
+or unverifiable lock remains blocked.
+
 Never repair by deleting `.pactile/`, rewriting a legacy source, or copying a
 secret into a template. Capture the minimal command output and open a governed
 issue using [Support](../governance/index.md).

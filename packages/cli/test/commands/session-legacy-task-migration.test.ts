@@ -1,0 +1,210 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { runSessionCli } from "../../src/commands/session.js";
+import { runTaskCli } from "../../src/commands/task.js";
+import { buildLegacyTaskV2Import } from "../../src/core/task/legacy-task-v2-import.js";
+import { scanLegacyTaskMigration } from "../../src/core/task/legacy-task-migration.js";
+import {
+  legacyTaskMigrationOverlayPath,
+} from "../../src/core/task/legacy-task-migration-reader.js";
+import {
+  readTaskKernel,
+  startTaskRun,
+} from "../../src/core/task/task-kernel.js";
+import { runLegacyTaskBatch } from "../../src/pactile/migration/legacy-task-batch.js";
+import { initializeDeveloper } from "../../src/utils/developer.js";
+
+const roots: string[] = [];
+
+function makeRoot(): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-p36-session-migration-"));
+  roots.push(root);
+  fs.mkdirSync(path.join(root, ".pactile", "tasks"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, ".pactile", "config.yaml"),
+    "session_auto_commit: false\n",
+    "utf8",
+  );
+  initializeDeveloper(root, "alice");
+  return root;
+}
+
+function writeJson(file: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function addLegacyTask(
+  root: string,
+  options: {
+    readonly id: string;
+    readonly directory: string;
+    readonly needsDefinition?: boolean;
+    readonly needsCoordination?: boolean;
+  },
+): string {
+  const taskDir = path.join(root, ".pactile", "tasks", options.directory);
+  writeJson(path.join(taskDir, "task.json"), {
+    id: options.id,
+    title: `Legacy ${options.id}`,
+    description: "Preserve the selected legacy record.",
+    status: "in_progress",
+    createdAt: "2026-09-25T12:00:00.000Z",
+    creator: "legacy-author",
+    ...(options.needsDefinition
+      ? {}
+      : {
+          deliverable: "A reviewable session migration result",
+          deliveryLevel: "local-result",
+        }),
+    ...(options.needsCoordination
+      ? { depends_on: ["missing-block-target"], depends_mode: "block" }
+      : {}),
+  });
+  fs.writeFileSync(
+    path.join(taskDir, "prd.md"),
+    options.needsDefinition
+      ? "# Legacy Task\n\n## Acceptance Criteria\n\n- TBD\n"
+      : "# Legacy Task\n\n## Acceptance Criteria\n\n- Session entry remains source-preserving.\n",
+    "utf8",
+  );
+  return taskDir;
+}
+
+async function importTasks(root: string): Promise<void> {
+  const plan = scanLegacyTaskMigration({ projectRoot: root });
+  const candidate = buildLegacyTaskV2Import(plan);
+  const result = await runLegacyTaskBatch(
+    { projectRoot: root, plan, targets: candidate.targets },
+    { approved: true },
+  );
+  expect(result.status).toBe("completed");
+}
+
+function selectTask(root: string, taskDir: string): void {
+  vi.stubEnv("PACTILE_CONTEXT_ID", "codex_session_migration_test");
+  expect(runTaskCli(["select", path.basename(taskDir)], root)).toBe(0);
+}
+
+function journalFiles(root: string): { index: Buffer; journal: Buffer } {
+  const workspace = path.join(root, ".pactile", "workspace", "alice");
+  return {
+    index: fs.readFileSync(path.join(workspace, "index.md")),
+    journal: fs.readFileSync(path.join(workspace, "journal-1.md")),
+  };
+}
+
+function expectJournalUnchanged(
+  root: string,
+  before: { index: Buffer; journal: Buffer },
+): void {
+  const after = journalFiles(root);
+  expect(after.index.equals(before.index)).toBe(true);
+  expect(after.journal.equals(before.journal)).toBe(true);
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+  for (const root of roots.splice(0))
+    fs.rmSync(root, { recursive: true, force: true });
+});
+
+describe("session add with selected legacy Task migrations", () => {
+  it.each([
+    ["needs-definition", { needsDefinition: true }],
+    ["needs-coordination", { needsCoordination: true }],
+  ] as const)(
+    "shows %s and refuses to append a session journal",
+    async (status, options) => {
+      const root = makeRoot();
+      const taskDir = addLegacyTask(root, {
+        id: `legacy-${status}`,
+        directory: `01-${status}`,
+        ...options,
+      });
+      await importTasks(root);
+      selectTask(root, taskDir);
+      const before = journalFiles(root);
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      expect(runSessionCli(["add", "--title", "Should not be recorded"], root)).toBe(1);
+      expect(String(error.mock.calls.at(-1)?.[0])).toContain(status);
+      expect(String(error.mock.calls.at(-1)?.[0])).toContain(
+        "session journal was not written",
+      );
+      expectJournalUnchanged(root, before);
+    },
+  );
+
+  it("fails closed on a corrupt selected overlay without writing the journal", async () => {
+    const root = makeRoot();
+    const taskDir = addLegacyTask(root, {
+      id: "legacy-corrupt-overlay",
+      directory: "01-corrupt-overlay",
+    });
+    await importTasks(root);
+    selectTask(root, taskDir);
+    const imported = readTaskKernel({ root, taskDir, cwd: root });
+    expect(imported.kind).toBe("task-kernel-v2");
+    if (imported.kind !== "task-kernel-v2")
+      throw new Error("expected active V2 Task");
+    startTaskRun({
+      root,
+      taskDir,
+      expectedRevision: imported.kernel.revision,
+      actor: "session-migration-integrity-test",
+      idempotencyKey: "session-migration-integrity-run",
+      input: {
+        summary: "Create a real mutable migration overlay",
+        references: [],
+      },
+      authorization: {
+        approvedBy: "test-approver",
+        approvedAt: "2026-09-25T13:00:00.000Z",
+        scope: "one Task",
+        evidenceRef: "approval.json",
+      },
+    });
+    const overlayDir = legacyTaskMigrationOverlayPath(root, taskDir);
+    if (!overlayDir) throw new Error("missing migration overlay path");
+    fs.writeFileSync(path.join(overlayDir, "kernel.json"), "corrupt overlay\n");
+    const before = journalFiles(root);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(runSessionCli(["add", "--title", "Must fail closed"], root)).toBe(1);
+    expect(String(error.mock.calls.at(-1)?.[0])).toMatch(/overlay hash-mismatch/);
+    expectJournalUnchanged(root, before);
+  });
+
+  it("fails closed when migration authority is missing and preserves the journal", async () => {
+    const root = makeRoot();
+    const taskDir = addLegacyTask(root, {
+      id: "legacy-missing-authority",
+      directory: "01-missing-authority",
+    });
+    await importTasks(root);
+    selectTask(root, taskDir);
+    const before = journalFiles(root);
+    fs.rmSync(
+      path.join(
+        root,
+        ".pactile",
+        "runtime",
+        "legacy-task-migrations",
+        "authority.json",
+      ),
+    );
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(runSessionCli(["add", "--title", "Must not be recorded"], root)).toBe(1);
+    expect(String(error.mock.calls.at(-1)?.[0])).toMatch(
+      /authority-missing-with-residual-state/,
+    );
+    expectJournalUnchanged(root, before);
+  });
+});

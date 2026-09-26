@@ -32,12 +32,37 @@ function git(root: string, args: string[]): string {
 function selectedRecord(root: string): Record<string, unknown> | null {
   const selected = resolveSelectedTask(root);
   if (!selected.taskPath || selected.stale) return null;
+  const dir = resolveTaskDir(root, selected.taskPath);
+  const importRecord = readLegacyTaskImportRecord(root, dir);
+  if (importRecord && importRecord.status !== "imported") {
+    return {
+      id: importRecord.legacyTaskId,
+      migrationStatus: importRecord.status,
+      runnable: false,
+      missingDefinitionFields: importRecord.missingDefinitionFields,
+      coordinationReasons: importRecord.coordinationReasons,
+    };
+  }
+  if (importRecord?.status === "imported") {
+    const read = readTaskKernel({ root, taskDir: dir, cwd: root });
+    if (read.kind !== "task-kernel-v2")
+      throw new Error("legacy-task-imported-kernel-unavailable");
+    return {
+      id: read.kernel.identity.taskId,
+      name: read.kernel.definition.title,
+      title: read.kernel.definition.title,
+      status: read.kernel.phase === "close" ? "closed" : read.kernel.phase,
+      phase: read.kernel.phase,
+      deliveryLevel: read.kernel.definition.deliveryLevel,
+      dependencies: read.kernel.definition.dependencies,
+      migrationStatus: importRecord.status,
+    };
+  }
+
+  // Only a confirmed, unimported legacy task keeps the historical best-effort
+  // parsing behavior. Imported records and migration-store errors fail closed.
   try {
-    const dir = resolveTaskDir(root, selected.taskPath);
-    if (
-      !fs.existsSync(path.join(dir, "kernel.json")) &&
-      !readLegacyTaskImportRecord(root, dir)
-    )
+    if (!fs.existsSync(path.join(dir, "kernel.json")))
       return JSON.parse(
         fs.readFileSync(path.join(dir, "task.json"), "utf8"),
       ) as Record<string, unknown>;
@@ -148,6 +173,14 @@ function addSession(args: string[], root: string): void {
       : {};
   const requestedPackage = option(args, "--package");
   const selected = selectedRecord(root);
+  if (
+    selected?.migrationStatus === "needs-definition" ||
+    selected?.migrationStatus === "needs-coordination"
+  ) {
+    throw new Error(
+      `Selected legacy Task requires ${String(selected.migrationStatus)} reconciliation; session journal was not written.`,
+    );
+  }
   let pkg =
     requestedPackage ??
     (typeof selected?.package === "string" ? selected.package : undefined) ??
