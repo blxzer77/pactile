@@ -27,7 +27,9 @@ vi.mock("node:child_process", () => ({
 // === Imports ===
 
 import { init } from "../../src/commands/init.js";
+import { readTaskKernel } from "../../src/core/task/index.js";
 import { runTaskCli } from "../../src/commands/task.js";
+import { scheduleTaskKernelGraph } from "../../src/pactile/scheduler/index.js";
 import { VERSION } from "../../src/constants/version.js";
 import { DIR_NAMES, FILE_NAMES, PATHS } from "../../src/constants/paths.js";
 import { frameworkDocs } from "../../src/templates/markdown/index.js";
@@ -182,7 +184,9 @@ describe("init() integration", () => {
       path.join(tmpDir, PATHS.TASKS, "00-bootstrap-guidelines", "prd.md"),
       "utf-8",
     );
-    expect(bootstrapPrd).toContain("## Capability readiness (required before archive)");
+    expect(bootstrapPrd).toContain(
+      "## Capability readiness (record before Review and Close)",
+    );
     expect(bootstrapPrd).toContain("`codebase-retrieval`");
     expect(bootstrapPrd).toContain("`fastctx`");
     expect(bootstrapPrd).toContain("watcher auto-syncs later edits");
@@ -969,22 +973,42 @@ describe("init() integration", () => {
     const taskDir = path.join(tmpDir, PATHS.TASKS, "00-bootstrap-guidelines");
     expect(fs.existsSync(taskDir)).toBe(true);
 
-    const taskJson = JSON.parse(
-      fs.readFileSync(path.join(taskDir, "task.json"), "utf-8"),
+    const kernel = readTaskKernel({ root: tmpDir, taskDir, cwd: tmpDir });
+    expect(kernel.kind).toBe("task-kernel-v2");
+    if (kernel.kind !== "task-kernel-v2")
+      throw new Error("expected V2 bootstrap Task");
+    expect(kernel.kernel.identity.taskId).toBe("00-bootstrap-guidelines");
+    expect(kernel.kernel.phase).toBe("define");
+    expect(kernel.kernel.definition.deliveryLevel).toBe("documentation");
+    expect(kernel.kernel.definition.dependencies).toEqual([]);
+    expect(kernel.kernel.definition.acceptanceCriteria.length).toBeGreaterThan(
+      0,
     );
+    expect(kernel.kernel.runs).toEqual([]);
+    expect(kernel.kernel.reviews).toEqual([]);
+    expect(kernel.kernel.closure).toBeNull();
+    expect(fs.existsSync(path.join(taskDir, FILE_NAMES.TASK_JSON))).toBe(false);
 
-    // task.json.subtasks is canonical string[] (child task dir names);
-    // per-package checklist items now live in prd.md as markdown checkboxes.
-    expect(Array.isArray(taskJson.subtasks)).toBe(true);
-    expect(taskJson.subtasks).toEqual([]);
-
-    // Canonical shape: legacy current_phase / next_action must NOT appear
-    expect(taskJson.current_phase).toBeUndefined();
-    expect(taskJson.next_action).toBeUndefined();
-
-    // relatedFiles point to spec/<name>/
-    expect(taskJson.relatedFiles).toContain(".pactile/spec/core/");
-    expect(taskJson.relatedFiles).toContain(".pactile/spec/ui/");
+    // The new V2 Task is readable and schedulable as a proposal without creating a Run.
+    const scheduled = scheduleTaskKernelGraph(tmpDir, [
+      kernel.kernel.identity.taskId,
+    ]);
+    expect(scheduled.receipt.scope).toBe("task-kernel-v2");
+    expect(scheduled.receipt.candidateTaskIds).toEqual([
+      "00-bootstrap-guidelines",
+    ]);
+    expect(scheduled.receipt.taskKernelRevisions).toMatchObject({
+      "00-bootstrap-guidelines": 1,
+    });
+    expect(scheduled.receipt.plan.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ taskId: "00-bootstrap-guidelines" }),
+      ]),
+    );
+    const afterPlan = readTaskKernel({ root: tmpDir, taskDir, cwd: tmpDir });
+    expect(afterPlan.kind).toBe("task-kernel-v2");
+    if (afterPlan.kind === "task-kernel-v2")
+      expect(afterPlan.kernel.runs).toEqual([]);
 
     // prd.md mentions packages + renders per-package checklist items
     const prd = fs.readFileSync(path.join(taskDir, "prd.md"), "utf-8");
@@ -994,7 +1018,13 @@ describe("init() integration", () => {
     expect(prd).toContain("- [ ] Fill guidelines for core");
     expect(prd).toContain("- [ ] Fill guidelines for ui");
     expect(prd).not.toContain("pactile task finish");
-    expect(prd).toContain("pactile task archive 00-bootstrap-guidelines");
+    expect(prd).toContain("candidate-bound independent Review");
+    expect(prd).toContain("No Run exists");
+    expect(prd).not.toMatch(/pactile task (?:start-execution|archive)/i);
+    expect(prd).not.toContain("pactile-implement");
+    expect(prd).not.toContain("pactile-check");
+    expect(prd).not.toContain("auto-injects");
+    expect(prd).not.toContain("Integrate?");
   });
 
   it("#16 --no-monorepo skips detection even with workspace config", async () => {
