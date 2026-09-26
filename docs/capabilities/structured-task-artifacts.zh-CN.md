@@ -65,7 +65,12 @@ Agent 先读取索引，根据当前决策选定事实 ID、逻辑事实 URI、�
 - Implement 包含 Run 与候选快照；运行结果证据同时可从 Verify 阶段定位。
 - Review 包含独立评审的整体决策与证据。Verify 会在存在该 criterion 的验收证据时复用 PRD 的同一验收事实 ID，并同时列出对应证据 locator。整体 Review verdict 不作为单项 criterion 的决定；criteria 在 Kernel Close 前保持 `active`，Close 才按记录状态变为 `verified`。
 - Design 的决策、理由和风险来自作者已有的 Markdown 标题；reader 暴露稳定章节 ID、来源、ref 和内容指纹，不生成 Kernel 状态或替作者摘要。PRD 的 Scope/Risk 使用同样方式。没有文档或对应标题时不产生章节项。
-- 候选快照在关闭观察前保持 `unknown`；关闭记录的观察与选中的快照一致时标为 `fresh`，其他历史快照标为 `stale`。这仅表示 Kernel 中记录的调用方观察，不重算 Git 或文件内容。
+- `run-result` 完成时，P41 Core 会记录机器观察：Git 项目使用 Git 工作树观察器；非 Git 项目使用有边界的项目文件扫描器。Run 写入范围内受观察的普通文件会连同 SHA-256 进入候选快照，Run 证据也会绑定到实际字节。Close 前候选新鲜度仍是 `unknown`；Close 只在同一观察范围内重新核对。观察范围内内容变化或观察器报告的写入范围外改动会阻止关闭。该可信观察由 Core 写入，不由调用方声明；观察器边界见 [P41 Run 观察范围](structured-task-artifacts.zh-CN.md#p41-run-observer-boundary)。
+
+<a id="p41-run-observer-boundary"></a>
+### P41 Run 观察范围
+
+Git 项目由 Git 工作树观察器记录候选基线和当前状态；非 Git 项目由有大小与路径边界的普通文件扫描器读取。非 Git 扫描会排除 `.env`、`node_modules/`、`dist/` 等路径；完整目录和文件规则见 [非 Git 项目文件观察器](../../packages/cli/src/core/task/project-file-observer.ts)，Git 工作树规则见 [候选观察器](../../packages/cli/src/core/task/task-candidate-observer.ts)。被排除路径不属于这次候选的受观察内容，成功 Close 也不表示这些路径未变化。写入范围若与排除路径重叠，非 Git Run 不会启动。
 
 创建新的 Kernel V2 Task 时，CLI 只在文件不存在时用 exclusive create 新建最小 `prd.md`：列出稳定事实 ID、Kernel 来源和 locator，并留出人类叙述区。后续流程只更新 Kernel；不会重写此 Markdown，也不会生成空的 Design、Implement、Review 或 Verify 模板。现存文档按只读文件路径和内容指纹索引；读取索引与选读正文都不修改文档。Markdown 内的自由叙述仍由作者维护，Kernel 继续是生命周期状态与证据 ID 的唯一权威。
 
@@ -82,9 +87,18 @@ pactile task create "Preserve the configured timeout fallback" --slug timeout-fa
 pactile task artifacts timeout-fallback --agent --stage prd
 ```
 
+`task create` 会输出完整 TaskDir 相对路径（例如 `.pactile/tasks/09-26-timeout-fallback`）。将输出的原路径填入 `$TASK_DIR`；不要再给它加 `.pactile/tasks/` 前缀。先取得实际批准，再由获授权的记录者把真实批准内容保存到 `evidence/timeout-approval.md`，并在 `run-start` 前确认该文件存在。示例中的 Review 文件只会在 Run 完成后由实际独立 reviewer 根据检查结果写入；不要预填评审结论：
+
+```bash
+TASK_DIR="<path-printed-by-task-create>"
+mkdir -p "$TASK_DIR/evidence" "$TASK_DIR/review"
+```
+
 PRD 中的验收项和硬依赖分别成为 `requirement` 与 `constraint` facts。这个例子在 `design.md` 写下真实取舍：`## Decision` 下说明“只有显式覆盖值才替换项目超时设置”；`## Rationale` 下说明“缺少覆盖值时继续使用已批准的默认值”。文档索引给出 `section:design:decision` 的来源、路径和 fingerprint；Agent 展开该段时读取作者原文，不会把它改写为另一个 Kernel fact。复制索引中的 fingerprint 后，可用 `pactile task artifacts timeout-fallback --agent --stage design --section "section:design:decision@<current-section-fingerprint>"` 只展开这项取舍。不需要设计时就不创建 `design.md`。索引只显示缺失文档的 `absent` 状态，不会生成空的 Design、Implement、Review 或 Verify 模板。此例假设硬依赖已经 Close；依赖未满足时 Run 会被阻断。
 
-执行前取得明确批准。Run 结果、独立 Review 与逐项验收证据随后进入 Kernel：
+Run 前必须先取得明确批准，并由获授权的记录者将实际决定、范围和来源写入 `evidence/timeout-approval.md`；`--approved-by` 等参数只是调用方声明，不能代替审批。Run 完成后，独立 reviewer 检查实际结果并把真实 Review 依据写入 `$TASK_DIR/review/timeout-fallback.md`，之后才读取 Review 文档或提交 Review。下面展示的是 reviewer 实际结论为 pass 时的命令；若检查结果不是 pass，应记录真实结论，不要照抄此成功路径。Run 结果、独立 Review 与逐项验收证据随后进入 Kernel：
+
+P41 的 Run 完成会读取观察范围内的真实文件。`run-start` 用 `--write-set <path>` 声明允许修改的文件；这些路径可以是 Run 中新增的文件，但必须在 `run-result` 前生成或存在，届时观察器才会读取实际内容。`--candidate <path>=<sha256>` 必须指向写入范围内当前存在的普通文件，并提供该文件字节的实际 SHA-256。Run 的 `--evidence` 引用必须能解析到写入范围中的冻结候选文件，或 Task 目录下的实际证据文件；CLI 会读取并冻结其字节摘要。Review 证据也必须解析到真实文件。下面的哈希占位符需换成当前文件的 64 位小写十六进制 SHA-256。
 
 ```bash
 pactile task run-start timeout-fallback \
@@ -92,19 +106,26 @@ pactile task run-start timeout-fallback \
   --input-summary "Preserve the configured timeout when no override is supplied" \
   --input-ref prd.md --input-ref design.md \
   --approved-by requester --authorization-scope "the declared timeout fix" \
-  --authorization-evidence evidence/timeout-approval.md
+  --authorization-evidence evidence/timeout-approval.md \
+  --write-set src/config/timeout.ts --write-set tests/timeout-fallback.txt
 pactile task run-result timeout-fallback <run-id> --outcome completed \
   --actor implementer \
   --summary "The fallback preserves the configured timeout" \
-  --candidate src/config/timeout.ts=<64-lowercase-hex-fingerprint> \
+  --candidate src/config/timeout.ts=<actual-file-sha256> \
   --evidence tests/timeout-fallback.txt
 pactile task artifacts timeout-fallback --agent --stage implement
 pactile task artifacts timeout-fallback --agent --stage implement --fact <candidate-fact-id>
+pactile task artifacts timeout-fallback --agent --stage review
+pactile task artifacts timeout-fallback --agent --stage review \
+  --document "document:review@<current-review-fingerprint>"
 pactile task review timeout-fallback --run <run-id> \
   --candidate-id <snapshot-id> --candidate-fingerprint <64-lowercase-hex-fingerprint> \
   --reviewer independent-reviewer --actor independent-reviewer --decision pass \
   --evidence review/timeout-fallback.md \
   --criterion AC-1=tests/timeout-fallback.txt
+cat > "$TASK_DIR/evidence/current-candidate.json" <<EOF
+{"snapshotId":"<snapshot-id>","fingerprint":"<candidate-fingerprint>"}
+EOF
 pactile task close timeout-fallback --run <run-id> --review <review-id> \
   --candidate-id <snapshot-id> --candidate-fingerprint <64-lowercase-hex-fingerprint> \
   --candidate-observed-by closer --candidate-observation-source declared \
@@ -113,7 +134,7 @@ pactile task close timeout-fallback --run <run-id> --review <review-id> \
   --delivery-summary "Reviewed timeout fallback is present"
 ```
 
-`<run-id>` 来自 Run 输出；候选 fact 通过 `--fact` 展开后，其 Kernel 值提供 snapshot ID 和完整 fingerprint。命令示例中的 fingerprint 是 64 个小写十六进制字符，不含 `sha256:` 前缀。Review 的 `--criterion` 对每条验收标准各传一次。引用只是调用方记录的 locator：Pactile 不会打开这些文件，也不会认证 reviewer 或 approver。人类复查可分别运行 `pactile task artifacts timeout-fallback --stage prd` 与 `--stage verify`；PRD/Verify 会指向同一个 requirement ID，Review 和 Evidence 则各自只出现一次。
+`src/config/timeout.ts` 和 `tests/timeout-fallback.txt` 必须在 `run-result` 前实际存在；它们可以是在 Run 中新建的写入范围文件。Review 证据文件必须是 Task 目录中的实际文件，并可通过 `document:review` 索引展开。Close 前将候选 fact 中的 snapshot ID 和 fingerprint 写入 TaskDir 的 `evidence/current-candidate.json`。`--authorization-evidence` 与 `--candidate-observation-ref` 是调用方提供的 locator：Kernel 不认证审批身份或信任调用方的候选观察；P41 Core 只在 Close 时重新读取观察范围内的候选并写入自己的收据。`<run-id>` 来自 Run 输出；候选 fact 通过 `--fact` 展开后，其 Kernel 值提供 snapshot ID 和完整 fingerprint。候选路径上的 SHA-256 不含 `sha256:` 前缀。Review 的 `--criterion` 对每条验收标准各传一次。Pactile 读取候选、Run 证据和 Review 证据文件，但不会认证 reviewer 或 approver 身份。人类复查可分别运行 `pactile task artifacts timeout-fallback --stage prd` 与 `--stage verify`；PRD/Verify 会指向同一个 requirement ID，Review 和 Evidence 则各自只出现一次。
 
 ## 重型 Task：多依赖、多验收项与跨文档证据
 
@@ -153,42 +174,58 @@ The Kernel owns lifecycle state, while document fingerprints pin the requested p
 An inserted same-kind heading can change later occurrence-based section IDs.
 ~~~
 
-作者只建立实际需要的 `prd.md`、`design.md`、`implement.md`；Review 与 Verify 有内容时再写入。先读完整 Agent 索引，再按需取 Run 或文档正文，然后记录多文件候选与逐项证据：
+作者只建立实际需要的 `prd.md`、`design.md`、`implement.md`；Review 与 Verify 有内容时再写入。先读完整 Agent 索引，再按需取 Run 或文档正文。`run-start` 前先声明示例中的源码、文档与测试证据路径；这些文件可以在 Run 中生成，但要在 `run-result` 前存在，届时提供各文件当前字节的 SHA-256。Task create 输出完整 TaskDir 相对路径，将原路径填入 `$TASK_DIR`。实际批准发生后，由获授权的记录者把真实决定和范围写入 TaskDir 的 `evidence/legacy-doc-read-approval.md`，并在 `run-start` 前确认文件存在。Run 完成后，独立 reviewer 检查实际结果，再把真实 Review 结论以及 AC-2/AC-3 检查记录分别写入 TaskDir 的 `review/legacy-doc-read-review.md`、`review/stale-fingerprint-rejected.md` 和 `review/source-preservation-check.md`；只在确实完成这些检查后才使用对应证据路径。示例中的 Review verdict 命令仅适用于实际结论为 pass 的情况。
 
 ```bash
+TASK_DIR="<path-printed-by-task-create>"
+mkdir -p "$TASK_DIR/evidence"
+```
+
+```bash
+TASK_DIR="<path-printed-by-task-create>"
 pactile task run-start legacy-doc-read \
   --actor implementer \
   --input-summary "Implement the three approved acceptance criteria" \
   --input-ref prd.md --input-ref design.md --input-ref implement.md \
   --approved-by requester --authorization-scope "read-only Task artifact indexing" \
-  --authorization-evidence evidence/legacy-doc-read-approval.md
+  --authorization-evidence evidence/legacy-doc-read-approval.md \
+  --write-set packages/cli/src/pactile/artifacts/reader.ts \
+  --write-set docs/capabilities/structured-task-artifacts.zh-CN.md \
+  --write-set evidence/artifact-reader-tests.txt \
+  --write-set evidence/p36-overlay-read.txt
 pactile task run-result legacy-doc-read <run-id> --outcome completed \
   --actor implementer \
   --summary "Selected facts and current document sections are readable" \
-  --candidate packages/cli/src/pactile/artifacts=<source-tree-64-hex-fingerprint> \
-  --candidate docs/capabilities/structured-task-artifacts.zh-CN.md=<docs-64-hex-fingerprint> \
+  --candidate packages/cli/src/pactile/artifacts/reader.ts=<actual-reader-file-sha256> \
+  --candidate docs/capabilities/structured-task-artifacts.zh-CN.md=<actual-doc-file-sha256> \
   --evidence evidence/artifact-reader-tests.txt \
   --evidence evidence/p36-overlay-read.txt
 pactile task artifacts legacy-doc-read --agent --stage implement
 pactile task artifacts legacy-doc-read --agent --stage implement --fact <candidate-fact-id>
+pactile task artifacts legacy-doc-read --agent --stage review
+pactile task artifacts legacy-doc-read --agent --stage review \
+  --document "document:review@<current-review-fingerprint>"
 pactile task review legacy-doc-read --run <run-id> \
   --candidate-id <snapshot-id> --candidate-fingerprint <64-lowercase-hex-fingerprint> \
   --reviewer independent-reviewer --actor independent-reviewer --decision pass \
   --evidence review/legacy-doc-read-review.md \
   --criterion AC-1=evidence/p36-overlay-read.txt \
-  --criterion AC-2=evidence/stale-fingerprint-rejected.txt \
-  --criterion AC-3=evidence/source-preservation-check.txt
+  --criterion AC-2=review/stale-fingerprint-rejected.md \
+  --criterion AC-3=review/source-preservation-check.md
+cat > "$TASK_DIR/evidence/legacy-doc-read-candidate.json" <<EOF
+{"snapshotId":"<snapshot-id>","fingerprint":"<candidate-fingerprint>"}
+EOF
 pactile task close legacy-doc-read --run <run-id> --review <review-id> \
   --candidate-id <snapshot-id> --candidate-fingerprint <64-lowercase-hex-fingerprint> \
   --candidate-observed-by closer --candidate-observation-source declared \
   --candidate-observation-ref evidence/legacy-doc-read-candidate.json \
   --delivery-level local-result \
-  --delivery-ref packages/cli/src/pactile/artifacts \
+  --delivery-ref packages/cli/src/pactile/artifacts/reader.ts \
   --delivery-summary "Reviewed artifact reader and evidence are present"
 pactile task artifacts legacy-doc-read --agent
 ```
 
-读索引后，`context:task`、依赖约束、每条验收标准、Run、Review、候选和 Evidence 都有独立 ID、来源、provenance 与 Kernel locator；跨阶段只引用同一 fact ID，不复制事实。PASS Review 后，整体 Review finding 可为 `accepted`，但各验收事实仍为 `active`；Kernel 只有 Close 才把它们记为 `verified`。Close 前候选 freshness 是 `unknown`；Close 记录的 caller-supplied observation 与 snapshot 匹配后，当前候选为 `fresh`，较早候选为 `stale`。这表示调用方观察与 Kernel 记录匹配，不表示 Pactile 重算了 Git 或磁盘字节。
+读索引后，`context:task`、依赖约束、每条验收标准、Run、Review、候选和 Evidence 都有独立 ID、来源、provenance 与 Kernel locator；跨阶段只引用同一 fact ID，不复制事实。PASS Review 后，整体 Review finding 可为 `accepted`，但各验收事实仍为 `active`；Kernel 只有 Close 才把它们记为 `verified`。Close 前候选 freshness 是 `unknown`；Close 在 P41 observer 的边界内核对 Run 冻结的机器观察。观察范围内内容变化或观察器报告的写入范围外改动会阻止 Close；匹配的当前候选标为 `fresh`，不匹配的历史候选为 `stale`。观察器排除路径不构成“未变化”的证据。`--candidate-observation-ref` 指向 TaskDir 中调用方提供的 Close 请求记录；它不是可信观察凭证，Core 仍自行重读并记录结果。运行示例时，`evidence/artifact-reader-tests.txt` 和 `evidence/p36-overlay-read.txt` 必须在 `run-result` 前成为真实项目文件并包含对应结果；Review 与 AC-2/AC-3 证据必须是 TaskDir 的实际 Markdown 文件，并可通过 `document:review` 展开读取。
 
 ## 跨文档章节 ID 与指纹
 

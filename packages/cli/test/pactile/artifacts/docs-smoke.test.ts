@@ -44,9 +44,36 @@ describe("structured task artifacts help and guide", () => {
 
     expect(guide).toContain("## 轻量 Task");
     expect(guide).toContain("## 重型 Task");
+    expect(guide).toContain('TASK_DIR="<path-printed-by-task-create>"');
+    expect(guide).not.toContain(
+      'TASK_DIR=".pactile/tasks/<path-printed-by-task-create>"',
+    );
+    expect(guide).toContain("获授权的记录者");
+    expect(guide).toContain("实际独立 reviewer");
+    expect(guide).not.toMatch(/Requester approved/iu);
+    expect(guide).not.toMatch(/Independent review:\s*PASS/iu);
+    expect(guide).not.toMatch(/Observed:\s*/u);
     expect(guide).toContain("section:design:decision");
     expect(guide).toContain("section:prd:legacy-task-map:scope");
     expect(guide).toContain("--actor implementer");
+    expect(guide).toContain("`--write-set <path>`");
+    expect(guide).toContain("`--candidate <path>=<sha256>`");
+    expect(guide).toContain("Run 写入范围内受观察的普通文件");
+    expect(guide).toContain("#p41-run-observer-boundary");
+    expect(guide).toContain(
+      "观察范围内内容变化或观察器报告的写入范围外改动会阻止关闭",
+    );
+    expect(guide).toContain("project-file-observer.ts");
+    expect(guide).toContain(
+      '--document "document:review@<current-review-fingerprint>"',
+    );
+    expect(guide).toContain("run-result` 前存在");
+    expect(guide).toContain(
+      "packages/cli/src/pactile/artifacts/reader.ts=<actual-reader-file-sha256>",
+    );
+    expect(guide).toContain(
+      "--delivery-ref packages/cli/src/pactile/artifacts/reader.ts",
+    );
     expect(guide).toContain(
       "--reviewer independent-reviewer --actor independent-reviewer",
     );
