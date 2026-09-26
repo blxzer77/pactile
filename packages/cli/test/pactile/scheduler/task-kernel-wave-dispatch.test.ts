@@ -1001,6 +1001,34 @@ async function runPairedMeasurementScenario(
 }
 
 describe("Task Kernel V2 writer-wave dispatch", () => {
+  it("dispatches a normalized directory write set through the wave provider gate", async () => {
+    const root = makeGitRoot();
+    const task = makeTask(root, "wave-directory-write-set", {
+      writeSet: ["src/"],
+    });
+    attachManagedWorktree(root, task);
+    const schedule = scheduleTaskKernelGraph(root, [task.taskId]);
+    const script = fakePiScript(root);
+
+    const result = await dispatchTaskKernelWaveV1(
+      root,
+      schedule.receipt.receiptFingerprint,
+      {
+        timeoutMs: 10_000,
+        runnerLabel: "fake-pi-rpc-provider-test-only",
+        runner: createPiTaskKernelWaveRunnerV1(root, fakePiLaunch(script)),
+      },
+    );
+
+    expect(result.status).toBe("provider-runs-complete");
+    expect(result.tasks).toContainEqual(
+      expect.objectContaining({
+        taskId: task.taskId,
+        status: "provider-runs-settled",
+      }),
+    );
+  }, 30_000);
+
   it("runs two independent isolated Tasks concurrently against the same persisted receipt using a fake Pi provider", async () => {
     const root = makeGitRoot();
     const first = makeTask(root, "wave-independent-a", {

@@ -163,9 +163,9 @@ function leaseForTask(root: string, task: V2TaskFixture): string {
 }
 
 describe("Pi V2 dispatch admission and host stop", () => {
-  it("admits a dated TaskDir Run, binds Pi after start, then releases only on verified close", async () => {
+  it("dispatches a dated TaskDir Run after its directory write set is normalized by workspace binding", async () => {
     const root = makeRoot();
-    const task = createTask(root, "dated-pi-task");
+    const task = createTask(root, "dated-pi-task", { writeSet: ["src/"] });
     if (!task.runId) throw new Error("V2 Run is missing");
     attachManagedWorktree(root, task);
     const marker = path.join(root, "pi-started.txt");

@@ -10,6 +10,7 @@ import {
   type TaskKernelSnapshotV2,
   type TaskRunV2,
 } from "../../core/task/index.js";
+import { taskRunWorkspaceWriteSetsEqual } from "../../core/task/task-kernel-write-set.js";
 import {
   acquireTaskKernelRunDispatchV1,
   assertTaskKernelRunDispatchPreSpawnV1,
@@ -155,12 +156,7 @@ function workdirForRun(root: string, run: TaskRunV2): string {
   if (binding.ownerRunId !== run.id) {
     throw new Error("Pi V2 Run worktree owner does not match the active Run");
   }
-  const runWriteSet = [...run.writeSetSnapshot].sort();
-  const workspaceWriteSet = [...binding.writeSet].sort();
-  if (
-    runWriteSet.length !== workspaceWriteSet.length ||
-    runWriteSet.some((item, index) => item !== workspaceWriteSet[index])
-  ) {
+  if (!taskRunWorkspaceWriteSetsEqual(run.writeSetSnapshot, binding.writeSet)) {
     throw new Error(
       "Pi V2 Run worktree write set does not match the Run snapshot",
     );

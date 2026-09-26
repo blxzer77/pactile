@@ -9,6 +9,7 @@ import {
   parseWorkspaceIntegrationReceipt,
 } from "./task-kernel-schema.js";
 import { canonicalProjectRoot } from "./task-kernel-paths.js";
+import { taskRunWorkspaceWriteSetsEqual } from "./task-kernel-write-set.js";
 import type {
   AcquireTaskRunWorkspaceCleanupLeaseRequest,
   BindTaskRunWorkspaceRequest,
@@ -40,17 +41,6 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
   return left.length === right.length && [...left].sort().every((value, index) => value === [...right].sort()[index]);
 }
 
-function sameWriteSet(left: readonly string[], right: readonly string[]): boolean {
-  const normalize = (values: readonly string[]): string[] => values
-    .map((value) => value.replaceAll("\\", "/").replace(/\/$/, ""))
-    .map((value) => process.platform === "win32" ? value.toLowerCase() : value)
-    .sort();
-  const normalizedLeft = normalize(left);
-  const normalizedRight = normalize(right);
-  return normalizedLeft.length === normalizedRight.length
-    && normalizedLeft.every((value, index) => value === normalizedRight[index]);
-}
-
 export function bindTaskRunWorkspace(request: BindTaskRunWorkspaceRequest): TaskKernelMutationResult {
   const actor = requireNonEmptyString(request.actor, "actor");
   const runId = requireNonEmptyString(request.runId, "runId");
@@ -72,7 +62,7 @@ export function bindTaskRunWorkspace(request: BindTaskRunWorkspaceRequest): Task
       throw new KernelError("INVALID_REQUEST", "Manager provenance project root does not match this Task Kernel");
     }
     const runWriteSet = [...run.writeSetSnapshot].sort();
-    if (!sameWriteSet(workspace.writeSet, runWriteSet)) throw new KernelError("INVALID_REQUEST", "Workspace write set must match the Run write-set snapshot");
+    if (!taskRunWorkspaceWriteSetsEqual(workspace.writeSet, runWriteSet)) throw new KernelError("INVALID_REQUEST", "Workspace write set must match the Run write-set snapshot");
     if (
       run.candidateBaseSha &&
       run.candidateBaseSha.toLowerCase() !== workspace.baseSha.toLowerCase()

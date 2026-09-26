@@ -13,10 +13,24 @@ import {
   recordTaskRunResult,
   startTaskRun,
 } from "../../../src/core/task/index.js";
+import { taskRunWorkspaceWriteSetsEqual } from "../../../src/core/task/task-kernel-write-set.js";
 
 const roots: string[] = [];
 const prefix = "pactile-p38-host-contract-";
 const actor = "p38-contract-test";
+
+describe("Task Run workspace write-set equivalence", () => {
+  it("matches Kernel slash, ordering, and Windows case rules while rejecting different paths", () => {
+    expect(
+      taskRunWorkspaceWriteSetsEqual(
+        ["src/", "docs\\readme.md"],
+        ["docs/readme.md", "src"],
+      ),
+    ).toBe(true);
+    expect(taskRunWorkspaceWriteSetsEqual(["src/one.ts"], ["src/two.ts"])).toBe(false);
+    expect(taskRunWorkspaceWriteSetsEqual(["SRC/"], ["src"])).toBe(process.platform === "win32");
+  });
+});
 
 afterEach(() => {
   const tempRoot = path.resolve(os.tmpdir());
@@ -96,6 +110,16 @@ describe("Task Run workspace candidate baseline", () => {
       actor,
       idempotencyKey: "workspace:wrong-base",
     })).toThrow(/base must match the Git commit captured when the Run started/);
+
+    expect(() => bindTaskRunWorkspace({
+      root: context.root,
+      taskDir: context.taskDir,
+      expectedRevision: context.started.revision,
+      runId: context.runId,
+      workspace: { ...workspace, writeSet: ["docs/"] },
+      actor,
+      idempotencyKey: "workspace:different-write-set",
+    })).toThrow(/Workspace write set must match the Run write-set snapshot/);
 
     const bound = bindTaskRunWorkspace({
       root: context.root,

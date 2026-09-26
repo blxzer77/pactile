@@ -6,6 +6,7 @@ import {
   readTaskKernel,
   type TaskRunV2,
 } from "../../core/task/index.js";
+import { taskRunWorkspaceWriteSetsEqual } from "../../core/task/task-kernel-write-set.js";
 import { resolveTaskDirectoryById } from "../../core/task/task-kernel-paths.js";
 import { resolveTaskDir } from "../task/session.js";
 import { inspectRunWorktree } from "../worktree/manager.js";
@@ -837,9 +838,12 @@ function inspectTask(
     defaults.blockedReason = "p38-managed-run-worktree-required";
     return defaults;
   }
-  const runWriteSet = [...run.writeSetSnapshot].sort();
-  const workspaceWriteSet = [...run.workspace.writeSet].sort();
-  if (!stableEqual(runWriteSet, workspaceWriteSet)) {
+  if (
+    !taskRunWorkspaceWriteSetsEqual(
+      run.writeSetSnapshot,
+      run.workspace.writeSet,
+    )
+  ) {
     defaults.blockedReason = "run-worktree-write-set-mismatch";
     return defaults;
   }
