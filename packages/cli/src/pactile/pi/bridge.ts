@@ -15,6 +15,7 @@ import {
   bindPiV2RunHost,
   persistPiV2StopAndRelease,
   preparePiV2RunDispatch,
+  recheckPiV2RunDispatchWorkspace,
   type PiHostStopReceipt,
   type PiProcessExitEvidence,
   type PiV2RunDispatch,
@@ -543,6 +544,9 @@ export class PiTaskBridge {
     }, 200);
     try {
       const resumeFile = input.resume ? previousSession : null;
+      if (dispatch) {
+        recheckPiV2RunDispatchWorkspace(dispatch);
+      }
       const { client, startupMs, mode } = await this.ensureClient(
         dir,
         workdir,

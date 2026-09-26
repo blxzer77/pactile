@@ -20,6 +20,7 @@ import {
 } from "../scheduler/index.js";
 import { resolveTaskDir } from "../task/session.js";
 import { sameGitRoot } from "../../utils/git-root.js";
+import { inspectRunWorktree } from "../worktree/manager.js";
 
 export interface PiV2RunDispatch {
   root: string;
@@ -125,21 +126,43 @@ function runAt(
 }
 
 function workdirForRun(root: string, run: TaskRunV2): string {
-  if (!run.workspace) return root;
-  const allowedRoot = path.resolve(root, ".pactile", "worktrees");
-  const candidate = path.resolve(run.workspace.canonicalPath);
-  const relative = path.relative(allowedRoot, candidate);
-  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new Error("Pi V2 Run workspace must stay under .pactile/worktrees");
+  const binding = run.workspace;
+  if (!binding?.manager) {
+    throw new Error("Pi V2 dispatch requires a P38-managed or approved-adopted Run worktree");
   }
-  if (!fs.statSync(candidate, { throwIfNoEntry: false })?.isDirectory()) {
-    throw new Error("Pi V2 Run workspace is missing");
+  if (binding.ownerRunId !== run.id) {
+    throw new Error("Pi V2 Run worktree owner does not match the active Run");
   }
-  const realRoot = fs.realpathSync(allowedRoot);
+  const runWriteSet = [...run.writeSetSnapshot].sort();
+  const workspaceWriteSet = [...binding.writeSet].sort();
+  if (
+    runWriteSet.length !== workspaceWriteSet.length ||
+    runWriteSet.some((item, index) => item !== workspaceWriteSet[index])
+  ) {
+    throw new Error("Pi V2 Run worktree write set does not match the Run snapshot");
+  }
+  const inspection = inspectRunWorktree({
+    repoRoot: root,
+    runId: run.id,
+    runState: run.state,
+    binding,
+    knownOwners: [],
+  });
+  const invalidIssues = inspection.issues.filter((issue) => issue !== "unintegrated");
+  if (
+    invalidIssues.length > 0 ||
+    inspection.state !== "unintegrated" ||
+    inspection.dirty ||
+    inspection.headSha?.toLowerCase() !== binding.baseSha.toLowerCase()
+  ) {
+    const detail = invalidIssues.join(", ") || inspection.state;
+    throw new Error(`Pi V2 Run worktree is not a clean, manager-verified base checkout (${detail})`);
+  }
+  const candidate = inspection.actualPath;
+  if (!candidate) throw new Error("Pi V2 Run worktree path could not be verified");
   const realCandidate = fs.realpathSync(candidate);
-  const realRelative = path.relative(realRoot, realCandidate);
-  if (!realRelative || realRelative === ".." || realRelative.startsWith(`..${path.sep}`) || path.isAbsolute(realRelative)) {
-    throw new Error("Pi V2 Run workspace resolves outside .pactile/worktrees");
+  if (realCandidate !== candidate) {
+    throw new Error("Pi V2 Run worktree path changed while it was being verified");
   }
   let gitRoot: string;
   try {
@@ -157,7 +180,24 @@ function workdirForRun(root: string, run: TaskRunV2): string {
   if (!sameGitRoot(gitRoot, realCandidate)) {
     throw new Error("Pi V2 Run workspace Git root does not match its binding");
   }
-  return realCandidate;
+  return candidate;
+}
+
+export function recheckPiV2RunDispatchWorkspace(
+  dispatch: PiV2RunDispatch,
+): string {
+  const { run } = runAt(
+    dispatch.root,
+    dispatch.taskDir,
+    dispatch.taskId,
+    dispatch.runId,
+  );
+  if (run.host) throw new Error("Pi V2 Run acquired a host binding before process start");
+  const currentWorkdir = workdirForRun(dispatch.root, run);
+  if (currentWorkdir !== dispatch.workdir) {
+    throw new Error("Pi V2 Run worktree path changed after dispatch admission");
+  }
+  return currentWorkdir;
 }
 
 export function preparePiV2RunDispatch(
@@ -172,11 +212,9 @@ export function preparePiV2RunDispatch(
     throw new Error("--run-id requires a Task Kernel V2 task");
   }
   const taskId = initial.kernel.identity.taskId;
-  const initialRun = initial.kernel.runs.at(-1);
-  if (initialRun) {
-    workdirForRun(root, initialRun);
-    if (initialRun.host) throw new Error("Pi V2 Run already has a host binding");
-  }
+  const initialRun = runAt(root, taskDir, taskId, runId).run;
+  workdirForRun(root, initialRun);
+  if (initialRun.host) throw new Error("Pi V2 Run already has a host binding");
   const schedule = scheduleTaskKernelGraph(root, [taskId]);
   const admission = acquireTaskKernelRunDispatchV1(root, {
     scheduleReceiptFingerprint: schedule.receipt.receiptFingerprint,

@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createTaskKernel,
+  bindTaskRunWorkspace,
   readTaskKernel,
   recordTaskRunResult,
   startTaskRun,
@@ -15,6 +17,7 @@ import {
 } from "../../src/pactile/scheduler/index.js";
 import * as taskKernel from "../../src/core/task/index.js";
 import * as scheduler from "../../src/pactile/scheduler/index.js";
+import { createTaskRunWorktree } from "../../src/pactile/worktree/index.js";
 import { PiTaskBridge, readPiHostStopReceipt } from "../../src/pactile/pi/bridge.js";
 import { PiRpcClient } from "../../src/pactile/pi/rpc.js";
 
@@ -34,8 +37,19 @@ interface V2TaskFixture {
 function makeRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-pi-v2-dispatch-"));
   roots.push(root);
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "Pactile Test"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "pactile@example.invalid"], { cwd: root, stdio: "ignore" });
+  fs.writeFileSync(path.join(root, "README.md"), "Pi V2 dispatch fixture\n");
+  fs.writeFileSync(path.join(root, ".gitignore"), "node_modules/\n");
+  execFileSync("git", ["add", "README.md", ".gitignore"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["commit", "-q", "-m", "fixture base"], { cwd: root, stdio: "ignore" });
   fs.mkdirSync(path.join(root, ".pactile", "tasks"), { recursive: true });
   return root;
+}
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
 function createTask(
@@ -77,6 +91,20 @@ function createTask(
     writeSetSnapshot: options.writeSet ?? ["src"],
   });
   return { taskId, taskDir, runId: started.kernel.runs.at(-1)?.id ?? null };
+}
+
+function attachManagedWorktree(root: string, task: V2TaskFixture): string {
+  if (!task.runId) throw new Error("V2 Run is missing");
+  const created = createTaskRunWorktree({
+    repoRoot: root,
+    taskDir: task.taskDir,
+    runId: task.runId,
+    branch: `feat/${task.taskId}`,
+    baseRef: git(root, "rev-parse", "HEAD"),
+    actor: "test-worktree-manager",
+    idempotencyKey: `worktree:${task.taskId}`,
+  });
+  return created.binding.canonicalPath;
 }
 
 function piScript(root: string, marker: string, hang = false): string {
@@ -141,6 +169,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     const root = makeRoot();
     const task = createTask(root, "dated-pi-task");
     if (!task.runId) throw new Error("V2 Run is missing");
+    attachManagedWorktree(root, task);
     const marker = path.join(root, "pi-started.txt");
     const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
     const record = await bridge.run({
@@ -189,7 +218,131 @@ describe("Pi V2 dispatch admission and host stop", () => {
     await bridge.close();
   });
 
-  it("does not start Pi when an open hard dependency is present", async () => {
+  it("refuses a Git project-root Run without a manager-owned workspace", async () => {
+    const root = makeRoot();
+    const task = createTask(root, "missing-managed-workspace");
+    const marker = path.join(root, "must-not-start.txt");
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+    await expect(bridge.run({
+      root,
+      task: task.taskId,
+      runId: task.runId as string,
+      role: "implement",
+      prompt: "A project-root Run is not a managed isolated workspace.",
+      timeoutMs: 5_000,
+    })).rejects.toThrow("P38-managed or approved-adopted Run worktree");
+    expect(fs.existsSync(marker)).toBe(false);
+    expect(fs.existsSync(path.join(task.taskDir, "pi-bridge"))).toBe(false);
+    await bridge.close();
+  });
+
+  it("refuses an unregistered foreign Git repository under the worktree directory", async () => {
+    const root = makeRoot();
+    const task = createTask(root, "foreign-worktree");
+    if (!task.runId) throw new Error("V2 Run is missing");
+    const foreign = path.join(root, ".pactile", "worktrees", "foreign");
+    fs.mkdirSync(path.join(foreign, "src"), { recursive: true });
+    git(foreign, "init", "-q", "-b", "main");
+    git(foreign, "config", "user.name", "Foreign Repository");
+    git(foreign, "config", "user.email", "foreign@example.invalid");
+    fs.writeFileSync(path.join(foreign, "src", "foreign.ts"), "export const foreign = true;\n");
+    git(foreign, "add", "src/foreign.ts");
+    git(foreign, "commit", "-q", "-m", "foreign base");
+    const read = readTaskKernel({ root, taskDir: task.taskDir, cwd: root });
+    if (read.kind !== "task-kernel-v2") throw new Error("V2 Kernel is missing");
+    const manager = {
+      version: 1 as const,
+      credentialId: "forged-manager-record",
+      projectRoot: root,
+      commonDir: git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"),
+      gitDir: git(foreign, "rev-parse", "--absolute-git-dir"),
+      source: "created" as const,
+      recordedAt: "2026-09-26T00:00:00.000Z",
+    };
+    bindTaskRunWorkspace({
+      root,
+      taskDir: task.taskDir,
+      expectedRevision: read.kernel.revision,
+      runId: task.runId,
+      workspace: {
+        ownerRunId: task.runId,
+        canonicalPath: fs.realpathSync(foreign),
+        branch: "main",
+        baseSha: git(foreign, "rev-parse", "HEAD"),
+        writeSet: ["src"],
+        integrationState: "not-integrated",
+        reclamationState: "not-requested",
+        manager,
+        integrationReceipt: null,
+        cleanupLease: null,
+      },
+      actor: "test-forger",
+      idempotencyKey: "bind-foreign-worktree",
+      cwd: root,
+    });
+    const marker = path.join(root, "must-not-start.txt");
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+    await expect(bridge.run({
+      root,
+      task: task.taskId,
+      runId: task.runId,
+      role: "implement",
+      prompt: "A foreign repository is not a manager worktree.",
+      timeoutMs: 5_000,
+    })).rejects.toThrow(/manager-verified base checkout/u);
+    expect(fs.existsSync(marker)).toBe(false);
+    expect(fs.existsSync(path.join(task.taskDir, "pi-bridge"))).toBe(false);
+    await bridge.close();
+  });
+
+  it("rechecks managed worktree provenance immediately before process start", async () => {
+    const root = makeRoot();
+    const task = createTask(root, "workspace-race", { writeSet: ["src/shared.ts"] });
+    if (!task.runId) throw new Error("V2 Run is missing");
+    const worktree = attachManagedWorktree(root, task);
+    const contender = createTask(root, "workspace-race-contender", { writeSet: ["src/shared.ts"] });
+    const marker = path.join(root, "must-not-start.txt");
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+    const evidenceDir = path.join(task.taskDir, "pi-bridge");
+    const mkdir = fs.mkdirSync;
+    const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation((...args) => {
+      const result = mkdir(...args);
+      if (path.resolve(String(args[0])) === evidenceDir) {
+        git(worktree, "checkout", "--detach", "HEAD");
+      }
+      return result;
+    });
+    try {
+      const record = await bridge.run({
+        root,
+        task: task.taskId,
+        runId: task.runId,
+        role: "implement",
+        prompt: "A worktree change after admission must stop dispatch before spawn.",
+        timeoutMs: 5_000,
+      });
+      expect(record.outcome).toBe("failed");
+      expect(record.reason).toMatch(/manager-verified base checkout/u);
+      expect(record.dispatch_lease_released).toBe(false);
+      expect(record.process_stop_receipt).toBeNull();
+      expect(fs.existsSync(marker)).toBe(false);
+      expect(fs.existsSync(path.join(task.taskDir, "pi-bridge", "runs", `${record.run_id}.json`))).toBe(true);
+      const contenderSchedule = scheduleTaskKernelGraph(root, [contender.taskId]);
+      const denied = acquireTaskKernelRunDispatchV1(root, {
+        scheduleReceiptFingerprint: contenderSchedule.receipt.receiptFingerprint,
+        taskId: contender.taskId,
+        runId: contender.runId as string,
+        owner: ownerForAdmission(),
+      });
+      expect(denied.permitted).toBe(false);
+      if (!denied.permitted) expect(denied.receipt.reasonCodes).toContain("project-write-set-conflict");
+    } finally {
+      mkdirSpy.mockRestore();
+      await bridge.close();
+    }
+  });
+
+  it("does not start Pi without a latest Run, even when a hard dependency is open", async () => {
     const root = makeRoot();
     createTask(root, "open-dependency", { start: false });
     const target = createTask(root, "blocked-pi-task", { dependencies: ["open-dependency"], start: false });
@@ -202,7 +355,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
       role: "implement",
       prompt: "Do not run without the dependency.",
       timeoutMs: 5_000,
-    })).rejects.toThrow("Pi V2 dispatch rejected before process start");
+    })).rejects.toThrow("latest Task Run");
     expect(fs.existsSync(marker)).toBe(false);
     expect(fs.existsSync(path.join(target.taskDir, "pi-bridge"))).toBe(false);
   });
@@ -212,6 +365,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     const competing = createTask(root, "competing-writer", { writeSet: ["src/shared.ts"] });
     const target = createTask(root, "target-writer", { writeSet: ["src/shared.ts"] });
     leaseForTask(root, competing);
+    attachManagedWorktree(root, target);
     const marker = path.join(root, "must-not-start.txt");
     const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
     await expect(bridge.run({
@@ -230,6 +384,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     const root = makeRoot();
     const task = createTask(root, "uncertain-start");
     if (!task.runId) throw new Error("V2 Run is missing");
+    attachManagedWorktree(root, task);
     const bridge = new PiTaskBridge(root, { command: path.join(root, "missing-pi-command.exe"), args: [] });
     const record = await bridge.run({
       root,
@@ -258,6 +413,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     const root = makeRoot();
     const task = createTask(root, "host-bind-failure", { writeSet: ["src/shared.ts"] });
     if (!task.runId) throw new Error("V2 Run is missing");
+    attachManagedWorktree(root, task);
     const marker = path.join(root, "pi-started.txt");
     const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
     const bindSpy = vi.spyOn(taskKernel, "bindTaskRunHostReceipt").mockImplementation(() => {
@@ -296,6 +452,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     const root = makeRoot();
     const task = createTask(root, "owner-bind-failure", { writeSet: ["src/shared.ts"] });
     if (!task.runId) throw new Error("V2 Run is missing");
+    attachManagedWorktree(root, task);
     const marker = path.join(root, "pi-started.txt");
     const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
     const bindSpy = vi.spyOn(scheduler, "bindTaskKernelRunDispatchOwnerV1").mockImplementation(() => {
@@ -334,6 +491,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     const root = makeRoot();
     const cancelledTask = createTask(root, "cancelled-run");
     if (!cancelledTask.runId) throw new Error("V2 Run is missing");
+    attachManagedWorktree(root, cancelledTask);
     const cancelMarker = path.join(root, "cancel-started.txt");
     const cancelBridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, cancelMarker, true)] });
     const controller = new AbortController();
@@ -360,6 +518,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
 
     const timedOutTask = createTask(root, "timed-out-run");
     if (!timedOutTask.runId) throw new Error("V2 Run is missing");
+    attachManagedWorktree(root, timedOutTask);
     const timeoutMarker = path.join(root, "timeout-started.txt");
     const timeoutBridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, timeoutMarker, true)] });
     const timedOut = await timeoutBridge.run({
@@ -381,6 +540,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     const root = makeRoot();
     const task = createTask(root, "unknown-stop");
     if (!task.runId) throw new Error("V2 Run is missing");
+    attachManagedWorktree(root, task);
     const marker = path.join(root, "pi-started.txt");
     const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
     const closeSpy = vi.spyOn(PiRpcClient.prototype, "closeAndObserve").mockResolvedValue({
@@ -419,6 +579,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     const root = makeRoot();
     const task = createTask(root, "wrong-run-id");
     if (!task.runId) throw new Error("V2 Run is missing");
+    attachManagedWorktree(root, task);
     const marker = path.join(root, "must-not-start.txt");
     const launch = { command: process.execPath, args: [piScript(root, marker)] };
     const wrong = new PiTaskBridge(root, launch);
@@ -429,7 +590,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
       role: "implement",
       prompt: "A mismatched run is not dispatchable.",
       timeoutMs: 5_000,
-    })).rejects.toThrow(/task-run-id-mismatch/u);
+    })).rejects.toThrow(/latest Task Run/u);
     expect(fs.existsSync(marker)).toBe(false);
 
     const read = readTaskKernel({ root, taskDir: task.taskDir, cwd: root });
@@ -454,7 +615,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
       role: "implement",
       prompt: "A completed candidate cannot start another writer.",
       timeoutMs: 5_000,
-    })).rejects.toThrow("Pi V2 dispatch rejected before process start");
+    })).rejects.toThrow("Pi V2 Run is not dispatchable: completed");
     expect(fs.existsSync(marker)).toBe(false);
   });
 });
