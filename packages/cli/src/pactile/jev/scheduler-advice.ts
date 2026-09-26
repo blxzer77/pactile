@@ -23,7 +23,10 @@ export interface JevScheduleCandidateFilterV1 {
     | "worktree-rejected"
     | "active-write-lease-conflict"
     | "lease-state-unavailable"
-    | "candidate-identity-unavailable";
+    | "candidate-identity-unavailable"
+    | "task-kernel-revision-changed"
+    | "run-not-eligible"
+    | "write-set-unavailable";
 }
 
 export interface JevScheduleRequestSnapshotV1 {
@@ -171,10 +174,24 @@ export async function requestJevTaskScheduleAdviceV1(input: {
   readonly filteredCandidates: readonly JevScheduleCandidateFilterV1[];
   readonly eligibility: JevScheduleFinalEligibleCandidatesV1["eligibility"];
   readonly options?: JevScheduleAdviceOptionsV1;
+  /** A caller-side policy denial that must short-circuit before any transport. */
+  readonly fallbackReasonCode?: JevFallbackCodeV1;
 }): Promise<JevScheduleAdviceResultV1> {
   const candidates = [...input.candidates].sort((left, right) =>
     compareText(left.taskId, right.taskId),
   );
+  if (input.fallbackReasonCode) {
+    return {
+      advice: null,
+      audit: baseAudit({
+        status: "fallback",
+        reasonCode: input.fallbackReasonCode,
+        candidates,
+        filteredCandidates: input.filteredCandidates,
+        eligibility: input.eligibility,
+      }),
+    };
+  }
   if (!input.options) {
     return {
       advice: null,
