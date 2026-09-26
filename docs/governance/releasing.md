@@ -64,10 +64,13 @@ node packages/cli/.tmp/p31-script-build/release-conformance.js
 
 The conformance check installs the sealed package with npm's default lifecycle
 scripts enabled, from the start in a PATH with Node and no Python or Pi
-executable. It exercises init, update preview/apply, task
-start/archive, a simulated Codex desktop receipt, simulated Pi RPC, and a
-two-child parallel batch. Its timing line is a local baseline, not a latency
-promise. For an offline local rehearsal after `pnpm install --offline`, set
+executable. It exercises fresh init; V2 Task create, run-start, and readback;
+same-wave scheduling and simulated Pi dispatch for two independent V2 Tasks;
+update preview/apply followed by V2 create, run-start, scheduling, and simulated
+Pi dispatch; and a legacy Codex bridge prepare/receipt flow. It does not test
+Task archive or the separate legacy `runParallelBatch` path. Its timing line is
+a local baseline, not a latency promise. For an offline local rehearsal after
+`pnpm install --offline`, set
 `PACTILE_CONFORMANCE_OFFLINE=1`; this unpacks the sealed tarball and links the
 already locked local dependencies. The CI/default path performs a clean npm
 install. Record real desktop-host and model-provider acceptance separately.

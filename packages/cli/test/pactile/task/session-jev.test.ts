@@ -14,13 +14,12 @@ import { prepareSelectedTaskAgentTileSelection } from "../../../src/pactile/regi
 
 const JEV_ORIGIN = "https://api.typesafe.ai";
 const API_KEY = "session-test-secret-key";
-const CLI_SOURCE = fileURLToPath(
-  new URL("../../../src/cli/index.ts", import.meta.url),
+const CLI_ENTRY = fileURLToPath(
+  new URL("../../../dist/cli/index.js", import.meta.url),
 );
 const FAKE_JEV_PRELOAD = fileURLToPath(
   new URL("../../../.tmp/p31-script-build/fixtures/fake-jev-preload.js", import.meta.url),
 );
-const TSX_LOADER = import.meta.resolve("tsx/esm");
 const roots: string[] = [];
 
 const DENIED_POLICY = {
@@ -171,15 +170,12 @@ function childEnv(
 }
 
 function childArgs(
-  root: string,
   cliArgs: readonly string[],
   preload?: string,
 ): string[] {
   return [
-    "--import",
-    TSX_LOADER,
     ...(preload ? ["--import", pathToFileURL(preload).href] : []),
-    CLI_SOURCE,
+    CLI_ENTRY,
     ...cliArgs,
   ];
 }
@@ -191,7 +187,7 @@ function runCliProcess(
   const preload = options.preload ?? createPreload();
   return spawnSync(
     process.execPath,
-    childArgs(root, ["context", "--mode", "session", "--json"], preload),
+    childArgs(["context", "--mode", "session", "--json"], preload),
     {
       cwd: root,
       env: childEnv(root, options),
@@ -205,7 +201,7 @@ function runCliCommand(
   root: string,
   cliArgs: readonly string[],
 ): ReturnType<typeof spawnSync> {
-  return spawnSync(process.execPath, childArgs(root, cliArgs), {
+  return spawnSync(process.execPath, childArgs(cliArgs), {
     cwd: root,
     env: childEnv(root),
     encoding: "utf8",
@@ -234,7 +230,7 @@ function startCliProcess(
 ) {
   const child = spawn(
     process.execPath,
-    childArgs(root, ["context", "--mode", "session", "--json"], preload),
+    childArgs(["context", "--mode", "session", "--json"], preload),
     {
       cwd: root,
       env: childEnv(root, {
