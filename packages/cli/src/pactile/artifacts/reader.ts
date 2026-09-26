@@ -39,6 +39,16 @@ function artifactRef(taskId: string, ...segments: string[]): string {
   return `artifact://tasks/${sourceTaskSegment(taskId)}/kernel/${segments.join("/")}`;
 }
 
+function kernelLocator(
+  taskId: string,
+  selector: string,
+): TaskArtifactFactV1["ref"] {
+  return {
+    uri: `artifact://tasks/${sourceTaskSegment(taskId)}/kernel`,
+    selector,
+  };
+}
+
 function oneLine(value: string, maxLength: number): string {
   const normalized = value.replace(/[\s\r\n]+/gu, " ").trim() || "(empty)";
   return normalized.length <= maxLength
@@ -177,7 +187,7 @@ export function projectTaskKernelArtifactsV1(
       summary: oneLine(taskSummary, 280),
       source: { kind: "artifact", ref: artifactRef(taskId, "definition") },
       provenance: taskProvenance,
-      ref: { path: "kernel.json", selector: "/definition" },
+      ref: kernelLocator(taskId, "/definition"),
     },
     "prd",
   );
@@ -249,10 +259,7 @@ export function projectTaskKernelArtifactsV1(
           ),
         },
         provenance,
-        ref: {
-          path: "kernel.json",
-          selector: `/definition/acceptanceCriteria/${index}`,
-        },
+        ref: kernelLocator(taskId, `/definition/acceptanceCriteria/${index}`),
       },
       "prd",
       ...(criterionEvidence.length || kernel.closure
@@ -284,10 +291,7 @@ export function projectTaskKernelArtifactsV1(
           actor: oneLine(event?.actor ?? createdBy, 120),
           method: "imported",
         },
-        ref: {
-          path: "kernel.json",
-          selector: `/definition/dependencies/${index}`,
-        },
+        ref: kernelLocator(taskId, `/definition/dependencies/${index}`),
       },
       "prd",
     );
@@ -298,7 +302,19 @@ export function projectTaskKernelArtifactsV1(
   for (const [index, run] of kernel.runs.entries()) {
     const runId = factId("implement", `run\u0000${run.id}`);
     runFactIds.set(run.id, runId);
-    const event = eventFor(kernel, run.id);
+    const runEventTypes =
+      run.state === "waiting"
+        ? ["run.queued"]
+        : run.state === "running"
+          ? ["run.started", "run.resumed"]
+          : run.state === "completed"
+            ? ["run.completed"]
+            : run.state === "failed"
+              ? ["run.failed"]
+              : run.state === "blocked"
+                ? ["run.blocked"]
+                : ["run.cancelled"];
+    const event = eventFor(kernel, run.id, runEventTypes);
     const runRecordedAt = timestamp(event?.at ?? run.startedAt, "run event.at");
     const runActor = oneLine(event?.actor ?? run.startedBy, 120);
     const runStatus: TaskArtifactFactV1["status"] =
@@ -308,16 +324,21 @@ export function projectTaskKernelArtifactsV1(
           ? "blocked"
           : run.state === "completed"
             ? "accepted"
-            : "active";
-    const runSummary = run.result?.summary
-      ? `Completed: ${run.result.summary}`
-      : run.failure
-        ? `Run ${run.state}: ${run.failure.category}`
-        : `Run ${run.state}; input captured.`;
+            : run.state === "cancelled"
+              ? "rejected"
+              : "active";
+    const runSummary =
+      run.state === "completed" && run.result?.summary
+        ? `Completed: ${run.result.summary}`
+        : run.failure
+          ? `Run ${run.state}: ${run.failure.category}${run.result?.summary ? `; ${run.result.summary}` : ""}`
+          : run.result?.summary
+            ? `Run ${run.state}; result summary: ${run.result.summary}`
+            : `Run ${run.state}; input captured.`;
     add(
       {
         id: runId,
-        kind: run.failure ? "finding" : "context",
+        kind: run.failure || run.state === "cancelled" ? "finding" : "context",
         status: runStatus,
         title: oneLine(`Run ${run.attempt}`, 120),
         summary: oneLine(runSummary, 280),
@@ -327,7 +348,7 @@ export function projectTaskKernelArtifactsV1(
           actor: runActor,
           method: "imported",
         },
-        ref: { path: "kernel.json", selector: `/runs/${index}` },
+        ref: kernelLocator(taskId, `/runs/${index}`),
       },
       "implement",
     );
@@ -364,10 +385,10 @@ export function projectTaskKernelArtifactsV1(
             actor: runActor,
             method: "imported",
           },
-          ref: {
-            path: "kernel.json",
-            selector: `/runs/${index}/result/evidenceRefs/${evidenceIndex}`,
-          },
+          ref: kernelLocator(
+            taskId,
+            `/runs/${index}/result/evidenceRefs/${evidenceIndex}`,
+          ),
         },
         "implement",
         "verify",
@@ -434,10 +455,7 @@ export function projectTaskKernelArtifactsV1(
           method: "derived",
           basedOn,
         },
-        ref: {
-          path: "kernel.json",
-          selector: `/runs/${index}/candidateSnapshot`,
-        },
+        ref: kernelLocator(taskId, `/runs/${index}/candidateSnapshot`),
         candidateFreshness,
       },
       "implement",
@@ -476,7 +494,7 @@ export function projectTaskKernelArtifactsV1(
           method: "derived",
           basedOn: basedOn.length ? basedOn : [taskFactId],
         },
-        ref: { path: "kernel.json", selector: `/reviews/${index}` },
+        ref: kernelLocator(taskId, `/reviews/${index}`),
       },
       "review",
     );
@@ -509,10 +527,10 @@ export function projectTaskKernelArtifactsV1(
             actor: oneLine(review.reviewer, 120),
             method: "imported",
           },
-          ref: {
-            path: "kernel.json",
-            selector: `/reviews/${index}/evidenceRefs/${evidenceIndex}`,
-          },
+          ref: kernelLocator(
+            taskId,
+            `/reviews/${index}/evidenceRefs/${evidenceIndex}`,
+          ),
         },
         "review",
       );
@@ -551,10 +569,10 @@ export function projectTaskKernelArtifactsV1(
               actor: oneLine(review.reviewer, 120),
               method: "imported",
             },
-            ref: {
-              path: "kernel.json",
-              selector: `/reviews/${index}/acceptanceEvidence/${pointerEscape(criterionId)}/${evidenceIndex}`,
-            },
+            ref: kernelLocator(
+              taskId,
+              `/reviews/${index}/acceptanceEvidence/${pointerEscape(criterionId)}/${evidenceIndex}`,
+            ),
           },
           "verify",
         );
@@ -583,7 +601,7 @@ export function projectTaskKernelArtifactsV1(
           actor: oneLine(kernel.closure.candidateObservation.observedBy, 120),
           method: "imported",
         },
-        ref: { path: "kernel.json", selector: "/closure/candidateObservation" },
+        ref: kernelLocator(taskId, "/closure/candidateObservation"),
       },
       "verify",
     );
@@ -603,7 +621,7 @@ export function projectTaskKernelArtifactsV1(
           actor: oneLine(kernel.closure.closedBy, 120),
           method: "imported",
         },
-        ref: { path: "kernel.json", selector: "/closure/acceptanceEvidence" },
+        ref: kernelLocator(taskId, "/closure/acceptanceEvidence"),
       },
       "verify",
     );
@@ -626,7 +644,7 @@ export function projectTaskKernelArtifactsV1(
           actor: oneLine(kernel.closure.closedBy, 120),
           method: "imported",
         },
-        ref: { path: "kernel.json", selector: "/closure/deliveryEvidence" },
+        ref: kernelLocator(taskId, "/closure/deliveryEvidence"),
       },
       "verify",
     );
@@ -693,7 +711,7 @@ export function renderTaskPrdScaffoldV1(kernel: TaskKernelSnapshotV2): string {
   const lines = [
     `# Task \`${kernel.identity.taskId}\``,
     "",
-    "The live structured fact view is derived from `kernel.json`; this file is for human-authored narrative and will not be regenerated after Task creation.",
+    "The live structured fact view is derived from the Task Kernel; this file is for human-authored narrative and will not be regenerated after Task creation.",
     "",
     `Live view: \`pactile task artifacts ${kernel.identity.taskId} --stage prd\` (add \`--agent\` for the compact index).`,
     "",
@@ -706,7 +724,7 @@ export function renderTaskPrdScaffoldV1(kernel: TaskKernelSnapshotV2): string {
     lines.push(
       `### \`${fact.id}\``,
       `- Source: \`${fact.source.ref}\``,
-      `- Ref: \`${fact.ref.path}#${fact.ref.selector}\``,
+      `- Ref: \`${fact.ref.uri}#${fact.ref.selector}\``,
       "",
     );
   }
