@@ -136,26 +136,50 @@ function pathExists(pathname: string): boolean {
   return fs.lstatSync(pathname, { throwIfNoEntry: false }) !== undefined;
 }
 
-function clearInitTaskMarker(marker: string): void {
+function hasInitTaskMarker(marker: string): boolean {
   try {
-    if (fs.readFileSync(marker, "utf8") === INIT_TASK_MARKER_TEXT) {
+    const entry = fs.lstatSync(marker);
+    return (
+      entry.isFile() &&
+      !entry.isSymbolicLink() &&
+      fs.readFileSync(marker, "utf8") === INIT_TASK_MARKER_TEXT
+    );
+  } catch {
+    return false;
+  }
+}
+
+function clearInitTaskMarker(marker: string): void {
+  if (hasInitTaskMarker(marker)) {
+    try {
       fs.unlinkSync(marker);
+    } catch {
+      // A missing, unreadable, or user-owned marker is left untouched.
+    }
+  }
+}
+
+function ensureInitTaskMarker(marker: string): boolean {
+  try {
+    fs.mkdirSync(path.dirname(marker), { recursive: true });
+    try {
+      fs.writeFileSync(marker, INIT_TASK_MARKER_TEXT, {
+        encoding: "utf8",
+        flag: "wx",
+      });
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") return false;
+      return hasInitTaskMarker(marker);
     }
   } catch {
-    // A missing, unreadable, or user-owned marker is left untouched.
+    // A conflicting, unreadable, or unwritable marker path is never replaced.
+    return false;
   }
 }
 
 function recordInitTaskFailure(marker: string): void {
-  try {
-    fs.mkdirSync(path.dirname(marker), { recursive: true });
-    fs.writeFileSync(marker, INIT_TASK_MARKER_TEXT, {
-      encoding: "utf8",
-      flag: "wx",
-    });
-  } catch {
-    // Keep a pre-existing marker (including user data) untouched.
-  }
+  ensureInitTaskMarker(marker);
 }
 
 function isCompleteExistingInitTask(
@@ -231,6 +255,7 @@ function writeTaskSkeleton(
   const tasksRoot = path.join(cwd, PATHS.TASKS);
   const stagingRoot = path.join(tasksRoot, ".creating");
   let stagingDir: string | null = null;
+  let createdStagingRoot = false;
   let committed = false;
   try {
     if (pathExists(path.join(tasksRoot, taskName))) {
@@ -241,9 +266,19 @@ function writeTaskSkeleton(
       return true;
     }
 
-    fs.mkdirSync(stagingRoot, { recursive: true });
-    if (fs.lstatSync(stagingRoot).isSymbolicLink()) {
-      throw new Error("Init Task staging directory must not be a symlink");
+    fs.mkdirSync(tasksRoot, { recursive: true });
+    try {
+      fs.mkdirSync(stagingRoot);
+      createdStagingRoot = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const existingStagingRoot = fs.lstatSync(stagingRoot);
+      if (
+        !existingStagingRoot.isDirectory() ||
+        existingStagingRoot.isSymbolicLink()
+      ) {
+        throw new Error("Init Task staging path must be a directory");
+      }
     }
     stagingDir = fs.mkdtempSync(path.join(stagingRoot, `${taskName}-`));
     fs.writeFileSync(path.join(stagingDir, FILE_NAMES.PRD), prdContent, {
@@ -293,10 +328,25 @@ function writeTaskSkeleton(
     return false;
   } finally {
     if (!committed && stagingDir && pathExists(stagingDir)) {
-      removeInitTaskStaging(stagingRoot, stagingDir);
+      try {
+        removeInitTaskStaging(stagingRoot, stagingDir);
+      } catch {
+        // Leave unexpected staging state for inspection; the marker remains.
+      }
     }
-    if (pathExists(stagingRoot) && fs.readdirSync(stagingRoot).length === 0) {
-      fs.rmdirSync(stagingRoot);
+    if (createdStagingRoot && pathExists(stagingRoot)) {
+      try {
+        const currentStagingRoot = fs.lstatSync(stagingRoot);
+        if (
+          currentStagingRoot.isDirectory() &&
+          !currentStagingRoot.isSymbolicLink() &&
+          fs.readdirSync(stagingRoot).length === 0
+        ) {
+          fs.rmdirSync(stagingRoot);
+        }
+      } catch {
+        // Preserve unexpected or user-modified paths during cleanup.
+      }
     }
   }
 }
@@ -943,17 +993,34 @@ async function handleReinit(
     const hadDeveloperFileBefore = fs.existsSync(
       path.join(cwd, DIR_NAMES.WORKFLOW, FILE_NAMES.DEVELOPER),
     );
+    const joinerMarker = path.join(
+      cwd,
+      PATHS.TASKS,
+      `.pending-00-join-${slugifyDeveloperName(devName)}`,
+    );
+    const joinerIntentReady =
+      hadDeveloperFileBefore || ensureInitTaskMarker(joinerMarker);
 
-    try {
-      initializeDeveloper(cwd, devName);
-      console.log(chalk.green(`✓ Developer "${devName}" initialized`));
-    } catch (err) {
-      console.log(chalk.yellow(`⚠ Could not initialize developer: ${err instanceof Error ? err.message : String(err)}`));
+    if (!joinerIntentReady) {
+      console.warn(
+        chalk.yellow(
+          "⚠ Could not record joiner recovery intent; developer identity was not initialized",
+        ),
+      );
+    }
+
+    if (joinerIntentReady) {
+      try {
+        initializeDeveloper(cwd, devName);
+        console.log(chalk.green(`✓ Developer "${devName}" initialized`));
+      } catch (err) {
+        console.log(chalk.yellow(`⚠ Could not initialize developer: ${err instanceof Error ? err.message : String(err)}`));
+      }
     }
 
     // Create joiner onboarding task for fresh checkouts (no prior .developer).
     // Runs outside the init_developer try/catch so failures surface as warnings.
-    if (!hadDeveloperFileBefore) {
+    if (!hadDeveloperFileBefore && joinerIntentReady) {
       try {
         if (!createJoinerOnboardingTask(cwd, devName)) {
           console.warn(
@@ -1158,6 +1225,30 @@ export async function init(options: InitOptions): Promise<void> {
       } catch {
         // Git not available or no user.name configured
       }
+    }
+  }
+
+  // A joiner intent is durable before identity is written. If this process is
+  // restarted without an explicit name or git user.name, recover that identity
+  // from .developer when its matching, trusted marker is still pending.
+  if (!options.user) {
+    let persistedDeveloper: string | null = null;
+    try {
+      persistedDeveloper = readDeveloper(cwd);
+    } catch {
+      // Keep init best-effort when a user-owned identity file is unreadable.
+    }
+    if (
+      persistedDeveloper &&
+      hasInitTaskMarker(
+        path.join(
+          cwd,
+          PATHS.TASKS,
+          `.pending-00-join-${slugifyDeveloperName(persistedDeveloper)}`,
+        ),
+      )
+    ) {
+      developerName = persistedDeveloper;
     }
   }
 
@@ -2011,8 +2102,48 @@ export async function init(options: InitOptions): Promise<void> {
     writeWaveCConfirmed(cwd);
   }
 
-  // Initialize developer identity with Node (silent - no output).
+  let shouldCreateBootstrap = false;
+  let shouldCreateJoiner = false;
   if (developerName) {
+    const tasksDir = path.join(cwd, PATHS.TASKS);
+    const tasksEmpty =
+      !fs.existsSync(tasksDir) ||
+      fs
+        .readdirSync(tasksDir)
+        .filter((entry) => entry !== ".creating" && !entry.startsWith(".pending-"))
+        .length === 0;
+    shouldCreateBootstrap =
+      (isFirstInit && !importingCstl) ||
+      pendingBootstrap ||
+      (tasksEmpty && !pendingJoiner);
+    shouldCreateJoiner =
+      !shouldCreateBootstrap &&
+      (!hadDeveloperFileAtStart || pendingJoiner);
+  }
+  const joinerMarker = developerName
+    ? path.join(
+        cwd,
+        PATHS.TASKS,
+        `.pending-00-join-${slugifyDeveloperName(developerName)}`,
+      )
+    : null;
+  const joinerIntentReady =
+    !developerName ||
+    !shouldCreateJoiner ||
+    (joinerMarker !== null && ensureInitTaskMarker(joinerMarker));
+
+  if (shouldCreateJoiner && !joinerIntentReady) {
+    console.warn(
+      chalk.yellow(
+        "⚠ Could not record joiner recovery intent; developer identity was not initialized",
+      ),
+    );
+  }
+
+  // Initialize developer identity with Node (silent - no output). For a fresh
+  // joiner, the recovery intent must be durable before this write so a process
+  // interruption cannot leave identity without its onboarding Task.
+  if (developerName && joinerIntentReady) {
     try {
       if (!readDeveloper(cwd)) initializeDeveloper(cwd, developerName);
     } catch {
@@ -2034,11 +2165,7 @@ export async function init(options: InitOptions): Promise<void> {
     // Runs OUTSIDE the init_developer try/catch (which uses stdio: "pipe")
     // so joiner failures surface as warnings instead of being silently
     // swallowed.
-    const tasksDir = path.join(cwd, PATHS.TASKS);
-    const tasksEmpty =
-      !fs.existsSync(tasksDir) || fs.readdirSync(tasksDir).filter((entry) => entry !== ".creating" && !entry.startsWith(".pending-")).length === 0;
-
-    if ((isFirstInit && !importingCstl) || pendingBootstrap || (tasksEmpty && !pendingJoiner)) {
+    if (shouldCreateBootstrap) {
       const bootstrapCreated = createBootstrapTask(
         cwd,
         developerName,
@@ -2055,7 +2182,7 @@ export async function init(options: InitOptions): Promise<void> {
       } else {
         console.warn(chalk.yellow(`⚠ Failed to create ${BOOTSTRAP_TASK_NAME}; inspect .pactile/tasks/ and retry pactile init.`));
       }
-    } else if (!hadDeveloperFileAtStart || pendingJoiner) {
+    } else if (shouldCreateJoiner) {
       try {
         if (!createJoinerOnboardingTask(cwd, developerName)) {
           console.warn(

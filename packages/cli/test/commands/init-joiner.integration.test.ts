@@ -251,8 +251,35 @@ describe("init() joiner onboarding", () => {
 
   it("#2 existing .pactile/ + no .developer → joiner onboarding task created", async () => {
     simulateExistingCheckout();
+    const marker = path.join(
+      tmpDir,
+      PATHS.TASKS,
+      ".pending-00-join-bob",
+    );
+    const developerFile = path.join(tmpDir, PATHS.DEVELOPER_FILE);
+    const originalWriteFileSync = fs.writeFileSync;
+    let intentExistedWhenIdentityWasWritten = false;
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(((
+      filePath: fs.PathOrFileDescriptor,
+      data: string | NodeJS.ArrayBufferView,
+      options?: fs.WriteFileOptions,
+    ) => {
+      if (String(filePath) === developerFile) {
+        intentExistedWhenIdentityWasWritten =
+          fs.readFileSync(marker, "utf8") ===
+          "Task creation was interrupted; retry pactile init.\n";
+      }
+      return originalWriteFileSync(filePath, data, options);
+    }) as typeof fs.writeFileSync);
 
-    await init({ yes: true, user: "bob", force: true });
+    try {
+      await init({ yes: true, user: "bob", force: true });
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    expect(intentExistedWhenIdentityWasWritten).toBe(true);
+    expect(fs.existsSync(marker)).toBe(false);
 
     const joiner = path.join(tmpDir, PATHS.TASKS, "00-join-bob");
     expect(fs.existsSync(joiner)).toBe(true);
@@ -388,6 +415,43 @@ describe("init() joiner onboarding", () => {
     expect(fs.existsSync(joinerPath)).toBe(false);
   }, 60_000);
 
+  it("recovers an interrupted joiner from its durable marker after identity was written", async () => {
+    simulateExistingCheckout();
+    const developerFile = path.join(tmpDir, PATHS.DEVELOPER_FILE);
+    const marker = path.join(
+      tmpDir,
+      PATHS.TASKS,
+      ".pending-00-join-dave",
+    );
+    const joinerPath = path.join(tmpDir, PATHS.TASKS, "00-join-dave");
+
+    // Model a process exit after initializeDeveloper wrote identity but before
+    // the staged V2 Task directory was atomically published.
+    fs.writeFileSync(
+      developerFile,
+      `name=dave\ninitialized_at=${new Date().toISOString()}\n`,
+      "utf8",
+    );
+    fs.writeFileSync(
+      marker,
+      "Task creation was interrupted; retry pactile init.\n",
+      "utf8",
+    );
+
+    await init({ yes: true });
+
+    expect(fs.existsSync(joinerPath)).toBe(true);
+    expect(fs.existsSync(marker)).toBe(false);
+    const kernel = readTaskKernel({ root: tmpDir, taskDir: joinerPath, cwd: tmpDir });
+    expect(kernel.kind).toBe("task-kernel-v2");
+    if (kernel.kind === "task-kernel-v2") {
+      expect(kernel.kernel.phase).toBe("define");
+      expect(kernel.kernel.runs).toEqual([]);
+      expect(kernel.kernel.reviews).toEqual([]);
+      expect(kernel.kernel.closure).toBeNull();
+    }
+  });
+
   it("#5a developer name with spaces → filesystem-safe slug", async () => {
     simulateExistingCheckout();
 
@@ -517,6 +581,49 @@ describe("init() joiner onboarding", () => {
     ).toContain("Joiner Onboarding Task");
   });
 
+  it("preserves a pre-existing empty .creating directory after successful task creation", async () => {
+    simulateExistingCheckout();
+    const stagingRoot = path.join(tmpDir, PATHS.TASKS, ".creating");
+    fs.mkdirSync(stagingRoot);
+
+    await init({ yes: true, user: "iris", force: true });
+
+    expect(fs.statSync(stagingRoot).isDirectory()).toBe(true);
+    expect(fs.readdirSync(stagingRoot)).toEqual([]);
+    expect(
+      fs.existsSync(path.join(tmpDir, PATHS.TASKS, "00-join-iris")),
+    ).toBe(true);
+  });
+
+  it("preserves a pre-existing .creating file and reports a clean task failure", async () => {
+    simulateExistingCheckout();
+    const stagingPath = path.join(tmpDir, PATHS.TASKS, ".creating");
+    const marker = path.join(
+      tmpDir,
+      PATHS.TASKS,
+      ".pending-00-join-jules",
+    );
+    const warningSpy = vi.spyOn(console, "warn");
+    fs.writeFileSync(stagingPath, "User-owned path.\n", "utf8");
+
+    await expect(
+      init({ yes: true, user: "jules", force: true }),
+    ).resolves.toBeUndefined();
+
+    expect(fs.readFileSync(stagingPath, "utf8")).toBe("User-owned path.\n");
+    expect(fs.statSync(stagingPath).isFile()).toBe(true);
+    expect(fs.existsSync(marker)).toBe(true);
+    expect(
+      warningSpy.mock.calls.some((call) =>
+        call.some(
+          (arg) =>
+            typeof arg === "string" &&
+            arg.includes("Failed to create joiner onboarding task"),
+        ),
+      ),
+    ).toBe(true);
+  });
+
   // Tests #7/#8 cover the handleReinit path — the default flow when .pactile/
   // already exists and neither --force nor --skip-existing is passed. init()
   // routes through handleReinit() instead of the main dispatch, so joiner
@@ -525,9 +632,35 @@ describe("init() joiner onboarding", () => {
 
   it("#7 handleReinit path: existing .pactile/ + no .developer → joiner task created", async () => {
     simulateExistingCheckout();
+    const marker = path.join(
+      tmpDir,
+      PATHS.TASKS,
+      ".pending-00-join-frank",
+    );
+    const developerFile = path.join(tmpDir, PATHS.DEVELOPER_FILE);
+    const originalWriteFileSync = fs.writeFileSync;
+    let intentExistedWhenIdentityWasWritten = false;
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(((
+      filePath: fs.PathOrFileDescriptor,
+      data: string | NodeJS.ArrayBufferView,
+      options?: fs.WriteFileOptions,
+    ) => {
+      if (String(filePath) === developerFile) {
+        intentExistedWhenIdentityWasWritten =
+          fs.readFileSync(marker, "utf8") ===
+          "Task creation was interrupted; retry pactile init.\n";
+      }
+      return originalWriteFileSync(filePath, data, options);
+    }) as typeof fs.writeFileSync);
 
-    await init({ yes: true, user: "frank" });
+    try {
+      await init({ yes: true, user: "frank" });
+    } finally {
+      writeSpy.mockRestore();
+    }
 
+    expect(intentExistedWhenIdentityWasWritten).toBe(true);
+    expect(fs.existsSync(marker)).toBe(false);
     const joiner = path.join(tmpDir, PATHS.TASKS, "00-join-frank");
     expect(fs.existsSync(joiner)).toBe(true);
 
