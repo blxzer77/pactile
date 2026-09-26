@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { PiTaskBridge, type PiRunRecord } from "../pactile/pi/bridge.js";
 import { resolveTaskDir } from "../pactile/task/session.js";
 
@@ -37,7 +38,7 @@ export async function runPiCli(argv: string[], root = process.cwd()): Promise<nu
       const evidence = evidenceDir(root, required(reference, "task"));
       const record = readRecord(path.join(evidence, "latest.json"));
       if (record?.outcome !== "running") throw new Error("No active Pi run to cancel");
-      fs.writeFileSync(path.join(evidence, "cancel-request.json"), `${JSON.stringify({ run_id: record.run_id, requested_at: new Date().toISOString() })}\n`, { mode: 0o600 });
+      fs.writeFileSync(path.join(evidence, "cancel-request.json"), `${JSON.stringify({ request_id: randomUUID(), run_id: record.run_id, requested_at: new Date().toISOString() })}\n`, { mode: 0o600 });
       console.log(`Cancellation requested for Pi run ${record.run_id}`);
       return 0;
     }
@@ -45,10 +46,14 @@ export async function runPiCli(argv: string[], root = process.cwd()): Promise<nu
     const task = required(reference, "task");
     const role = required(option(args, "--role"), "--role");
     if (role !== "implement" && role !== "check" && role !== "research") throw new Error("--role must be implement, check, or research");
+    const runId = args.includes("--run-id") ? required(option(args, "--run-id"), "--run-id") : undefined;
     const promptFiles = args.flatMap((arg, index) => arg === "--prompt-file" ? [path.resolve(root, required(args[index + 1], "--prompt-file"))] : []);
     if (!promptFiles.length) throw new Error("--prompt-file is required");
     for (const file of promptFiles) if (!fs.statSync(file, { throwIfNoEntry: false })?.isFile()) throw new Error(`Prompt file not found: ${file}`);
     const timeoutMs = option(args, "--timeout-ms") ? Number(option(args, "--timeout-ms")) : 30 * 60_000;
+    if (runId && (promptFiles.length !== 1 || args.includes("--resume") || role !== "implement")) {
+      throw new Error("Pi V2 dispatch requires one prompt file, --role implement, and no --resume");
+    }
     const controller = new AbortController();
     const onSignal = (): void => controller.abort();
     process.once("SIGINT", onSignal);
@@ -57,7 +62,7 @@ export async function runPiCli(argv: string[], root = process.cwd()): Promise<nu
     try {
       for (const [index, file] of promptFiles.entries()) {
         const result = await bridge.run({
-          root, task, role, prompt: fs.readFileSync(file, "utf8"), timeoutMs,
+          root, task, role, prompt: fs.readFileSync(file, "utf8"), timeoutMs, runId,
           resume: index === 0 && args.includes("--resume"), signal: controller.signal,
           onProgress: (event) => {
             if (["agent_start", "agent_end", "agent_settled", "tool_execution_start", "tool_execution_end"].includes(String(event.type))) {

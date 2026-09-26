@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createTaskKernel,
   fingerprintTaskValue,
+  bindTaskRunHostReceipt,
   readTaskKernel,
   recordTaskRunResult,
   resumeTaskRun,
@@ -13,6 +14,8 @@ import {
 import {
   acquireTaskKernelRunDispatchV1,
   assertTaskKernelRunDispatchLeaseV1,
+  assertTaskKernelRunDispatchPreSpawnV1,
+  bindTaskKernelRunDispatchOwnerV1,
   releaseTaskKernelRunDispatchV1,
   validateTaskKernelRunDispatchStopProofV1,
   scheduleTaskKernelGraph,
@@ -420,6 +423,157 @@ function admit(
 }
 
 describe("Task Kernel V2 Run dispatch admission", () => {
+  it("validates the active pre-spawn lease against its admission write set", () => {
+    const root = makeRoot();
+    const task = createTask(root, "v2-pre-spawn-write-set", {
+      state: "running",
+      writeSet: ["src/declared.ts"],
+    });
+    const owner: TaskKernelRunDispatchOwnerV1 = {
+      host: "pi",
+      role: "implement",
+      sessionId: null,
+      threadId: null,
+      hostId: null,
+      contractFingerprint: null,
+      startRequestId: null,
+      processId: null,
+    };
+    const schedule = scheduleTaskKernelGraph(root, ["v2-pre-spawn-write-set"]);
+    const permit = admit(
+      root,
+      schedule.receipt.receiptFingerprint,
+      "v2-pre-spawn-write-set",
+      task.runId,
+      owner,
+    );
+    expect(permit.permitted).toBe(true);
+    if (!permit.permitted) return;
+    const request = {
+      leaseId: permit.leaseId,
+      taskId: "v2-pre-spawn-write-set",
+      runId: task.runId,
+      scheduleReceiptFingerprint: schedule.receipt.receiptFingerprint,
+      owner,
+    };
+    expect(assertTaskKernelRunDispatchPreSpawnV1(root, request)).toMatchObject({
+      asserted: true,
+      reasonCode: null,
+      hostBound: false,
+      scheduleReceiptFingerprint: schedule.receipt.receiptFingerprint,
+      writeSet: ["src/declared.ts"],
+    });
+    expect(assertTaskKernelRunDispatchPreSpawnV1(root, {
+      ...request,
+      scheduleReceiptFingerprint: "0".repeat(64),
+    })).toMatchObject({
+      asserted: false,
+      reasonCode: "schedule-receipt-fingerprint-mismatch",
+      hostBound: null,
+    });
+    expect(assertTaskKernelRunDispatchPreSpawnV1(root, {
+      ...request,
+      owner: { ...owner, hostId: "unexpected-host" },
+    })).toMatchObject({
+      asserted: false,
+      reasonCode: "dispatch-lease-owner-mismatch",
+      hostBound: null,
+    });
+
+    const leaseFile = path.join(root, permit.leaseFile);
+    const lease = JSON.parse(fs.readFileSync(leaseFile, "utf8")) as {
+      touches: string[];
+    };
+    lease.touches = ["unrelated"];
+    fs.writeFileSync(leaseFile, `${JSON.stringify(lease, null, 2)}\n`);
+    expect(assertTaskKernelRunDispatchPreSpawnV1(root, request)).toMatchObject({
+      asserted: false,
+      reasonCode: "dispatch-lease-write-set-mismatch",
+      hostBound: null,
+    });
+  });
+
+  it("accepts the unbound Pi owner before spawn and rejects that gate after Host binding", () => {
+    const root = makeRoot();
+    const task = createTask(root, "v2-pre-spawn-host-timing", {
+      state: "running",
+      writeSet: ["src/output.ts"],
+    });
+    const admissionOwner: TaskKernelRunDispatchOwnerV1 = {
+      host: "pi",
+      role: "implement",
+      sessionId: null,
+      threadId: null,
+      hostId: null,
+      contractFingerprint: null,
+      startRequestId: null,
+      processId: null,
+    };
+    const schedule = scheduleTaskKernelGraph(root, ["v2-pre-spawn-host-timing"]);
+    const permit = admit(
+      root,
+      schedule.receipt.receiptFingerprint,
+      "v2-pre-spawn-host-timing",
+      task.runId,
+      admissionOwner,
+    );
+    expect(permit.permitted).toBe(true);
+    if (!permit.permitted) return;
+    const request = {
+      leaseId: permit.leaseId,
+      taskId: "v2-pre-spawn-host-timing",
+      runId: task.runId,
+      scheduleReceiptFingerprint: schedule.receipt.receiptFingerprint,
+      owner: admissionOwner,
+    };
+    expect(assertTaskKernelRunDispatchPreSpawnV1(root, request)).toMatchObject({
+      asserted: true,
+      hostBound: false,
+    });
+
+    bindTaskRunHostReceipt({
+      root,
+      taskDir: task.taskDir,
+      expectedRevision: task.revision,
+      runId: task.runId,
+      host: {
+        host: "pi",
+        role: "implement",
+        sessionId: "pi-session-after-spawn",
+        hostId: null,
+        threadId: null,
+        requestRefs: ["pi-start-request"],
+        eventRefs: ["pi-progress"],
+        resultRefs: [],
+        assuranceSource: "manager-owned-child-exit",
+      },
+      actor: "test-pi-bridge",
+      idempotencyKey: "bind-host-after-start",
+      cwd: root,
+    });
+    const dispatchOwner: TaskKernelRunDispatchOwnerV1 = {
+      ...admissionOwner,
+      sessionId: "pi-session-after-spawn",
+      startRequestId: "pi-start-request",
+      processId: 42,
+    };
+    expect(bindTaskKernelRunDispatchOwnerV1(root, {
+      leaseId: permit.leaseId,
+      taskId: "v2-pre-spawn-host-timing",
+      runId: task.runId,
+      owner: dispatchOwner,
+    }).bound).toBe(true);
+    expect(assertTaskKernelRunDispatchPreSpawnV1(root, request)).toMatchObject({
+      asserted: false,
+      hostBound: null,
+    });
+    expect(assertTaskKernelRunDispatchLeaseV1(root, {
+      leaseId: permit.leaseId,
+      taskId: "v2-pre-spawn-host-timing",
+      runId: task.runId,
+    }).asserted).toBe(true);
+  });
+
   it.skipIf(process.platform !== "win32")(
     "rejects NTFS alternate data stream paths without changing ordinary or drive-path rules",
     () => {
