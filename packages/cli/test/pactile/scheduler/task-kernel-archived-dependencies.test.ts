@@ -75,9 +75,14 @@ function closeSuccessfully(root: string, taskId: string): string {
       scope: "fixture",
       evidenceRef: "approval.json",
     },
+    writeSetSnapshot: ["result.txt"],
   });
   const run = started.kernel.runs.at(-1);
   if (!run) throw new Error("Run was not started");
+  fs.writeFileSync(path.join(root, "result.txt"), "prerequisite result is ready\n");
+  fs.writeFileSync(path.join(taskDir, "tests.json"), "{}\n");
+  fs.writeFileSync(path.join(taskDir, "review.json"), "{}\n");
+  fs.writeFileSync(path.join(taskDir, "candidate.json"), "{}\n");
   const completed = recordTaskRunResult({
     root,
     taskDir,
@@ -85,7 +90,6 @@ function closeSuccessfully(root: string, taskId: string): string {
     runId: run.id,
     outcome: "completed",
     summary: "prerequisite result is ready",
-    candidateEntries: [{ ref: "result.txt", fingerprint: "a".repeat(64) }],
     evidenceRefs: ["tests.json"],
     actor: "implementer",
     idempotencyKey: `result:${taskId}`,
@@ -250,6 +254,14 @@ describe("V2 Task DAG archived dependencies", () => {
     });
     const run = started.kernel.runs.at(-1);
     if (!run) throw new Error("Dependent Run was not started");
+    fs.mkdirSync(path.join(root, "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "src", "active-dispatch-dependent.ts"),
+      "export const result = true;\n",
+    );
+    fs.writeFileSync(path.join(dependentDir, "tests.json"), "{}\n");
+    fs.writeFileSync(path.join(dependentDir, "review.json"), "{}\n");
+    fs.writeFileSync(path.join(dependentDir, "candidate.json"), "{}\n");
 
     const scheduled = scheduleTaskKernelGraph(root, ["active-dispatch-dependent"]);
     expect(scheduled.receipt.candidateTaskIds).toEqual([
@@ -349,12 +361,54 @@ describe("V2 Task DAG archived dependencies", () => {
       runId: run.id,
       outcome: "completed",
       summary: "dependent result is ready",
-      candidateEntries: [{ ref: "result.txt", fingerprint: "b".repeat(64) }],
       evidenceRefs: ["tests.json"],
       actor: "implementer",
       idempotencyKey: "complete:active-dispatch-dependent",
     });
     expect(settled.kernel.runs.at(-1)?.state).toBe("completed");
+    const candidate = settled.kernel.runs.at(-1)?.candidateSnapshot;
+    if (!candidate) throw new Error("Dependent Run candidate was not recorded");
+    const reviewed = recordTaskReview({
+      root,
+      taskDir: dependentDir,
+      expectedRevision: settled.kernel.revision,
+      runId: run.id,
+      candidateSnapshotId: candidate.id,
+      candidateFingerprint: candidate.fingerprint,
+      reviewer: "reviewer",
+      decision: "pass",
+      evidenceRefs: ["review.json"],
+      acceptanceEvidence: {
+        "AC-1": ["src/active-dispatch-dependent.ts"],
+      },
+      actor: "reviewer",
+      idempotencyKey: "review:active-dispatch-dependent",
+    });
+    const review = reviewed.kernel.reviews.at(-1);
+    if (!review) throw new Error("Dependent passing Review was not recorded");
+    const closed = closeTaskKernel({
+      root,
+      taskDir: dependentDir,
+      expectedRevision: reviewed.kernel.revision,
+      runId: run.id,
+      reviewId: review.id,
+      candidateObservation: {
+        snapshotId: candidate.id,
+        fingerprint: candidate.fingerprint,
+        observedBy: "closer",
+        observedAt: "2026-09-26T00:05:00.000Z",
+        source: "caller-attested",
+        evidenceRef: "candidate.json",
+      },
+      deliveryEvidence: {
+        level: "local-result",
+        reference: "src/active-dispatch-dependent.ts",
+        summary: "The accepted downstream result is present",
+      },
+      actor: "closer",
+      idempotencyKey: "close:active-dispatch-dependent",
+    });
+    expect(closed.kernel).toMatchObject({ phase: "close", outcome: "completed" });
     expect(
       assertTaskKernelRunDispatchLeaseV1(root, {
         leaseId: admitted.leaseId,
