@@ -221,6 +221,9 @@ function answeredFacade(
             inputTokens: 42,
             outputTokens: 0,
             estimatedInputCostMicrousd: 2,
+            confidence: {
+              first_task: { status: "available", value: 0.96 },
+            },
           },
           budget: {
             maxDecisions: 1,
@@ -319,6 +322,9 @@ describe("P34 Jev scheduler advice", () => {
         attempts: 1,
         httpStatus: 200,
         model: "jev-test",
+        confidence: {
+          first_task: { status: "available", value: 0.96 },
+        },
       },
     });
     const invocation = facade.decide.mock.calls[0]?.[0] as {
@@ -802,7 +808,14 @@ describe("P34 Jev scheduler advice", () => {
       },
       eligibilityChanged: false,
       suggestedTaskIds: [],
-      transport: { attempts: 1, httpStatus: 200, model: "jev-test" },
+      transport: {
+        attempts: 1,
+        httpStatus: 200,
+        model: "jev-test",
+        confidence: {
+          first_task: { status: "available", value: 0.45 },
+        },
+      },
     });
     expect(JSON.stringify(result.receipt.jevAdviceAudit)).not.toContain(
       "test-key-not-persisted",
@@ -869,7 +882,13 @@ describe("P34 Jev scheduler advice", () => {
           worktreePassedTaskIds: [firstTaskId, secondTaskId],
         },
       },
-      transport: { latencyMs: 0, attempts: 0 },
+      transport: {
+        latencyMs: 0,
+        attempts: 0,
+        confidence: {
+          first_task: { status: "unavailable", reasonCode: "not-returned" },
+        },
+      },
     });
 
     const fetchImpl = vi.fn(async () => new Response("unused", { status: 200 }));

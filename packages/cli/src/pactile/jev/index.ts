@@ -15,6 +15,9 @@ export { createJevTransportV1, JEV_ENDPOINT_V1 } from "./transport.js";
 export type {
   JevAnswerV1,
   JevCallOptionsV1,
+  JevConfidenceReceiptV1,
+  JevConfidenceUnavailableReasonV1,
+  JevConfidenceValueV1,
   JevDecisionRequestV1,
   JevEgressAuthorizationV1,
   JevFallbackCodeV1,

@@ -42,5 +42,7 @@ Session pack 会保留原有的 `retrievalPlanning` 字段，并增加脱敏的
 的 intent、模型、传输延迟、尝试次数、usage 与预计输入成本。回执不包含摘要正文、源码
 片段、API key 或 Provider 响应正文。项目 deny、敏感内容命中、密钥缺失或传输失败都会
 记录 fallback 审计，并保留 exact 计划。
+回执还会逐项记录 Provider 返回的 route confidence；缺失或无效时明确标为 unavailable，
+不会从 route choice 或 fallback 结果推导 confidence。
 
 此项目开关同时管理 Jev 检索规划与 selected Task 的 Tile Session 建议。Tile 建议遇到项目 deny 或无效配置时，会在 HTTP 前阻止 Jev，即使历史 active Run grant 曾允许外发。项目 allow 只是额外一道门：当前 active Run grant 仍须独立允许目标地址和其他 Jev 策略条件。

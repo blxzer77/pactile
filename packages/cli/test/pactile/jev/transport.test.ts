@@ -301,6 +301,9 @@ describe("optional Jev transport input and egress boundary", () => {
     expect(result.fallback?.reasonCode).toBe("low-confidence");
     expect(result.receipt.inputTokens).toBe(800);
     expect(result.receipt.estimatedInputCostMicrousd).toBe(34);
+    expect(result.receipt.confidence).toEqual({
+      route: { status: "available", value: 0.4 },
+    });
   });
 
   it("rejects responses above the body-size limit", async () => {
@@ -350,7 +353,56 @@ describe("optional Jev transport input and egress boundary", () => {
     });
     expect(confidentNo.status).toBe("answered");
     expect(undecided.fallback?.reasonCode).toBe("low-confidence");
+    expect(confidentNo.receipt.confidence).toEqual({
+      semantic: { status: "unavailable", reasonCode: "not-provided" },
+    });
+    expect(undecided.receipt.confidence).toEqual({
+      semantic: { status: "unavailable", reasonCode: "not-provided" },
+    });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("marks missing or invalid provider confidence unavailable on invalid responses", async () => {
+    const bodies = [
+      {
+        ...success,
+        answers: {
+          route: {
+            type: "choice",
+            choice: "semantic",
+            probabilities: { exact: 0.1, semantic: 0.9 },
+          },
+        },
+      },
+      {
+        ...success,
+        answers: {
+          route: {
+            type: "choice",
+            choice: "semantic",
+            confidence: 1.2,
+            probabilities: { exact: 0.1, semantic: 0.9 },
+          },
+        },
+      },
+    ];
+    const fetchImpl = fakeFetch(async () => response(bodies.shift()));
+    const call = createJevTransportV1({
+      apiKey: "test-key",
+      fetchImpl,
+    });
+
+    const missing = await call(request, { egress });
+    const invalid = await call(request, { egress });
+
+    expect(missing.fallback?.reasonCode).toBe("invalid-response");
+    expect(missing.receipt.confidence).toEqual({
+      route: { status: "unavailable", reasonCode: "not-provided" },
+    });
+    expect(invalid.fallback?.reasonCode).toBe("invalid-response");
+    expect(invalid.receipt.confidence).toEqual({
+      route: { status: "unavailable", reasonCode: "invalid" },
+    });
   });
 
   it("projects a Score answer but does not assign assurance authority", async () => {

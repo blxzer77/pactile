@@ -253,6 +253,10 @@ describe("V2 Session Jev retrieval planning", () => {
         inputTokens: 20,
         outputTokens: 2,
         estimatedInputCostMicrousd: 1,
+        confidence: {
+          semantic: { status: "available", value: 0.92 },
+          structural: { status: "available", value: 0.92 },
+        },
       },
     });
     expect(
@@ -312,6 +316,10 @@ describe("V2 Session Jev retrieval planning", () => {
         application: "not-applied",
         outboundAttempted: false,
         model: null,
+        confidence: {
+          semantic: { status: "unavailable", reasonCode: "not-returned" },
+          structural: { status: "unavailable", reasonCode: "not-returned" },
+        },
         fallback: {
           reasonCode: "configuration-missing",
           explanation: expect.any(String),
@@ -700,5 +708,54 @@ describe("V2 Session Jev retrieval planning", () => {
         },
       },
     });
+  });
+
+  it("persists unavailable confidence when a provider answer omits it", async () => {
+    const root = createRoot("jev:\n  egress: allow\n");
+    vi.stubEnv("PACTILE_SESSION_FACT_GAP", "1");
+    vi.stubEnv("PACTILE_JEV_API_KEY", API_KEY);
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          model: "jev-test-model",
+          answers: {
+            semantic: {
+              type: "choice",
+              choice: "include",
+              probabilities: { include: 0.9, exclude: 0.1 },
+            },
+            structural: {
+              type: "choice",
+              choice: "exclude",
+              confidence: 0.88,
+              probabilities: { include: 0.12, exclude: 0.88 },
+            },
+          },
+          usage: { input_tokens: 20, output_tokens: 2 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const pack = compileSessionPack(root, true);
+
+    const planned = await compileSessionRetrievalPlanWithJevV1(root, pack);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(planned.retrievalPlanning).toMatchObject({
+      source: "deterministic",
+      intents: ["exact"],
+      audit: {
+        status: "fallback",
+        fallback: { reasonCode: "invalid-response" },
+        confidence: {
+          semantic: { status: "unavailable", reasonCode: "not-provided" },
+          structural: { status: "available", value: 0.88 },
+        },
+      },
+    });
+    expect(JSON.stringify(planned.retrievalPlanning)).not.toContain(
+      "jev-test-model",
+    );
   });
 });

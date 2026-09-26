@@ -90,7 +90,12 @@ globalThis.fetch = async (input, init = {}) => {
       name,
       {
         type: "noul",
-        noul: wantedRefs.has(snippets[index]) ? 0.98 : 0.02,
+        noul:
+          responseMode === "low-confidence"
+            ? 0.5
+            : wantedRefs.has(snippets[index])
+              ? 0.98
+              : 0.02,
       },
     ]),
   );

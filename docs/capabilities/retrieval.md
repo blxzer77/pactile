@@ -69,6 +69,9 @@ overridden intents, model, transport latency, attempts, usage, and estimated
 input cost. The receipt contains no summary text, source snippets, API key, or
 provider response body. A project deny, sensitive-content match, missing key,
 or transport failure records a fallback audit and keeps the exact plan.
+The audit also records the provider-reported confidence for each requested
+route; missing or invalid values are marked unavailable. It does not infer
+confidence from a route choice or fallback outcome.
 
 This project switch governs Jev retrieval planning and selected-Task Tile
 Session advice. For Tile advice, project denial or invalid configuration blocks

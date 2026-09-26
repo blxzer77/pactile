@@ -180,6 +180,9 @@ function answerFacade(
             inputTokens: 42,
             outputTokens: 0,
             estimatedInputCostMicrousd: 2,
+            confidence: {
+              first_task: { status: "available", value: 0.96 },
+            },
           },
           budget: {
             maxDecisions: 1,
@@ -266,6 +269,11 @@ describe("V2 Task Jev schedule advice", () => {
         eligibility: {
           approvalPassedTaskIds: [first.taskId, second.taskId],
           worktreePassedTaskIds: [first.taskId, second.taskId],
+        },
+      },
+      transport: {
+        confidence: {
+          first_task: { status: "available", value: 0.96 },
         },
       },
     });
@@ -569,7 +577,15 @@ describe("V2 Task Jev schedule advice", () => {
         status: "fallback",
         reasonCode,
         sentRequestSnapshot: null,
-        transport: { attempts: 0 },
+        transport: {
+          attempts: 0,
+          confidence: {
+            first_task: {
+              status: "unavailable",
+              reasonCode: "not-returned",
+            },
+          },
+        },
       });
       expect(JSON.stringify(output)).not.toContain(
         "test-schedule-key-not-for-output",

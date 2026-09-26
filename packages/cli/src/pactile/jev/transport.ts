@@ -8,12 +8,21 @@ import type {
 } from "./contracts.js";
 import { egressFailure, validateInput } from "./outbound.js";
 import { requestJevHttpV1 } from "./http.js";
-import { costEstimate, decisionConfidence, parseSuccess } from "./response.js";
+import {
+  costEstimate,
+  decisionConfidence,
+  parseSuccess,
+  readJevConfidenceReceiptV1,
+  unavailableJevConfidenceReceiptV1,
+} from "./response.js";
 
 export { JEV_ENDPOINT_V1 } from "./contracts.js";
 export type {
   JevAnswerV1,
   JevCallOptionsV1,
+  JevConfidenceReceiptV1,
+  JevConfidenceUnavailableReasonV1,
+  JevConfidenceValueV1,
   JevDecisionRequestV1,
   JevEgressAuthorizationV1,
   JevFallbackCodeV1,
@@ -49,22 +58,31 @@ export function createJevTransportV1(config: JevTransportConfigV1 = {}) {
       return fail("configuration-invalid");
     const input = validateInput(raw, key);
     if (!input.ok) return fail(input.code);
-    if (options === undefined) return fail("egress-denied");
+    const unavailableConfidence = unavailableJevConfidenceReceiptV1(
+      Object.keys(input.request.questions),
+    );
+    const failForInput = (
+      code: Parameters<typeof fail>[0],
+      info: Parameters<typeof fail>[1] = {},
+    ): JevTransportResultV1 =>
+      fail(code, { confidence: unavailableConfidence, ...info });
+    if (options === undefined) return failForInput("egress-denied");
     const policyError = egressFailure(
       options.egress,
       (input.request.sourceSnippets?.length ?? 0) > 0,
     );
-    if (policyError !== null) return fail(policyError);
+    if (policyError !== null) return failForInput(policyError);
     const minConfidence = options.minimumDecisionConfidence ?? 0.65;
     if (
       !Number.isFinite(minConfidence) ||
       minConfidence < 0 ||
       minConfidence > 1
     )
-      return fail("configuration-invalid");
-    if (options.signal?.aborted) return fail("cancelled");
+      return failForInput("configuration-invalid");
+    if (options.signal?.aborted) return failForInput("cancelled");
     const fetchImpl = config.fetchImpl ?? globalThis.fetch;
-    if (typeof fetchImpl !== "function") return fail("runtime-unsupported");
+    if (typeof fetchImpl !== "function")
+      return failForInput("runtime-unsupported");
 
     const http = await requestJevHttpV1({
       apiKey: key,
@@ -74,23 +92,31 @@ export function createJevTransportV1(config: JevTransportConfigV1 = {}) {
       fetchImpl,
       signal: options.signal,
     });
-    if (!http.ok) return fail(http.reasonCode, http.metrics);
+    if (!http.ok) return failForInput(http.reasonCode, http.metrics);
+    const confidence = readJevConfidenceReceiptV1(
+      http.payload,
+      input.request.questions,
+    );
     const result = parseSuccess(http.payload, input.request.questions);
     if (result === null || result.model.includes(key))
-      return fail("invalid-response", http.metrics);
+      return failForInput("invalid-response", {
+        ...http.metrics,
+        confidence,
+      });
     const receiptData = {
       ...http.metrics,
       model: result.model,
       inputTokens: result.inputTokens,
       outputTokens: result.outputTokens,
       estimatedInputCostMicrousd: costEstimate(result.inputTokens),
+      confidence,
     };
     if (
       Object.values(result.answers).some(
         (answer) => decisionConfidence(answer) < minConfidence,
       )
     )
-      return fail("low-confidence", receiptData);
+      return failForInput("low-confidence", receiptData);
     const receipt: JevReceiptV1 = Object.freeze({
       provider: "typesafe-jev",
       outcome: "answered",

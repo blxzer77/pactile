@@ -1,10 +1,154 @@
+import { types as utilTypes } from "node:util";
 import { snapshotPlainOwnDataRecordV3 } from "../retrieval/boundary.js";
 import { MODEL_PATTERN } from "./contracts.js";
-import type { JevAnswerV1, JevQuestionV1 } from "./contracts.js";
+import type {
+  JevAnswerV1,
+  JevConfidenceReceiptV1,
+  JevConfidenceUnavailableReasonV1,
+  JevQuestionV1,
+  JevConfidenceValueV1,
+} from "./contracts.js";
 
 const COST_MICRO_USD_PER_INPUT_TOKEN = 0.042;
 const PROBABILITY_SUM_TOLERANCE = 0.01;
 const SCORE_EXPECTATION_TOLERANCE = 0.01;
+const QUESTION_ID = /^[A-Za-z][A-Za-z0-9._-]{0,63}$/u;
+
+/** Snapshot either a provider JSON record or our null-prototype receipt map. */
+function snapshotConfidenceRecord(
+  raw: unknown,
+): Readonly<Record<string, unknown>> | null {
+  if (
+    raw === null ||
+    typeof raw !== "object" ||
+    Array.isArray(raw) ||
+    utilTypes.isProxy(raw)
+  )
+    return null;
+  try {
+    const prototype = Object.getPrototypeOf(raw) as object | null;
+    if (prototype !== Object.prototype && prototype !== null) return null;
+    const keys = Reflect.ownKeys(raw);
+    if (keys.some((key) => typeof key !== "string")) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(raw);
+    const result = Object.create(null) as Record<string, unknown>;
+    for (const key of Object.keys(descriptors)) {
+      const descriptor = descriptors[key];
+      if (
+        !descriptor ||
+        !("value" in descriptor) ||
+        descriptor.enumerable !== true
+      )
+        return null;
+      result[key] = descriptor.value;
+    }
+    return Object.freeze(result);
+  } catch {
+    return null;
+  }
+}
+
+function unavailableConfidence(
+  reasonCode: JevConfidenceUnavailableReasonV1,
+): JevConfidenceValueV1 {
+  return Object.freeze({ status: "unavailable", reasonCode });
+}
+
+function availableConfidence(value: number): JevConfidenceValueV1 {
+  return Object.freeze({ status: "available", value });
+}
+
+/** Build explicit unavailable entries for a bounded set of known question IDs. */
+export function unavailableJevConfidenceReceiptV1(
+  questionIds: readonly string[],
+  reasonCode: JevConfidenceUnavailableReasonV1 = "not-returned",
+): JevConfidenceReceiptV1 {
+  const result: Record<string, JevConfidenceValueV1> = Object.create(null) as Record<
+    string,
+    JevConfidenceValueV1
+  >;
+  for (const questionId of questionIds) {
+    if (QUESTION_ID.test(questionId))
+      result[questionId] = unavailableConfidence(reasonCode);
+  }
+  return Object.freeze(result);
+}
+
+/** Keep only valid provider confidence values for the caller's known questions. */
+export function projectJevConfidenceReceiptV1(
+  raw: unknown,
+  questionIds: readonly string[],
+): JevConfidenceReceiptV1 {
+  const source = snapshotConfidenceRecord(raw);
+  const result: Record<string, JevConfidenceValueV1> = Object.create(null) as Record<
+    string,
+    JevConfidenceValueV1
+  >;
+  for (const questionId of questionIds) {
+    if (!QUESTION_ID.test(questionId)) continue;
+    const value = source ? snapshotPlainOwnDataRecordV3(source[questionId]) : null;
+    if (
+      value?.status === "available" &&
+      typeof value.value === "number" &&
+      Number.isFinite(value.value) &&
+      value.value >= 0 &&
+      value.value <= 1
+    ) {
+      result[questionId] = availableConfidence(value.value);
+      continue;
+    }
+    if (
+      value?.status === "unavailable" &&
+      (value.reasonCode === "not-returned" ||
+        value.reasonCode === "not-provided" ||
+        value.reasonCode === "invalid")
+    ) {
+      result[questionId] = unavailableConfidence(value.reasonCode);
+      continue;
+    }
+    result[questionId] = unavailableConfidence(
+      source && Object.hasOwn(source, questionId) ? "invalid" : "not-returned",
+    );
+  }
+  return Object.freeze(result);
+}
+
+/** Extract only finite provider-reported confidence; never derive it from an answer. */
+export function readJevConfidenceReceiptV1(
+  raw: unknown,
+  questions: Readonly<Record<string, JevQuestionV1>>,
+): JevConfidenceReceiptV1 {
+  const payload = snapshotPlainOwnDataRecordV3(raw);
+  const answers = snapshotPlainOwnDataRecordV3(payload?.answers);
+  const result: Record<string, JevConfidenceValueV1> = Object.create(null) as Record<
+    string,
+    JevConfidenceValueV1
+  >;
+  for (const questionId of Object.keys(questions).sort()) {
+    if (!answers || !Object.hasOwn(answers, questionId)) {
+      result[questionId] = unavailableConfidence("not-returned");
+      continue;
+    }
+    const answer = snapshotPlainOwnDataRecordV3(answers[questionId]);
+    if (answer === null) {
+      result[questionId] = unavailableConfidence("invalid");
+      continue;
+    }
+    if (!Object.hasOwn(answer, "confidence")) {
+      result[questionId] = unavailableConfidence("not-provided");
+      continue;
+    }
+    const confidence = answer.confidence;
+    result[questionId] =
+      typeof confidence === "number" &&
+      Number.isFinite(confidence) &&
+      confidence >= 0 &&
+      confidence <= 1
+        ? availableConfidence(confidence)
+        : unavailableConfidence("invalid");
+  }
+  return Object.freeze(result);
+}
 
 function exactFields(
   record: Readonly<Record<string, unknown>>,
