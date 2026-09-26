@@ -76,6 +76,7 @@ describe("Node context CLI", () => {
     fs.mkdirSync(path.join(modulesDir, "define-basic"), { recursive: true });
     fs.writeFileSync(path.join(modulesDir, "index.json"), JSON.stringify({ modules: [{ id: "define-basic", contract: "define-basic/contract.md" }] }));
     fs.writeFileSync(path.join(modulesDir, "define-basic", "contract.md"), "V1 phase contract that must not be exposed for an unresolved Task.");
+    const output = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {
       for (const taskId of ["malformed-json", "malformed-kernel", "orphan-task-json", "unknown-task"]) {
         const taskDir = path.join(tasksDir, taskId);
@@ -99,8 +100,12 @@ describe("Node context CLI", () => {
         expect(layers[1].moduleIds).toEqual([]);
         expect(JSON.stringify(pack)).not.toContain("V1 phase contract that must not be exposed");
         expect(JSON.stringify(pack)).not.toMatch(/Rigor=lite|topology=single|Open Proposal|Open approval/);
+        expect(runContextCli(["--mode", "session", "--json"], root)).toBe(0);
+        const emittedPack = JSON.parse(String(output.mock.calls.at(-1)?.[0]));
+        expect(emittedPack.layers[0].text).toContain("Phase: Unknown (selected Task format needs inspection)");
+        expect(emittedPack.layers[0].text).toContain("selected Task format is not identified");
       }
-    } finally { vi.unstubAllEnvs(); }
+    } finally { output.mockRestore(); vi.unstubAllEnvs(); }
   });
 
   it("extracts the human Phase Index and a platform-filtered step without treating it as Kernel state", () => {

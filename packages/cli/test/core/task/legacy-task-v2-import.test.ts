@@ -181,7 +181,9 @@ describe("legacy Task to V2 import mapping", () => {
     expect(runTaskCli(["list"], root)).toBe(1);
     expect(runContextCli(["--mode", "record", "--json"], root)).toBe(1);
     expect(runContextCli(["--mode", "lite", "--json"], root)).toBe(1);
+    const hashMismatchedOverlay = fs.readFileSync(overlayKernelPath);
     expect(runContextCli(["--mode", "session", "--json"], root)).toBe(1);
+    expect(fs.readFileSync(overlayKernelPath).equals(hashMismatchedOverlay)).toBe(true);
     expect(errorOutput.join("\n")).toMatch(/overlay hash-mismatch/);
     expect(() => startTaskRun(request)).toThrow(/overlay hash-mismatch/);
 
@@ -193,7 +195,9 @@ describe("legacy Task to V2 import mapping", () => {
     expect(() => listTaskKernelSnapshots(root)).toThrow(/overlay kernel-missing/);
     expect(runContextCli(["--mode", "record", "--json"], root)).toBe(1);
     expect(runContextCli(["--mode", "lite", "--json"], root)).toBe(1);
+    fs.rmSync(overlayDir, { recursive: true, force: true });
     expect(runContextCli(["--mode", "session", "--json"], root)).toBe(1);
+    expect(fs.existsSync(overlayDir)).toBe(false);
     expect(errorOutput.join("\n")).toMatch(/overlay kernel-missing/);
     errorSpy.mockRestore();
   });
