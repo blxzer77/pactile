@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,6 +16,13 @@ import {
   createTaskCandidateEntry,
   observeTaskRunCandidate,
 } from "../../src/core/task/task-candidate-observer.js";
+import {
+  PROJECT_FILE_CANDIDATE_ENTRY_REF,
+  PROJECT_FILE_CANDIDATE_OBSERVER_VERSION,
+  PROJECT_FILE_SNAPSHOT_MAX_FILE_BYTES,
+  PROJECT_FILE_SNAPSHOT_MAX_FILES,
+  PROJECT_FILE_SNAPSHOT_MAX_TOTAL_BYTES,
+} from "../../src/core/task/project-file-observer.js";
 import { runTaskCliWithWorkspaceReclaim } from "../../src/commands/task-worktree-close.js";
 import type {
   JevVerificationAdviceReceiptV1,
@@ -62,7 +70,11 @@ function kernel(root: string, taskDir: string): TaskKernelSnapshotV2 {
 }
 
 function fixture(
-  options: { denyEgress?: boolean; invalidEgress?: boolean } = {},
+  options: {
+    denyEgress?: boolean;
+    invalidEgress?: boolean;
+    nonGit?: boolean;
+  } = {},
 ): {
   root: string;
   taskId: string;
@@ -73,9 +85,11 @@ function fixture(
 } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), fixturePrefix));
   fixtureRoots.push(root);
-  git(root, "init", "-q", "-b", "main");
-  git(root, "config", "user.name", "Pactile Test");
-  git(root, "config", "user.email", "pactile@example.invalid");
+  if (!options.nonGit) {
+    git(root, "init", "-q", "-b", "main");
+    git(root, "config", "user.name", "Pactile Test");
+    git(root, "config", "user.email", "pactile@example.invalid");
+  }
   fs.mkdirSync(path.join(root, ".pactile"), { recursive: true });
   fs.writeFileSync(
     path.join(root, ".gitignore"),
@@ -96,8 +110,10 @@ function fixture(
   const baselineFiles = [".gitignore", ".pactile/.gitignore", "src/feature.ts"];
   if (options.denyEgress || options.invalidEgress)
     baselineFiles.push(".pactile/config.yaml");
-  git(root, "add", ...baselineFiles);
-  git(root, "commit", "-q", "-m", "fixture baseline");
+  if (!options.nonGit) {
+    git(root, "add", ...baselineFiles);
+    git(root, "commit", "-q", "-m", "fixture baseline");
+  }
 
   const taskId = "verify-plan-fixture";
   const taskDir = path.join(root, ".pactile", "tasks", taskId);
@@ -133,11 +149,40 @@ function fixture(
   });
   const run = started.kernel.runs.at(-1);
   if (!run) throw new Error("Started Run is missing");
+  if (options.nonGit) {
+    const baseline = run.candidateFileBaseline;
+    if (!baseline) throw new Error("Non-Git Run is missing its file baseline");
+    const totalBytes = baseline.files.reduce(
+      (total, file) => total + file.sizeBytes,
+      0,
+    );
+    if (
+      baseline.source !== "pactile-project-file-baseline-v1" ||
+      baseline.policy !== "project-files-bounded-v1" ||
+      baseline.files.length > PROJECT_FILE_SNAPSHOT_MAX_FILES ||
+      totalBytes > PROJECT_FILE_SNAPSHOT_MAX_TOTAL_BYTES ||
+      baseline.files.some(
+        (file) => file.sizeBytes > PROJECT_FILE_SNAPSHOT_MAX_FILE_BYTES,
+      )
+    ) {
+      throw new Error("Non-Git Run exceeded its project-file snapshot budget");
+    }
+  }
   fs.writeFileSync(
     path.join(root, "src", "feature.ts"),
     "export const feature = true;\n",
   );
   const observation = observeTaskRunCandidate({ run, repositoryRoot: root });
+  const candidateEntries = [createTaskCandidateEntry(observation)];
+  if (observation.source === PROJECT_FILE_CANDIDATE_OBSERVER_VERSION) {
+    const candidateBytes = fs.readFileSync(
+      path.join(root, "src", "feature.ts"),
+    );
+    candidateEntries.unshift({
+      ref: "src/feature.ts",
+      fingerprint: createHash("sha256").update(candidateBytes).digest("hex"),
+    });
+  }
   const completed = recordTaskRunResult({
     root,
     taskDir,
@@ -146,7 +191,7 @@ function fixture(
     outcome: "completed",
     summary: "Candidate behavior implemented",
     evidenceRefs: ["src/feature.ts"],
-    candidateEntries: [createTaskCandidateEntry(observation)],
+    candidateEntries,
     actor: "worker",
     idempotencyKey: `complete:${taskId}`,
   });
@@ -695,6 +740,143 @@ describe("task verify-plan CLI", () => {
       ).toContain("task.a-primary");
     },
   );
+
+  it("keeps a non-Git single-area plan incomplete without focused public evidence", async () => {
+    const target = fixture({ nonGit: true });
+    expect(fs.existsSync(path.join(target.root, ".git"))).toBe(false);
+    const initialRun = target.initialKernel.runs.at(-1);
+    const baseline = initialRun?.candidateFileBaseline;
+    if (!baseline) throw new Error("Non-Git Run file baseline is missing");
+    expect(baseline).toMatchObject({
+      source: "pactile-project-file-baseline-v1",
+      policy: "project-files-bounded-v1",
+    });
+    expect(baseline.files.length).toBeLessThanOrEqual(
+      PROJECT_FILE_SNAPSHOT_MAX_FILES,
+    );
+    expect(
+      baseline.files.reduce((total, file) => total + file.sizeBytes, 0),
+    ).toBeLessThanOrEqual(PROJECT_FILE_SNAPSHOT_MAX_TOTAL_BYTES);
+    expect(
+      baseline.files.every(
+        (file) => file.sizeBytes <= PROJECT_FILE_SNAPSHOT_MAX_FILE_BYTES,
+      ),
+    ).toBe(true);
+    const relativeManifest = saveManifest(
+      target.root,
+      target.manifestPath,
+      manifestFor({
+        scope: "single-area",
+        changedSurfaces: ["task.create"],
+        risks: [],
+        checks: [
+          {
+            kind: "policy-ci",
+            id: "ci.required",
+            title: "Required project CI",
+            requiredBy: ["repository policy"],
+          },
+          {
+            kind: "behavior",
+            id: "task.create.mirror",
+            title: "Implementation mirror check",
+            mode: "focused",
+            evidence: "implementation-mirror",
+            coversRisks: [],
+            coversSurfaces: ["task.create"],
+          },
+          {
+            kind: "behavior",
+            id: "ci.full-suite",
+            title: "Full suite",
+            mode: "full-suite",
+            evidence: "independent-public-behavior",
+            coversRisks: [],
+            coversSurfaces: ["task.create"],
+          },
+        ],
+      }),
+    );
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    expect(
+      await runTaskCliWithWorkspaceReclaim(
+        [
+          "verify-plan",
+          target.taskId,
+          "--manifest",
+          relativeManifest,
+          "--override",
+          "--no-jev",
+        ],
+        target.root,
+      ),
+    ).toBe(0);
+    expect(error).not.toHaveBeenCalled();
+    const output = lastOutput(log);
+    expect(
+      output.deterministicPlan.selected.map((check) => check.checkId),
+    ).toEqual(["ci.required"]);
+    expect(output.deterministicPlan.skipped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          checkId: "task.create.mirror",
+          reason: "implementation-mirror",
+        }),
+        expect.objectContaining({
+          checkId: "ci.full-suite",
+          reason: "broad-check-not-warranted",
+        }),
+      ]),
+    );
+    expect(output.deterministicPlan.coverageStatus).toBe(
+      "missing-public-behavior-evidence",
+    );
+    expect(output.deterministicPlan.uncoveredGoals).toEqual([
+      {
+        goal: {
+          id: "surface:task.create",
+          kind: "surface",
+          label: "task.create",
+        },
+        reason: "only-broader-check-not-warranted",
+        checkIds: ["ci.full-suite"],
+      },
+    ]);
+    expect(output.input.completeRepositoryCiInventory).toBe(false);
+    expect(output.decision.choice).toBe("override");
+    expect(output.execution).toBe("not-run");
+    expect(output.receipt.status).toBe("persisted");
+    if (!output.receipt.ref)
+      throw new Error("Planning receipt locator is missing");
+    expect(fs.existsSync(path.join(target.root, output.receipt.ref))).toBe(
+      true,
+    );
+
+    const after = kernel(target.root, target.taskDir);
+    expect(after).toEqual(target.initialKernel);
+    expect(after.reviews).toEqual([]);
+    expect(after.closure).toBeNull();
+    const latestRun = after.runs.at(-1);
+    if (!latestRun?.candidateSnapshot)
+      throw new Error("Non-Git completed Run candidate disappeared");
+    const currentObservation = observeTaskRunCandidate({
+      run: latestRun,
+      repositoryRoot: target.root,
+    });
+    expect(currentObservation.source).toBe(
+      PROJECT_FILE_CANDIDATE_OBSERVER_VERSION,
+    );
+    expect(currentObservation.scopeStatus).toBe("within-write-set");
+    expect(currentObservation.fingerprint).toBe(
+      latestRun.candidateSnapshot.entries.find(
+        (entry) => entry.ref === PROJECT_FILE_CANDIDATE_ENTRY_REF,
+      )?.fingerprint,
+    );
+  });
 
   it("rejects an answer when the candidate changes during Jev and writes no receipt", async () => {
     const target = fixture();
