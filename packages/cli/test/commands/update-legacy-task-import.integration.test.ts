@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -130,12 +131,16 @@ describe("pactile update legacy Task import", () => {
     const sourceTasksRoot = path.join(fixtureRoot, ".pactile", "tasks");
     const targetTasksRoot = projectFile(".pactile", "tasks");
     fs.cpSync(sourceTasksRoot, targetTasksRoot, { recursive: true });
-    const sourceFiles = new Map(
-      provenance.files.map((file) => [
-        file.path,
-        fs.readFileSync(path.join(fixtureRoot, ...file.path.split("/"))),
-      ]),
-    );
+    const sourceFiles = new Map<string, Buffer>();
+    for (const file of provenance.files) {
+      const bytes = fs.readFileSync(
+        path.join(fixtureRoot, ...file.path.split("/")),
+      );
+      expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+        file.sha256,
+      );
+      sourceFiles.set(file.path, bytes);
+    }
 
     const plan = scanLegacyTaskMigration({ projectRoot: root });
     expect(plan.preflight).toMatchObject({ status: "clear-to-review", blockerCount: 0 });
