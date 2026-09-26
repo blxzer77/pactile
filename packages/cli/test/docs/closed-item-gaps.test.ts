@@ -78,6 +78,36 @@ describe("P43 product template mirrors", () => {
     expect(frontier).toMatch(/AC 歧义面 = 0/);
   });
 
+  it("keeps brainstorm readiness consistent with conditional Grill routing", () => {
+    const brainstorm = readUtf8(
+      path.join(templates, "common/skills/brainstorm.md"),
+    );
+    const defineExtended = readUtf8(
+      path.join(templates, "pactile/modules/define-extended/contract.md"),
+    );
+
+    expect(defineExtended).toContain(
+      "触发：Phase=Define 且（Rigor=Full 或硬 Risk 或用户明确要深挖/研究/设计）。",
+    );
+    expect(defineExtended).toContain(
+      "Lite 成功路径可以全程不见 Grill、不见 Design。",
+    );
+    expect(defineExtended).toContain(
+      "Lite 写完 PRD+AC 就可以去请 Execute，不必经过本块。",
+    );
+    expect(brainstorm).toContain("PRD Grill is an optional planning aid");
+    expect(brainstorm).toContain(
+      "a Lite task with a clear, testable PRD and acceptance criteria may skip it",
+    );
+    expect(brainstorm).toContain("If PRD Grill ran, also require:");
+    expect(brainstorm).toContain(
+      "A Lite path that skips Grill follows the baseline criteria without a Grill-specific checklist requirement.",
+    );
+    expect(brainstorm).not.toContain(
+      "Complete **PRD Grill** (below) and **`pactile-micro-grill`**",
+    );
+  });
+
   it("ships test-brick and E2E walkthrough template assets", () => {
     const guidesDir = path.join(templates, "markdown/spec/guides");
     const discipline = readUtf8(
