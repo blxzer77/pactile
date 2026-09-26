@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+  KernelError,
   fingerprintTaskValue,
   listTaskKernelSnapshots,
   projectTaskKernelLifecycle,
@@ -9,6 +10,10 @@ import {
   type TaskKernelSnapshotV2,
   type TaskRunV2,
 } from "../../core/task/index.js";
+import {
+  readLegacyTaskImportRecord,
+  type LegacyTaskImportRecord,
+} from "../../core/task/legacy-task-migration-reader.js";
 import { approvedTask, piWorkdir } from "../pi/bridge.js";
 import { resolveTaskDir } from "../task/session.js";
 import { readTaskMap, type ChildEntry } from "../task/task-map.js";
@@ -140,6 +145,19 @@ interface IndexedTask {
   kernel: TaskKernelSnapshotV2 | null;
 }
 
+interface ReconciliationIndexedTask {
+  dir: string;
+  taskId: string;
+  migrationStatus: "needs-definition" | "needs-coordination";
+  reconciliationDetail: string;
+}
+
+type TaskKernelGraphIndexedTask = IndexedTask | ReconciliationIndexedTask;
+type ReconciliationStatus = Exclude<
+  LegacyTaskImportRecord["status"],
+  "imported"
+>;
+
 interface SelectedTask extends IndexedTask {
   child: ChildEntry;
   dependencies: string[];
@@ -217,6 +235,106 @@ function indexTasks(root: string): {
     });
   }
   return { byId, byDir, byArchivedId };
+}
+
+function reconciliationRecordForError(
+  error: unknown,
+): ReconciliationStatus | null {
+  if (!(error instanceof KernelError)) return null;
+  if (error.code === "LEGACY_TASK_REQUIRES_DEFINITION")
+    return "needs-definition";
+  if (error.code === "LEGACY_TASK_REQUIRES_COORDINATION")
+    return "needs-coordination";
+  return null;
+}
+
+function reconciliationDetail(
+  record: LegacyTaskImportRecord,
+  status: ReconciliationStatus,
+): string {
+  return status === "needs-definition"
+    ? `missing definition fields: ${record.missingDefinitionFields.join(", ")}`
+    : `unresolved blocking legacy dependencies: ${record.coordinationReasons.join(", ")}`;
+}
+
+function isReconciliationIndexedTask(
+  task: TaskKernelGraphIndexedTask,
+): task is ReconciliationIndexedTask {
+  return "migrationStatus" in task;
+}
+
+function indexTaskKernelGraphTasks(root: string): {
+  byId: Map<string, TaskKernelGraphIndexedTask>;
+  byArchivedId: Map<string, IndexedTask>;
+} {
+  const byId = new Map<string, TaskKernelGraphIndexedTask>();
+  const byArchivedId = new Map<string, IndexedTask>();
+  for (const dir of activeTaskDirectories(root)) {
+    let read: AnyTaskKernelReadResult;
+    try {
+      read = readTaskKernel({ root, taskDir: dir });
+    } catch (error) {
+      const expectedStatus = reconciliationRecordForError(error);
+      if (!expectedStatus) throw error;
+      const record = readLegacyTaskImportRecord(root, dir);
+      if (record?.status !== expectedStatus) throw error;
+      if (record.taskPath !== relativeTaskDir(root, dir)) throw error;
+      if (byId.has(record.legacyTaskId))
+        throw new Error(
+          `Duplicate active Task identity: ${record.legacyTaskId}`,
+        );
+      byId.set(record.legacyTaskId, {
+        dir,
+        taskId: record.legacyTaskId,
+        migrationStatus: expectedStatus,
+        reconciliationDetail: reconciliationDetail(record, expectedStatus),
+      });
+      continue;
+    }
+    const taskId =
+      read.kind === "task-kernel-v2"
+        ? read.kernel.identity.taskId
+        : read.kernel.kernel.identity.taskId;
+    if (byId.has(taskId))
+      throw new Error(`Duplicate active Task identity: ${taskId}`);
+    byId.set(taskId, {
+      dir,
+      taskId,
+      read,
+      kernel: read.kind === "task-kernel-v2" ? read.kernel : null,
+    });
+  }
+  const archivePrefix =
+    `${path.resolve(root, ".pactile", "tasks", "archive")}${path.sep}`.toLowerCase();
+  for (const { taskDir, kernel } of listTaskKernelSnapshots(root)) {
+    const dir = path.resolve(taskDir);
+    if (!dir.toLowerCase().startsWith(archivePrefix)) continue;
+    const taskId = kernel.identity.taskId;
+    if (byId.has(taskId) || byArchivedId.has(taskId))
+      throw new Error(`Duplicate active or archived Task identity: ${taskId}`);
+    byArchivedId.set(taskId, {
+      dir,
+      taskId,
+      read: { kind: "task-kernel-v2", kernel },
+      kernel,
+    });
+  }
+  return { byId, byArchivedId };
+}
+
+function reconciliationFailure(
+  task: ReconciliationIndexedTask,
+  relation: "candidate" | "dependency",
+): Error {
+  const subject =
+    relation === "candidate" ? "Task candidate" : "Hard Task dependency";
+  const reason =
+    task.migrationStatus === "needs-definition"
+      ? "must be completed before it can run"
+      : "must be coordinated before it can run";
+  return new Error(
+    `${subject} ${task.taskId} requires legacy reconciliation (${task.migrationStatus}): ${reason}; ${task.reconciliationDetail}`,
+  );
 }
 
 function resolveChildDependency(
@@ -1221,7 +1339,7 @@ function buildTaskKernelGraphSnapshot(
   if (candidateSet.size !== candidateTaskIds.length)
     throw new Error("candidateTaskIds contains duplicates");
 
-  const { byId, byArchivedId } = indexTasks(root);
+  const { byId, byArchivedId } = indexTaskKernelGraphTasks(root);
   const unknownCandidates = [...candidateSet].filter(
     (taskId) => !byId.has(taskId),
   );
@@ -1230,7 +1348,10 @@ function buildTaskKernelGraphSnapshot(
       `Unknown Task candidates: ${unknownCandidates.sort(compareText).join(", ")}`,
     );
   for (const taskId of candidateSet) {
-    if (!byId.get(taskId)?.kernel)
+    const indexed = byId.get(taskId);
+    if (indexed && isReconciliationIndexedTask(indexed))
+      throw reconciliationFailure(indexed, "candidate");
+    if (!indexed?.kernel)
       throw new Error(`Task candidate must use Task Kernel v2: ${taskId}`);
   }
 
@@ -1249,6 +1370,8 @@ function buildTaskKernelGraphSnapshot(
     const archivedIndexed = byArchivedId.get(taskId);
     const indexed = activeIndexed ?? archivedIndexed;
     if (!indexed) throw new Error(`Missing hard Task dependency: ${taskId}`);
+    if (isReconciliationIndexedTask(indexed))
+      throw reconciliationFailure(indexed, "dependency");
     if (!indexed.kernel)
       throw new Error(
         `Hard Task dependency must use Task Kernel v2: ${taskId}`,
