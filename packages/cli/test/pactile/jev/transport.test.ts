@@ -145,6 +145,18 @@ describe("optional Jev transport input and egress boundary", () => {
 
   it.each([
     ["credential assignment", "TYPESAFE_API_KEY=sk-test-12345678901234567890"],
+    ["package registry token", "NPM_TOKEN=p34syntheticvalue"],
+    ["private token", "PRIVATE_TOKEN=p34syntheticvalue"],
+    ["registry auth token", "REGISTRY_AUTH_TOKEN=p34syntheticvalue"],
+    [
+      "database URL with credentials",
+      "DATABASE_URL=postgres://user:pass@host/db",
+    ],
+    [
+      "database URL with query password",
+      "DATABASE_URL=postgres://host/db?password=p34syntheticvalue",
+    ],
+    ["URI user info", "postgres://user:pass@host/db"],
     ["sk_live credential", "sk_live_0123456789abcdef0123456789"],
     ["secret assignment", "SECRET=top-secret-value"],
     ["email address", "contact me at engineer@example.test"],

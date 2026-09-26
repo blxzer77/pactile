@@ -24,9 +24,10 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
   /\bsk-(?:live|test|proj)?[_-]?[A-Za-z0-9_-]{20,}\b/u,
   /\bsk_(?:live|test)_[A-Za-z0-9_-]{12,}\b/iu,
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/u,
-  /\b(?:[A-Z0-9_-]*(?:API[_-]?KEY|ACCESS[_-]?TOKEN|AUTH[_-]?TOKEN|REFRESH[_-]?TOKEN|CLIENT[_-]?SECRET|SECRET|PASSWORD|PASSWD|CREDENTIALS?)[A-Z0-9_-]*)\b\s*(?:=|:)\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/iu,
+  /\b[A-Z0-9_.-]*(?:API[_-]?KEY|ACCESS[_-]?(?:KEY|TOKEN)|AUTH(?:ORIZATION)?|TOKEN|SECRET|PASS(?:WORD|WD)?|CREDENTIALS?|PRIVATE[_-]?(?:KEY|TOKEN)|DATABASE[_-]?(?:URL|URI)|DB[_-]?(?:URL|URI)|CONNECTION[_-]?(?:STRING|URI|URL)|DSN)[A-Z0-9_.-]*\b["']?\s*(?:=|:)\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/iu,
   /\bBearer\s+[A-Za-z0-9._~+/-]{8,}={0,2}\b/iu,
   /\bhttps?:\/\/[^/\s:@]+:[^/\s@]+@/iu,
+  /\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/\s@?#]+@[^/\s?#]+/u,
   /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/iu,
 ];
 const EXPLICIT_SENSITIVE_MARKERS: readonly RegExp[] = [

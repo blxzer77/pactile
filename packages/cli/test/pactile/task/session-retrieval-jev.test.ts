@@ -123,8 +123,22 @@ describe("Jev project egress policy", () => {
       source: "default",
     });
 
+    const commentsOnlyRoot = createRoot(
+      "# Default Pactile config contains documentation only.\n# Jev has no override.\n",
+    );
+    expect(resolveJevProjectEgressPolicyV1(commentsOnlyRoot)).toEqual({
+      allowed: true,
+      source: "default",
+    });
+
     const validConfigRoot = createRoot("artifact_locale: en\n");
     expect(resolveJevProjectEgressPolicyV1(validConfigRoot)).toEqual({
+      allowed: true,
+      source: "default",
+    });
+
+    const legacyConfigRoot = createRoot("session_auto_commit: yes\n");
+    expect(resolveJevProjectEgressPolicyV1(legacyConfigRoot)).toEqual({
       allowed: true,
       source: "default",
     });
@@ -139,6 +153,22 @@ describe("Jev project egress policy", () => {
 
     const malformedRoot = createRoot("artifact_locale: en\n  orphan: true\n");
     expect(resolveJevProjectEgressPolicyV1(malformedRoot)).toEqual({
+      allowed: false,
+      reasonCode: "configuration-invalid",
+    });
+
+    const malformedYamlRoot = createRoot(
+      "jev:\n  egress: allow\nother: [unterminated\n",
+    );
+    expect(resolveJevProjectEgressPolicyV1(malformedYamlRoot)).toEqual({
+      allowed: false,
+      reasonCode: "configuration-invalid",
+    });
+
+    const unsupportedMergeRoot = createRoot(
+      "deny_policy: &deny { egress: deny }\njev:\n  <<: *deny\n",
+    );
+    expect(resolveJevProjectEgressPolicyV1(unsupportedMergeRoot)).toEqual({
       allowed: false,
       reasonCode: "configuration-invalid",
     });
@@ -267,7 +297,7 @@ describe("V2 Session Jev retrieval planning", () => {
   });
 
   it("fails closed on malformed project config without leaking the parser detail", async () => {
-    const root = createRoot("artifact_locale: en\n  orphan: true\n");
+    const root = createRoot("jev:\n  egress: allow\nother: [unterminated\n");
     vi.stubEnv("PACTILE_JEV_API_KEY", API_KEY);
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -284,7 +314,28 @@ describe("V2 Session Jev retrieval planning", () => {
         explanation: expect.any(String),
       },
     });
-    expect(JSON.stringify(planned)).not.toContain("orphan");
+    expect(JSON.stringify(planned)).not.toContain("unterminated");
+
+    const mergeRoot = createRoot(
+      "deny_policy: &deny { egress: deny }\njev:\n  <<: *deny\n",
+    );
+    const mergePack = compileSessionPack(mergeRoot, true);
+    const mergeFetch = vi.fn();
+    vi.stubGlobal("fetch", mergeFetch);
+    const mergePlanned = await compileSessionRetrievalPlanWithJevV1(
+      mergeRoot,
+      mergePack,
+    );
+
+    expect(mergeFetch).not.toHaveBeenCalled();
+    expect(mergePlanned.retrievalPlanning).toMatchObject({
+      source: "deterministic",
+      intents: ["exact"],
+      fallback: {
+        reasonCode: "configuration-invalid",
+        explanation: expect.any(String),
+      },
+    });
   });
 
   it("keeps the exact plan and omits provider errors when transport fails", async () => {
@@ -314,14 +365,18 @@ describe("V2 Session Jev retrieval planning", () => {
   });
 
   it("does not send a sensitive V2 Task summary", async () => {
-    const sensitiveValue = "p34-session-sensitive-canary";
-    const root = createRoot(undefined, "Review API_KEY=" + sensitiveValue);
+    const sensitiveValue = "p34syntheticvalue";
+    const root = createRoot(undefined, "Review NPM_TOKEN=" + sensitiveValue);
+    vi.stubEnv("PACTILE_SESSION_FACT_GAP", "1");
     vi.stubEnv("PACTILE_JEV_API_KEY", API_KEY);
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const pack = compileSessionPack(root, true);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    const planned = await compileSessionRetrievalPlanWithJevV1(root, pack);
+    expect(
+      await runContextCliAsync(["--mode", "session", "--json"], root),
+    ).toBe(0);
+    const planned = parseLastPack(log);
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(planned.retrievalPlanning).toMatchObject({
