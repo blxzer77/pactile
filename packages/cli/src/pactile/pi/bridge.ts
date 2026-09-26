@@ -15,6 +15,7 @@ import {
   bindPiV2RunHost,
   persistPiV2StopAndRelease,
   preparePiV2RunDispatch,
+  recheckPiV2RunDispatchBeforeSpawn,
   recheckPiV2RunDispatchWorkspace,
   type PiHostStopReceipt,
   type PiProcessExitEvidence,
@@ -291,6 +292,7 @@ export class PiTaskBridge {
     workdir: string,
     role: PiRunInput["role"],
     resumeFile: string | null,
+    beforeSpawn?: () => void,
   ): Promise<{
     client: PiRpcClient;
     startupMs: number;
@@ -314,7 +316,7 @@ export class PiTaskBridge {
     this.taskDir = dir;
     this.workdir = workdir;
     this.role = role;
-    const startupMs = await client.start();
+    const startupMs = await client.start(beforeSpawn);
     if (resumeFile) await client.switchSession(resumeFile);
     return { client, startupMs, mode: "cold" };
   }
@@ -552,6 +554,14 @@ export class PiTaskBridge {
         workdir,
         input.role,
         resumeFile,
+        dispatch
+          ? () => {
+              const verifiedWorkdir = recheckPiV2RunDispatchBeforeSpawn(dispatch);
+              if (verifiedWorkdir !== workdir) {
+                throw new Error("Pi V2 Run worktree changed immediately before process start");
+              }
+            }
+          : undefined,
       );
       if (parallelLeaseId) updateParallelChildPid(this.root, dir, parallelLeaseId, client.pid);
       fs.writeFileSync(

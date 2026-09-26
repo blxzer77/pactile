@@ -12,6 +12,7 @@ import {
 } from "../../core/task/index.js";
 import {
   acquireTaskKernelRunDispatchV1,
+  assertTaskKernelRunDispatchLeaseV1,
   bindTaskKernelRunDispatchOwnerV1,
   releaseTaskKernelRunDispatchV1,
   scheduleTaskKernelGraph,
@@ -196,6 +197,32 @@ export function recheckPiV2RunDispatchWorkspace(
   const currentWorkdir = workdirForRun(dispatch.root, run);
   if (currentWorkdir !== dispatch.workdir) {
     throw new Error("Pi V2 Run worktree path changed after dispatch admission");
+  }
+  return currentWorkdir;
+}
+
+/** Revalidates all dispatch gates synchronously at the final pre-spawn seam. */
+export function recheckPiV2RunDispatchBeforeSpawn(
+  dispatch: PiV2RunDispatch,
+): string {
+  const currentWorkdir = recheckPiV2RunDispatchWorkspace(dispatch);
+  const schedule = scheduleTaskKernelGraph(dispatch.root, [dispatch.taskId]);
+  if (schedule.receipt.receiptFingerprint !== dispatch.scheduleReceiptFingerprint) {
+    throw new Error("Pi V2 Task schedule changed after dispatch admission");
+  }
+
+  const lease = assertTaskKernelRunDispatchLeaseV1(dispatch.root, {
+    leaseId: dispatch.leaseId,
+    taskId: dispatch.taskId,
+    runId: dispatch.runId,
+  });
+  // Before Pi starts, the admission owner is intentionally only a placeholder.
+  // P37 reports that expected state as a host-binding mismatch after it has
+  // verified the active lease, schedule, Run, dependencies, and reserved write set.
+  if (lease.asserted || lease.reasonCode !== "task-run-host-binding-mismatch") {
+    throw new Error(
+      `Pi V2 dispatch lease is not active and dispatchable (${lease.reasonCode ?? "unexpected host binding"})`,
+    );
   }
   return currentWorkdir;
 }

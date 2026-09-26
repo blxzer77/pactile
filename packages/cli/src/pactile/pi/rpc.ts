@@ -124,7 +124,7 @@ export class PiRpcClient {
     }
   }
 
-  async start(): Promise<number> {
+  async start(beforeSpawn?: () => void): Promise<number> {
     if (this.isStarted) return 0;
     if (this.child) throw new Error("Pi RPC process cannot be restarted after exit");
     fs.mkdirSync(this.options.sessionDir, { recursive: true });
@@ -132,6 +132,8 @@ export class PiRpcClient {
       ? { command: process.env.ComSpec ?? "cmd.exe", args: ["/d", "/s", "/c", `pi.cmd --mode rpc${this.options.readOnly ? " --tools read,grep,find,ls" : ""}`] }
       : { command: "pi", args: ["--mode", "rpc", ...(this.options.readOnly ? ["--tools", "read,grep,find,ls"] : [])] });
     const started = performance.now();
+    // This callback is synchronous and has no await between its return and spawn.
+    beforeSpawn?.();
     const child = spawn(launch.command, launch.args, {
       cwd: this.options.cwd,
       env: { ...process.env, ...this.options.env, PI_CODING_AGENT_SESSION_DIR: this.options.sessionDir },

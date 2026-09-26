@@ -342,6 +342,74 @@ describe("Pi V2 dispatch admission and host stop", () => {
     }
   });
 
+  it("does not spawn when the active dispatch lease is revoked in the launch gap", async () => {
+    const root = makeRoot();
+    const task = createTask(root, "lease-revoked-before-spawn");
+    if (!task.runId) throw new Error("V2 Run is missing");
+    attachManagedWorktree(root, task);
+    const marker = path.join(root, "must-not-start.txt");
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [piScript(root, marker)] });
+    const sessionDir = path.join(task.taskDir, "pi-bridge", "sessions");
+    const mkdir = fs.mkdirSync;
+    let revokedLeasePath: string | null = null;
+    const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation((...args) => {
+      const result = mkdir(...args);
+      if (path.resolve(String(args[0])) === sessionDir) {
+        const latest = JSON.parse(
+          fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+        ) as { dispatch_lease_id?: unknown };
+        if (typeof latest.dispatch_lease_id !== "string") {
+          throw new Error("Pi V2 admission lease was not recorded before client startup");
+        }
+        revokedLeasePath = path.join(
+          root,
+          ".pactile",
+          ".runtime",
+          "scheduler",
+          "active",
+          `${latest.dispatch_lease_id}.json`,
+        );
+        fs.rmSync(revokedLeasePath, { force: true });
+      }
+      return result;
+    });
+    try {
+      const record = await bridge.run({
+        root,
+        task: task.taskId,
+        runId: task.runId,
+        role: "implement",
+        prompt: "A revoked lease must prevent the child from starting.",
+        timeoutMs: 5_000,
+      });
+      expect(record.outcome).toBe("failed");
+      expect(record.reason).toMatch(/dispatch-lease-not-active/u);
+      expect(record.dispatch_lease_released).toBe(false);
+      expect(record.process_stop_receipt).toBeNull();
+      expect(fs.existsSync(marker)).toBe(false);
+      expect(revokedLeasePath).not.toBeNull();
+      expect(fs.existsSync(revokedLeasePath as string)).toBe(false);
+
+      const kernel = readTaskKernel({ root, taskDir: task.taskDir, cwd: root });
+      if (kernel.kind !== "task-kernel-v2") throw new Error("V2 Kernel is missing");
+      expect(kernel.kernel.runs.at(-1)).toMatchObject({
+        id: task.runId,
+        state: "running",
+        candidateSnapshot: null,
+        result: null,
+        host: null,
+      });
+      expect(assertTaskKernelRunDispatchLeaseV1(root, {
+        leaseId: record.dispatch_lease_id as string,
+        taskId: task.taskId,
+        runId: task.runId,
+      })).toMatchObject({ asserted: false, reasonCode: "dispatch-lease-not-active" });
+    } finally {
+      mkdirSpy.mockRestore();
+      await bridge.close();
+    }
+  });
+
   it("does not start Pi without a latest Run, even when a hard dependency is open", async () => {
     const root = makeRoot();
     createTask(root, "open-dependency", { start: false });
