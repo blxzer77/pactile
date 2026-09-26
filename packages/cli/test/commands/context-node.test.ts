@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runContextCli } from "../../src/commands/context.js";
 import { runTaskCli } from "../../src/commands/task.js";
+import { emptyTaskRecord } from "../../src/core/task/schema.js";
 import { compileSessionPack } from "../../src/pactile/task/session-pack.js";
 
 const roots: string[] = [];
@@ -62,6 +63,36 @@ describe("Node context CLI", () => {
       expect(JSON.stringify(selection)).not.toContain("audit");
       expect(JSON.stringify(selection)).toContain("does not activate a Tile");
       expect(JSON.stringify(pack)).not.toContain("SECRET WORKFLOW DUMP");
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("fails closed instead of projecting malformed or unknown selected Tasks as V1", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-session-unresolved-"));
+    roots.push(root);
+    const tasksDir = path.join(root, ".pactile", "tasks");
+    const sessionsDir = path.join(root, ".pactile", ".runtime", "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    try {
+      for (const taskId of ["malformed-json", "malformed-kernel", "unknown-task"]) {
+        const taskDir = path.join(tasksDir, taskId);
+        fs.mkdirSync(taskDir, { recursive: true });
+        if (taskId === "malformed-json") fs.writeFileSync(path.join(taskDir, "task.json"), "{ invalid json\n");
+        if (taskId === "malformed-kernel") {
+          fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(emptyTaskRecord({ id: taskId, name: taskId, title: taskId })));
+          fs.writeFileSync(path.join(taskDir, "kernel.json"), "{ invalid kernel json\n");
+        }
+        fs.writeFileSync(path.join(sessionsDir, "unresolved_selection.json"), JSON.stringify({ selected_task: `.pactile/tasks/${taskId}` }));
+        vi.stubEnv("PACTILE_CONTEXT_ID", "unresolved_selection");
+
+        const pack = compileSessionPack(root);
+        expect(pack.kernel).toMatchObject({ taskId: null, schemaVersion: null, phase: null, condition: null, selected: true });
+        expect(pack).not.toHaveProperty("rigor");
+        expect(pack).not.toHaveProperty("topologyKind");
+        const layers = pack.layers as { text: string }[];
+        expect(layers[0].text).toContain("Phase: Unknown (selected Task format needs inspection)");
+        expect(layers[0].text).toContain("selected Task format is not identified");
+        expect(JSON.stringify(pack)).not.toMatch(/Rigor=lite|topology=single|Open Proposal|Open approval/);
+      }
     } finally { vi.unstubAllEnvs(); }
   });
 

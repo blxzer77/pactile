@@ -68,27 +68,23 @@ function taskTileOffer(
   }
 }
 
-function phaseFromLegacyStatus(status: unknown): KernelPhase {
-  if (status === "planning") return "define";
-  if (status === "in_progress") return "execute";
-  if (status === "review") return "verify";
-  if (status === "completed") return "close";
-  return "open";
-}
-
 /** Five-layer session context; no workflow dump or unactivated contract bodies. */
 export function compileSessionPack(root: string, factGap = false): Record<string, unknown> {
   const selection = resolveSelectedTask(root);
   const selected = Boolean(selection.taskPath) && !selection.stale;
   const stale = selection.stale;
   const dir = selection.taskPath && !stale ? resolveTaskDir(root, selection.taskPath) : null;
-  const kernelRead = dir && fs.existsSync(path.join(dir, "kernel.json")) ? readTaskKernel({ root, taskDir: dir, cwd: root }) : null;
+  let kernelRead: ReturnType<typeof readTaskKernel> | null = null;
+  if (selected && dir) {
+    try { kernelRead = readTaskKernel({ root, taskDir: dir, cwd: root }); }
+    catch { /* An unreadable or unknown selected Task must not fall through to V1 guidance. */ }
+  }
   const snapshot = kernelRead?.kind === "legacy-task-kernel-v1" ? kernelRead.kernel.kernel : null;
   const v2 = kernelRead?.kind === "task-kernel-v2" ? kernelRead.kernel : null;
-  const legacyRecord = dir && !kernelRead && fs.existsSync(path.join(dir, "task.json")) ? readJson(path.join(dir, "task.json")) : null;
-  const selectedLegacy = selected && !v2 && (snapshot !== null || legacyRecord !== null);
+  const selectedLegacy = selected && kernelRead?.kind === "legacy-task-kernel-v1";
   const unresolvedSelection = selected && !v2 && !selectedLegacy;
-  const phase: KernelPhase = v2?.phase ?? snapshot?.phase ?? (legacyRecord ? phaseFromLegacyStatus(legacyRecord.status) : "open");
+  const resolvedSelection = selected && !unresolvedSelection;
+  const phase: KernelPhase = v2?.phase ?? snapshot?.phase ?? "open";
   const condition = v2?.condition ?? snapshot?.condition ?? "ready";
   const outcome = v2?.outcome ?? snapshot?.outcome ?? null;
   const extras = snapshot?.projection?.extras ?? {};
@@ -125,7 +121,7 @@ export function compileSessionPack(root: string, factGap = false): Record<string
       `Dependencies: ${definition.dependencies.join(", ") || "none"}`, "Acceptance criteria:", ...definition.acceptanceCriteria.map((criterion) => `- ${criterion.id}: ${criterion.description}`)].join("\n");
     candidates.push({ id: "kernel-definition", kind: "artifact", path: path.relative(root, path.join(dir, "kernel.json")).replaceAll("\\", "/"), role: "definition", text, estimatedTokens: estimatedTokens(text) });
   }
-  if (dir && !v2) for (const [name, role] of PHASE_ARTIFACTS[phase]) {
+  if (dir && selectedLegacy) for (const [name, role] of PHASE_ARTIFACTS[phase]) {
     const file = path.join(dir, name);
     if (!fs.existsSync(file)) continue;
     const text = fs.readFileSync(file, "utf8").slice(0, 1200).trim();
@@ -141,7 +137,7 @@ export function compileSessionPack(root: string, factGap = false): Record<string
   }
   const contracts = kept.filter((item) => item.kind === "contract");
   const artifacts = kept.filter((item) => item.kind === "artifact");
-  const taskId = v2?.identity.taskId ?? snapshot?.identity.taskId ?? (typeof legacyRecord?.id === "string" ? legacyRecord.id : null);
+  const taskId = v2?.identity.taskId ?? snapshot?.identity.taskId ?? null;
   const revision = v2?.revision ?? snapshot?.revision ?? 0;
   const tileSelection = dir && selected && !stale && taskId
     ? taskTileOffer(root, taskId, phase, revision)
@@ -170,14 +166,15 @@ export function compileSessionPack(root: string, factGap = false): Record<string
   else if (selectedLegacy) constraints.push(`V1 legacy Task: Rigor=${rigor}; topology=${topologyKind}.`);
   else if (unresolvedSelection) constraints.push("The selected Task schema is unresolved; do not infer lifecycle gates.");
   else constraints.push("No Task selected: prepare a V2 Task Proposal only; no Task is created or execution authorized.");
-  if (selected) constraints.push("Stay inside the selected task contract.");
+  if (resolvedSelection) constraints.push("Stay inside the selected task contract.");
+  else if (unresolvedSelection) constraints.push("Do not read artifacts or proceed until the selected Task format is identified.");
   else constraints.push("No selected task: do not dump task-specific artifacts or add execution instructions.");
   if (condition === "blocked") constraints.push("Condition=blocked: do not silently retry.");
   const layer1 = [
     unresolvedSelection ? "Phase: Unknown (selected Task format needs inspection)"
       : selected ? `Phase: ${HUMAN[phase]} (${phase})`
         : stale ? "Phase: Intake (clear stale selection first)" : "Phase: Intake (no Task selected)",
-    ...(selected ? [`Condition: ${condition}`, `Outcome: ${outcome ?? "(none)"}`] : []),
+    ...(resolvedSelection ? [`Condition: ${condition}`, `Outcome: ${outcome ?? "(none)"}`] : []),
     "Constraints:", ...constraints, `Next: ${next}`,
   ].join("\n");
   const layer4 = factGap ? "Fact gap: route with intents exact / semantic / structural / external. Do not bind Agent tool names. Ranking and retrieval-pack stay with `retrieval-extended`." : "";
@@ -185,11 +182,12 @@ export function compileSessionPack(root: string, factGap = false): Record<string
   return {
     version: 1, source: "context-progressive",
     activationSource: { kind: "profile-runtime", filter: "phase-intersect-active", baselineActive, ondemandActive, note: "Layer 2 is phase-needed intersect still-active. Unactivated modules are not installed." },
-    kernel: { taskId: selected ? v2?.identity.taskId ?? snapshot?.identity.taskId ?? legacyRecord?.id ?? null : null,
-      schemaVersion: !selected ? null : v2?.schemaVersion ?? (snapshot ? 1 : selectedLegacy ? 0 : null),
-      revision: selected ? v2?.revision ?? snapshot?.revision ?? 0 : null,
-      deliveryLevel: v2?.definition.deliveryLevel ?? null, phase: selected ? phase : null,
-      condition: selected ? condition : null, outcome: selected ? outcome : null, humanPhase: selected ? HUMAN[phase] : null, selected },
+    kernel: { taskId: resolvedSelection ? taskId : null,
+      schemaVersion: resolvedSelection ? v2?.schemaVersion ?? (snapshot ? 1 : null) : null,
+      revision: resolvedSelection ? v2?.revision ?? snapshot?.revision ?? 0 : null,
+      deliveryLevel: v2?.definition.deliveryLevel ?? null, phase: resolvedSelection ? phase : null,
+      condition: resolvedSelection ? condition : null, outcome: resolvedSelection ? outcome : null,
+      humanPhase: resolvedSelection ? HUMAN[phase] : null, selected },
     ...(v2 || selectedLegacy ? { rigor, topologyKind } : {}),
     ...(!selected && !stale ? { proposalModel: "task-kernel-v2" } : {}),
     ...(tileSelection ? { tileSelection } : {}),
