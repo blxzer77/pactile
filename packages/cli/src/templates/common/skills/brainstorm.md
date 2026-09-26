@@ -2,7 +2,7 @@
 
 ## Non-Negotiable Interview Contract
 
-Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
+Ask only about unresolved **blocking** product decisions that could change the requirements or acceptance criteria. Use repository evidence for factual questions, give a recommendation for each blocking question, and stop asking once no blocking questions remain.
 
 Ask the questions one at a time.
 
@@ -40,7 +40,7 @@ Among competing designs that satisfy the acceptance criteria, prefer the one wit
 
 Use this skill during Phase 1 planning to turn the user's request into clear requirements and planning artifacts.
 
-**Agent-capable platforms:** Do **not** use legacy Claude-only grill subagents as a hard gate. Complete **PRD Grill** (below) and **`pactile-micro-grill`** for blocking open questions before treating planning as ready for `design.md` / `implement.md` / `start-execution --check`.
+**Agent-capable platforms:** Do **not** use legacy Claude-only grill subagents as a hard gate. PRD Grill is an optional planning aid; a Lite task with a clear, testable PRD and acceptance criteria may skip it. Regardless of whether Grill runs, resolve blocking open questions with **`pactile-micro-grill`** before treating planning as ready for `design.md` / `implement.md` / `start-execution --check`.
 
 ## Preconditions
 
@@ -61,7 +61,7 @@ Use a concise title from the user's request. Use a slug without a date prefix. `
 | Phase | Name | User questions |
 | --- | --- | --- |
 | **A** | Discovery Before Questions + PRD draft | None until repo evidence is exhausted |
-| **B** | PRD Grill pass + Micro-grill unresolved | Only blocking business / risk / preference |
+| **B** | Optional PRD Grill + Micro-grill for blocking questions | Only blocking business / risk / preference |
 
 External facts during Discovery or Research: load `smart-search-cli`; on CLI/doctor failure use an available web tool and persist its exact source under `{TASK}/research/`.
 
@@ -94,11 +94,11 @@ After Discovery, flesh out `prd.md`:
 - out of scope
 - open questions (tag **blocking** vs **nice-to-have**)
 
-For complex tasks, start `design.md` / `implement.md` skeletons only when boundaries are already clear from Discovery; otherwise wait until Phase B.
+For complex tasks, start the `implement.md` skeleton when boundaries are clear from Discovery. Add `design.md` only when Risk/Policy or `verification_profile: architecture` requires it; if boundaries are unclear, resolve blocking questions before drafting the artifacts.
 
-## Phase B — PRD Grill pass
+## Phase B — Optional PRD Grill pass
 
-Treat `prd.md` (+ existing `design.md` fragments) as the **only document surface**. Run this checklist; fix the PRD in place (no new subagent):
+When PRD Grill is selected as useful (often within a triggered `define-extended` path), treat `prd.md` (+ existing `design.md` fragments) as the **only document surface**. Run this checklist; fix the PRD in place (no new subagent). A Lite task with clear, testable PRD and acceptance criteria may skip this pass:
 
 | # | Check |
 | --- | --- |
@@ -119,7 +119,7 @@ Treat `prd.md` (+ existing `design.md` fragments) as the **only document surface
 
 ## Phase B — Micro-grill unresolved
 
-For each **blocking** open question after the checklist, embed the **`pactile-micro-grill` contract**:
+Use the **`pactile-micro-grill` contract** for every **blocking** open question identified during repository evidence, PRD drafting, or an optional PRD Grill pass. This applies whether or not PRD Grill runs:
 
 - exactly **one** question per message
 - **Simplified Chinese** for user-facing text
@@ -165,7 +165,7 @@ Your recommended answer defaults to Occam's Razor: the **minimal sufficient** op
 - out of scope
 - open questions that still block planning
 
-`design.md` records technical design for complex tasks:
+`design.md` records technical design when Risk/Policy or `verification_profile: architecture` requires it:
 
 - architecture and boundaries
 - data flow and contracts
@@ -181,19 +181,25 @@ Your recommended answer defaults to Occam's Razor: the **minimal sufficient** op
 - **Development Strategy Contract** (`execution_mode`, `isolation`, …): choose the execution and isolation strategy from the actual scope, then record the approved YAML block in `implement.md`.
 - follow-up checks before `pactile task start-execution --check`
 
-Lightweight tasks may have only `prd.md`. Complex tasks must have `prd.md`, `design.md`, and `implement.md` before `pactile task start-execution --check`.
+Lightweight tasks may have only `prd.md`. Complex tasks must have `prd.md` and `implement.md` before `pactile task start-execution --check`; include `design.md` only when Risk/Policy or `verification_profile: architecture` requires it.
 
 `implement.md` is not a replacement for `implement.jsonl`. Use JSONL files only for manifest-style spec and research references when the task needs them.
 
-## Completion criteria — PRD Grill done
+## Completion criteria — planning ready
 
-Planning is ready for execution gate when **all** hold:
+Planning is ready for the execution gate when all baseline criteria hold:
 
-- PRD Grill checklist (14 items) satisfied or explicitly N/A with rationale in `prd.md`
 - **No blocking** open questions in `prd.md`
 - Acceptance criteria are testable; out of scope is explicit
-- Complex tasks: `design.md` and `implement.md` present
+- Complex tasks: `implement.md` present; `design.md` only when Risk/Policy or `verification_profile: architecture` requires it
 - User reviewed artifacts or explicitly approved proceeding
+
+If PRD Grill ran, also require:
+
+- PRD Grill checklist (14 items) satisfied or explicitly N/A with rationale in `prd.md`
+- Stop rule met (**AC 歧义面 = 0**); not measured by question count
+
+A Lite path that skips Grill follows the baseline criteria without a Grill-specific checklist requirement.
 
 Then proceed to Phase 1.2 Research (if needed), Phase 1.4 `pactile task start-execution --check`, and implementation only after user approval.
 

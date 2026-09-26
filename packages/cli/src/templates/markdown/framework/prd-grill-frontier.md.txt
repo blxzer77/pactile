@@ -68,9 +68,9 @@ Each question must include: the decision needed, why it matters, your recommende
 ## Artifact rules (summary)
 
 - `prd.md` records requirements + acceptance (goal, confirmed facts, requirements, acceptance criteria, out of scope, blocking open questions).
-- `design.md` records technical design for complex tasks (architecture, data flow, contracts, trade-offs, rollback).
+- `design.md` records technical design when Risk/Policy or `verification_profile: architecture` requires it (architecture, data flow, contracts, trade-offs, rollback).
 - `implement.md` records execution planning (ordered checklist, validation commands, and Development Strategy Contract).
-- Complex tasks need all three before `start-execution --check`; lightweight tasks may be PRD-only.
+- Complex tasks need `prd.md` and `implement.md` before `start-execution --check`; include `design.md` only when Risk/Policy or `verification_profile: architecture` requires it.
 
 ## Stop — AC ambiguity face = 0
 
@@ -93,7 +93,7 @@ Planning is ready for the execution gate when **all** hold:
 - **No blocking** open questions in `prd.md`
 - Acceptance criteria testable; out of scope explicit
 - If grill ran: stop rule met (**AC 歧义面 = 0**); not measured by question count
-- Complex tasks: `design.md` and `implement.md` present
+- Complex tasks: `implement.md` present; `design.md` only when Risk/Policy or `verification_profile: architecture` requires it
 - User reviewed artifacts or explicitly approved proceeding
 
 Then proceed to Research (if needed), `pactile task start-execution <task> --check`, and implementation **only after** explicit user execution approval. Do not start implementation until the user approves or asks for implementation.
