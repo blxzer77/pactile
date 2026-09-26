@@ -36,15 +36,15 @@ pactile task close search-result --run <run-id> --review <review-id> \
 
 Review 绑定一次已完成的 Run 及其 candidate snapshot ID 与 fingerprint。PASS 必须包含 Review 和每条已声明验收标准的 evidence ref、未解决 blocker 必须为零，且 reviewer 必须不同于 Run 实施者和授权者。多个 Review 会保留在历史中；Close 必须采用最新 Run candidate 对应的最新 Review。诸如 `Pi settled` 的桥接回执不能自动生成 PASS Review。
 
-Close 由同一个 Kernel 权威提交。它检查 Task 已处于 Verify、最新 Run 已完成、Review 通过且绑定该候选、所有硬依赖均已成功 Close、验收证据齐全，并且交付证据符合 Task 声明的交付层级。Pull request 和 merged-result 的证据引用必须是 HTTPS URL；Kernel 校验声明的证据格式，但不会访问远端确认合并状态。
+Close 通过 `closeTaskKernel` 提交；CLI 调用的也是同一个 Core API。它检查 Task 已处于 Verify、最新 Run 已完成、最新 Review 通过且绑定该候选、所有硬依赖均已成功 Close、验收证据齐全，并且交付证据符合 Task 声明的交付层级。对 `local-result` 和 `documentation`，Core 会重新观察 Run 写入范围内的当前普通文件，并将文件字节绑定到候选。对 `pull-request` 和 `merged-result`，Core 要求 Git 候选，并通过只读 GitHub `gh api` observer 查询 PR；调用方给出的 HTTPS URL 只是定位符，本身不能证明交付。`pull-request` 必须由 provider 确认 PR 处于 open、非 draft 状态且 head 等于候选 HEAD；`merged-result` 还要求 provider 确认已合并、合并提交存在于本地目标分支的祖先链中，且该分支上的交付字节匹配。Provider 不支持或无法读取时，Close 会阻断。
 
-本切片对候选新鲜度有明确限制：Close 要求调用方提交当前 observation ID/fingerprint，并记录来源和 evidence ref。Kernel 会把该 observation 与冻结的 Run snapshot 对照，但不会重新计算当前 Git HEAD、暂存/未暂存状态或文件字节。因此，Git/文件观察器接入前，这只是声明性观察。只读 `readTaskKernel` reader 与 `projectTaskKernelLifecycle` projection 会导出 Kernel revision、phase、已记录的审批字段和 gate snapshot；这些审批字段也是调用方声明，projection 只供只读判断，最终权限仍由每次 Kernel mutation 检查。
+Close 请求中的 candidate ID 和 fingerprint 必须匹配最新冻结的 Run snapshot，但调用方提供的 observer 字段不构成新鲜度证明：Core 会重新观察当前候选并记录自己的 observation。Git Run 会检查 HEAD、分支、Git 报告的暂存/未暂存/未跟踪/冲突/已提交路径，并为变化的写入范围路径及精确写入路径计算有界文件指纹；非 Git Run 则重新扫描有界项目文件快照。这不代表对磁盘上每个字节作出证明：Git 未跟踪路径发现使用 `--exclude-standard`，非 Git 观察器会跳过配置的排除路径，并限制文件数、路径数和字节数。Close 还会重新打开 Review 与验收证据文件，按 Review 中保存的验证结果复核指纹。只读 `readTaskKernel` reader 与 `projectTaskKernelLifecycle` projection 只导出已记录状态，不触发这些观察；projection 仅供只读参考，每次 mutation 仍由 Kernel 作最终门槛判断。
 
 0.5.x Kernel v1 与 `task.json` 记录仍可读取，并保留旧命令路径。V2 读取时不会迁移旧数据。`pactile task legacy-create` 是显式兼容入口；旧数据自动迁移由 P36 单独处理。
 
 新 `task create` 命令必须提供 `--deliverable`、`--delivery-level` 和至少一条 `--accept`。旧的 `task create <title> --slug <slug>` 不再是 V2 创建方式；需要显式创建 0.5.x Task 时使用 `task legacy-create`。这样新写入不会静默沿用 Lite/Full 或 Parent/Child 预设。
 
-actor、approver、reviewer、observer、approval、candidate observation 与 evidence ref 都是调用方声明的值。Kernel 校验字段形状以及 Task、Run、候选、Review、Close 之间的关联，并要求 evidence ref 存在；它不会认证这些身份、打开被引用文件、向宿主验证审批，也不会查询 PR 或合并服务。Git/文件观察器接入并核对外部事实前，候选 observation 仍是声明。
+actor、approver、reviewer 与 Run authorization 字段由调用方提供；Core 会检查字段形状和记录之间的关联，但不会认证身份或向外部宿主验证审批。Close 请求中的 candidate ID/fingerprint 只负责绑定所选 Run；当前 observation 由 Core 自行生成。Review 和验收 evidence ref 会在记录 Review 时解析为有界文件并计算指纹，Close 时再打开文件复核。PR 状态只通过内置的只读 GitHub provider 查询，适用于受支持的 GitHub 仓库，不代表通用 PR 主机集成。
 
 ## 0.5.x Kernel v1 记录与命令
 

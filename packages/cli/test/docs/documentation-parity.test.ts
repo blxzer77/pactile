@@ -165,4 +165,34 @@ describe("Batch 4 documentation links and locale parity", () => {
     }
     expect(failures).toEqual([]);
   });
+
+  it("documents V2 Close observations and provider proof in both locales", () => {
+    const english = readUtf8("docs/concepts/task-system.md").split(
+      /^## 0\.5\.x Kernel v1/mu,
+    )[0];
+    const chinese = readUtf8("docs/concepts/task-system.zh-CN.md").split(
+      /^## 0\.5\.x Kernel v1/mu,
+    )[0];
+    if (!english || !chinese) throw new Error("V2 task-system section is missing");
+
+    expect(english).toContain("`closeTaskKernel`, the same Core API used by the CLI");
+    expect(english).toContain("Core re-observes current candidate state");
+    expect(english).toContain("read-only GitHub `gh api` observer");
+    expect(english).toContain("`--exclude-standard`");
+    expect(english).toContain("Review and acceptance evidence is also reopened and fingerprinted at Close");
+    expect(english).toContain("does not authenticate identities");
+    expect(english).not.toContain("does not recompute current Git HEAD, staged/unstaged state, or file bytes");
+    expect(english).not.toContain("does not query a PR/merge service");
+    expect(english).not.toContain("does not authenticate those identities, open referenced files");
+
+    expect(chinese).toContain("同一个 Core API");
+    expect(chinese).toContain("Core 会重新观察当前候选");
+    expect(chinese).toContain("只读 GitHub `gh api` observer");
+    expect(chinese).toContain("`--exclude-standard`");
+    expect(chinese).toContain("Close 还会重新打开 Review 与验收证据文件");
+    expect(chinese).toContain("不会认证身份");
+    expect(chinese).not.toContain("不会重新计算当前 Git HEAD");
+    expect(chinese).not.toContain("它不会认证这些身份、打开被引用文件");
+    expect(chinese).not.toContain("也不会查询 PR 或合并服务");
+  });
 });
