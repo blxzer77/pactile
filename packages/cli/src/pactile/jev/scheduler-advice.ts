@@ -74,6 +74,8 @@ export interface JevScheduleAdviceAuditV1 {
   readonly suggestedTaskIds: readonly string[];
   readonly adoptedTaskIds: readonly string[];
   readonly overriddenTaskIds: readonly string[];
+  /** Project egress policy snapshots recorded by the standalone V2 scheduler. */
+  readonly projectEgressPolicy?: JevScheduleProjectEgressAuditV1;
   readonly transport: {
     readonly latencyMs: number;
     /** Null when the facade failed before returning transport metrics. */
@@ -89,6 +91,18 @@ export interface JevScheduleAdviceAuditV1 {
 export interface JevScheduleAdviceResultV1 {
   readonly advice: JevSchedulerAdviceV1 | null;
   readonly audit: JevScheduleAdviceAuditV1;
+}
+
+export type JevScheduleProjectEgressStatusV1 =
+  | "allowed"
+  | "egress-denied"
+  | "configuration-invalid";
+
+export interface JevScheduleProjectEgressAuditV1 {
+  readonly atScheduleStart: JevScheduleProjectEgressStatusV1;
+  readonly beforeAdviceRequest: JevScheduleProjectEgressStatusV1;
+  readonly afterAdviceResponse: JevScheduleProjectEgressStatusV1;
+  readonly changed: boolean;
 }
 
 const MAX_CHOICE_CANDIDATES = 16;
@@ -462,5 +476,28 @@ export function supersedeJevTaskScheduleAdviceV1(
     reasonCode: "eligibility-changed",
     adoptedTaskIds: [],
     overriddenTaskIds: [...audit.suggestedTaskIds],
+  };
+}
+
+/** Rejects an answer when the project egress policy is no longer permissive. */
+export function applyJevTaskScheduleEgressFallbackV1(
+  audit: JevScheduleAdviceAuditV1,
+  reasonCode: Extract<
+    JevFallbackCodeV1,
+    "egress-denied" | "configuration-invalid"
+  >,
+): JevScheduleAdviceAuditV1 {
+  return {
+    ...audit,
+    status:
+      audit.status === "answered" || audit.status === "superseded"
+        ? "superseded"
+        : "fallback",
+    reasonCode,
+    adoptedTaskIds: [],
+    overriddenTaskIds:
+      audit.suggestedTaskIds.length > 0
+        ? [...audit.suggestedTaskIds]
+        : [...audit.overriddenTaskIds],
   };
 }

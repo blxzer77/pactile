@@ -11,12 +11,15 @@ import {
 } from "../../../src/core/task/index.js";
 import { runTaskSchedulePlanCliAsync } from "../../../src/commands/task-schedule.js";
 import {
+  createJevDecisionFacadeV1,
   type JevDecisionFacadeV1,
   type JevEgressAuthorizationV1,
 } from "../../../src/pactile/jev/index.js";
 import {
+  acquireTaskKernelRunDispatchV1,
   planTaskKernelGraphV1,
   readTaskKernelScheduleReceiptV1,
+  scheduleTaskKernelGraph,
   scheduleTaskKernelGraphWithJevV1,
 } from "../../../src/pactile/scheduler/index.js";
 import { createTaskRunWorktree } from "../../../src/pactile/worktree/index.js";
@@ -79,7 +82,12 @@ interface TaskFixture {
 function makeTask(
   root: string,
   taskId: string,
-  options: { dependencies?: string[]; start?: boolean } = {},
+  options: {
+    approvedAt?: string;
+    dependencies?: string[];
+    start?: boolean;
+    writeSet?: string[];
+  } = {},
 ): TaskFixture {
   const taskDir = path.join(root, ".pactile", "tasks", taskId);
   const created = createTaskKernel({
@@ -107,12 +115,12 @@ function makeTask(
     input: { summary: "Implement the declared result", references: [] },
     authorization: {
       approvedBy: "test-approver",
-      approvedAt: "2026-09-26T00:00:00.000Z",
+      approvedAt: options.approvedAt ?? "2026-09-26T00:00:00.000Z",
       scope: "declared Task write set",
       evidenceRef: `approval:${taskId}`,
     },
     initialState: "waiting",
-    writeSetSnapshot: [`src/${taskId}.ts`],
+    writeSetSnapshot: options.writeSet ?? [`src/${taskId}.ts`],
     estimatedDurations: { executionMs: 100_000 },
   });
   const runId = started.kernel.runs.at(-1)?.id;
@@ -185,7 +193,9 @@ function answerFacade(
   };
 }
 
-function successResponse(choice: "candidate-01" | "candidate-02"): Response {
+function successResponse(
+  choice: "candidate-01" | "candidate-02" = "candidate-02",
+): Response {
   const other = choice === "candidate-01" ? "candidate-02" : "candidate-01";
   return new Response(
     JSON.stringify({
@@ -202,6 +212,20 @@ function successResponse(choice: "candidate-01" | "candidate-02"): Response {
     }),
     { status: 200, headers: { "content-type": "application/json" } },
   );
+}
+
+function realJevFacade(fetchImpl: typeof fetch): JevDecisionFacadeV1 {
+  return createJevDecisionFacadeV1({
+    enabled: true,
+    maxDecisions: 1,
+    maxDeadlineMs: 2_500,
+    transport: {
+      apiKey: "test-schedule-key-not-for-output",
+      deadlineMs: 2_500,
+      maxRetries: 0,
+      fetchImpl,
+    },
+  });
 }
 
 describe("V2 Task Jev schedule advice", () => {
@@ -373,6 +397,127 @@ describe("V2 Task Jev schedule advice", () => {
     });
   });
 
+  it("filters a waiting Run whose approval timestamp is invalid", async () => {
+    const root = makeGitRoot();
+    const invalid = makeTask(root, "jev-approval-invalid", {
+      approvedAt: "not-an-instant",
+    });
+    const eligible = makeTask(root, "jev-approval-eligible");
+    attachManagedWorktree(root, invalid);
+    attachManagedWorktree(root, eligible);
+    const facade = answerFacade();
+
+    const result = await scheduleTaskKernelGraphWithJevV1(
+      root,
+      [invalid.taskId, eligible.taskId],
+      {},
+      { facade, egress },
+    );
+
+    expect(facade.decide).not.toHaveBeenCalled();
+    expect(result.receipt.request.jevAdvice).toBeUndefined();
+    expect(result.receipt.jevAdviceAudit).toMatchObject({
+      status: "skipped",
+      reasonCode: "insufficient-candidates",
+      finalEligibleCandidates: {
+        candidateTaskIds: [eligible.taskId],
+        filteredCandidates: [
+          { taskId: invalid.taskId, reasonCode: "approval-rejected" },
+        ],
+        eligibility: {
+          approvalPassedTaskIds: [eligible.taskId],
+          worktreePassedTaskIds: [eligible.taskId],
+        },
+      },
+    });
+  });
+
+  it("filters a candidate that conflicts with an active project write lease", async () => {
+    const root = makeGitRoot();
+    const leaseHolder = makeTask(root, "jev-lease-holder", {
+      writeSet: ["src/shared.ts"],
+    });
+    const conflict = makeTask(root, "jev-lease-conflict", {
+      writeSet: ["src/shared.ts"],
+    });
+    const unaffected = makeTask(root, "jev-lease-unaffected", {
+      writeSet: ["src/unaffected.ts"],
+    });
+    attachManagedWorktree(root, leaseHolder);
+    attachManagedWorktree(root, conflict);
+    attachManagedWorktree(root, unaffected);
+    if (!leaseHolder.runId) throw new Error("Lease holder Run is missing");
+    const holderSchedule = scheduleTaskKernelGraph(root, [leaseHolder.taskId]);
+    const admission = acquireTaskKernelRunDispatchV1(root, {
+      scheduleReceiptFingerprint: holderSchedule.receipt.receiptFingerprint,
+      taskId: leaseHolder.taskId,
+      runId: leaseHolder.runId,
+      owner: {
+        host: "pi",
+        role: "implement",
+        sessionId: null,
+        threadId: null,
+        hostId: null,
+      },
+    });
+    expect(admission.permitted).toBe(true);
+    const facade = answerFacade();
+
+    const result = await scheduleTaskKernelGraphWithJevV1(
+      root,
+      [conflict.taskId, unaffected.taskId],
+      {},
+      { facade, egress },
+    );
+
+    expect(facade.decide).not.toHaveBeenCalled();
+    expect(result.receipt.request.jevAdvice).toBeUndefined();
+    expect(result.receipt.jevAdviceAudit).toMatchObject({
+      status: "skipped",
+      reasonCode: "insufficient-candidates",
+      finalEligibleCandidates: {
+        candidateTaskIds: [unaffected.taskId],
+        filteredCandidates: [
+          {
+            taskId: conflict.taskId,
+            reasonCode: "active-write-lease-conflict",
+          },
+        ],
+      },
+    });
+  });
+
+  it("does not send later-wave candidates held behind overlapping writes", async () => {
+    const root = makeGitRoot();
+    const first = makeTask(root, "jev-overlap-a", {
+      writeSet: ["src/shared.ts"],
+    });
+    const second = makeTask(root, "jev-overlap-b", {
+      writeSet: ["src/shared.ts"],
+    });
+    attachManagedWorktree(root, first);
+    attachManagedWorktree(root, second);
+    const baseline = planTaskKernelGraphV1(root, [first.taskId, second.taskId]);
+    expect(baseline.plan.waves[0]?.candidateTaskIds).toHaveLength(1);
+    const facade = answerFacade();
+
+    const result = await scheduleTaskKernelGraphWithJevV1(
+      root,
+      [first.taskId, second.taskId],
+      {},
+      { facade, egress },
+    );
+
+    expect(facade.decide).not.toHaveBeenCalled();
+    expect(result.receipt.request.jevAdvice).toBeUndefined();
+    expect(result.receipt.jevAdviceAudit).toMatchObject({
+      status: "skipped",
+      reasonCode: "insufficient-candidates",
+      preparedRequestSnapshot: null,
+      sentRequestSnapshot: null,
+    });
+  });
+
   it.each([
     ["deny", "jev:\n  egress: deny\n", "egress-denied"],
     ["invalid", "jev:\n  egress: maybe\n", "configuration-invalid"],
@@ -428,4 +573,154 @@ describe("V2 Task Jev schedule advice", () => {
       expect(fetchMock.mock.calls).toHaveLength(0);
     },
   );
+
+  it.each([
+    ["deny", "jev:\n  egress: deny\n", "egress-denied"],
+    ["invalid", "jev:\n  egress: maybe\n", "configuration-invalid"],
+  ] as const)(
+    "keeps direct V2 library calls local for project egress %s",
+    async (_label, config, reasonCode) => {
+      const root = makeGitRoot();
+      const first = makeTask(root, `jev-api-egress-a-${reasonCode}`);
+      const second = makeTask(root, `jev-api-egress-b-${reasonCode}`);
+      attachManagedWorktree(root, first);
+      attachManagedWorktree(root, second);
+      fs.writeFileSync(
+        path.join(root, ".pactile", "config.yaml"),
+        config,
+        "utf8",
+      );
+      const fetchMock = vi.fn(async () => successResponse());
+      const facade = realJevFacade(fetchMock as unknown as typeof fetch);
+      const baseline = planTaskKernelGraphV1(root, [
+        first.taskId,
+        second.taskId,
+      ]);
+
+      const result = await scheduleTaskKernelGraphWithJevV1(
+        root,
+        [first.taskId, second.taskId],
+        {},
+        { facade, egress },
+      );
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(result.receipt.request.jevAdvice).toBeUndefined();
+      expect(result.receipt.plan).toEqual(baseline.plan);
+      expect(result.receipt.jevAdviceAudit).toMatchObject({
+        status: "fallback",
+        reasonCode,
+        sentRequestSnapshot: null,
+        transport: { attempts: 0 },
+        projectEgressPolicy: {
+          atScheduleStart: reasonCode,
+          beforeAdviceRequest: reasonCode,
+          afterAdviceResponse: reasonCode,
+          changed: false,
+        },
+      });
+    },
+  );
+
+  it("rejects a Jev answer when project egress changes to deny during the request", async () => {
+    const root = makeGitRoot();
+    const first = makeTask(root, "jev-egress-drift-a");
+    const second = makeTask(root, "jev-egress-drift-b");
+    attachManagedWorktree(root, first);
+    attachManagedWorktree(root, second);
+    const configPath = path.join(root, ".pactile", "config.yaml");
+    fs.writeFileSync(configPath, "jev:\n  egress: allow\n", "utf8");
+    const fetchMock = vi.fn(async () => {
+      fs.writeFileSync(configPath, "jev:\n  egress: deny\n", "utf8");
+      return successResponse();
+    });
+    const facade = realJevFacade(fetchMock as unknown as typeof fetch);
+    const baseline = planTaskKernelGraphV1(root, [first.taskId, second.taskId]);
+
+    const result = await scheduleTaskKernelGraphWithJevV1(
+      root,
+      [first.taskId, second.taskId],
+      {},
+      { facade, egress },
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.receipt.request.jevAdvice).toBeUndefined();
+    expect(result.receipt.plan).toEqual(baseline.plan);
+    expect(result.receipt.jevAdviceAudit).toMatchObject({
+      status: "superseded",
+      reasonCode: "egress-denied",
+      adoptedTaskIds: [],
+      overriddenTaskIds: [second.taskId, first.taskId],
+      sentRequestSnapshot: {
+        candidateTaskIds: [first.taskId, second.taskId],
+      },
+      projectEgressPolicy: {
+        atScheduleStart: "allowed",
+        beforeAdviceRequest: "allowed",
+        afterAdviceResponse: "egress-denied",
+        changed: true,
+      },
+    });
+  });
+
+  it("allows the task-schedule CLI helper to adopt bounded Jev advice when egress is allowed", async () => {
+    const root = makeGitRoot();
+    const first = makeTask(root, "jev-cli-allowed-a");
+    const second = makeTask(root, "jev-cli-allowed-b");
+    attachManagedWorktree(root, first);
+    attachManagedWorktree(root, second);
+    fs.writeFileSync(
+      path.join(root, ".pactile", "config.yaml"),
+      "jev:\n  egress: allow\n",
+      "utf8",
+    );
+    vi.stubEnv("PACTILE_JEV_API_KEY", "test-schedule-key-not-for-output");
+    vi.stubEnv("PACTILE_JEV_ENABLED", "true");
+    const requestBodies: string[] = [];
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        void input;
+        requestBodies.push(String(init?.body ?? ""));
+        return successResponse();
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(
+      runTaskSchedulePlanCliAsync([first.taskId, second.taskId], root),
+    ).resolves.toBe(0);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const requestBody = requestBodies[0] ?? "";
+    expect(requestBody).not.toContain(first.taskId);
+    expect(requestBody).not.toContain(second.taskId);
+    expect(requestBody).not.toContain("src/jev-cli-allowed-");
+    expect(log).toHaveBeenCalledTimes(1);
+    const output = JSON.parse(String(log.mock.lastCall?.[0])) as {
+      receipt: {
+        jevAdviceAudit: {
+          status: string;
+          adoptedTaskIds: string[];
+          projectEgressPolicy: {
+            atScheduleStart: string;
+            beforeAdviceRequest: string;
+            afterAdviceResponse: string;
+            changed: boolean;
+          };
+        };
+      };
+    };
+    expect(output.receipt.jevAdviceAudit).toMatchObject({
+      status: "answered",
+      adoptedTaskIds: [second.taskId, first.taskId],
+      projectEgressPolicy: {
+        atScheduleStart: "allowed",
+        beforeAdviceRequest: "allowed",
+        afterAdviceResponse: "allowed",
+        changed: false,
+      },
+    });
+  });
 });

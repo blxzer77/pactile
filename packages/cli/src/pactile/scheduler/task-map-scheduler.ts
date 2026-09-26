@@ -18,8 +18,13 @@ import { approvedTask, piWorkdir } from "../pi/bridge.js";
 import { resolveTaskDir } from "../task/session.js";
 import { readTaskMap, type ChildEntry } from "../task/task-map.js";
 import { inspectRunWorktree } from "../worktree/manager.js";
+import {
+  resolveJevProjectEgressPolicyV1,
+  type JevProjectEgressPolicyV1,
+} from "../jev/project-policy.js";
 import type { JevFallbackCodeV1 } from "../jev/transport.js";
 import {
+  applyJevTaskScheduleEgressFallbackV1,
   finalizeJevTaskScheduleAdviceV1,
   finalizeJevTaskScheduleEligibilityV1,
   requestJevTaskScheduleAdviceV1,
@@ -28,6 +33,8 @@ import {
   type JevScheduleAdviceOptionsV1,
   type JevScheduleCandidateFilterV1,
   type JevScheduleCandidateV1,
+  type JevScheduleProjectEgressAuditV1,
+  type JevScheduleProjectEgressStatusV1,
 } from "../jev/scheduler-advice.js";
 import {
   listProjectWriteLeases,
@@ -1710,6 +1717,28 @@ function taskKernelEligibilityFingerprint(
   });
 }
 
+function projectEgressStatus(
+  policy: JevProjectEgressPolicyV1,
+): JevScheduleProjectEgressStatusV1 {
+  return policy.allowed ? "allowed" : policy.reasonCode;
+}
+
+function projectEgressAudit(
+  atScheduleStart: JevProjectEgressPolicyV1,
+  beforeAdviceRequest: JevProjectEgressPolicyV1,
+  afterAdviceResponse: JevProjectEgressPolicyV1,
+): JevScheduleProjectEgressAuditV1 {
+  const startStatus = projectEgressStatus(atScheduleStart);
+  const beforeStatus = projectEgressStatus(beforeAdviceRequest);
+  const afterStatus = projectEgressStatus(afterAdviceResponse);
+  return {
+    atScheduleStart: startStatus,
+    beforeAdviceRequest: beforeStatus,
+    afterAdviceResponse: afterStatus,
+    changed: startStatus !== beforeStatus || startStatus !== afterStatus,
+  };
+}
+
 /**
  * Plans a Task Kernel v2 dependency graph directly. It does not read or create
  * a Parent Task Map and never mutates Task or Run state.
@@ -1945,6 +1974,7 @@ export async function scheduleTaskKernelGraphWithJevV1(
   fallbackReasonCode?: JevFallbackCodeV1,
 ): Promise<PersistedTaskKernelScheduleV1> {
   const root = path.resolve(rootValue);
+  const policyAtScheduleStart = resolveJevProjectEgressPolicyV1(root);
   const planningOptions: TaskKernelScheduleOptionsV1 = { ...options };
   delete planningOptions.jevAdvice;
 
@@ -1961,6 +1991,12 @@ export async function scheduleTaskKernelGraphWithJevV1(
     previewSnapshot,
     structuralCandidates,
   );
+  const policyBeforeAdviceRequest = resolveJevProjectEgressPolicyV1(root);
+  const projectPolicyFallbackReasonCode = !policyAtScheduleStart.allowed
+    ? policyAtScheduleStart.reasonCode
+    : !policyBeforeAdviceRequest.allowed
+      ? policyBeforeAdviceRequest.reasonCode
+      : undefined;
   const requested = await requestJevTaskScheduleAdviceV1({
     candidates: initialEligibility.candidates,
     filteredCandidates: initialEligibility.filteredCandidates,
@@ -1970,7 +2006,7 @@ export async function scheduleTaskKernelGraphWithJevV1(
       activeLeaseCheckAt: initialEligibility.activeLeaseCheckAt,
     },
     options: jev,
-    fallbackReasonCode,
+    fallbackReasonCode: projectPolicyFallbackReasonCode ?? fallbackReasonCode,
   });
 
   const finalSnapshot = buildTaskKernelGraphSnapshot(
@@ -1986,6 +2022,7 @@ export async function scheduleTaskKernelGraphWithJevV1(
     finalSnapshot,
     finalStructuralCandidates,
   );
+  const policyAfterAdviceResponse = resolveJevProjectEgressPolicyV1(root);
   let finalRequest = finalSnapshot.request;
   const advice = requested.advice;
   const requestStateStable =
@@ -2015,9 +2052,17 @@ export async function scheduleTaskKernelGraphWithJevV1(
     },
     eligibilityChanged,
   );
+  audit = {
+    ...audit,
+    projectEgressPolicy: projectEgressAudit(
+      policyAtScheduleStart,
+      policyBeforeAdviceRequest,
+      policyAfterAdviceResponse,
+    ),
+  };
 
   if (advice) {
-    if (!eligibilityChanged) {
+    if (!eligibilityChanged && policyAfterAdviceResponse.allowed) {
       finalRequest = { ...finalSnapshot.request, jevAdvice: advice };
       audit = finalizeJevTaskScheduleAdviceV1(
         audit,
@@ -2026,6 +2071,12 @@ export async function scheduleTaskKernelGraphWithJevV1(
     } else {
       audit = supersedeJevTaskScheduleAdviceV1(audit);
     }
+  }
+  if (!policyAfterAdviceResponse.allowed) {
+    audit = applyJevTaskScheduleEgressFallbackV1(
+      audit,
+      policyAfterAdviceResponse.reasonCode,
+    );
   }
 
   const receiptBase: Omit<
