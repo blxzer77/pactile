@@ -49,14 +49,24 @@ describe("release promotion scripts", () => {
     );
     expect(workflow).not.toContain("node --input-type=module - <<'NODE'");
     expect(workflow).not.toContain("node - \"$notes_file\" <<'NODE'");
-    expect(
-      fs.readFileSync(
-        path.join(repositoryRoot, ".github/workflows/ci.yml"),
-        "utf8",
-      ),
-    ).toContain(
+    const ciWorkflow = fs.readFileSync(
+      path.join(repositoryRoot, ".github/workflows/ci.yml"),
+      "utf8",
+    );
+    expect(ciWorkflow).toContain(
       "node packages/cli/.tmp/p31-script-build/release-conformance.js",
     );
+    const conformanceJobStart = ciWorkflow.indexOf("  release-conformance:");
+    expect(conformanceJobStart).toBeGreaterThanOrEqual(0);
+    const conformanceJob = ciWorkflow.slice(conformanceJobStart);
+    expect(conformanceJob).toContain('node: ["20.0.0", "lts/*", "current"]');
+    expect(conformanceJob).toContain("run: pnpm typecheck");
+    expect(conformanceJob).toContain(
+      "Test Node-only and package release contracts",
+    );
+    expect(conformanceJob).toContain("vitest run --maxWorkers=2");
+    expect(conformanceJob).toContain("test/release-guard.test.ts");
+    expect(conformanceJob).toContain("test/assert-no-python-on-path.test.ts");
     expect(packageManifest.scripts.clean).toBe(
       "pnpm run build:script-artifacts && node .tmp/p31-script-build/clean.js",
     );
