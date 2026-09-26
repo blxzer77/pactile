@@ -46,6 +46,20 @@ function markLegacyProjectVersion(root: string): void {
   fs.writeFileSync(path.join(root, ".pactile", ".version"), "0.5.0\n", "utf8");
 }
 
+function copyHistoryFixture(root: string): void {
+  const runtimePath = path.join(".pactile", "runtime");
+  fs.cpSync(HISTORY_FIXTURE, root, {
+    recursive: true,
+    filter(source) {
+      const relative = path.relative(HISTORY_FIXTURE, source);
+      return (
+        relative !== runtimePath &&
+        !relative.startsWith(`${runtimePath}${path.sep}`)
+      );
+    },
+  });
+}
+
 function createV2Task(root: string, directory: string, id: string): string {
   const taskDir = path.join(root, ".pactile", "tasks", directory);
   createTaskKernel({
@@ -182,7 +196,7 @@ afterEach(() => {
 describe("legacy-task CLI route", () => {
   it("routes history through the CLI and leaves archived fixture bytes unchanged", () => {
     const root = makeRoot();
-    fs.cpSync(HISTORY_FIXTURE, root, { recursive: true });
+    copyHistoryFixture(root);
     markLegacyProjectVersion(root);
     const before = snapshotTree(root);
 
@@ -221,7 +235,7 @@ describe("legacy-task CLI route", () => {
 
   it("indexes archived and interrupted sources, exposes source metadata, and explicitly restores them through CLI", async () => {
     const root = makeRoot();
-    fs.cpSync(HISTORY_FIXTURE, root, { recursive: true });
+    copyHistoryFixture(root);
     markLegacyProjectVersion(root);
     const archivedDir = path.join(
       root,
@@ -463,6 +477,13 @@ describe("legacy-task CLI route", () => {
     expect(snapshotTree(archivedDir)).toEqual(archivedBefore);
     expect(snapshotTree(interruptedDir)).toEqual(interruptedBefore);
 
+    const archiveUserFile = path.join(archiveTargetDir, "user-note.txt");
+    fs.mkdirSync(archiveTargetDir, { recursive: true });
+    fs.writeFileSync(
+      archiveUserFile,
+      "User-owned archive target content.\n",
+      "utf8",
+    );
     const retriedArchiveRestore = runCli(root, archiveReconcileArgs);
     expect(retriedArchiveRestore.status, retriedArchiveRestore.stderr).toBe(0);
     expect(parseJsonOutput(retriedArchiveRestore.stdout)).toMatchObject({
@@ -470,6 +491,9 @@ describe("legacy-task CLI route", () => {
       wrote: false,
       visible: true,
     });
+    expect(fs.readFileSync(archiveUserFile, "utf8")).toBe(
+      "User-owned archive target content.\n",
+    );
     const rereadArchive = runCli(root, [
       "legacy-task",
       "history",
@@ -494,7 +518,7 @@ describe("legacy-task CLI route", () => {
   it("rejects occupied archive restore targets and duplicate V2 IDs without hiding data, then retries a free target", async () => {
     const root = makeRoot();
     const duplicateKernel = makeV2KernelBytes("closed-lite-legacy");
-    fs.cpSync(HISTORY_FIXTURE, root, { recursive: true });
+    copyHistoryFixture(root);
     markLegacyProjectVersion(root);
     const archivedDir = path.join(
       root,
@@ -654,7 +678,7 @@ describe("legacy-task CLI route", () => {
     expect(snapshotTree(archivedDir)).toEqual(sourceBefore);
 
     const duplicateRoot = makeRoot();
-    fs.cpSync(HISTORY_FIXTURE, duplicateRoot, { recursive: true });
+    copyHistoryFixture(duplicateRoot);
     markLegacyProjectVersion(duplicateRoot);
     const duplicateArchive = path.join(
       duplicateRoot,

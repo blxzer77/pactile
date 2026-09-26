@@ -31,8 +31,19 @@ describe("legacy Task source migration preflight", () => {
   });
 
   it("preserves v0.5-shaped Task, Kernel, task-map, and document source without writes", () => {
-    const original = scanLegacyTaskMigration({ projectRoot: FIXTURE_ROOT });
-    const repeated = scanLegacyTaskMigration({ projectRoot: FIXTURE_ROOT });
+    const runtimePath = path.join(".pactile", "runtime");
+    fs.cpSync(FIXTURE_ROOT, tmp, {
+      recursive: true,
+      filter(source) {
+        const relative = path.relative(FIXTURE_ROOT, source);
+        return (
+          relative !== runtimePath &&
+          !relative.startsWith(`${runtimePath}${path.sep}`)
+        );
+      },
+    });
+    const original = scanLegacyTaskMigration({ projectRoot: tmp });
+    const repeated = scanLegacyTaskMigration({ projectRoot: tmp });
 
     expect(original.readOnly).toBe(true);
     expect(original.wrote).toBe(false);
@@ -116,7 +127,7 @@ describe("legacy Task source migration preflight", () => {
 
     for (const task of original.tasks) {
       for (const source of task.files) {
-        const diskBytes = fs.readFileSync(path.join(FIXTURE_ROOT, source.path));
+        const diskBytes = fs.readFileSync(path.join(tmp, source.path));
         const plannedBytes =
           source.encoding === "utf8"
             ? Buffer.from(source.content, "utf8")

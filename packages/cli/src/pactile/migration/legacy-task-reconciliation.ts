@@ -569,7 +569,6 @@ export async function runLegacyTaskReconciliation(
       ? JSON.parse(effectiveRecordBytes.toString("utf8")) as LegacyTaskImportRecord
       : null;
     const activeMetadata = activeImport ? parseReconciliationMetadata(activeImport) : null;
-    if (requiresSeparateTarget) assertRestoreTargetDirectoryAvailable(root, taskPath);
     if (activeImport?.status === "imported") {
       if (activeMetadata?.idempotencyKey === input.idempotencyKey && activeMetadata.requestFingerprint === fingerprint) {
         visible = true;
@@ -584,6 +583,7 @@ export async function runLegacyTaskReconciliation(
       visible = true;
       throw new Error("legacy-task-reconciliation-task-already-active");
     }
+    if (requiresSeparateTarget) assertRestoreTargetDirectoryAvailable(root, taskPath);
     if (archivedSource || interruptedSource) {
       const sourceTaskJsonPath = `${sourceTaskPath}/task.json`;
       for (const file of currentView?.reconciliationFiles.values() ?? []) {
@@ -621,8 +621,8 @@ export async function runLegacyTaskReconciliation(
       const dependencyDir = resolveTaskDirectoryById(root, resolution.taskId);
       if (!dependencyDir) throw new Error(`legacy-task-reconciliation-dependency-target-not-unique:${resolution.taskId}`);
       const dependency = readTaskKernel({ root, taskDir: dependencyDir, cwd: root });
-      if (dependency.kind !== "task-kernel-v2" || dependency.kernel.phase !== "close" || dependency.kernel.outcome !== "completed")
-        throw new Error(`legacy-task-reconciliation-dependency-target-not-closed:${resolution.taskId}`);
+      if (dependency.kind !== "task-kernel-v2")
+        throw new Error(`legacy-task-reconciliation-dependency-target-not-v2:${resolution.taskId}`);
       externalDependencyIds.add(resolution.taskId);
     }
     const built = buildLegacyTaskV2Reconciliation(currentScan, buildInput, { externalDependencyIds });

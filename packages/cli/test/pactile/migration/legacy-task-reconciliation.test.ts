@@ -119,6 +119,7 @@ function addV2Task(root: string, directory: string, id: string, dependencies: st
 function closeV2Task(root: string, taskDir: string, id: string): void {
   const current = readTaskKernel({ root, taskDir, cwd: root });
   if (current.kind !== "task-kernel-v2") throw new Error("expected V2 prerequisite");
+  const resultPath = `${id}-result.txt`;
   const started = startTaskRun({
     root,
     taskDir,
@@ -132,12 +133,12 @@ function closeV2Task(root: string, taskDir: string, id: string): void {
       scope: "test prerequisite",
       evidenceRef: `approval-${id}`,
     },
-    writeSetSnapshot: ["result.txt"],
+    writeSetSnapshot: [resultPath],
   });
   const runId = started.kernel.runs.at(-1)?.id;
   if (!runId) throw new Error("missing prerequisite Run");
   fs.mkdirSync(taskDir, { recursive: true });
-  fs.writeFileSync(path.join(root, "result.txt"), `result for ${id}\n`, "utf8");
+  fs.writeFileSync(path.join(root, resultPath), `result for ${id}\n`, "utf8");
   const completed = recordTaskRunResult({
     root,
     taskDir,
@@ -145,7 +146,7 @@ function closeV2Task(root: string, taskDir: string, id: string): void {
     runId,
     outcome: "completed",
     summary: "Prerequisite result is ready",
-    evidenceRefs: ["result.txt"],
+    evidenceRefs: [resultPath],
     actor: "legacy-reconciliation-test-worker",
     idempotencyKey: `result-${id}`,
   });
@@ -164,7 +165,7 @@ function closeV2Task(root: string, taskDir: string, id: string): void {
     reviewer: "legacy-reconciliation-test-reviewer",
     decision: "pass",
     evidenceRefs: ["review.txt"],
-    acceptanceEvidence: { [acceptanceCriterion.id]: ["result.txt"] },
+    acceptanceEvidence: { [acceptanceCriterion.id]: [resultPath] },
     actor: "legacy-reconciliation-test-reviewer",
     idempotencyKey: `review-${id}`,
   });
@@ -182,11 +183,11 @@ function closeV2Task(root: string, taskDir: string, id: string): void {
       observedBy: "legacy-reconciliation-test-closer",
       observedAt: "2026-09-26T15:10:00.000Z",
       source: "caller-attested",
-      evidenceRef: "result.txt",
+      evidenceRef: resultPath,
     },
     deliveryEvidence: {
       level: "local-result",
-      reference: "result.txt",
+      reference: resultPath,
       summary: "The prerequisite result is present.",
     },
     actor: "legacy-reconciliation-test-closer",
@@ -436,9 +437,16 @@ describe("P36 explicit legacy Task reconciliation", () => {
       kernel: { phase: "define", outcome: null, runs: [], reviews: [], closure: null },
     });
     for (const [name, bytes] of interruptedBefore) expect(fs.readFileSync(path.join(interruptedDir, name))).toEqual(bytes);
+
+    const userFile = path.join(targetDir, "user-note.txt");
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.writeFileSync(userFile, "User-owned target content.\n", "utf8");
+    const repeated = await runLegacyTaskReconciliation(request("09-28-free-interrupted-retry"), { approved: true });
+    expect(repeated).toMatchObject({ status: "completed", wrote: false, visible: true });
+    expect(fs.readFileSync(userFile, "utf8")).toBe("User-owned target content.\n");
   });
 
-  it("resolves restored IDs for explicit block dependencies only after Close and keeps scheduler gates intact", async () => {
+  it("maps explicit block dependencies to unique open V2 Tasks and gates Run until Close", async () => {
     const root = makeRoot();
     const openPrerequisite = addV2Task(root, "01-open-v2-prerequisite", "open-v2-prerequisite");
     addArchivedTask(root, "archived-v2-prerequisite");
@@ -484,10 +492,20 @@ describe("P36 explicit legacy Task reconciliation", () => {
         dependencyResolutions: [{ reference: "archive-reference", taskId: "archived-v2-prerequisite" }],
       },
     };
-    const heldUntilClose = await runLegacyTaskReconciliation(dependencyRequest, { approved: true });
-    expect(heldUntilClose).toMatchObject({ status: "blocked", wrote: false, visible: false });
-    expect(heldUntilClose.reason).toContain("dependency-target-not-closed:archived-v2-prerequisite");
-    expect(readLegacyTaskImportRecord(root, dependent)?.status).toBe("needs-coordination");
+    const reconciled = await runLegacyTaskReconciliation(dependencyRequest, { approved: true });
+    expect(reconciled).toMatchObject({ status: "completed", wrote: true, visible: true });
+    const dependentKernel = readTaskKernel({ root, taskDir: dependent, cwd: root });
+    if (dependentKernel.kind !== "task-kernel-v2") throw new Error("expected reconciled dependent V2 Task");
+    expect(dependentKernel.kernel.definition.dependencies).toEqual(["archived-v2-prerequisite"]);
+    expect(() => startTaskRun({
+      root,
+      taskDir: dependent,
+      expectedRevision: dependentKernel.kernel.revision,
+      actor: "runner",
+      idempotencyKey: "archive-dependent-run-before-close",
+      input: { summary: "Wait for the restored prerequisite", references: [] },
+      authorization: { approvedBy: "approver", approvedAt: "2026-09-26T15:30:00.000Z", scope: "dependent task", evidenceRef: "approval.json" },
+    })).toThrow(/hard dependencies must be closed successfully: archived-v2-prerequisite/u);
 
     closeV2Task(root, restoredDir, "archived-v2-prerequisite");
     const closedSchedule = planTaskKernelGraphV1(root, ["scheduler-dependent"]);
@@ -496,11 +514,18 @@ describe("P36 explicit legacy Task reconciliation", () => {
       kind: "task-kernel-v2", kernel: { definition: { dependencies: ["archived-v2-prerequisite"] } },
     });
 
-    const reconciled = await runLegacyTaskReconciliation(dependencyRequest, { approved: true });
-    expect(reconciled.status).toBe("completed");
-    const dependentKernel = readTaskKernel({ root, taskDir: dependent, cwd: root });
-    if (dependentKernel.kind !== "task-kernel-v2") throw new Error("expected reconciled dependent V2 Task");
-    expect(dependentKernel.kernel.definition.dependencies).toEqual(["archived-v2-prerequisite"]);
+    const readyDependent = readTaskKernel({ root, taskDir: dependent, cwd: root });
+    if (readyDependent.kind !== "task-kernel-v2") throw new Error("expected reconciled dependent V2 Task");
+    const dependentRun = startTaskRun({
+      root,
+      taskDir: dependent,
+      expectedRevision: readyDependent.kernel.revision,
+      actor: "runner",
+      idempotencyKey: "archive-dependent-run-after-close",
+      input: { summary: "Run after the restored prerequisite closes", references: [] },
+      authorization: { approvedBy: "approver", approvedAt: "2026-09-26T15:31:00.000Z", scope: "dependent task", evidenceRef: "approval.json" },
+    });
+    expect(dependentRun.kernel.runs).toHaveLength(1);
     expect(planTaskKernelGraphV1(root, ["archive-dependent"]).plan.decisions.find((item) => item.taskId === "archive-dependent")?.action).not.toBe("blocked");
 
     const unresolvedV2 = readTaskKernel({ root, taskDir: openPrerequisite, cwd: root });
@@ -516,8 +541,34 @@ describe("P36 explicit legacy Task reconciliation", () => {
       },
     };
     const openDependency = await runLegacyTaskReconciliation(openRequest, { approved: true });
-    expect(openDependency).toMatchObject({ status: "blocked", wrote: false, visible: false });
-    expect(openDependency.reason).toContain("dependency-target-not-closed:open-v2-prerequisite");
+    expect(openDependency).toMatchObject({ status: "completed", wrote: true, visible: true });
+    const openDependentDir = path.join(root, ".pactile", "tasks", "03-open-dependent");
+    const openDependentKernel = readTaskKernel({ root, taskDir: openDependentDir, cwd: root });
+    if (openDependentKernel.kind !== "task-kernel-v2") throw new Error("expected open dependent V2 Task");
+    expect(openDependentKernel.kernel.definition.dependencies).toEqual(["open-v2-prerequisite"]);
+    expect(() => startTaskRun({
+      root,
+      taskDir: openDependentDir,
+      expectedRevision: openDependentKernel.kernel.revision,
+      actor: "runner",
+      idempotencyKey: "open-dependent-run-before-close",
+      input: { summary: "Wait for the open prerequisite", references: [] },
+      authorization: { approvedBy: "approver", approvedAt: "2026-09-26T15:40:00.000Z", scope: "dependent task", evidenceRef: "approval.json" },
+    })).toThrow(/hard dependencies must be closed successfully: open-v2-prerequisite/u);
+
+    closeV2Task(root, openPrerequisite, "open-v2-prerequisite");
+    const openDependentAfterClose = readTaskKernel({ root, taskDir: openDependentDir, cwd: root });
+    if (openDependentAfterClose.kind !== "task-kernel-v2") throw new Error("expected open dependent V2 Task");
+    const openDependentRun = startTaskRun({
+      root,
+      taskDir: openDependentDir,
+      expectedRevision: openDependentAfterClose.kernel.revision,
+      actor: "runner",
+      idempotencyKey: "open-dependent-run-after-close",
+      input: { summary: "Run after the prerequisite closes", references: [] },
+      authorization: { approvedBy: "approver", approvedAt: "2026-09-26T15:41:00.000Z", scope: "dependent task", evidenceRef: "approval.json" },
+    });
+    expect(openDependentRun.kernel.runs).toHaveLength(1);
   });
 
   it("keeps dry-run, cancel, placeholder, source-field override, and bad delivery level at zero visible writes", async () => {
