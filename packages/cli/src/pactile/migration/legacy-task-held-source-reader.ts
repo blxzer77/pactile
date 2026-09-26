@@ -127,68 +127,75 @@ function fingerprint(bytes: Buffer): string {
 function readHeldTaskFiles(
   taskDir: string,
   relativeTaskPath: string,
+  sourceFacts: readonly SourceFileFact[],
 ): LegacyTaskHeldSourceFile[] {
+  if (sourceFacts.length > MAX_FILES) {
+    throw new Error("legacy-task-held-history-size-limit-exceeded");
+  }
   const files: LegacyTaskHeldSourceFile[] = [];
   let totalBytes = 0;
-  const visit = (
-    directory: string,
-    relativeDirectory: string,
-    depth: number,
-  ): void => {
-    if (depth > MAX_DIRECTORY_DEPTH) {
-      throw new Error("legacy-task-held-history-size-limit-exceeded");
+  const sourcePrefix = `${TASKS_ROOT}/${relativeTaskPath}/`;
+  for (const fact of sourceFacts) {
+    if (!fact.path.startsWith(sourcePrefix) || !validRelativePath(fact.path)) {
+      throw new Error("legacy-task-held-history-record-invalid");
     }
-    const directoryStat = fs.lstatSync(directory);
-    if (directoryStat.isSymbolicLink()) {
-      throw new Error("legacy-task-held-history-link-invalid");
+    const relativeFilePath = fact.path.slice(sourcePrefix.length);
+    const parts = relativeFilePath.split("/");
+    if (
+      !validRelativePath(relativeFilePath) ||
+      parts.length - 1 > MAX_DIRECTORY_DEPTH
+    ) {
+      throw new Error("legacy-task-held-history-path-invalid");
     }
-    if (!directoryStat.isDirectory()) {
-      throw new Error("legacy-task-held-history-directory-invalid");
-    }
-    for (const name of fs.readdirSync(directory).sort()) {
-      if (!name || name === "." || name === ".." || name.includes("\\")) {
-        throw new Error("legacy-task-held-history-path-invalid");
-      }
-      const file = path.join(directory, name);
-      const childPath = `${relativeDirectory}/${name}`;
-      const stat = fs.lstatSync(file);
-      if (stat.isSymbolicLink()) {
+    let cursor = taskDir;
+    for (const part of parts.slice(0, -1)) {
+      cursor = path.join(cursor, part);
+      const directoryStat = fs.lstatSync(cursor);
+      if (directoryStat.isSymbolicLink()) {
         throw new Error("legacy-task-held-history-link-invalid");
       }
-      if (stat.isDirectory()) {
-        visit(file, childPath, depth + 1);
-      } else if (stat.isFile() && stat.nlink === 1) {
-        if (stat.size > MAX_FILE_BYTES || files.length >= MAX_FILES) {
-          throw new Error("legacy-task-held-history-size-limit-exceeded");
-        }
-        totalBytes += stat.size;
-        if (totalBytes > MAX_TOTAL_BYTES) {
-          throw new Error("legacy-task-held-history-size-limit-exceeded");
-        }
-        const bytes = fs.readFileSync(file);
-        const afterRead = fs.lstatSync(file);
-        if (
-          !afterRead.isFile() ||
-          afterRead.isSymbolicLink() ||
-          afterRead.nlink !== 1 ||
-          afterRead.dev !== stat.dev ||
-          afterRead.ino !== stat.ino ||
-          bytes.byteLength !== stat.size
-        ) {
-          throw new Error("legacy-task-held-history-file-changed-during-read");
-        }
-        files.push({
-          path: childPath,
-          byteLength: bytes.byteLength,
-          sha256: fingerprint(bytes),
-          ...utf8OrBase64(bytes),
-        });
-      } else {
-        throw new Error("legacy-task-held-history-file-invalid");
+      if (!directoryStat.isDirectory()) {
+        throw new Error("legacy-task-held-history-directory-invalid");
       }
     }
-  };
-  visit(taskDir, `${TASKS_ROOT}/${relativeTaskPath}`, 0);
+    const file = path.join(cursor, parts.at(-1) ?? "");
+    const stat = fs.lstatSync(file);
+    if (stat.isSymbolicLink()) {
+      throw new Error("legacy-task-held-history-link-invalid");
+    }
+    if (!stat.isFile() || stat.nlink !== 1) {
+      throw new Error("legacy-task-held-history-file-invalid");
+    }
+    if (stat.size > MAX_FILE_BYTES) {
+      throw new Error("legacy-task-held-history-size-limit-exceeded");
+    }
+    totalBytes += stat.size;
+    if (totalBytes > MAX_TOTAL_BYTES) {
+      throw new Error("legacy-task-held-history-size-limit-exceeded");
+    }
+    const bytes = fs.readFileSync(file);
+    const afterRead = fs.lstatSync(file);
+    if (
+      !afterRead.isFile() ||
+      afterRead.isSymbolicLink() ||
+      afterRead.nlink !== 1 ||
+      afterRead.dev !== stat.dev ||
+      afterRead.ino !== stat.ino ||
+      bytes.byteLength !== stat.size
+    ) {
+      throw new Error("legacy-task-held-history-file-changed-during-read");
+    }
+    const sha256 = fingerprint(bytes);
+    if (sha256 !== fact.fingerprint) {
+      throw new Error("legacy-task-held-history-source-stale");
+    }
+    files.push({
+      path: fact.path,
+      byteLength: bytes.byteLength,
+      sha256,
+      ...utf8OrBase64(bytes),
+    });
+  }
   return files.sort((left, right) => left.path.localeCompare(right.path));
 }
 
@@ -271,19 +278,14 @@ export function readLegacyTaskHeldSource(
     throw new Error("legacy-task-held-history-authority-stale");
   }
 
-  const files = readHeldTaskFiles(taskDir, relative);
   const prefix = `${canonicalTaskPath}/`;
   const expectedFacts = migrationSourceFacts(record).filter((fact) =>
     fact.path.startsWith(prefix),
   );
-  const actualFacts = files.map(({ path: filePath, sha256 }) => ({
-    path: filePath,
-    fingerprint: sha256,
-  }));
   if (
     !expectedFacts.some((fact) => fact.path === `${prefix}task.json`) ||
     expectedFacts.length > MAX_FILES ||
-    !sameFacts(expectedFacts, actualFacts)
+    !expectedFacts.length
   ) {
     throw new Error("legacy-task-held-history-source-stale");
   }
@@ -296,8 +298,11 @@ export function readLegacyTaskHeldSource(
     .map((file) => ({ path: file.path, fingerprint: file.sha256 }))
     .sort((left, right) => left.path.localeCompare(right.path));
   if (
-    plan.preflight.status !== "clear-to-review" ||
-    plan.sourceFingerprint !== view.authority.sourceFingerprint ||
+    plan.findings.some((finding) => finding.code === "source-symlink-skipped")
+  ) {
+    throw new Error("legacy-task-held-history-link-invalid");
+  }
+  if (
     !scannedTask ||
     scannedTask.archivedByPath ||
     scannedTask.preflight !== "clear-to-review" ||
@@ -305,7 +310,21 @@ export function readLegacyTaskHeldSource(
     !scannedFacts ||
     !sameFacts(expectedFacts, scannedFacts)
   ) {
+    throw new Error("legacy-task-held-history-source-stale");
+  }
+  if (
+    plan.preflight.status !== "clear-to-review" ||
+    plan.sourceFingerprint !== view.authority.sourceFingerprint
+  ) {
     throw new Error("legacy-task-held-history-authority-stale");
+  }
+  const files = readHeldTaskFiles(taskDir, relative, scannedFacts);
+  const actualFacts = files.map(({ path: filePath, sha256 }) => ({
+    path: filePath,
+    fingerprint: sha256,
+  }));
+  if (!sameFacts(scannedFacts, actualFacts)) {
+    throw new Error("legacy-task-held-history-source-stale");
   }
 
   return {

@@ -86,8 +86,45 @@ function parseJsonOutput(stdout: string): Record<string, unknown> {
   return JSON.parse(stdout) as Record<string, unknown>;
 }
 
-async function importHeldTask(root: string): Promise<void> {
+async function importHeldTask(
+  root: string,
+  includeNestedChild = false,
+): Promise<void> {
   fs.cpSync(RECONCILE_FIXTURE, root, { recursive: true });
+  if (includeNestedChild) {
+    const sourceTaskDir = path.join(
+      RECONCILE_FIXTURE,
+      ".pactile",
+      "tasks",
+      HELD_TASK_PATH,
+    );
+    const nestedChildDir = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      HELD_TASK_PATH,
+      "nested-child",
+    );
+    fs.mkdirSync(nestedChildDir, { recursive: true });
+    for (const name of ["task.json", "prd.md", "verify.md"]) {
+      fs.copyFileSync(
+        path.join(sourceTaskDir, name),
+        path.join(nestedChildDir, name),
+      );
+    }
+    const childTaskPath = path.join(nestedChildDir, "task.json");
+    const childTask = JSON.parse(
+      fs.readFileSync(childTaskPath, "utf8"),
+    ) as Record<string, unknown>;
+    childTask.id = "nested-v050-child";
+    childTask.name = "nested-v050-child";
+    childTask.title = "Nested v0.5.0 held Child";
+    fs.writeFileSync(
+      childTaskPath,
+      `${JSON.stringify(childTask, null, 2)}\n`,
+      "utf8",
+    );
+  }
   markLegacyProjectVersion(root);
   const plan = scanLegacyTaskMigration({ projectRoot: root });
   const imported = buildLegacyTaskV2Import(plan);
@@ -202,6 +239,81 @@ describe("legacy-task CLI route", () => {
     }
   });
 
+  it("reads nested Parent and Child sources by scanner ownership and detects Child source drift", async () => {
+    const root = makeRoot();
+    await importHeldTask(root, true);
+    const before = snapshotTree(root);
+
+    const parentResult = runCli(root, [
+      "legacy-task",
+      "history",
+      `held/${HELD_TASK_PATH}`,
+      "--json",
+    ]);
+    expect(parentResult.status, parentResult.stderr).toBe(0);
+    const parentReport = parseJsonOutput(parentResult.stdout);
+    expect(parentReport).toMatchObject({
+      taskPath: `.pactile/tasks/${HELD_TASK_PATH}`,
+      status: "held-source-read-only",
+      runnable: false,
+    });
+    const parentFiles = parentReport.files as { path: string }[];
+    expect(parentFiles.some((file) => file.path.endsWith("/task.json"))).toBe(
+      true,
+    );
+    expect(
+      parentFiles.some((file) => file.path.includes("/nested-child/")),
+    ).toBe(false);
+    expect(snapshotTree(root)).toEqual(before);
+
+    const childResult = runCli(root, [
+      "legacy-task",
+      "history",
+      `held/${HELD_TASK_PATH}/nested-child`,
+      "--json",
+    ]);
+    expect(childResult.status, childResult.stderr).toBe(0);
+    const childReport = parseJsonOutput(childResult.stdout);
+    expect(childReport).toMatchObject({
+      taskPath: `.pactile/tasks/${HELD_TASK_PATH}/nested-child`,
+      status: "held-source-read-only",
+      legacyTaskId: "nested-v050-child",
+      runnable: false,
+    });
+    const childFiles = childReport.files as { path: string }[];
+    expect(
+      childFiles.some((file) => file.path.endsWith("/nested-child/task.json")),
+    ).toBe(true);
+    expect(snapshotTree(root)).toEqual(before);
+
+    const changedRoot = makeRoot();
+    await importHeldTask(changedRoot, true);
+    fs.appendFileSync(
+      path.join(
+        changedRoot,
+        ".pactile",
+        "tasks",
+        HELD_TASK_PATH,
+        "nested-child",
+        "verify.md",
+      ),
+      "\nchanged after import\n",
+      "utf8",
+    );
+    const changedBefore = snapshotTree(changedRoot);
+    const changed = runCli(changedRoot, [
+      "legacy-task",
+      "history",
+      `held/${HELD_TASK_PATH}`,
+      "--json",
+    ]);
+    expect(changed.status).toBe(1);
+    expect(changed.stderr).toContain(
+      "legacy-task-held-history-authority-stale",
+    );
+    expect(snapshotTree(changedRoot)).toEqual(changedBefore);
+  });
+
   it("rejects traversal, changed source, stale authority, and linked source paths", async () => {
     const traversalRoot = makeRoot();
     await importHeldTask(traversalRoot);
@@ -269,7 +381,7 @@ describe("legacy-task CLI route", () => {
     expect(snapshotTree(staleRoot)).toEqual(staleBefore);
 
     const linkedRoot = makeRoot();
-    await importHeldTask(linkedRoot);
+    await importHeldTask(linkedRoot, true);
     const outside = path.join(linkedRoot, "outside-source");
     fs.mkdirSync(outside);
     const linkPath = path.join(
@@ -277,6 +389,7 @@ describe("legacy-task CLI route", () => {
       ".pactile",
       "tasks",
       HELD_TASK_PATH,
+      "nested-child",
       "linked-source",
     );
     fs.symlinkSync(outside, linkPath, "junction");
