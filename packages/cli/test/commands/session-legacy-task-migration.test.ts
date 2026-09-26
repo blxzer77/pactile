@@ -12,6 +12,7 @@ import {
   legacyTaskMigrationOverlayPath,
 } from "../../src/core/task/legacy-task-migration-reader.js";
 import {
+  createTaskKernel,
   readTaskKernel,
   startTaskRun,
 } from "../../src/core/task/task-kernel.js";
@@ -90,21 +91,58 @@ function selectTask(root: string, taskDir: string): void {
   expect(runTaskCli(["select", path.basename(taskDir)], root)).toBe(0);
 }
 
-function journalFiles(root: string): { index: Buffer; journal: Buffer } {
+interface SessionWorkspaceSnapshot {
+  readonly index: Buffer;
+  readonly journals: ReadonlyMap<string, Buffer>;
+}
+
+function journalFiles(root: string): SessionWorkspaceSnapshot {
   const workspace = path.join(root, ".pactile", "workspace", "alice");
+  const journals = fs
+    .readdirSync(workspace)
+    .filter((name) => /^journal-\d+\.md$/.test(name))
+    .sort()
+    .map((name) => [
+      name,
+      fs.readFileSync(path.join(workspace, name)),
+    ] as const);
   return {
     index: fs.readFileSync(path.join(workspace, "index.md")),
-    journal: fs.readFileSync(path.join(workspace, "journal-1.md")),
+    journals: new Map(journals),
   };
 }
 
 function expectJournalUnchanged(
   root: string,
-  before: { index: Buffer; journal: Buffer },
+  before: SessionWorkspaceSnapshot,
 ): void {
   const after = journalFiles(root);
   expect(after.index.equals(before.index)).toBe(true);
-  expect(after.journal.equals(before.journal)).toBe(true);
+  expect([...after.journals.keys()]).toEqual([...before.journals.keys()]);
+  for (const [name, contents] of before.journals)
+    expect(after.journals.get(name)?.equals(contents)).toBe(true);
+}
+
+function createNativeV2Task(root: string, taskId: string): string {
+  const taskDir = path.join(root, ".pactile", "tasks", taskId);
+  createTaskKernel({
+    root,
+    taskDir,
+    actor: "session-test",
+    idempotencyKey: `create:${taskId}`,
+    definition: {
+      taskId,
+      title: `Native ${taskId}`,
+      description: "A native V2 task for the session command test.",
+      deliverable: "A reviewable local result",
+      deliveryLevel: "local-result",
+      acceptanceCriteria: [
+        { id: "AC-1", description: "The session entry can be recorded." },
+      ],
+      dependencies: [],
+    },
+  });
+  return taskDir;
 }
 
 afterEach(() => {
@@ -204,6 +242,118 @@ describe("session add with selected legacy Task migrations", () => {
     expect(runSessionCli(["add", "--title", "Must not be recorded"], root)).toBe(1);
     expect(String(error.mock.calls.at(-1)?.[0])).toMatch(
       /authority-missing-with-residual-state/,
+    );
+    expectJournalUnchanged(root, before);
+  });
+
+  it("allows session add for an imported V2 Task and records the journal", async () => {
+    const root = makeRoot();
+    const taskDir = addLegacyTask(root, {
+      id: "legacy-imported-session-positive",
+      directory: "01-imported-session-positive",
+    });
+    await importTasks(root);
+    selectTask(root, taskDir);
+    const before = journalFiles(root);
+
+    expect(
+      runSessionCli(["add", "--title", "Imported V2 session"], root),
+    ).toBe(0);
+
+    const after = journalFiles(root);
+    expect(after.index.equals(before.index)).toBe(false);
+    expect([...after.journals.keys()]).toEqual([...before.journals.keys()]);
+    expect(after.journals.get("journal-1.md")?.equals(
+      before.journals.get("journal-1.md") ?? Buffer.alloc(0),
+    )).toBe(false);
+    expect(after.journals.get("journal-1.md")?.toString("utf8")).toContain(
+      "Session 1: Imported V2 session",
+    );
+    expect(after.index.toString("utf8")).toContain("**Total Sessions**: 1");
+  });
+
+  it("keeps a readable legacy Kernel v1 eligible for session add", () => {
+    const root = makeRoot();
+    expect(
+      runTaskCli(
+        ["legacy-create", "Confirmed legacy", "--slug", "confirmed-legacy"],
+        root,
+      ),
+    ).toBe(0);
+    const taskName = fs
+      .readdirSync(path.join(root, ".pactile", "tasks"))
+      .find((name) => name.endsWith("-confirmed-legacy"));
+    if (!taskName) throw new Error("legacy-create did not create the Task directory");
+    const taskDir = path.join(root, ".pactile", "tasks", taskName);
+    const kernel = JSON.parse(
+      fs.readFileSync(path.join(taskDir, "kernel.json"), "utf8"),
+    ) as { schemaVersion: number };
+    expect(kernel.schemaVersion).toBe(1);
+    selectTask(root, taskDir);
+
+    expect(
+      runSessionCli(["add", "--title", "Confirmed legacy session"], root),
+    ).toBe(0);
+    expect(
+      fs
+        .readFileSync(
+          path.join(root, ".pactile", "workspace", "alice", "journal-1.md"),
+          "utf8",
+        )
+        .includes("Session 1: Confirmed legacy session"),
+    ).toBe(true);
+  });
+
+  it("fails closed on a corrupt native V2 Kernel without creating any journal", () => {
+    const root = makeRoot();
+    const taskDir = createNativeV2Task(root, "native-corrupt-session");
+    selectTask(root, taskDir);
+    const kernelFile = path.join(taskDir, "kernel.json");
+    fs.writeFileSync(kernelFile, "{ corrupt native kernel\n", "utf8");
+    const corruptKernel = fs.readFileSync(kernelFile);
+    const before = journalFiles(root);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(
+      runSessionCli(["add", "--title", "Must fail closed"], root),
+    ).toBe(1);
+    expect(String(error.mock.calls.at(-1)?.[0])).toMatch(/Failed to parse/);
+    expectJournalUnchanged(root, before);
+    expect(fs.readFileSync(kernelFile).equals(corruptKernel)).toBe(true);
+  });
+
+  it("rejects a missing native V2 Kernel instead of falling back to task.json", () => {
+    const root = makeRoot();
+    const taskDir = createNativeV2Task(root, "native-missing-session");
+    selectTask(root, taskDir);
+    fs.rmSync(path.join(taskDir, "kernel.json"));
+    const before = journalFiles(root);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(
+      runSessionCli(["add", "--title", "Must not be recorded"], root),
+    ).toBe(1);
+    expect(String(error.mock.calls.at(-1)?.[0])).toContain(
+      "selected-task-kernel-missing",
+    );
+    expectJournalUnchanged(root, before);
+  });
+
+  it("does not treat a parseable task.json as legacy when kernel.json is missing", () => {
+    const root = makeRoot();
+    const taskDir = addLegacyTask(root, {
+      id: "task-json-without-kernel",
+      directory: "01-task-json-without-kernel",
+    });
+    selectTask(root, taskDir);
+    const before = journalFiles(root);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(
+      runSessionCli(["add", "--title", "Must not be recorded"], root),
+    ).toBe(1);
+    expect(String(error.mock.calls.at(-1)?.[0])).toContain(
+      "selected-task-kernel-missing",
     );
     expectJournalUnchanged(root, before);
   });

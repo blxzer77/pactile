@@ -59,29 +59,48 @@ function selectedRecord(root: string): Record<string, unknown> | null {
     };
   }
 
-  // Only a confirmed, unimported legacy task keeps the historical best-effort
-  // parsing behavior. Imported records and migration-store errors fail closed.
+  // A readable Kernel v1 file is the confirmation that this is an unimported
+  // legacy task. A parseable task.json alone is not enough: it may be a stale
+  // projection beside a missing or damaged Kernel. Keep Kernel errors visible
+  // so session add cannot silently downgrade native V2 or corrupt state.
+  const kernelFile = path.join(dir, "kernel.json");
+  let kernelStat: fs.Stats;
   try {
-    if (!fs.existsSync(path.join(dir, "kernel.json")))
-      return JSON.parse(
-        fs.readFileSync(path.join(dir, "task.json"), "utf8"),
-      ) as Record<string, unknown>;
-    const read = readTaskKernel({ root, taskDir: dir, cwd: root });
-    if (read.kind === "task-kernel-v2")
-      return {
-        id: read.kernel.identity.taskId,
-        name: read.kernel.definition.title,
-        title: read.kernel.definition.title,
-        status: read.kernel.phase === "close" ? "closed" : read.kernel.phase,
-        phase: read.kernel.phase,
-        deliveryLevel: read.kernel.definition.deliveryLevel,
-        dependencies: read.kernel.definition.dependencies,
-      };
-    return JSON.parse(
-      fs.readFileSync(path.join(dir, "task.json"), "utf8"),
-    ) as Record<string, unknown>;
-  } catch {
-    return null;
+    kernelStat = fs.lstatSync(kernelFile);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      throw new Error("selected-task-kernel-missing");
+    throw error;
+  }
+  if (!kernelStat.isFile() || kernelStat.isSymbolicLink())
+    throw new Error("selected-task-kernel-not-regular-file");
+
+  const read = readTaskKernel({ root, taskDir: dir, cwd: root });
+  if (read.kind === "task-kernel-v2")
+    return {
+      id: read.kernel.identity.taskId,
+      name: read.kernel.definition.title,
+      title: read.kernel.definition.title,
+      status: read.kernel.phase === "close" ? "closed" : read.kernel.phase,
+      phase: read.kernel.phase,
+      deliveryLevel: read.kernel.definition.deliveryLevel,
+      dependencies: read.kernel.definition.dependencies,
+    };
+
+  const taskFile = path.join(dir, "task.json");
+  try {
+    return JSON.parse(fs.readFileSync(taskFile, "utf8")) as Record<
+      string,
+      unknown
+    >;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return {
+      id: read.kernel.legacy.id,
+      name: read.kernel.legacy.name,
+      title: read.kernel.legacy.title,
+      status: read.kernel.legacy.status,
+    };
   }
 }
 
