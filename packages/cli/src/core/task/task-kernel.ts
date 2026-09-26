@@ -49,6 +49,7 @@ export type {
   RecordTaskRunWorkspaceIntegrationRequest,
   AcquireTaskRunWorkspaceCleanupLeaseRequest,
   FinishTaskRunWorkspaceCleanupRequest,
+  RecordTaskRunWorkspaceCleanupRefusalRequest,
   TaskKernelReadResult,
   LegacyTaskKernelReadResult,
   AnyTaskKernelReadResult,
@@ -83,6 +84,7 @@ export {
   recordTaskRunWorkspaceIntegration,
   acquireTaskRunWorkspaceCleanupLease,
   finishTaskRunWorkspaceCleanup,
+  recordTaskRunWorkspaceCleanupRefusal,
 } from "./task-kernel-workspaces.js";
 export { recordTaskReview } from "./task-kernel-reviews.js";
 export { checkTaskClose, closeTaskKernel } from "./task-kernel-close.js";

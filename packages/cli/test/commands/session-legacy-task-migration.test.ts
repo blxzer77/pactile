@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runSessionCli } from "../../src/commands/session.js";
 import { runTaskCli } from "../../src/commands/task.js";
+import { runContextCli } from "../../src/commands/context.js";
 import { buildLegacyTaskV2Import } from "../../src/core/task/legacy-task-v2-import.js";
 import { scanLegacyTaskMigration } from "../../src/core/task/legacy-task-migration.js";
 import { emptyTaskRecord } from "../../src/core/task/schema.js";
@@ -232,7 +233,7 @@ describe("session add with selected legacy Task migrations", () => {
     },
   );
 
-  it("does not project a selected Task as V1 when migration authority is missing", async () => {
+  it("returns an error for selected migration state with missing authority", async () => {
     const root = makeRoot();
     const taskDir = addLegacyTask(root, {
       id: "legacy-missing-authority-pack",
@@ -240,27 +241,19 @@ describe("session add with selected legacy Task migrations", () => {
     });
     await importTasks(root);
     selectTask(root, taskDir);
+    const before = journalFiles(root);
     fs.rmSync(
       path.join(root, ".pactile", "runtime", "legacy-task-migrations", "authority.json"),
     );
+    const output = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const pack = compileSessionPack(root);
-    const layers = pack.layers as { moduleIds: string[]; text: string }[];
-
-    expect(pack.kernel).toMatchObject({
-      taskId: null,
-      schemaVersion: null,
-      phase: null,
-      condition: null,
-      selected: true,
-    });
-    expect(pack).not.toHaveProperty("rigor");
-    expect(pack).not.toHaveProperty("topologyKind");
-    expect(pack).not.toHaveProperty("tileSelection");
-    expect(layers[0]?.text).toContain("Legacy migration authority could not be validated");
-    expect(layers[0]?.text).toContain("do not fall back to legacy files");
-    expect(layers[1]?.moduleIds).toEqual([]);
-    expect(JSON.stringify(pack)).not.toMatch(/Rigor=lite|topology=single|V1 legacy Task:/);
+    expect(runContextCli(["--mode", "session", "--json"], root)).toBe(1);
+    expect(output).not.toHaveBeenCalled();
+    expect(String(error.mock.calls.at(-1)?.[0])).toMatch(
+      /legacy-task-migration-authority-missing-with-residual-state/,
+    );
+    expectJournalUnchanged(root, before);
   });
 
   it("fails closed on a corrupt selected overlay without writing the journal", async () => {

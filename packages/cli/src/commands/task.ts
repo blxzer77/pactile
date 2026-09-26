@@ -44,6 +44,7 @@ import {
 import { approvedExecuteTask } from "../pactile/task/authorization.js";
 import { createTaskWithArtifacts } from "../pactile/task/creation.js";
 import { readPactileConfig } from "../pactile/task/config.js";
+import { runTaskScheduleCli } from "./task-schedule.js";
 import {
   checkArchive,
   checkStartExecution,
@@ -2254,6 +2255,8 @@ export function runTaskCli(argv: string[], root = process.cwd()): number {
   const [command, ...args] = argv;
   try {
     switch (command) {
+      case "schedule":
+        return runTaskScheduleCli(args, root);
       case "create":
         createTask(args, root);
         return 0;
@@ -2662,7 +2665,7 @@ export function runTaskCli(argv: string[], root = process.cwd()): number {
       }
       default:
         console.error(
-          "Usage: pactile task <create|legacy-create|show|artifacts|add-dependency|run-start|run-resume|run-result|review|close|start-execution|archive|prepare-archive-evidence|prepare-learning-scaffold|review-child|dashboard|list|select|selected|exit|add-context|validate|list-context|set-branch|set-base-branch|set-scope|set-deps|set-depends-mode> ...",
+          "Usage: pactile task <create|legacy-create|show|artifacts|schedule|add-dependency|run-start|run-resume|run-result|review|close|start-execution|archive|prepare-archive-evidence|prepare-learning-scaffold|review-child|dashboard|list|select|selected|exit|add-context|validate|list-context|set-branch|set-base-branch|set-scope|set-deps|set-depends-mode> ...",
         );
         return 1;
     }

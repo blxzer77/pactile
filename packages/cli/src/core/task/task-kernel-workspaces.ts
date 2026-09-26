@@ -1,7 +1,7 @@
 import path from "node:path";
 
 import { KernelError, requireNonEmptyString } from "./kernel-contract.js";
-import { appendDomainEvent, mutateTaskKernel } from "./task-kernel-store-v2.js";
+import { appendDomainEvent, appendMutation, mutateTaskKernel } from "./task-kernel-store-v2.js";
 import {
   fingerprintTaskValue,
   parseWorkspaceBinding,
@@ -14,6 +14,7 @@ import type {
   BindTaskRunWorkspaceRequest,
   FinishTaskRunWorkspaceCleanupRequest,
   RecordTaskRunWorkspaceIntegrationRequest,
+  RecordTaskRunWorkspaceCleanupRefusalRequest,
   TaskKernelMutationResult,
   TaskKernelSnapshotV2,
   TaskRunV2,
@@ -172,5 +173,23 @@ export function finishTaskRunWorkspaceCleanup(request: FinishTaskRunWorkspaceCle
     const type = request.result === "reclaimed" ? "run.workspace-reclaimed"
       : request.result === "retained" ? "run.workspace-retained" : "run.workspace-recovery-required";
     return appendDomainEvent(next, actor, request.idempotencyKey, type, runId, fingerprint);
+  });
+}
+
+/** Persist a fail-closed cleanup refusal even when no cleanup lease can be acquired. */
+export function recordTaskRunWorkspaceCleanupRefusal(request: RecordTaskRunWorkspaceCleanupRefusalRequest): TaskKernelMutationResult {
+  const actor = requireNonEmptyString(request.actor, "actor");
+  const runId = requireNonEmptyString(request.runId, "runId");
+  const reason = requireNonEmptyString(request.reason, "reason")
+    .replace(/\p{Cc}+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+  if (!reason) throw new KernelError("INVALID_REQUEST", "Cleanup refusal reason must not be empty");
+  const fingerprint = fingerprintTaskValue({ runId, result: "retained", reason });
+  return mutateTaskKernel(request.root, request.taskDir, request.expectedRevision, actor, request.idempotencyKey, fingerprint, request.cwd, (current) => {
+    const { run } = runAt(current, runId);
+    return appendMutation(current, actor, request.idempotencyKey, "run.workspace-cleanup-refused", run.id,
+      fingerprint, {}, `Workspace cleanup refused: ${reason}`);
   });
 }

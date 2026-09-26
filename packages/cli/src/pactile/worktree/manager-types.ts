@@ -90,6 +90,7 @@ export interface ManagerProvenance {
   writeSet: string[];
   source: "created" | "adopted";
   recordedAt: string;
+  ownershipProtocol?: "canonical-path-index-v1";
   adoption?: { approvedBy: string; approvedAt: string; evidenceRef: string };
 }
 

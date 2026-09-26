@@ -30,6 +30,7 @@ import {
   acquireTaskRunWorkspaceCleanupLease,
   fingerprintTaskValue,
   recordTaskRunHostStopReceipt,
+  recordTaskRunWorkspaceCleanupRefusal,
   finishTaskRunWorkspaceCleanup,
   type TaskKernelMutationResult,
   type TaskKernelSnapshotV2,
@@ -316,8 +317,30 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
   let { kernel, run } = stored;
   let binding = run.workspace;
   const retain = (reason: string, state: "retained" | "partial-removal" | "recovery-required" = "retained"): WorktreeCleanupResult => {
-    if (!binding) throw new WorktreeManagerError("workspace-not-bound", reason);
-    return { state, binding, path: path.resolve(binding.canonicalPath), reason };
+    let persistedReason = state === "retained" ? reason : `${state}: ${reason}`;
+    try {
+      const latest = readStoredTaskRun(input.repoRoot, input.taskDir, input.runId);
+      const refusalFingerprint = fingerprintTaskValue({
+        runId: input.runId,
+        requestIdempotencyKey: input.idempotencyKey,
+        state,
+        reason,
+      });
+      const mutation = recordTaskRunWorkspaceCleanupRefusal({
+        root: input.repoRoot,
+        taskDir: input.taskDir,
+        expectedRevision: latest.kernel.revision,
+        runId: input.runId,
+        reason: persistedReason,
+        actor: input.actor,
+        idempotencyKey: `workspace-cleanup-refusal:${refusalFingerprint}`,
+      });
+      binding = mutation.kernel.runs.find((item) => item.id === input.runId)?.workspace ?? binding;
+    } catch (error) {
+      persistedReason = `${persistedReason} (refusal event could not be persisted${error instanceof Error ? `: ${error.message}` : ""})`;
+    }
+    if (!binding) return { state, binding: null, path: null, reason: persistedReason };
+    return { state, binding, path: path.resolve(binding.canonicalPath), reason: persistedReason };
   };
   if (!binding?.manager || !binding.integrationReceipt) return retain("Run has no manager-owned workspace and persisted integration receipt");
   if (run.state !== "completed" || !run.result || !run.candidateSnapshot) return retain("Only a completed Run with preserved result and candidate can be reclaimed");
@@ -380,7 +403,12 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
     return retain(binding.cleanupLease.reason ?? "Worktree is in a persisted recovery state", "recovery-required");
   }
 
-  const identity = repoIdentity(input.repoRoot);
+  let identity: GitIdentity;
+  try {
+    identity = repoIdentity(input.repoRoot);
+  } catch (error) {
+    return retain(error instanceof Error ? error.message : "Run worktree repository identity could not be verified", "recovery-required");
+  }
   const heldLease = binding.cleanupLease;
   const absentCheckoutWithStaleLease = !fs.existsSync(binding.canonicalPath)
     && heldLease?.state === "held" && !processIsAlive(heldLease.processId);
@@ -394,7 +422,11 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
     }
     assertNoSymlinkBetween(identity.root, canonicalPath);
   } else {
-    canonicalPath = assertAllowedPath(identity, binding.canonicalPath);
+    try {
+      canonicalPath = assertAllowedPath(identity, binding.canonicalPath);
+    } catch (error) {
+      return retain(error instanceof Error ? error.message : "Run worktree path could not be verified", "recovery-required");
+    }
   }
   if (pathKey(canonicalPath) !== pathKey(binding.canonicalPath)
     || pathKey(binding.manager.projectRoot) !== pathKey(identity.root)
@@ -464,7 +496,7 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
     if (!pathExists || !registered) {
       return cleanupResultFromKernel({ ...input, result: "recovery-required", reason: "Interrupted cleanup left an inconsistent Git registration/path state" });
     }
-    const staleInspection = inspectRunWorktree({ repoRoot: identity.root, runId: run.id, runState: run.state, binding, knownOwners: [] });
+    const staleInspection = inspectRunWorktree({ repoRoot: identity.root, runId: run.id, runState: run.state, binding });
     if (staleInspection.state !== "clean" || staleInspection.headSha !== activeLease.expectedHeadSha) {
       return cleanupResultFromKernel({ ...input, result: "recovery-required", reason: `Interrupted cleanup checkout needs preservation (${staleInspection.state})` });
     }
@@ -533,7 +565,7 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
     }
     const verified = verifyWorktreeIntegration({
       repoRoot: freshIdentity.root, runId: currentRun.id, runState: currentRun.state,
-      binding: currentWorkspace, knownOwners: [], targetRef: integrationReceipt.targetBranch,
+      binding: currentWorkspace, targetRef: integrationReceipt.targetBranch,
       result: { runId: currentRun.id, summary: currentResult.summary, evidenceRefs: currentResult.evidenceRefs,
         candidateSnapshotId: currentCandidate.id, candidateFingerprint: currentCandidate.fingerprint },
     });
@@ -542,7 +574,7 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
       || verified.receipt.contentFingerprint !== integrationReceipt.contentFingerprint) {
       throw new WorktreeManagerError("cleanup-head-changed", "Worktree HEAD, integrated target branch, or preserved content changed before Git removal", canonicalPath);
     }
-    const finalInspection = inspectRunWorktree({ repoRoot: freshIdentity.root, runId: currentRun.id, runState: currentRun.state, binding: currentWorkspace, knownOwners: [] });
+    const finalInspection = inspectRunWorktree({ repoRoot: freshIdentity.root, runId: currentRun.id, runState: currentRun.state, binding: currentWorkspace });
     if (finalInspection.state !== "clean" || finalInspection.headSha?.toLowerCase() !== expectedHeadSha
       || !finalInspection.gitDir || pathKey(finalInspection.gitDir) !== pathKey(currentWorkspace.manager.gitDir)) {
       throw new WorktreeManagerError("cleanup-worktree-changed", `Worktree changed or contains user/ignored files (${finalInspection.state})`, canonicalPath);
@@ -578,7 +610,11 @@ export async function reclaimRunWorktree(input: ReclaimTaskRunWorktreeInput): Pr
   }
 
   const restoreAndRetain = (reason: string): WorktreeCleanupResult => {
-    const restoration = restoreRemovedWorktree(identity, binding);
+    const recoveryBinding = binding;
+    if (!recoveryBinding) {
+      return keepLeaseResult(`${reason}; the Run workspace binding is unavailable, preserve refs for manual reconciliation`, "recovery-required");
+    }
+    const restoration = restoreRemovedWorktree(identity, recoveryBinding);
     return keepLeaseResult(restoration.binding
       ? `${reason}; the checkout was restored at the preserved Run branch head`
       : `${reason}; preserve repository refs and reconcile manually${restoration.reason ? ` (${restoration.reason})` : ""}`,

@@ -53,6 +53,12 @@ export function assertHardDependenciesSatisfied(root: string, dependencies: read
   if (unmet.length) throw new KernelError("DEPENDENCY_UNSATISFIED", `hard dependencies must be closed successfully: ${unmet.join(", ")}`);
 }
 
+/** Resolves a Task ID across active and archived records for read-only evidence checks. */
+export function resolveTaskDirectoryById(root: string, taskId: string): string | null {
+  const located = findTaskById(root, requireNonEmptyString(taskId, "taskId"));
+  return located?.taskDir ?? null;
+}
+
 interface LocatedTask {
   taskDir: string;
   taskId: string;

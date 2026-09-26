@@ -254,6 +254,7 @@ export type TaskKernelEventType =
   | "run.workspace-bound"
   | "run.workspace-integrated"
   | "run.workspace-cleanup-acquired"
+  | "run.workspace-cleanup-refused"
   | "run.workspace-reclaimed"
   | "run.workspace-retained"
   | "run.workspace-recovery-required"
@@ -384,6 +385,17 @@ export interface FinishTaskRunWorkspaceCleanupRequest {
   result: "reclaimed" | "retained" | "partial-removal" | "recovery-required";
   reason?: string | null;
   updatedManagerBinding?: TaskRunWorkspaceManagerBinding;
+  actor: string;
+  idempotencyKey: string;
+  cwd?: string;
+}
+
+export interface RecordTaskRunWorkspaceCleanupRefusalRequest {
+  root: string;
+  taskDir: string;
+  expectedRevision: number;
+  runId: string;
+  reason: string;
   actor: string;
   idempotencyKey: string;
   cwd?: string;

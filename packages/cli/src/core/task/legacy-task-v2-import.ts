@@ -39,6 +39,30 @@ export interface LegacyTaskV2ImportSummary {
   readonly diagnostics: readonly string[];
 }
 
+export interface LegacyTaskV2ReconciliationInput {
+  readonly taskPath: string;
+  readonly idempotencyKey: string;
+  readonly activationAt: string;
+  /** Added by the transaction writer; callers must not choose this value. */
+  readonly requestFingerprint?: string;
+  readonly definition?: {
+      readonly title?: string;
+      readonly deliverable?: string;
+      readonly deliveryLevel?: string;
+      readonly createdAt?: string;
+      readonly acceptanceCriteria?: readonly string[];
+  };
+  readonly dependencyResolutions?: readonly {
+    readonly reference: string;
+    readonly taskId: string;
+  }[];
+}
+
+export interface LegacyTaskV2ReconciliationBuild {
+  readonly targets: readonly LegacyTaskV2ImportTarget[];
+  readonly diagnostics: readonly string[];
+}
+
 interface DependencyDeclaration {
   readonly owner: LegacyTaskSource | null;
   readonly ownerId: string | null;
@@ -80,6 +104,7 @@ interface TaskImportAssessment {
   description: string;
   deliverable: string | null;
   deliveryLevel: TaskDefinitionV2["deliveryLevel"] | null;
+  createdAt: string | null;
   acceptanceCriteria: TaskAcceptanceCriterion[] | null;
 }
 
@@ -563,8 +588,68 @@ function assessmentFor(source: LegacyTaskSource): TaskImportAssessment {
     description: typeof raw.description === "string" ? raw.description : "",
     deliverable,
     deliveryLevel,
+    createdAt:
+      typeof raw.createdAt === "string" &&
+      raw.createdAt.trim() !== "" &&
+      !Number.isNaN(Date.parse(raw.createdAt))
+        ? raw.createdAt
+        : null,
     acceptanceCriteria,
   };
+}
+
+function applyReconciliationDefinition(
+  assessment: TaskImportAssessment,
+  input: LegacyTaskV2ReconciliationInput,
+): void {
+  const definition = input.definition ?? {};
+  const keys = Object.keys(definition);
+  if (keys.some((key) => !["title", "deliverable", "deliveryLevel", "createdAt", "acceptanceCriteria"].includes(key))) {
+    throw new Error("legacy-task-reconciliation-definition-field-invalid");
+  }
+  const takeMissing = (field: string): void => {
+    if (!assessment.missingDefinitionFields.has(field))
+      throw new Error(`legacy-task-reconciliation-field-already-defined:${field}`);
+    assessment.missingDefinitionFields.delete(field);
+  };
+  if (Object.hasOwn(definition, "title")) {
+    if (!nonPlaceholder(definition.title))
+      throw new Error("legacy-task-reconciliation-title-invalid");
+    takeMissing("title");
+    assessment.title = definition.title.trim();
+  }
+  if (Object.hasOwn(definition, "deliverable")) {
+    if (!nonPlaceholder(definition.deliverable))
+      throw new Error("legacy-task-reconciliation-deliverable-invalid");
+    takeMissing("deliverable");
+    assessment.deliverable = definition.deliverable.trim();
+  }
+  if (Object.hasOwn(definition, "deliveryLevel")) {
+    if (!TASK_DELIVERY_LEVELS.includes(
+      definition.deliveryLevel as (typeof TASK_DELIVERY_LEVELS)[number],
+    )) throw new Error("legacy-task-reconciliation-delivery-level-invalid");
+    takeMissing("deliveryLevel");
+    assessment.deliveryLevel = definition.deliveryLevel as TaskDefinitionV2["deliveryLevel"];
+  }
+  if (Object.hasOwn(definition, "createdAt")) {
+    if (typeof definition.createdAt !== "string" || Number.isNaN(Date.parse(definition.createdAt)))
+      throw new Error("legacy-task-reconciliation-created-at-invalid");
+    takeMissing("createdAt");
+    assessment.createdAt = definition.createdAt;
+  }
+  if (Object.hasOwn(definition, "acceptanceCriteria")) {
+    const supplied = definition.acceptanceCriteria;
+    if (
+      !Array.isArray(supplied) ||
+      supplied.length === 0 ||
+      supplied.some((criterion) => !nonPlaceholder(criterion))
+    ) throw new Error("legacy-task-reconciliation-acceptance-criteria-invalid");
+    takeMissing("acceptanceCriteria");
+    assessment.acceptanceCriteria = supplied.map((description, index) => ({
+      id: `legacy-ac-${index + 1}-${stableHash({ path: assessment.source.directory, description: description.trim() }).slice(0, 8)}`,
+      description: description.trim(),
+    }));
+  }
 }
 
 function explicitTaskJsonDeclaration(
@@ -590,6 +675,7 @@ function addDependencyDeclarations(
   declaration: DependencyDeclaration,
   tasks: readonly LegacyTaskSource[],
   byDirectory: Map<string, TaskImportAssessment>,
+  explicitResolutions: ReadonlyMap<string, LegacyTaskSource> = new Map(),
 ): void {
   const owner = declaration.owner
     ? byDirectory.get(declaration.owner.directory)
@@ -618,7 +704,10 @@ function addDependencyDeclarations(
     return;
   }
   for (const reference of declaration.references) {
-    const resolved = uniqueTaskForReference(reference, tasks);
+    const resolutionKey = `${declaration.source}\0${typeof reference === "string" ? reference.trim() : String(reference)}`;
+    const resolved = explicitResolutions.has(resolutionKey)
+      ? { task: explicitResolutions.get(resolutionKey) ?? null, reason: null }
+      : uniqueTaskForReference(reference, tasks);
     if (!resolved.task || resolved.reason) {
       owner.coordinationReasons.add(
         `${resolved.reason ?? "dependency-unresolved"}:${declaration.source}`,
@@ -673,6 +762,7 @@ function markHardDependencyCycles(
 function importedSnapshot(
   assessment: TaskImportAssessment,
   sourceFingerprint: string,
+  activationAt?: string,
 ): TaskKernelSnapshotV2 {
   if (
     !assessment.title ||
@@ -683,7 +773,9 @@ function importedSnapshot(
     throw new Error("legacy-task-import-definition-missing");
   }
   const raw = assessment.source.rawTaskData ?? {};
-  const createdAt = raw.createdAt as string;
+  const createdAt = assessment.createdAt;
+  if (!createdAt) throw new Error("legacy-task-import-created-at-missing");
+  const eventAt = activationAt ?? createdAt;
   const actor = nonPlaceholder(raw.creator)
     ? raw.creator
     : "pactile-legacy-migration";
@@ -709,7 +801,7 @@ function importedSnapshot(
   const event: TaskKernelEventV2 = {
     id: eventId,
     revision: 1,
-    at: createdAt,
+    at: eventAt,
     actor: "pactile-legacy-migration",
     idempotencyKey,
     type: "task.created",
@@ -718,7 +810,7 @@ function importedSnapshot(
   };
   const audit: KernelAuditEvent = {
     id: eventId,
-    at: createdAt,
+    at: eventAt,
     actor: "pactile-legacy-migration",
     idempotencyKey,
     evidence: `Imported legacy Task source ${sourceFingerprint}; historical lifecycle evidence remains in the immutable source snapshot.`,
@@ -872,5 +964,102 @@ export function buildLegacyTaskV2Import(
     needsCoordination,
     archived: plan.tasks.filter((task) => task.archivedByPath).length,
     diagnostics: [...new Set(diagnostics)].sort(),
+  };
+}
+
+/**
+ * Build one explicit, non-historical V2 activation for a previously held Task.
+ * This builder never changes the source scan and refuses to emit a kernel while
+ * any required definition field or blocking dependency remains unresolved.
+ */
+export function buildLegacyTaskV2Reconciliation(
+  plan: LegacyTaskMigrationPlan,
+  input: LegacyTaskV2ReconciliationInput,
+): LegacyTaskV2ReconciliationBuild {
+  if (
+    plan.preflight.status !== "clear-to-review" ||
+    !plan.sourceFingerprint ||
+    !input.idempotencyKey.trim() ||
+    Number.isNaN(Date.parse(input.activationAt))
+  ) throw new Error("legacy-task-reconciliation-preflight-blocked");
+  const source = plan.tasks.find((task) => task.directory === input.taskPath);
+  if (!source || source.archivedByPath)
+    throw new Error("legacy-task-reconciliation-task-not-active");
+  const active = plan.tasks.filter((task) => !task.archivedByPath);
+  const assessments = active.map((task) => assessmentFor(task));
+  const byDirectory = new Map(assessments.map((item) => [item.source.directory, item]));
+  const finalAssessment = byDirectory.get(source.directory);
+  if (!finalAssessment || finalAssessment.missingDefinitionFields.has("taskId"))
+    throw new Error("legacy-task-reconciliation-task-id-invalid");
+  applyReconciliationDefinition(finalAssessment, input);
+  const declarations = active.flatMap((task) => {
+    const jsonDeclaration = explicitTaskJsonDeclaration(task);
+    return jsonDeclaration ? [jsonDeclaration] : [];
+  });
+  declarations.push(...taskMapDeclarations(plan.tasks, byDirectory));
+
+  const selectedDeclaration = (declaration: DependencyDeclaration): boolean =>
+    declaration.owner?.directory === source.directory;
+  const explicitResolutions = new Map<string, LegacyTaskSource>();
+  const seenReferences = new Set<string>();
+  for (const item of input.dependencyResolutions ?? []) {
+    if (
+      typeof item.reference !== "string" || !item.reference.trim() ||
+      typeof item.taskId !== "string" || !TASK_ID.test(item.taskId)
+    ) throw new Error("legacy-task-reconciliation-dependency-resolution-invalid");
+    const matching = declarations.filter((declaration) => {
+      if (!selectedDeclaration(declaration) || declaration.mode.state !== "block") return false;
+      return declaration.references.some((reference) =>
+        typeof reference === "string" && reference.trim() === item.reference.trim() &&
+        uniqueTaskForReference(reference, plan.tasks).reason !== null,
+      );
+    });
+    if (matching.length !== 1)
+      throw new Error(`legacy-task-reconciliation-dependency-resolution-not-unique:${item.reference}`);
+    const declaration = matching[0];
+    if (!declaration) throw new Error("legacy-task-reconciliation-dependency-resolution-invalid");
+    const resolutionKey = `${declaration.source}\0${item.reference.trim()}`;
+    if (seenReferences.has(resolutionKey))
+      throw new Error(`legacy-task-reconciliation-dependency-resolution-duplicate:${item.reference}`);
+    seenReferences.add(resolutionKey);
+    const targets = active.filter((task) => legacyId(task) === item.taskId);
+    if (targets.length !== 1)
+      throw new Error(`legacy-task-reconciliation-dependency-target-not-unique:${item.taskId}`);
+    explicitResolutions.set(resolutionKey, targets[0] as LegacyTaskSource);
+  }
+
+  for (const declaration of declarations)
+    addDependencyDeclarations(declaration, plan.tasks, byDirectory, explicitResolutions);
+  markHardDependencyCycles(assessments);
+  const reconciledAssessment = byDirectory.get(source.directory);
+  if (!reconciledAssessment) throw new Error("legacy-task-reconciliation-assessment-missing");
+  if (reconciledAssessment.coordinationReasons.size)
+    throw new Error(`legacy-task-reconciliation-needs-coordination:${[...reconciledAssessment.coordinationReasons].sort().join(",")}`);
+  if (reconciledAssessment.missingDefinitionFields.size)
+    throw new Error(`legacy-task-reconciliation-needs-definition:${[...reconciledAssessment.missingDefinitionFields].sort().join(",")}`);
+
+  const resolvedDependencies = [...(input.dependencyResolutions ?? [])].map((item) => ({
+    reference: item.reference.trim(),
+    taskId: item.taskId,
+  }));
+  const record = importRecord(reconciledAssessment, plan.sourceFingerprint);
+  record.reconciliation = {
+    schemaVersion: 1,
+    kind: "explicit-legacy-task-reconciliation",
+    activationAt: input.activationAt,
+    idempotencyKey: input.idempotencyKey,
+    requestFingerprint: input.requestFingerprint ?? null,
+    suppliedDefinition: input.definition ?? {},
+    resolvedDependencies,
+    historyPolicy: "legacy-lifecycle-remains-source-only",
+  };
+  const kernel = importedSnapshot(reconciledAssessment, plan.sourceFingerprint, input.activationAt);
+  const root = source.directory;
+  return {
+    targets: [
+      { path: `${root}/legacy-import.json`, bytes: jsonBytes(record) },
+      { path: `${root}/kernel.json`, bytes: jsonBytes(kernel) },
+    ].sort((left, right) => left.path.localeCompare(right.path)),
+    diagnostics: [],
   };
 }

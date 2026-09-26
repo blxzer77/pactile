@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { readTaskKernel, type KernelPhase } from "../../core/task/index.js";
+import { KernelError, readTaskKernel, type KernelPhase } from "../../core/task/index.js";
 import { readLegacyTaskImportRecord } from "../../core/task/legacy-task-migration-reader.js";
 import { prepareSelectedTaskAgentTileSelection } from "../registry.js";
 import { resolveSelectedTask, resolveTaskDir } from "./session.js";
@@ -75,24 +75,24 @@ export function compileSessionPack(root: string, factGap = false): Record<string
   const selected = Boolean(selection.taskPath) && !selection.stale;
   const stale = selection.stale;
   const dir = selection.taskPath && !stale ? resolveTaskDir(root, selection.taskPath) : null;
-  let migrationRecord: ReturnType<typeof readLegacyTaskImportRecord> = null;
-  let migrationAuthorityFailed = false;
-  if (selected && dir) {
-    try {
-      migrationRecord = readLegacyTaskImportRecord(root, dir);
-    } catch {
-      // An invalid migration authority must not fall through to legacy files.
-      migrationAuthorityFailed = true;
-    }
-  }
+  const migrationRecord = selected && dir
+    ? readLegacyTaskImportRecord(root, dir)
+    : null;
   const migrationNeedsReconciliation =
     migrationRecord !== null && migrationRecord.status !== "imported";
   let kernelRead: ReturnType<typeof readTaskKernel> | null = null;
   let kernelReadFailed = false;
-  if (selected && dir && !migrationAuthorityFailed && !migrationNeedsReconciliation) {
+  if (selected && dir && !migrationNeedsReconciliation) {
     try {
       kernelRead = readTaskKernel({ root, taskDir: dir, cwd: root });
-    } catch {
+    } catch (error) {
+      if (
+        migrationRecord?.status === "imported" &&
+        error instanceof KernelError &&
+        error.code === "CORRUPT_STATE"
+      ) {
+        throw error;
+      }
       // An unreadable or unknown selected Task must not fall through to V1 guidance.
       kernelReadFailed = true;
     }
@@ -190,11 +190,9 @@ export function compileSessionPack(root: string, factGap = false): Record<string
     : !selected
       ? "Intake: answer directly, clarify whether there is work, or draft a V2 Task Proposal with a deliverable, measurable ACs, a delivery level, and known hard dependency Task IDs. Create the Task only after the user agrees; its lifecycle starts at Define."
       : unresolvedSelection
-        ? migrationAuthorityFailed
-          ? "Stop. Legacy migration authority could not be validated; inspect the committed migration state before continuing."
-          : kernelReadFailed
-            ? "Stop. The selected Task format is not identified because its canonical Task Kernel could not be read; inspect it before continuing."
-            : "Stop. The selected Task format is not identified as a valid persisted V1 or V2 Kernel; inspect it before continuing."
+        ? kernelReadFailed
+          ? "Stop. The selected Task format is not identified because its canonical Task Kernel could not be read; inspect it before continuing."
+          : "Stop. The selected Task format is not identified as a valid persisted V1 or V2 Kernel; inspect it before continuing."
         : migrationNeedsReconciliation
           ? migrationNext ?? "Stop. Reconcile the legacy migration before any V2 Run."
           : stuck
@@ -211,8 +209,6 @@ export function compileSessionPack(root: string, factGap = false): Record<string
       constraints.push(`Coordination reasons: ${migrationRecord.coordinationReasons.join(", ")}.`);
   } else if (unresolvedSelection) {
     constraints.push("The selected Task schema is unresolved; do not infer lifecycle gates.");
-    if (migrationAuthorityFailed)
-      constraints.push("Migration authority is invalid or has residual state; do not fall back to legacy files.");
     if (kernelReadFailed)
       constraints.push("The canonical Task Kernel could not be read; do not fall back to legacy files.");
   }

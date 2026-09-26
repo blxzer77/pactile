@@ -21,7 +21,8 @@ import {
 import { isWorkflowInitialized, workflowPath } from "../utils/workflow-dir.js";
 import { PACKAGE_NAME, VERSION } from "../constants/version.js";
 import { runKernelJsonCli } from "../core/task/index.js";
-import { runTaskCli } from "../commands/task.js";
+import { runTaskCliWithWorkspaceReclaim } from "../commands/task-worktree-close.js";
+import { runWorktreeCommand } from "../commands/worktree.js";
 import { runPiCli } from "../commands/pi.js";
 import { runParallelCli } from "../commands/parallel.js";
 import { runCodexCli } from "../commands/codex.js";
@@ -544,13 +545,25 @@ program
 program
   .command("task")
   .description("Manage Pactile tasks with the Node runtime")
-  .addHelpText("after", "\nCore operations:\n  create <title> --slug <slug> --deliverable <text> --delivery-level <level> --accept <criterion> [--depends-on <task-id>]\n  legacy-create <title> --slug <slug> [--rigor lite|full] [--parent <task>]\n  show <task> [--json] | dashboard | list | list-archive [YYYY-MM] | select <task> | selected [--json] | exit\n  artifacts <task> [--agent] [--stage prd|design|implement|review|verify]\n    Default is human-readable Markdown; --agent returns a compact JSON index without document bodies.\n  artifacts <task> --fact <id> [--stage <stage>] [--agent]\n    Expands selected Kernel facts from the index.\n  artifacts <task> --document <document-id>@<fingerprint> [--stage <stage>] [--agent]\n    Reads authored Markdown. Copy sha256:<64 lowercase hex> from the current index, or use @absent to confirm a missing file; re-read the index after edits because stale fingerprints fail.\n  run-start <task> --input-summary <text> --approved-by <actor> --authorization-scope <text> --authorization-evidence <ref> [--wait]\n  run-resume <task> <run-id> | run-result <task> <run-id> --outcome <completed|failed|blocked>\n  review <task> --run <run-id> --candidate-id <id> --candidate-fingerprint <sha256> --reviewer <actor> --decision <verdict> --evidence <ref> --criterion <id>=<ref>\n  close <task> --run <run-id> --review <review-id> --candidate-id <id> --candidate-fingerprint <sha256> --candidate-observed-by <actor> --candidate-observation-source <source> --candidate-observation-ref <ref> --delivery-level <level> --delivery-ref <ref> --delivery-summary <text> [--check]\n  start-execution <legacy-task> --check|--approved [--ignore-deps]\n  archive <legacy-task> [--check] [--archive-integrated-children]\n  prepare-archive-evidence <legacy-task> [--dry-run] | prepare-learning-scaffold <legacy-task> [--trigger <text>]\n  set-deps <legacy-task> [required-task-id...]\n  add-subtask <parent> <child> | remove-subtask <parent> <child>\n  prepare-child-worktree <parent> <child> --branch <branch> [--check]\n  set-child-state <parent> <child> <state> --evidence <ref>\n  integrate-child <parent> <child> <state> --evidence <ref> --ref <git-ref> [--execute-merge]\n  record-ac-evidence | record-independent-check | record-gate\n  add-context | list-context | validate | artifact-locale\n")
+  .addHelpText("after", "\nCore operations:\n  create <title> --slug <slug> --deliverable <text> --delivery-level <level> --accept <criterion> [--depends-on <task-id>]\n  legacy-create <title> --slug <slug> [--rigor lite|full] [--parent <task>]\n  show <task> [--json] | dashboard | list | list-archive [YYYY-MM] | select <task> | selected [--json] | exit\n  schedule list [--json] | schedule plan <task-id> [task-id ...] | schedule show <fingerprint>\n    Plans and reads V2 Task DAG receipts only; it does not start Runs or authorize dispatch.\n  artifacts <task> [--agent] [--stage prd|design|implement|review|verify]\n    Default is human-readable Markdown; --agent returns a compact JSON index without document bodies.\n  artifacts <task> --fact <id> [--stage <stage>] [--agent]\n    Expands selected Kernel facts from the index.\n  artifacts <task> --document <document-id>@<fingerprint> [--stage <stage>] [--agent]\n    Reads authored Markdown. Copy sha256:<64 lowercase hex> from the current index, or use @absent to confirm a missing file; re-read the index after edits because stale fingerprints fail.\n  run-start <task> --input-summary <text> --approved-by <actor> --authorization-scope <text> --authorization-evidence <ref> [--wait]\n  run-resume <task> <run-id> | run-result <task> <run-id> --outcome <completed|failed|blocked>\n  review <task> --run <run-id> --candidate-id <id> --candidate-fingerprint <sha256> --reviewer <actor> --decision <verdict> --evidence <ref> --criterion <id>=<ref>\n  close <task> --run <run-id> --review <review-id> --candidate-id <id> --candidate-fingerprint <sha256> --candidate-observed-by <actor> --candidate-observation-source <source> --candidate-observation-ref <ref> --delivery-level <level> --delivery-ref <ref> --delivery-summary <text> [--check]\n  start-execution <legacy-task> --check|--approved [--ignore-deps]\n  archive <legacy-task> [--check] [--archive-integrated-children]\n  prepare-archive-evidence <legacy-task> [--dry-run] | prepare-learning-scaffold <legacy-task> [--trigger <text>]\n  set-deps <legacy-task> [required-task-id...]\n  add-subtask <parent> <child> | remove-subtask <parent> <child>\n  prepare-child-worktree <parent> <child> --branch <branch> [--check]\n  set-child-state <parent> <child> <state> --evidence <ref>\n  integrate-child <parent> <child> <state> --evidence <ref> --ref <git-ref> [--execute-merge]\n  record-ac-evidence | record-independent-check | record-gate\n  add-context | list-context | validate | artifact-locale\n")
   .allowUnknownOption()
   .allowExcessArguments()
   .argument("[operation]")
   .argument("[arguments...]")
-  .action(() => {
-    process.exitCode = runTaskCli(process.argv.slice(3));
+  .action(async () => {
+    process.exitCode = await runTaskCliWithWorkspaceReclaim(process.argv.slice(3));
+  });
+
+program
+  .command("worktree")
+  .description("Manage the current Pactile Run's Git worktree")
+  .addHelpText("after", "\n  create <task> <run-id> [--branch <branch>] [--base-ref <ref>]\n  adopt <task> <run-id> --path <registered-checkout> --branch <branch> --base-sha <sha> --approved-by <name> --approval-evidence <ref>\n  inspect <task> <run-id> | integrate <task> <run-id> --target <local-branch> | reclaim <task> <run-id>\n")
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[operation]")
+  .argument("[arguments...]")
+  .action(async () => {
+    process.exitCode = await runWorktreeCommand(process.argv.slice(3));
   });
 
 program
@@ -575,4 +588,4 @@ program
     }
   });
 
-program.parse();
+await program.parseAsync();

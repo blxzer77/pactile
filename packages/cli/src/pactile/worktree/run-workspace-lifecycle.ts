@@ -50,7 +50,6 @@ export function createTaskRunWorktree(input: CreateTaskRunWorktreeInput): {
     branch: input.branch,
     baseRef: input.baseRef,
     writeSet: stored.run.writeSetSnapshot,
-    knownOwners: [],
   });
   try {
     const mutation = bindTaskRunWorkspace({
@@ -97,7 +96,6 @@ export function adoptTaskRunWorktree(input: AdoptTaskRunWorktreeInput): {
     branch: input.branch,
     baseSha: input.baseSha,
     writeSet: stored.run.writeSetSnapshot,
-    knownOwners: [],
     authorization: input.authorization,
   });
   try {
@@ -140,7 +138,6 @@ export function integrateTaskRunWorktree(input: IntegrateTaskRunWorktreeInput): 
     runId: input.runId,
     runState: stored.run.state,
     binding: workspace,
-    knownOwners: [],
     targetRef: input.targetRef,
     result: {
       runId: input.runId,
