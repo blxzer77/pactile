@@ -370,6 +370,7 @@ export type TaskKernelEventType =
   | "run.host-settlement-recorded"
   | "run.host-settled"
   | "run.workspace-bound"
+  | "run.workspace-claim-refused"
   | "run.workspace-integrated"
   | "run.workspace-cleanup-acquired"
   | "run.workspace-cleanup-refused"
@@ -514,6 +515,42 @@ export interface RecordTaskRunWorkspaceCleanupRefusalRequest {
   expectedRevision: number;
   runId: string;
   reason: string;
+  actor: string;
+  idempotencyKey: string;
+  cwd?: string;
+}
+
+export type TaskRunWorkspaceClaimOperation = "create" | "adopt";
+
+export const TASK_RUN_WORKSPACE_CLAIM_ERROR_CODES = [
+  "owner-conflict",
+  "path-exists",
+  "invalid-run-id",
+  "invalid-write-set",
+  "invalid-ref",
+  "path-anomaly",
+  "invalid-repository",
+  "adoption-not-authorized",
+  "adoption-not-safe",
+  "git-command-failed",
+  "git-path-unrepresentable",
+  "gitdir-mismatch",
+  "manager-provenance-invalid",
+  "manager-provenance-write-failed",
+  "worktree-create-failed",
+  "post-create-verification-failed",
+  "claim-failed",
+] as const;
+
+export type TaskRunWorkspaceClaimErrorCode = (typeof TASK_RUN_WORKSPACE_CLAIM_ERROR_CODES)[number];
+
+export interface RecordTaskRunWorkspaceClaimRefusalRequest {
+  root: string;
+  taskDir: string;
+  expectedRevision: number;
+  runId: string;
+  operation: TaskRunWorkspaceClaimOperation;
+  errorCode: TaskRunWorkspaceClaimErrorCode;
   actor: string;
   idempotencyKey: string;
   cwd?: string;

@@ -198,6 +198,7 @@ export function adoptRunWorktree(input: {
     persistManagerProvenance(identity, provenance);
     ownedBinding = { ...binding, manager: taskKernelManagerBinding(provenance) };
   } catch (error) {
+    if (error instanceof WorktreeManagerError && error.code === "owner-conflict") throw error;
     throw new WorktreeManagerError("adoption-not-safe", error instanceof Error ? error.message : "Could not persist adoption evidence", canonicalPath);
   }
   const verified = inspectRunWorktree({ repoRoot: identity.root, runId: input.runId, runState: input.runState, binding: ownedBinding, knownOwners: input.knownOwners });
