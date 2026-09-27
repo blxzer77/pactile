@@ -675,6 +675,7 @@ function parseReview(value: unknown, field: string): TaskReviewV2 {
   const acceptanceEvidence = parseEvidenceMap(
     input.acceptanceEvidence,
     `${field}.acceptanceEvidence`,
+    input.decision !== "pass",
   );
   const evidenceVerification =
     input.evidenceVerification === undefined
@@ -1640,7 +1641,11 @@ export function parseAcceptanceEvidence(
   criteria: readonly TaskAcceptanceCriterion[],
   requireComplete: boolean,
 ): Record<string, string[]> {
-  const evidence = parseEvidenceMap(value, "acceptanceEvidence");
+  const evidence = parseEvidenceMap(
+    value,
+    "acceptanceEvidence",
+    !requireComplete,
+  );
   const allowed = new Set(criteria.map((criterion) => criterion.id));
   for (const key of Object.keys(evidence))
     if (!allowed.has(key))
@@ -1664,12 +1669,13 @@ export function parseAcceptanceEvidence(
 function parseEvidenceMap(
   value: unknown,
   field: string,
+  allowEmptyReferences = false,
 ): Record<string, string[]> {
   const input = parseObject(value, field);
   const result: Record<string, string[]> = {};
   for (const [key, refs] of Object.entries(input)) {
     Object.defineProperty(result, requireNonEmptyString(key, `${field} key`), {
-      value: parseStringArray(refs, `${field}.${key}`),
+      value: parseStringArray(refs, `${field}.${key}`, allowEmptyReferences),
       enumerable: true,
       writable: true,
       configurable: true,

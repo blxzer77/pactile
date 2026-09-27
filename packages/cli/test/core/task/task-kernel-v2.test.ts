@@ -1024,6 +1024,132 @@ describe("Task Kernel v2", () => {
     }).kernel.closure?.reviewId).toBe(latestReview.id);
   });
 
+  it("persists empty acceptance refs for non-passing Reviews while keeping pass and Close blocked", () => {
+    for (const decision of ["fail", "needs-changes"] as const) {
+      const root = makeRoot();
+      const taskId = `empty-acceptance-${decision}`;
+      const task = createKernelTask(root, taskId);
+      const prepared = prepareReviewableTask(root, task.dir, taskId);
+      const current = readV2(root, task.dir);
+
+      expect(() =>
+        recordTaskReview({
+          root,
+          taskDir: task.dir,
+          expectedRevision: current.revision,
+          runId: prepared.run.id,
+          candidateSnapshotId: prepared.candidate.id,
+          candidateFingerprint: prepared.candidate.fingerprint,
+          reviewer: "reviewer",
+          decision: "pass",
+          evidenceRefs: ["review.md"],
+          acceptanceEvidence: { "AC-1": [] },
+          actor: "reviewer",
+          idempotencyKey: `empty-acceptance-pass-${decision}`,
+        }),
+      ).toThrow(/must contain at least one reference/);
+
+      const recorded = recordTaskReview({
+        root,
+        taskDir: task.dir,
+        expectedRevision: current.revision,
+        runId: prepared.run.id,
+        candidateSnapshotId: prepared.candidate.id,
+        candidateFingerprint: prepared.candidate.fingerprint,
+        reviewer: "reviewer",
+        decision,
+        evidenceRefs: ["review.md"],
+        acceptanceEvidence: { "AC-1": [] },
+        actor: "reviewer",
+        idempotencyKey: `empty-acceptance-${decision}`,
+      });
+      const readBack = readV2(root, task.dir);
+      const review = must(readBack.reviews.at(-1), "non-passing Review");
+
+      expect(review.decision).toBe(decision);
+      expect(review.acceptanceEvidence).toEqual({ "AC-1": [] });
+      expect(review.evidenceRefs).toEqual(["review.md"]);
+      expect(review.evidenceVerification?.items).toEqual([
+        expect.objectContaining({
+          ref: "review.md",
+          sha256: bytesFingerprint("Independent Review report\n"),
+          source: "task-evidence",
+        }),
+      ]);
+      expect(recorded.kernel.revision).toBe(readBack.revision);
+
+      const closeErrors = checkTaskClose({
+        root,
+        taskDir: task.dir,
+        expectedRevision: readBack.revision,
+        runId: prepared.run.id,
+        reviewId: review.id,
+        candidateObservation: {
+          snapshotId: prepared.candidate.id,
+          fingerprint: prepared.candidate.fingerprint,
+          observedBy: "closer",
+          observedAt: "now",
+          source: "caller",
+          evidenceRef: "candidate-observation.json",
+        },
+        deliveryEvidence: {
+          level: "local-result",
+          reference: "result.txt",
+          summary: "present",
+        },
+      });
+      expect(closeErrors).toContain(
+        "the latest Review for the selected candidate must pass",
+      );
+      expect(closeErrors).toContain("acceptance evidence missing for AC-1");
+    }
+  });
+
+  it("continues to reject empty acceptance refs in stored Closure state", () => {
+    const root = makeRoot();
+    const taskId = "closure-empty-acceptance";
+    const task = createKernelTask(root, taskId);
+    const prepared = prepareReviewableTask(root, task.dir, taskId);
+    const closed = closeTaskKernel({
+      root,
+      taskDir: task.dir,
+      expectedRevision: prepared.kernel.revision,
+      runId: prepared.run.id,
+      reviewId: prepared.review.id,
+      candidateObservation: {
+        snapshotId: prepared.candidate.id,
+        fingerprint: prepared.candidate.fingerprint,
+        observedBy: "closer",
+        observedAt: "now",
+        source: "caller",
+        evidenceRef: "candidate-observation.json",
+      },
+      deliveryEvidence: {
+        level: "local-result",
+        reference: "result.txt",
+        summary: "present",
+      },
+      actor: "closer",
+      idempotencyKey: "close-with-complete-acceptance",
+    });
+    expect(closed.kernel.closure?.acceptanceEvidence).toEqual({
+      "AC-1": ["result.txt"],
+    });
+
+    const kernelPath = path.join(task.dir, "kernel.json");
+    const persisted = JSON.parse(fs.readFileSync(kernelPath, "utf8")) as {
+      closure: { acceptanceEvidence: Record<string, string[]> };
+    };
+    persisted.closure.acceptanceEvidence = { "AC-1": [] };
+    fs.writeFileSync(kernelPath, JSON.stringify(persisted) + "\n", "utf8");
+
+    expect(() =>
+      readTaskKernel({ root, taskDir: task.dir, cwd: root }),
+    ).toThrow(
+      /closure.acceptanceEvidence.AC-1 must contain at least one reference/,
+    );
+  });
+
   it("accepts only delivery evidence matching each of the four Task delivery levels", () => {
     const cases: { level: TaskDeliveryLevel; reference: string; mismatch: TaskDeliveryLevel }[] = [
       { level: "local-result", reference: "dist/result.txt", mismatch: "documentation" },
