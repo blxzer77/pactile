@@ -39,6 +39,7 @@ interface PiRpcCloseEvent {
 export class PiRpcClient {
   private child: ChildProcessWithoutNullStreams | null = null;
   private pending = new Map<string, { resolve: (value: RpcObject) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
+  private pendingWrites = new Map<string, (error: Error) => void>();
   private buffer = "";
   private decoder = new StringDecoder("utf8");
   private listeners = new Set<(event: RpcObject) => void>();
@@ -65,6 +66,8 @@ export class PiRpcClient {
   private fail(error: Error): void {
     if (this.ended) return;
     this.ended = error;
+    for (const failWrite of [...this.pendingWrites.values()]) failWrite(error);
+    this.pendingWrites.clear();
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(error);
@@ -124,7 +127,7 @@ export class PiRpcClient {
     }
   }
 
-  async start(beforeSpawn?: () => void): Promise<number> {
+  async start(beforeSpawn?: () => void, timeoutMs = 30_000): Promise<number> {
     if (this.isStarted) return 0;
     if (this.child) throw new Error("Pi RPC process cannot be restarted after exit");
     fs.mkdirSync(this.options.sessionDir, { recursive: true });
@@ -155,13 +158,23 @@ export class PiRpcClient {
     child.stderr.resume();
     child.on("error", (error) => this.fail(new Error(`Pi RPC launch failed: ${error.message}`)));
     child.on("exit", (code, signal) => this.fail(new Error(`Pi RPC exited (code=${code ?? "null"}, signal=${signal ?? "none"})`)));
-    await this.request("get_state", {}, 30_000);
+    await this.request("get_state", {}, timeoutMs);
     this.startupMs = Math.round(performance.now() - started);
     return this.startupMs;
   }
 
-  async request(type: string, fields: RpcObject = {}, timeoutMs = 15_000): Promise<RpcObject> {
-    if (!this.child || this.ended) throw this.ended ?? new Error("Pi RPC is not started");
+  async request(
+    type: string,
+    fields: RpcObject = {},
+    timeoutMs = 15_000,
+    dispatch?: {
+      beforeWrite?: () => void;
+      onWritten?: () => void;
+      onWriteFailed?: (error: Error) => void;
+    },
+  ): Promise<RpcObject> {
+    const child = this.child;
+    if (!child || this.ended) throw this.ended ?? new Error("Pi RPC is not started");
     const id = randomUUID();
     const response = new Promise<RpcObject>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -170,20 +183,62 @@ export class PiRpcClient {
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
     });
-    try {
-      this.child.stdin.write(`${JSON.stringify({ id, type, ...fields })}\n`);
-    } catch (error) {
+    let resolveWrite!: () => void;
+    let rejectWrite!: (error: Error) => void;
+    const write = new Promise<void>((resolve, reject) => {
+      resolveWrite = resolve;
+      rejectWrite = reject;
+    });
+    let writeSettled = false;
+    const failWrite = (error: Error): void => {
+      if (writeSettled) return;
+      writeSettled = true;
+      this.pendingWrites.delete(id);
       const pending = this.pending.get(id);
-      if (pending) { clearTimeout(pending.timer); this.pending.delete(id); }
-      throw error;
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pending.delete(id);
+        pending.reject(error);
+      }
+      try { dispatch?.onWriteFailed?.(error); } catch { /* Preserve the transport failure. */ }
+      rejectWrite(error);
+    };
+    const finishWrite = (): void => {
+      if (writeSettled) return;
+      try {
+        dispatch?.onWritten?.();
+      } catch (callbackError) {
+        failWrite(callbackError instanceof Error ? callbackError : new Error(String(callbackError)));
+        return;
+      }
+      writeSettled = true;
+      this.pendingWrites.delete(id);
+      resolveWrite();
+    };
+    try {
+      const serialized = `${JSON.stringify({ id, type, ...fields })}\n`;
+      // Prepare the payload before the last-moment deadline and cancellation check.
+      this.pendingWrites.set(id, failWrite);
+      dispatch?.beforeWrite?.();
+      child.stdin.write(serialized, (error?: Error | null) => {
+        if (error) {
+          failWrite(error);
+          return;
+        }
+        // Node's Writable callback runs after this request is flushed from its queue.
+        finishWrite();
+      });
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error(String(error));
+      failWrite(normalized);
     }
-    const result = await response;
+    const [result] = await Promise.all([response, write]);
     if (result.success !== true) throw new Error(`Pi RPC ${type} rejected: ${String(result.error ?? "unknown error")}`);
     return result;
   }
 
-  async state(): Promise<RpcObject> {
-    const result = await this.request("get_state");
+  async state(timeoutMs = 15_000): Promise<RpcObject> {
+    const result = await this.request("get_state", {}, timeoutMs);
     return result.data && typeof result.data === "object" ? result.data as RpcObject : {};
   }
 
@@ -192,9 +247,34 @@ export class PiRpcClient {
     if ((result.data as RpcObject | undefined)?.cancelled === true) throw new Error("Pi refused session switch");
   }
 
-  async prompt(message: string, timeoutMs: number, signal?: AbortSignal): Promise<{ event: RpcObject; firstEventMs: number | null }> {
+  async prompt(
+    message: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+    onDispatched?: () => void,
+    absoluteDeadlineAt?: number,
+    beforeDispatch?: () => void,
+  ): Promise<{ event: RpcObject; firstEventMs: number | null }> {
     if (signal?.aborted) throw new Error("Pi run cancelled before dispatch");
     const began = performance.now();
+    const remainingMs = (): number => Math.floor(Math.min(
+      timeoutMs - (performance.now() - began),
+      absoluteDeadlineAt === undefined
+        ? Number.POSITIVE_INFINITY
+        : absoluteDeadlineAt - performance.now(),
+    ));
+    const initialBudgetMs = remainingMs();
+    if (initialBudgetMs <= 0) throw new Error("Pi run timed out before prompt dispatch");
+    let settleWriteOutcome!: (written: boolean) => void;
+    let writeOutcomeSettled = false;
+    const writeOutcome = new Promise<boolean>((resolve) => {
+      settleWriteOutcome = (written): void => {
+        if (writeOutcomeSettled) return;
+        writeOutcomeSettled = true;
+        resolve(written);
+      };
+    });
+    let promptRequestStarted = false;
     let firstEventMs: number | null = null;
     let finish!: (event: RpcObject) => void;
     let reject!: (error: Error) => void;
@@ -221,21 +301,82 @@ export class PiRpcClient {
       }
     };
     const abort = (): void => reject(new Error("Pi run cancelled"));
-    const timer = setTimeout(() => reject(new Error("Pi run timed out")), timeoutMs);
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<never>((_resolve, fail) => {
+      timer = setTimeout(() => fail(new Error("Pi run timed out")), initialBudgetMs);
+    });
     this.listeners.add(listener);
     signal?.addEventListener("abort", abort, { once: true });
     try {
-      await this.request("prompt", { message }, Math.min(timeoutMs, 15_000));
-      const event = await done;
-      const state = await this.state();
-      if (state.isStreaming === true) throw new Error("Pi emitted completion while still streaming");
-      return { event, firstEventMs };
+      const operation = async (): Promise<{ event: RpcObject; firstEventMs: number | null }> => {
+        const promptBudgetMs = remainingMs();
+        if (promptBudgetMs <= 0) throw new Error("Pi run timed out before prompt dispatch");
+        promptRequestStarted = true;
+        await this.request(
+          "prompt",
+          { message },
+          Math.min(promptBudgetMs, 15_000),
+          {
+            beforeWrite: () => {
+              if (signal?.aborted) throw new Error("Pi run cancelled before dispatch");
+              if (
+                absoluteDeadlineAt !== undefined &&
+                performance.now() >= absoluteDeadlineAt
+              ) {
+                throw new Error("Pi run timed out before prompt dispatch");
+              }
+              beforeDispatch?.();
+              if (signal?.aborted) throw new Error("Pi run cancelled before dispatch");
+              if (
+                absoluteDeadlineAt !== undefined &&
+                performance.now() >= absoluteDeadlineAt
+              ) {
+                throw new Error("Pi run timed out before prompt dispatch");
+              }
+            },
+            onWritten: () => {
+              onDispatched?.();
+              settleWriteOutcome(true);
+            },
+            onWriteFailed: () => settleWriteOutcome(false),
+          },
+        );
+        const event = await done;
+        const stateBudgetMs = remainingMs();
+        if (stateBudgetMs <= 0)
+          throw new Error("Pi run timed out before completion state verification");
+        const state = await this.state(stateBudgetMs);
+        if (remainingMs() <= 0)
+          throw new Error("Pi run timed out during completion state verification");
+        if (state.isStreaming === true) throw new Error("Pi emitted completion while still streaming");
+        return { event, firstEventMs };
+      };
+      return await Promise.race([operation(), deadline]);
     } catch (error) {
       // Abort is best-effort. The caller closes the process if Pi does not settle.
       if (this.isStarted) void this.request("abort", {}, 2_000).catch(() => undefined);
+      if (absoluteDeadlineAt !== undefined && promptRequestStarted) {
+        let settlementTimer: NodeJS.Timeout | undefined;
+        const writeGrace = new Promise<"grace">((resolve) => {
+          settlementTimer = setTimeout(() => resolve("grace"), 2_000);
+        });
+        const processClosed = this.childClose
+          ? this.childClose.then(() => "closed" as const)
+          : new Promise<"closed">(() => undefined);
+        const settlement = await Promise.race([
+          writeOutcome.then(() => "settled" as const),
+          processClosed,
+          writeGrace,
+        ]);
+        if (settlementTimer) clearTimeout(settlementTimer);
+        if (settlement === "closed" || settlement === "grace") {
+          // Do not finalize a Review attempt while its prompt write can still settle.
+          await this.closeAndObserve();
+        }
+      }
       throw error;
     } finally {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       this.listeners.delete(listener);
       signal?.removeEventListener("abort", abort);
     }

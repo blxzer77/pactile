@@ -20,7 +20,7 @@ import {
 import { INDEPENDENT_REVIEW_AREAS } from "../../src/pactile/review/contract.js";
 import { PiTaskBridge } from "../../src/pactile/pi/bridge.js";
 import type { PiRunInput, PiRunRecord } from "../../src/pactile/pi/bridge.js";
-import type { PiRpcLaunch } from "../../src/pactile/pi/rpc.js";
+import { PiRpcClient, type PiRpcLaunch } from "../../src/pactile/pi/rpc.js";
 import { codexBridgeStatus } from "../../src/pactile/codex/bridge.js";
 import type { CodexBridgeRequest } from "../../src/pactile/codex/bridge.js";
 import { resolveTaskDir } from "../../src/pactile/task/session.js";
@@ -59,6 +59,7 @@ function fixture(
     implementationSessionId?: string;
     includeRunEvidence?: boolean;
     taskId?: string;
+    largeCandidate?: boolean;
   } = {},
 ): ReviewFixture {
   const root = fs.mkdtempSync(
@@ -67,6 +68,11 @@ function fixture(
   roots.push(root);
   fs.mkdirSync(path.join(root, "tests"), { recursive: true });
   fs.writeFileSync(path.join(root, "result.txt"), "candidate output\n");
+  const largeCandidateRefs = options.largeCandidate
+    ? Array.from({ length: 129 }, (_, index) => `candidate-${index}.txt`)
+    : [];
+  for (const reference of largeCandidateRefs)
+    fs.writeFileSync(path.join(root, reference), "candidate entry\n");
   fs.writeFileSync(
     path.join(root, "tests", "verify.txt"),
     "verification evidence\n",
@@ -119,7 +125,11 @@ function fixture(
       scope: "result.txt, tests/verify.txt",
       evidenceRef: "approval.json",
     },
-    writeSetSnapshot: ["result.txt", "tests/verify.txt"],
+    writeSetSnapshot: [
+      "result.txt",
+      "tests/verify.txt",
+      ...largeCandidateRefs,
+    ],
     ...(options.implementationSessionId
       ? {
           host: {
@@ -269,6 +279,12 @@ function fakePi(
   fixture: ReviewFixture,
   value: Record<string, unknown>,
   sessionId = "pi-checker",
+  malformed: "none" | "first" | "first-sensitive" | "always" | "hang-after-first" = "none",
+  switchSessionOnSecond = false,
+  delayCorrectionGetStateMs = 0,
+  maliciousMetadata = false,
+  switchSessionBeforeCorrection = false,
+  cancelCorrectionPreflight = false,
 ): PiRpcLaunch {
   const resultFile = path.join(fixture.taskDir, "fake-pi-review-result.json");
   fs.writeFileSync(resultFile, JSON.stringify(value) + "\n");
@@ -280,6 +296,22 @@ function fakePi(
       sessionId,
       "--result-file",
       resultFile,
+      "--malformed",
+      malformed,
+      "--delay-correction-get-state-ms",
+      String(delayCorrectionGetStateMs),
+      ...(switchSessionOnSecond ? ["--switch-session-on-second"] : []),
+      ...(maliciousMetadata ? ["--malicious-metadata"] : []),
+      ...(switchSessionBeforeCorrection ? ["--switch-session-before-correction"] : []),
+      ...(cancelCorrectionPreflight
+        ? [
+            "--cancel-correction-preflight",
+            "--cancel-file",
+            path.join(fixture.taskDir, "pi-bridge", "cancel-request.json"),
+            "--latest-file",
+            path.join(fixture.taskDir, "pi-bridge", "latest.json"),
+          ]
+        : []),
     ],
   };
 }
@@ -289,6 +321,13 @@ function readKernel(root: string, taskDir: string): TaskKernelSnapshotV2 {
   if (result.kind !== "task-kernel-v2")
     throw new Error("Expected a V2 Task Kernel");
   return result.kernel;
+}
+
+function blockSynchronously(durationMs: number): void {
+  const deadline = performance.now() + durationMs;
+  while (performance.now() < deadline) {
+    // Deliberately block to exercise the monotonic Check deadline at the write boundary.
+  }
 }
 
 function closeInput(task: ReviewFixture) {
@@ -326,6 +365,13 @@ async function runReview(
   value: Record<string, unknown>,
   prompt = "Review the candidate.",
   sessionId = "pi-checker",
+  malformed: "none" | "first" | "first-sensitive" | "always" | "hang-after-first" = "none",
+  timeoutMs = 30 * 60_000,
+  switchSessionOnSecond = false,
+  delayCorrectionGetStateMs = 0,
+  maliciousMetadata = false,
+  switchSessionBeforeCorrection = false,
+  cancelCorrectionPreflight = false,
 ): Promise<number> {
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -343,9 +389,21 @@ async function runReview(
       "check",
       "--prompt-file",
       fixture.promptFile,
+      "--timeout-ms",
+      String(timeoutMs),
     ],
     fixture.root,
-    fakePi(fixture, value, sessionId),
+    fakePi(
+      fixture,
+      value,
+      sessionId,
+      malformed,
+      switchSessionOnSecond,
+      delayCorrectionGetStateMs,
+      maliciousMetadata,
+      switchSessionBeforeCorrection,
+      cancelCorrectionPreflight,
+    ),
   );
 }
 
@@ -777,6 +835,696 @@ function prepareAndRecordAdditionalP40Send(
 }
 
 describe("P40 independent Pi Review route", () => {
+  it("allows one same-session format correction and records safe summaries for both answers", async () => {
+    const task = fixture();
+    expect(await runReview(task, report(task), "Review the candidate.", "pi-checker", "first")).toBe(0);
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(piRun["review_format_correction"]).toEqual({
+      attempted: true,
+      outcome: "accepted",
+    });
+    const attempts = fs
+      .readFileSync(path.join(task.taskDir, String(piRun["review_attempts_ref"])), "utf8")
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toMatchObject({
+      attempt: 1,
+      kind: "initial",
+      outcome: "settled",
+      format: "non-structured-json",
+    });
+    expect(attempts[1]).toMatchObject({
+      attempt: 2,
+      kind: "format-correction",
+      outcome: "settled",
+      format: "structured-json-object",
+    });
+    expect(attempts[0]?.["responseSha256"]).toEqual(expect.stringMatching(/^[a-f0-9]{64}$/u));
+    expect(attempts[1]?.["responseSha256"]).toEqual(expect.stringMatching(/^[a-f0-9]{64}$/u));
+    expect(JSON.stringify(attempts)).not.toContain("not-json");
+    expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(1);
+  });
+
+  it("persists both bounded redacted responses as independently bound evidence", async () => {
+    const task = fixture();
+    expect(
+      await runReview(
+        task,
+        report(task),
+        "Review the candidate.",
+        "pi-checker",
+        "first-sensitive",
+      ),
+    ).toBe(0);
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    const attempts = fs
+      .readFileSync(path.join(task.taskDir, String(piRun["review_attempts_ref"])), "utf8")
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const responseRefs = attempts.map((attempt) => attempt["responseRef"]);
+    expect(responseRefs).toEqual([
+      `pi-bridge/review-responses/${String(piRun["run_id"])}-attempt-1.txt`,
+      `pi-bridge/review-responses/${String(piRun["run_id"])}-attempt-2.txt`,
+    ]);
+    expect(new Set(responseRefs).size).toBe(2);
+    const responseTexts = responseRefs.map((reference) => {
+      const bytes = fs.readFileSync(path.join(task.taskDir, String(reference)));
+      expect(bytes.byteLength).toBeLessThanOrEqual(64 * 1024);
+      return bytes.toString("utf8");
+    });
+    expect(responseTexts[0]).toContain("<|DSML|>");
+    expect(responseTexts[0]).toContain("token=[redacted]");
+    expect(responseTexts[0]).not.toContain("private-provider-response-secret-1234567890");
+    expect(responseTexts[0]).not.toContain("ghs_abcdefghijklmnop");
+    expect(responseTexts[0]).not.toContain("ghs_abcdefghijk-");
+    expect(responseTexts[0]).not.toContain("ghp_abcdefghijk_");
+    expect(responseTexts[0]).not.toContain("Bearer abcdefghijk+");
+    expect(responseTexts[0]).not.toContain("Bearer abcdefghijk/");
+    expect(attempts[0]?.["redacted"]).toBe(true);
+    expect(JSON.parse(responseTexts[1] ?? "{}" )).toMatchObject({ verdict: "pass" });
+    for (const [index, responseText] of responseTexts.entries()) {
+      const bytes = Buffer.from(responseText ?? "", "utf8");
+      expect(attempts[index]?.["responseSha256"]).toBe(
+        createHash("sha256").update(bytes).digest("hex"),
+      );
+      expect(attempts[index]?.["responseBytes"]).toBe(bytes.byteLength);
+    }
+    const stop = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, String(piRun["review_stop_receipt_ref"])), "utf8"),
+    ) as Record<string, unknown>;
+    expect(stop["reviewResponses"]).toEqual(
+      attempts.map((attempt) => ({
+        ref: attempt["responseRef"],
+        sha256: attempt["responseSha256"],
+        sizeBytes: attempt["responseBytes"],
+      })),
+    );
+    const review = readKernel(task.root, task.taskDir).reviews[0];
+    expect(review?.evidenceRefs).toEqual(expect.arrayContaining(responseRefs as string[]));
+    for (const reference of responseRefs) {
+      const bytes = fs.readFileSync(path.join(task.taskDir, String(reference)));
+      expect(review?.evidenceVerification?.items).toContainEqual({
+        ref: reference,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        sizeBytes: bytes.byteLength,
+        source: "task-evidence",
+      });
+    }
+  });
+
+  it("treats a DSML tool-call shaped answer as malformed and corrects from bound evidence", async () => {
+    const task = fixture();
+    expect(
+      await runReview(task, report(task), "Review the candidate.", "pi-checker", "first"),
+    ).toBe(0);
+    const attempts = fs
+      .readFileSync(
+        path.join(
+          task.taskDir,
+          String(
+            (
+              JSON.parse(
+                fs.readFileSync(
+                  path.join(task.taskDir, "pi-bridge", "latest.json"),
+                  "utf8",
+                ),
+              ) as Record<string, unknown>
+            )["review_attempts_ref"],
+          ),
+        ),
+        "utf8",
+      )
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(attempts[0]).toMatchObject({ format: "non-structured-json" });
+    expect(JSON.stringify(attempts)).not.toContain("DSML");
+  });
+
+  it("reobserves a large candidate without turning every candidate entry into Review citations", async () => {
+    const task = fixture({ largeCandidate: true });
+    expect(
+      await runReview(task, report(task), "Review the candidate.", "pi-checker", "first"),
+    ).toBe(0);
+    expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(1);
+  });
+
+  it("rejects a second malformed answer without granting Review authority", async () => {
+    const task = fixture();
+    expect(await runReview(task, report(task), "Review the candidate.", "pi-checker", "always")).toBe(1);
+    const kernel = readKernel(task.root, task.taskDir);
+    expect(kernel.reviews).toHaveLength(0);
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(piRun).toMatchObject({
+      outcome: "settled",
+      review_status: "rejected",
+      review_format_correction: { attempted: true, outcome: "rejected" },
+    });
+    const attempts = fs
+      .readFileSync(path.join(task.taskDir, String(piRun["review_attempts_ref"])), "utf8")
+      .trim()
+      .split(/\r?\n/u);
+    expect(attempts).toHaveLength(2);
+  });
+
+  it("does not correct a valid non-PASS Review response", async () => {
+    const task = fixture();
+    expect(await runReview(task, nonPassingWithoutMandatoryEscalation(task))).toBe(1);
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(piRun["review_format_correction"]).toEqual({
+      attempted: false,
+      outcome: "not-needed",
+    });
+    const attempts = fs
+      .readFileSync(path.join(task.taskDir, String(piRun["review_attempts_ref"])), "utf8")
+      .trim()
+      .split(/\r?\n/u);
+    expect(attempts).toHaveLength(1);
+  });
+
+  it("uses the raw JSON shape before redaction and never persists a secret-shaped value", async () => {
+    const task = fixture();
+    const sensitive = report(task);
+    const coverage = sensitive["coverage"] as Record<string, Record<string, unknown>>;
+    coverage["security"] = {
+      ...coverage["security"],
+      note: "token=provider-secret-value-1234567890",
+    };
+    expect(await runReview(task, sensitive)).toBe(1);
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(piRun["review_format_correction"]).toEqual({
+      attempted: false,
+      outcome: "not-needed",
+    });
+    const result = fs.readFileSync(
+      path.join(task.taskDir, String(piRun["result_file"])),
+      "utf8",
+    );
+    expect(result).not.toContain("provider-secret-value-1234567890");
+  });
+
+  it("normalizes Pi-controlled metadata before persisting Review evidence", async () => {
+    const task = fixture();
+    expect(
+      await runReview(
+        task,
+        report(task),
+        "Review the candidate.",
+        "pi-checker",
+        "none",
+        30 * 60_000,
+        false,
+        0,
+        true,
+      ),
+    ).toBe(0);
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    const evidenceRefs = [
+      piRun["review_start_receipt_ref"],
+      piRun["review_stop_receipt_ref"],
+      piRun["review_attempts_ref"],
+      piRun["progress_evidence_ref"],
+      piRun["result_file"],
+    ];
+    const persisted = [
+      JSON.stringify(piRun),
+      ...evidenceRefs.map((reference) =>
+        fs.readFileSync(path.join(task.taskDir, String(reference)), "utf8"),
+      ),
+    ].join("\n");
+    expect(persisted).not.toContain("private-metadata-canary-74192");
+    expect(piRun["session_id"]).toMatch(/^pirc-[a-f0-9]{32}$/u);
+    expect(piRun["session_file"]).toBeNull();
+
+    const events = fs
+      .readFileSync(
+        path.join(task.taskDir, String(piRun["progress_evidence_ref"])),
+        "utf8",
+      )
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "other", tool: "other" }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "message_end",
+        role: "other",
+        stop_reason: "other",
+      }),
+    );
+    const attempts = fs
+      .readFileSync(
+        path.join(task.taskDir, String(piRun["review_attempts_ref"])),
+        "utf8",
+      )
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(attempts[0]?.["errorMessage"]).toBe("provider-reported-error");
+  });
+
+  it("rechecks the frozen candidate before format correction", async () => {
+    const task = fixture();
+    expect(
+      await runReview(
+        task,
+        report(task),
+        "TEST_MUTATE_CANDIDATE",
+        "pi-checker",
+        "first",
+      ),
+    ).toBe(1);
+    expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(piRun["review_format_correction"]).toEqual({
+      attempted: false,
+      outcome: "failed",
+    });
+    const attempts = fs
+      .readFileSync(path.join(task.taskDir, String(piRun["review_attempts_ref"])), "utf8")
+      .trim()
+      .split(/\r?\n/u);
+    expect(attempts).toHaveLength(1);
+  });
+
+  it("rejects a non-regular candidate before sending the correction prompt", async () => {
+    const task = fixture();
+    expect(
+      await runReview(
+        task,
+        report(task),
+        "TEST_NON_REGULAR_CANDIDATE",
+        "pi-checker",
+        "first",
+      ),
+    ).toBe(1);
+    expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
+    const session = fs.readFileSync(
+      path.join(
+        task.taskDir,
+        "pi-bridge",
+        "review-sessions",
+        String(
+          (
+            JSON.parse(
+              fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+            ) as Record<string, unknown>
+          )["run_id"],
+        ),
+        "fake-review-session.jsonl",
+      ),
+      "utf8",
+    );
+    expect(session.match(/Format correction for the same independent Pi Check session/gu)).toBeNull();
+  });
+
+  it("rejects a correction when the Pi session identity changes", async () => {
+    const task = fixture();
+    expect(
+      await runReview(
+        task,
+        report(task),
+        "Review the candidate.",
+        "pi-checker",
+        "first",
+        5_000,
+        true,
+      ),
+    ).toBe(1);
+    expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(piRun["review_rejection_reason"]).toContain("session changed");
+  });
+
+  it("does not count a correction when the session changes during preflight", async () => {
+    const task = fixture();
+    expect(
+      await runReview(
+        task,
+        report(task),
+        "Review the candidate.",
+        "pi-checker",
+        "first",
+        5_000,
+        false,
+        0,
+        false,
+        true,
+      ),
+    ).toBe(1);
+    expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(piRun["review_format_correction"]).toEqual({
+      attempted: false,
+      outcome: "failed",
+    });
+    const attempts = fs
+      .readFileSync(path.join(task.taskDir, String(piRun["review_attempts_ref"])), "utf8")
+      .trim()
+      .split(/\r?\n/u);
+    expect(attempts).toHaveLength(1);
+    const session = fs.readFileSync(
+      path.join(
+        task.taskDir,
+        "pi-bridge",
+        "review-sessions",
+        String(piRun["run_id"]),
+        "fake-review-session.jsonl",
+      ),
+      "utf8",
+    );
+    expect(session).not.toContain("Format correction for the same independent Pi Check session");
+  });
+
+  it("does not count a correction cancelled during preflight", async () => {
+    const task = fixture();
+    expect(
+      await runReview(
+        task,
+        report(task),
+        "Review the candidate.",
+        "pi-checker",
+        "first",
+        5_000,
+        false,
+        0,
+        false,
+        false,
+        true,
+      ),
+    ).toBe(1);
+    expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(piRun).toMatchObject({
+      outcome: "cancelled",
+      review_status: "rejected",
+      review_format_correction: { attempted: false, outcome: "cancelled" },
+    });
+    const attempts = fs
+      .readFileSync(path.join(task.taskDir, String(piRun["review_attempts_ref"])), "utf8")
+      .trim()
+      .split(/\r?\n/u);
+    expect(attempts).toHaveLength(1);
+  });
+
+  it("does not send or count a correction after its get_state preflight exhausts the Check deadline", async () => {
+    const task = fixture();
+    expect(
+      await runReview(
+        task,
+        report(task),
+        "Review the candidate.",
+        "pi-checker",
+        "first",
+        1_000,
+        false,
+        5_000,
+      ),
+    ).toBe(1);
+    expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(piRun).toMatchObject({
+      outcome: "timed_out",
+      review_status: "rejected",
+      review_format_correction: {
+        attempted: false,
+        outcome: "deadline-exceeded",
+      },
+    });
+    const attempts = fs
+      .readFileSync(path.join(task.taskDir, String(piRun["review_attempts_ref"])), "utf8")
+      .trim()
+      .split(/\r?\n/u);
+    expect(attempts).toHaveLength(1);
+    const session = fs.readFileSync(
+      path.join(
+        task.taskDir,
+        "pi-bridge",
+        "review-sessions",
+        String(piRun["run_id"]),
+        "fake-review-session.jsonl",
+      ),
+      "utf8",
+    );
+    expect(session).not.toContain("Format correction for the same independent Pi Check session");
+  });
+
+  it("rechecks the absolute Check deadline at stdin write after delayed correction construction", async () => {
+    const task = fixture();
+    const originalJoin = Array.prototype.join;
+    let delayedCorrectionConstruction = false;
+    vi.spyOn(Array.prototype, "join").mockImplementation(function (
+      this: unknown[],
+      separator?: string,
+    ) {
+      if (
+        Array.isArray(this) &&
+        this.some((part) =>
+          String(part).includes("Format correction for the same independent Pi Check session"),
+        )
+      ) {
+        delayedCorrectionConstruction = true;
+        blockSynchronously(150);
+      }
+      return originalJoin.call(this, separator);
+    });
+    const originalRequest = PiRpcClient.prototype.request;
+    vi.spyOn(PiRpcClient.prototype, "request").mockImplementation(
+      async function (
+        this: PiRpcClient,
+        ...args: Parameters<PiRpcClient["request"]>
+      ) {
+        const [type, fields] = args;
+        const message = String(fields?.["message"] ?? "");
+        if (
+          type === "prompt" &&
+          message.includes("Format correction for the same independent Pi Check session")
+        ) {
+          blockSynchronously(1_100);
+        }
+        return originalRequest.apply(this, args);
+      },
+    );
+    expect(
+      await runReview(
+        task,
+        report(task),
+        "Review the candidate.",
+        "pi-checker",
+        "first",
+        1_000,
+      ),
+    ).toBe(1);
+    expect(delayedCorrectionConstruction).toBe(true);
+    expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(piRun).toMatchObject({
+      outcome: "timed_out",
+      review_format_correction: { attempted: false, outcome: "deadline-exceeded" },
+    });
+    const session = fs.readFileSync(
+      path.join(
+        task.taskDir,
+        "pi-bridge",
+        "review-sessions",
+        String(piRun["run_id"]),
+        "fake-review-session.jsonl",
+      ),
+      "utf8",
+    );
+    expect(session).not.toContain(
+      "Format correction for the same independent Pi Check session",
+    );
+  });
+
+  it("waits for a delayed successful stdin write callback before freezing timeout attempts", async () => {
+    const task = fixture();
+    const originalRequest = PiRpcClient.prototype.request;
+    let delayedCorrectionWriteCallback = false;
+    vi.spyOn(PiRpcClient.prototype, "request").mockImplementation(
+      async function (
+        this: PiRpcClient,
+        ...args: Parameters<PiRpcClient["request"]>
+      ) {
+        const [type, fields] = args;
+        const message = String(fields?.["message"] ?? "");
+        if (
+          type === "prompt" &&
+          message.includes("Format correction for the same independent Pi Check session")
+        ) {
+          const rpc = this as unknown as {
+            child: {
+              stdin: {
+                write: (
+                  chunk: string,
+                  callback?: (error?: Error | null) => void,
+                ) => boolean;
+              };
+            };
+          };
+          const stdin = rpc.child.stdin;
+          const originalWrite = stdin.write.bind(stdin);
+          stdin.write = (chunk, callback) => {
+            if (
+              chunk.includes("Format correction for the same independent Pi Check session")
+            ) {
+              return originalWrite(chunk, (error) => {
+                delayedCorrectionWriteCallback = true;
+                setTimeout(() => callback?.(error), 1_250);
+              });
+            }
+            return originalWrite(chunk, callback);
+          };
+          try {
+            return await originalRequest.apply(this, args);
+          } finally {
+            stdin.write = originalWrite;
+          }
+        }
+        return originalRequest.apply(this, args);
+      },
+    );
+    expect(
+      await runReview(
+        task,
+        report(task),
+        "Review the candidate.",
+        "pi-checker",
+        "hang-after-first",
+        1_000,
+      ),
+    ).toBe(1);
+    expect(delayedCorrectionWriteCallback).toBe(true);
+    expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(piRun).toMatchObject({
+      outcome: "timed_out",
+      review_format_correction: { attempted: true, outcome: "timed-out" },
+    });
+    const attempts = fs
+      .readFileSync(path.join(task.taskDir, String(piRun["review_attempts_ref"])), "utf8")
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toMatchObject({
+      attempt: 2,
+      kind: "format-correction",
+      outcome: "transport-error",
+      format: "unavailable",
+      responseRef: null,
+    });
+    const session = fs.readFileSync(
+      path.join(
+        task.taskDir,
+        "pi-bridge",
+        "review-sessions",
+        String(piRun["run_id"]),
+        "fake-review-session.jsonl",
+      ),
+      "utf8",
+    );
+    expect(session).toContain(
+      "Format correction for the same independent Pi Check session",
+    );
+  });
+
+  it("keeps a correction timeout rejected with no Review authority", async () => {
+    const task = fixture();
+    expect(
+      await runReview(
+        task,
+        report(task),
+        "Review the candidate.",
+        "pi-checker",
+        "hang-after-first",
+        1_000,
+      ),
+    ).toBe(1);
+    expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(piRun).toMatchObject({
+      outcome: "timed_out",
+      review_status: "rejected",
+      review_format_correction: { attempted: true, outcome: "timed-out" },
+    });
+    const attempts = fs
+      .readFileSync(path.join(task.taskDir, String(piRun["review_attempts_ref"])), "utf8")
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toMatchObject({
+      outcome: "transport-error",
+      format: "unavailable",
+    });
+  });
+
+  it("honors a cancellation request while the bounded correction is pending", async () => {
+    const task = fixture();
+    const pending = runReview(
+      task,
+      report(task),
+      "Review the candidate.",
+      "pi-checker",
+      "hang-after-first",
+      5_000,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const latest = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    fs.writeFileSync(
+      path.join(task.taskDir, "pi-bridge", "cancel-request.json"),
+      `${JSON.stringify({ request_id: "cancel-format-correction", run_id: latest["run_id"] })}\n`,
+      { mode: 0o600 },
+    );
+    expect(await pending).toBe(1);
+    expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(piRun).toMatchObject({
+      outcome: "cancelled",
+      review_status: "rejected",
+      cancellation_request_id: "cancel-format-correction",
+      review_format_correction: { attempted: true, outcome: "cancelled" },
+    });
+  });
+
   it("starts a separate Check, records a verified stop receipt, and atomically records a Review artifact", async () => {
     const task = fixture();
     const status = await runReview(task, report(task));
@@ -793,7 +1541,7 @@ describe("P40 independent Pi Review route", () => {
     expect(kernel.reviews[0]).toMatchObject({
       runId: task.runId,
       decision: "pass",
-      reviewer: "pi-session:pi-checker",
+      reviewer: expect.stringMatching(/^pi-session:pirc-[a-f0-9]{32}$/u),
     });
     const checkEvidenceRefs = [
       piRun["review_file"],
@@ -1014,6 +1762,59 @@ describe("P40 independent Pi Review route", () => {
     expect(await runReview(task, report(task))).toBe(1);
     expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
   });
+
+  it.each(["response-body", "attempt-order", "final-result"] as const)(
+    "rejects tampered %s evidence before Kernel Review persistence",
+    async (mutation) => {
+      const task = fixture();
+      const originalRun = PiTaskBridge.prototype.run;
+      vi.spyOn(PiTaskBridge.prototype, "run").mockImplementation(async function (
+        this: PiTaskBridge,
+        input: PiRunInput,
+      ): Promise<PiRunRecord> {
+        const result = await originalRun.call(this, input);
+        if (result.review_format_correction?.outcome !== "accepted") return result;
+        const stopFile = path.join(task.taskDir, String(result.review_stop_receipt_ref));
+        const stop = JSON.parse(fs.readFileSync(stopFile, "utf8")) as Record<string, unknown>;
+        if (mutation === "response-body") {
+          const attempts = fs
+            .readFileSync(path.join(task.taskDir, String(result.review_attempts_ref)), "utf8")
+            .trim()
+            .split(/\r?\n/u)
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+          const responseFile = path.join(task.taskDir, String(attempts[0]?.["responseRef"]));
+          fs.appendFileSync(responseFile, "tamper");
+        } else if (mutation === "attempt-order") {
+          const attemptsFile = path.join(task.taskDir, String(result.review_attempts_ref));
+          const attempts = fs
+            .readFileSync(attemptsFile, "utf8")
+            .trim()
+            .split(/\r?\n/u)
+            .reverse();
+          fs.writeFileSync(attemptsFile, `${attempts.join("\n")}\n`);
+          const digest = createHash("sha256")
+            .update(fs.readFileSync(attemptsFile))
+            .digest("hex");
+          result.review_attempts_sha256 = digest;
+          stop["reviewAttemptsSha256"] = digest;
+        } else {
+          const resultFile = path.join(task.taskDir, String(result.result_file));
+          fs.writeFileSync(resultFile, "tampered final result\n");
+          const digest = createHash("sha256")
+            .update(fs.readFileSync(resultFile))
+            .digest("hex");
+          result.result_sha256 = digest;
+          stop["resultSha256"] = digest;
+        }
+        fs.writeFileSync(stopFile, `${JSON.stringify(stop)}\n`);
+        return result;
+      });
+      expect(
+        await runReview(task, report(task), "Review the candidate.", "pi-checker", "first"),
+      ).toBe(1);
+      expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
+    },
+  );
 
   it("prepares a bound Codex escalation without claiming a Codex response", async () => {
     const task = fixture();
