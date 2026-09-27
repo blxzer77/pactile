@@ -18,11 +18,10 @@ v1 `CanonicalPathsV1.legacySources` 契约恰好包含一个 `.cstl` 和一个 `
 journal 时，使用 `pactile init --import-cstl -y`。该选项不授予源目录写入权限。
 `.trellis` 是只读契约输入，不构成隐式导入或归属授权。
 
-## 桥接与退役链接
+## 别名与退役链接
 
-`cstl` 可执行入口是带警告的别名。`@blxzer/cursor-trellis` 和
-`@blxzer/cursor-trellis-core` 是指向 canonical 包的薄桥接，不是第二套实现。
-它们的 bin 归属和精确依赖边仍属于 release conformance。
+`cstl` 可执行入口仍是单一 Pactile 包内带警告的别名。此前发布的兼容包
+仅属于 npm 历史版本，不参与当前发布图的构建、打包或验收。
 
 旧文档 URL 仅保留短兼容跳转。退役的 Cursor++ 操作只属于
 [历史页面](../history/cursor-plus-plus.zh-CN.md)，不是当前安装步骤。
@@ -30,7 +29,8 @@ journal 时，使用 `pactile init --import-cstl -y`。该选项不授予源目�
 
 ## 退出条件
 
-- 可执行入口与包桥接不早于 0.6.0 重新评估。
+- `cstl` 警告别名保持明确，直到单独决定移除。
+- 退役兼容包不进入 v0.6.0 发布图。
 - 只有存在已验证 receipts 且无剩余归属 claimants 时才能退出迁移 reader；
   v1 契约变化需要独立的版本迁移。
 - 旧 URL 跳转在 0.5.x 兼容窗口结束且链接审计完成后才能退出。

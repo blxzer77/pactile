@@ -22,12 +22,12 @@ only from a checkout without `.pactile`, or to resume a recoverable import
 journal. The option does not grant permission to write the source. A `.trellis`
 root is a read-only contract input, not an implicit import or ownership grant.
 
-## Bridges and retired links
+## Alias and retired links
 
-The `cstl` executable is a warning alias. `@blxzer/cursor-trellis` and
-`@blxzer/cursor-trellis-core` are thin bridges to the canonical packages, not
-second implementations. Their bin ownership and exact dependency edges remain
-part of release conformance.
+The `cstl` executable remains a warning alias within the single Pactile
+package. Previously published compatibility packages are historical npm
+releases; they are not built, shipped, or validated in the current release
+graph.
 
 Old documentation URLs remain short compatibility pointers. Retired Cursor++
 procedures belong only to the [history page](../history/cursor-plus-plus.md);
@@ -36,7 +36,8 @@ evidence, not current product artwork.
 
 ## Exit conditions
 
-- Reassess executable/package bridges no earlier than 0.6.0.
+- Keep the `cstl` warning alias explicit until its own removal decision.
+- Retired compatibility packages stay outside the v0.6.0 release graph.
 - Retire migration readers only after verified receipts and no remaining
   ownership claimants; a v1 contract change needs its own version transition.
 - Retire old URL pointers after the 0.5.x compatibility window and a link audit.

@@ -43,6 +43,10 @@ const FORBIDDEN_SUFFIXES = [".py", ".pyc", ".pyo"];
 const CURSOR_IDE_CONTENT_RULES = [
   { label: "host name", pattern: /\bCursor\b/u },
   {
+    label: "host phrase",
+    pattern: /\bcursor[-\s]+(?:ide|editor|agent)\b/iu,
+  },
+  {
     label: "editor file surface",
     pattern: /(?:^|[\s"'`])\.cursor(?:[/\\]|(?=[\s"'`]|$))/iu,
   },
@@ -84,7 +88,7 @@ function resolvePackageRoot(): string {
 const packageRoot = resolvePackageRoot();
 
 function isCursorIdePath(file: string): boolean {
-  return /(?:^|\/)(?:\.cursor|cursor)(?:\.[^/]+)?(?:\/|$)/iu.test(file);
+  return /(?:^|\/)(?:\.cursor|cursor|cursor-ide)(?:\/|$)/iu.test(file);
 }
 
 export function validateReleasePackPaths(
