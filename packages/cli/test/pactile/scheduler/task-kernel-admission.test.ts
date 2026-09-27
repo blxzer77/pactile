@@ -24,6 +24,7 @@ import {
   bindTaskKernelRunDispatchOwnerV1,
   releaseTaskKernelRunDispatchV1,
   readTaskKernelScheduleReceiptV1,
+  readPiRunSettlementSealV1,
   validateTaskKernelRunDispatchStopProofV1,
   scheduleTaskKernelGraph,
   type TaskKernelRunDispatchOwnerV1,
@@ -365,26 +366,33 @@ function makePiStopProof(
     recordedAt: "2026-09-26T00:18:00.000Z",
   };
   fs.writeFileSync(requestRef, `${JSON.stringify(startReceipt, null, 2)}\n`);
+  const runRecord = {
+    run_id: piRunId,
+    task_id: input.taskId,
+    task_run_id: input.runId,
+    task_host_id: "pi",
+    role: "implement",
+    session_id: input.owner.sessionId,
+    process_id: input.owner.processId,
+    start_request_id: input.owner.startRequestId,
+    host_start_receipt_ref: projectRequestRef,
+    progress_evidence_ref: projectProgressRef,
+    settle_receipt_id: stop.settleReceiptId,
+    process_stop_receipt: stop,
+    outcome: "settled",
+    tool_errors: 0,
+    started_at: "2026-09-26T00:18:00.000Z",
+    ended_at: "2026-09-26T00:20:00.000Z",
+    elapsed_ms: 120_000,
+    result_file: stop.resultRef,
+    result_sha256: stop.resultSha256,
+  };
   fs.writeFileSync(
     nativeReceiptRef,
-    `${JSON.stringify(
-      {
-        run_id: piRunId,
-        task_id: input.taskId,
-        task_run_id: input.runId,
-        role: "implement",
-        session_id: input.owner.sessionId,
-        process_id: input.owner.processId,
-        start_request_id: input.owner.startRequestId,
-        host_start_receipt_ref: projectRequestRef,
-        progress_evidence_ref: projectProgressRef,
-        settle_receipt_id: stop.settleReceiptId,
-        process_stop_receipt: stop,
-      },
-      null,
-      2,
-    )}\n`,
+    `${JSON.stringify(runRecord, null, 2)}\n`,
   );
+  const runSettlementSeal = readPiRunSettlementSealV1(runRecord);
+  if (!runSettlementSeal) throw new Error("Pi settlement seal fixture is invalid");
   const proofBase = {
     schema_version: 1,
     scope: "task-kernel-v2-run-dispatch-stop",
@@ -409,6 +417,7 @@ function makePiStopProof(
     request_fingerprint: fingerprintTaskValue(startReceipt),
     native_receipt_ref: projectReceiptRef,
     native_receipt_fingerprint: fingerprintTaskValue(stop),
+    native_run_settlement_fingerprint: fingerprintTaskValue(runSettlementSeal),
   };
   const proofFingerprint = fingerprintTaskValue(proofBase);
   const proofRef = path.join(proofDir, `${proofFingerprint}.json`);
@@ -1690,6 +1699,38 @@ describe("Task Kernel V2 Run dispatch admission", () => {
       owner,
       disposition: "native-terminal",
     });
+    const codexProofPath = path.resolve(root, validProof);
+    const codexProof = JSON.parse(
+      fs.readFileSync(codexProofPath, "utf8"),
+    ) as Record<string, unknown>;
+    delete codexProof.proof_fingerprint;
+    codexProof.native_run_settlement_fingerprint = "a".repeat(64);
+    const codexExtraKeyFingerprint = fingerprintTaskValue(codexProof);
+    const codexExtraKeyProofPath = path.join(
+      path.dirname(codexProofPath),
+      `${codexExtraKeyFingerprint}.json`,
+    );
+    fs.writeFileSync(
+      codexExtraKeyProofPath,
+      `${JSON.stringify(
+        { ...codexProof, proof_fingerprint: codexExtraKeyFingerprint },
+        null,
+        2,
+      )}\n`,
+    );
+    expect(
+      validateTaskKernelRunDispatchStopProofV1(root, {
+        leaseId: permit.leaseId,
+        taskId: "v2-native-stop",
+        runId: task.runId,
+        stopReceiptRef: path
+          .relative(root, codexExtraKeyProofPath)
+          .replaceAll("\\", "/"),
+      }),
+    ).toMatchObject({
+      valid: false,
+      reasonCode: "dispatch-stop-proof-integrity-failed",
+    });
     expect(
       validateTaskKernelRunDispatchStopProofV1(root, {
         leaseId: permit.leaseId,
@@ -1814,6 +1855,43 @@ describe("Task Kernel V2 Run dispatch admission", () => {
       scheduleReceiptFingerprint: schedule.receipt.receiptFingerprint,
       admissionReceiptFingerprint: permit.receipt.receiptFingerprint,
       owner,
+    });
+    const validPiProofPath = path.resolve(root, valid);
+    const piProofWithoutSeal = JSON.parse(
+      fs.readFileSync(validPiProofPath, "utf8"),
+    ) as Record<string, unknown>;
+    delete piProofWithoutSeal.proof_fingerprint;
+    delete piProofWithoutSeal.native_run_settlement_fingerprint;
+    const piProofWithoutSealFingerprint = fingerprintTaskValue(
+      piProofWithoutSeal,
+    );
+    const piProofWithoutSealPath = path.join(
+      path.dirname(validPiProofPath),
+      `${piProofWithoutSealFingerprint}.json`,
+    );
+    fs.writeFileSync(
+      piProofWithoutSealPath,
+      `${JSON.stringify(
+        {
+          ...piProofWithoutSeal,
+          proof_fingerprint: piProofWithoutSealFingerprint,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    expect(
+      validateTaskKernelRunDispatchStopProofV1(root, {
+        leaseId: permit.leaseId,
+        taskId,
+        runId: task.runId,
+        stopReceiptRef: path
+          .relative(root, piProofWithoutSealPath)
+          .replaceAll("\\", "/"),
+      }),
+    ).toMatchObject({
+      valid: false,
+      reasonCode: "dispatch-stop-proof-integrity-failed",
     });
     expect(
       validateTaskKernelRunDispatchStopProofV1(root, {

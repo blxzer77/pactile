@@ -16,6 +16,7 @@ import {
   assertTaskKernelRunDispatchPreSpawnV1,
   bindTaskKernelRunDispatchOwnerV1,
   readTaskKernelScheduleReceiptV1,
+  readPiRunSettlementSealV1,
   releaseTaskKernelRunDispatchV1,
   scheduleTaskKernelGraph,
   validateTaskKernelRunDispatchStopProofV1,
@@ -108,6 +109,15 @@ export interface PiV2RunSettlementVerificationV1 {
   leaseReleased: boolean;
   evidenceRef: string | null;
   reasonCode: string | null;
+}
+
+export interface PiTaskRunEvidenceV1 {
+  taskId: string;
+  taskRunId: string;
+  evidenceRefs: string[];
+  executionMeasurementRef: string;
+  assurance: "manager-owned-child-exit";
+  outcome: "settled";
 }
 
 function taskRelativeRef(root: string, taskDir: string, ref: string): string {
@@ -483,8 +493,12 @@ export function persistPiV2StopAndRelease(
     string,
     unknown
   >;
+  const runSettlementSeal = readPiRunSettlementSealV1(runRecord);
   const processStopReceipt = stop.processStopReceipt;
   if (
+    runSettlementSeal?.outcome !== stop.outcome ||
+    runSettlementSeal.result_file !== stop.resultRef ||
+    runSettlementSeal.result_sha256 !== stop.resultSha256 ||
     runRecord.run_id !== stop.runId ||
     runRecord.task_id !== dispatch.taskId ||
     runRecord.task_run_id !== dispatch.runId ||
@@ -586,6 +600,7 @@ export function persistPiV2StopAndRelease(
       stop.runReceiptRef,
     ),
     native_receipt_fingerprint: fingerprintTaskValue(processStopReceipt),
+    native_run_settlement_fingerprint: fingerprintTaskValue(runSettlementSeal),
   };
   const stopReceiptRef = storeProof(dispatch, proofBase);
   const proofFingerprint = fingerprintTaskValue(proofBase);
@@ -764,9 +779,11 @@ export function readPiHostStopReceipt(
         string,
         unknown
       >;
+      const runSettlementSeal = readPiRunSettlementSealV1(runRecord);
       const { proof_fingerprint: storedProofFingerprint, ...proofBase } = proof;
       const proofOwner = proof.owner as Record<string, unknown> | undefined;
       if (
+        !runSettlementSeal ||
         typeof storedProofFingerprint !== "string" ||
         fingerprintTaskValue(proofBase) !== storedProofFingerprint ||
         path.basename(proofFile) !== `${storedProofFingerprint}.json` ||
@@ -794,7 +811,9 @@ export function readPiHostStopReceipt(
         proof.native_receipt_ref !==
           path.relative(root, safeRun.file).replaceAll("\\", "/") ||
         proof.request_fingerprint !== fingerprintTaskValue(start) ||
-        proof.native_receipt_fingerprint !== fingerprintTaskValue(receipt)
+        proof.native_receipt_fingerprint !== fingerprintTaskValue(receipt) ||
+        proof.native_run_settlement_fingerprint !==
+          fingerprintTaskValue(runSettlementSeal)
       )
         continue;
       if (receipt.resultRef !== null) {
@@ -984,8 +1003,10 @@ export function verifyPiV2RunSettlementV1(
       if (!hostStop || !safeProof) continue;
       const proof = asRecord(JSON.parse(safeProof.bytes.toString("utf8")));
       if (!proof) continue;
+      const runSettlementSeal = readPiRunSettlementSealV1(runRecord);
       const { proof_fingerprint: proofFingerprint, ...proofBase } = proof;
       if (
+        !runSettlementSeal ||
         typeof proofFingerprint !== "string" ||
         !/^[a-f0-9]{64}$/u.test(proofFingerprint) ||
         fingerprintTaskValue(proofBase) !== proofFingerprint ||
@@ -996,6 +1017,8 @@ export function verifyPiV2RunSettlementV1(
         proof.schedule_receipt_fingerprint !==
           expectedScheduleReceiptFingerprint ||
         proof.admission_receipt_fingerprint !== admissionFingerprint ||
+        proof.native_run_settlement_fingerprint !==
+          fingerprintTaskValue(runSettlementSeal) ||
         hostStop.piRunId !== runRecord.run_id ||
         hostStop.terminal !== (outcome === "cancelled" ? "cancelled" : "exited")
       )
@@ -1055,5 +1078,181 @@ export function verifyPiV2RunSettlementV1(
         ? `settlement-evidence-read-failed:${error.message}`
         : "settlement-evidence-read-failed",
     );
+  }
+}
+
+/** Reads only persisted, cross-bound Pi V2 evidence for Task Run completion. */
+export function readPiTaskRunEvidence(
+  rootValue: string,
+  taskReference: string,
+  taskRunId: string,
+): PiTaskRunEvidenceV1 | null {
+  try {
+    const root = path.resolve(rootValue);
+    const taskDir = resolveTaskDir(root, taskReference);
+    const read = readTaskKernel({ root, taskDir, cwd: root });
+    if (read.kind !== "task-kernel-v2") return null;
+    const run = read.kernel.runs.find((candidate) => candidate.id === taskRunId);
+    if (!run) return null;
+    const host = run.host;
+    if (
+      run.taskId !== read.kernel.identity.taskId ||
+      run.state !== "running" ||
+      run.candidateSnapshot !== null ||
+      run.result !== null ||
+      host?.host !== "pi" ||
+      host.role !== "implement" ||
+      host.assuranceSource !== "manager-owned-child-exit" ||
+      !host.sessionId ||
+      host.hostId !== null ||
+      host.threadId !== null ||
+      host.requestRefs.length !== 1 ||
+      host.eventRefs.length !== 2 ||
+      host.resultRefs.length !== 1 ||
+      !run.workspace?.manager ||
+      run.workspace.ownerRunId !== run.id ||
+      !taskRunWorkspaceWriteSetsEqual(run.writeSetSnapshot, run.workspace.writeSet)
+    ) {
+      return null;
+    }
+
+    const stop = readPiHostStopReceipt(root, taskReference, taskRunId);
+    if (!stop) return null;
+    if (
+      stop.taskId !== read.kernel.identity.taskId ||
+      stop.taskRunId !== run.id ||
+      stop.role !== "implement" ||
+      stop.terminal !== "exited" ||
+      stop.exitCode !== 0 ||
+      stop.signalCode !== null ||
+      stop.processExit.terminationVerified !== true ||
+      !stop.processExit.exitObservedAt
+    ) {
+      return null;
+    }
+
+    const runReceiptRef = `pi-bridge/runs/${stop.piRunId}.json`;
+    const startReceiptRef = `pi-bridge/starts/${stop.piRunId}.json`;
+    const progressEvidenceRef = `pi-bridge/events/${stop.piRunId}.jsonl`;
+    const resultRef = `pi-bridge/results/${stop.piRunId}.md`;
+    if (
+      host.sessionId !== stop.sessionId ||
+      host.requestRefs[0] !== stop.startRequestId ||
+      !host.eventRefs.includes(stop.settleReceiptId) ||
+      !host.eventRefs.includes(progressEvidenceRef) ||
+      host.resultRefs[0] !== runReceiptRef ||
+      stop.evidenceRef !== runReceiptRef ||
+      stop.progressEvidenceRef !== progressEvidenceRef ||
+      stop.resultRef !== resultRef ||
+      typeof stop.resultSha256 !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(stop.resultSha256)
+    ) {
+      return null;
+    }
+
+    const safeRun = readSafeTaskFile(taskDir, runReceiptRef);
+    const safeStart = readSafeTaskFile(taskDir, startReceiptRef);
+    const safeProgress = readSafeTaskFile(taskDir, progressEvidenceRef);
+    const safeResult = readSafeTaskFile(taskDir, resultRef);
+    if (!safeRun || !safeStart || !safeProgress || !safeResult) return null;
+    const runRecord = asRecord(JSON.parse(safeRun.bytes.toString("utf8")));
+    if (!runRecord) return null;
+    const startedAt =
+      typeof runRecord.started_at === "string"
+        ? Date.parse(runRecord.started_at)
+        : Number.NaN;
+    const endedAt =
+      typeof runRecord.ended_at === "string"
+        ? Date.parse(runRecord.ended_at)
+        : Number.NaN;
+    const elapsedMs = runRecord.elapsed_ms;
+    const wallElapsedMs = endedAt - startedAt;
+    if (
+      runRecord.schema_version !== 2 ||
+      runRecord.run_id !== stop.piRunId ||
+      runRecord.task_id !== read.kernel.identity.taskId ||
+      runRecord.task !== path.relative(root, taskDir).replaceAll("\\", "/") ||
+      runRecord.task_run_id !== run.id ||
+      runRecord.task_host_id !== "pi" ||
+      runRecord.role !== "implement" ||
+      runRecord.outcome !== "settled" ||
+      runRecord.tool_errors !== 0 ||
+      runRecord.process_stop_error !== null ||
+      !Number.isFinite(startedAt) ||
+      !Number.isFinite(endedAt) ||
+      typeof elapsedMs !== "number" ||
+      !Number.isSafeInteger(elapsedMs) ||
+      elapsedMs < 0 ||
+      wallElapsedMs < 0 ||
+      Math.abs(elapsedMs - wallElapsedMs) > 2_000 ||
+      Date.parse(stop.processExit.exitObservedAt) > endedAt ||
+      runRecord.dispatch_lease_released !== true ||
+      runRecord.start_request_id !== stop.startRequestId ||
+      runRecord.session_id !== stop.sessionId ||
+      runRecord.process_id !== stop.processId ||
+      runRecord.settle_receipt_id !== stop.settleReceiptId ||
+      runRecord.host_start_receipt_ref !== startReceiptRef ||
+      runRecord.progress_evidence_ref !== progressEvidenceRef ||
+      runRecord.result_file !== resultRef ||
+      runRecord.result_sha256 !== stop.resultSha256 ||
+      typeof runRecord.dispatch_lease_id !== "string" ||
+      !runRecord.dispatch_lease_id.trim() ||
+      typeof runRecord.schedule_receipt_fingerprint !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(runRecord.schedule_receipt_fingerprint) ||
+      typeof runRecord.admission_receipt_fingerprint !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(runRecord.admission_receipt_fingerprint) ||
+      typeof runRecord.dispatch_stop_proof_ref !== "string" ||
+      !runRecord.dispatch_stop_proof_ref.trim()
+    ) {
+      return null;
+    }
+    const resultSha256 = createHash("sha256")
+      .update(safeResult.bytes)
+      .digest("hex");
+    if (
+      !safeResult.bytes.toString("utf8").trim() ||
+      resultSha256 !== stop.resultSha256 ||
+      resultSha256 !== runRecord.result_sha256
+    ) {
+      return null;
+    }
+
+    const settlement = verifyPiV2RunSettlementV1(
+      root,
+      taskReference,
+      taskRunId,
+      runRecord.schedule_receipt_fingerprint,
+    );
+    if (
+      !settlement.verified ||
+      settlement.outcome !== "settled" ||
+      !settlement.hostStopVerified ||
+      !settlement.leaseReleased ||
+      typeof settlement.evidenceRef !== "string" ||
+      settlement.evidenceRef !== runRecord.dispatch_stop_proof_ref
+    ) {
+      return null;
+    }
+
+    const proofRef = settlement.evidenceRef;
+    if (!readSafeTaskFile(taskDir, proofRef)) return null;
+    const evidenceRefs = [
+      startReceiptRef,
+      progressEvidenceRef,
+      resultRef,
+      runReceiptRef,
+      proofRef,
+    ];
+    if (new Set(evidenceRefs).size !== evidenceRefs.length) return null;
+    return {
+      taskId: read.kernel.identity.taskId,
+      taskRunId: run.id,
+      evidenceRefs,
+      executionMeasurementRef: runReceiptRef,
+      assurance: "manager-owned-child-exit",
+      outcome: "settled",
+    };
+  } catch {
+    return null;
   }
 }
