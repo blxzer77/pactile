@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -259,10 +260,16 @@ describe("current Task tile-selection CLI", () => {
       providerFacts: [],
     };
     const grantScope = `pactile-tile-selection/v1:${canonicalizePactileJsonV1(grant)}`;
+    const requestFile = path.join(root, "tile-request.json");
+    fs.writeFileSync(requestFile, JSON.stringify({
+      intent: "structural", requiredOutputs: ["worker.handoff"],
+      policyCeiling: grant.policyCeiling, capabilities: grant.capabilities, providerFacts: [],
+    }));
     expect(runTaskCli([
       "run-start", "v2-tile-grant", "--actor", "alice", "--input-summary", "Implement AC-1",
       "--approved-by", "user", "--approved-at", "2026-09-26T00:00:00.000Z",
       "--authorization-scope", grantScope, "--authorization-evidence", "approval.json",
+      "--write-set", "result.txt",
     ], root)).toBe(0);
 
     const active = readTaskKernel({ root, taskDir, cwd: root });
@@ -315,11 +322,6 @@ describe("current Task tile-selection CLI", () => {
     expect(String(errorLog.mock.lastCall?.[0] ?? "")).toContain("Session-profile commands do not accept caller request fields");
     expect(String(errorLog.mock.lastCall?.[0] ?? "")).not.toContain("worker-orchestration");
 
-    const requestFile = path.join(root, "tile-request.json");
-    fs.writeFileSync(requestFile, JSON.stringify({
-      intent: "structural", requiredOutputs: ["worker.handoff"],
-      policyCeiling: grant.policyCeiling, capabilities: grant.capabilities, providerFacts: [],
-    }));
     expect(runTileSelectionCli(["prepare", "--request-file", "tile-request.json"], root)).toBe(0);
     const authorizedOffer = lastJson(log).offer as {
       taskLifecycle: { phase: string; selectionGrant: { source: string; assurance: string } };
@@ -344,9 +346,12 @@ describe("current Task tile-selection CLI", () => {
 
     const current = readTaskKernel({ root, taskDir, cwd: root });
     if (current.kind !== "task-kernel-v2" || !activeRun) throw new Error("expected the active V2 Run");
+    const candidateBytes = Buffer.from("V2 Tile grant Run result\n", "utf8");
+    fs.writeFileSync(path.join(root, "result.txt"), candidateBytes);
+    const candidateFingerprint = createHash("sha256").update(candidateBytes).digest("hex");
     expect(runTaskCli([
       "run-result", "v2-tile-grant", activeRun.id, "--outcome", "completed", "--summary", "Result recorded",
-      "--candidate", `result.txt=${"a".repeat(64)}`,
+      "--candidate", `result.txt=${candidateFingerprint}`,
     ], root)).toBe(0);
     expect(runTileSelectionCli(["prepare", "--request-file", "tile-request.json"], root)).toBe(0);
     const completedRunOffer = lastJson(log).offer as {

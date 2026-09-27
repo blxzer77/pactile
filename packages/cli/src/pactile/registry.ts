@@ -12,6 +12,7 @@ import {
 import * as taskKernelApi from "../core/task/index.js";
 import { approvedExecuteTask } from "./task/authorization.js";
 import { resolveSelectedTask, resolveTaskDir } from "./task/session.js";
+import type { SessionJevRunIdentityV1 } from "./task/session-jev-receipt.js";
 import type {
   TileCapabilityFact,
   CompiledComposition,
@@ -261,6 +262,9 @@ interface DerivedTaskSelectionAuthority {
 interface SelectedTaskTileSelectionSurface extends Batch2TileSelectionSurface {
   readonly taskLifecycle: TileTaskLifecycleFact;
   readonly authority: DerivedTaskSelectionAuthority;
+  readonly hasTaskKernelV2: boolean;
+  readonly activeRunId: string | null;
+  readonly approvalRunId: string | null;
 }
 
 interface TaskKernelLifecycleProjectionCompat {
@@ -484,6 +488,8 @@ interface SelectedTaskKernelFacts {
   readonly approvalScope: string | null;
   readonly executeApproved: boolean;
   readonly hasTaskKernelV2: boolean;
+  readonly activeRunId: string | null;
+  readonly approvalRunId: string | null;
 }
 
 function legacyApprovalScope(
@@ -539,6 +545,8 @@ function readSelectedTaskKernelFacts(
         approvalScope: projection.approvalSnapshot.scope,
         executeApproved: approved,
         hasTaskKernelV2: true,
+        activeRunId: projection.gateSnapshot.runStart.activeRunId,
+        approvalRunId: projection.approvalSnapshot.runId,
       };
     }
     if (document.kind === "legacy-task-kernel-v1" && isRecord(document.kernel) && isRecord(document.kernel.kernel)) {
@@ -557,6 +565,8 @@ function readSelectedTaskKernelFacts(
         approvalScope: approval.scope,
         executeApproved: approval.approved,
         hasTaskKernelV2: false,
+        activeRunId: null,
+        approvalRunId: null,
       };
     }
     throw new Error("kernel-kind-unsupported");
@@ -577,6 +587,8 @@ function readSelectedTaskKernelFacts(
     approvalScope: approval.scope,
     executeApproved: approval.approved,
     hasTaskKernelV2: false,
+    activeRunId: null,
+    approvalRunId: null,
   };
 }
 
@@ -704,7 +716,31 @@ function loadSelectedTaskTileSelectionSurface(
   };
   return {
     success: true,
-    data: { ...surface.data, taskLifecycle: lifecycleWithGrant, authority },
+    data: {
+      ...surface.data,
+      taskLifecycle: lifecycleWithGrant,
+      authority,
+      hasTaskKernelV2: kernelFacts.hasTaskKernelV2,
+      activeRunId: kernelFacts.activeRunId,
+      approvalRunId: kernelFacts.approvalRunId,
+    },
+  };
+}
+
+function trustedSessionJevRunIdentity(
+  surface: SelectedTaskTileSelectionSurface,
+): SessionJevRunIdentityV1 | null {
+  if (
+    !surface.hasTaskKernelV2 ||
+    typeof surface.activeRunId !== "string" ||
+    surface.activeRunId.length === 0 ||
+    typeof surface.approvalRunId !== "string" ||
+    surface.approvalRunId.length === 0
+  )
+    return null;
+  return {
+    activeRunId: surface.activeRunId,
+    approvalRunId: surface.approvalRunId,
   };
 }
 
@@ -748,6 +784,8 @@ export function prepareSelectedTaskAgentTileSelection(
     readonly taskId: string;
     readonly phase: TileTaskLifecycleFact["phase"];
     readonly revision: number;
+    readonly activeRunId?: string | null;
+    readonly approvalRunId?: string | null;
   },
   env: NodeJS.ProcessEnv = process.env,
 ): SelectedTaskTileSelectionResult<TileSelectionPlan> {
@@ -760,7 +798,11 @@ export function prepareSelectedTaskAgentTileSelection(
     expectedLifecycle && (
       surface.data.taskLifecycle.taskId !== expectedLifecycle.taskId ||
       surface.data.taskLifecycle.phase !== expectedLifecycle.phase ||
-      surface.data.taskLifecycle.revision !== expectedLifecycle.revision
+      surface.data.taskLifecycle.revision !== expectedLifecycle.revision ||
+      (expectedLifecycle.activeRunId !== undefined &&
+        surface.data.activeRunId !== expectedLifecycle.activeRunId) ||
+      (expectedLifecycle.approvalRunId !== undefined &&
+        surface.data.approvalRunId !== expectedLifecycle.approvalRunId)
     )
   )
     return taskLifecycleFailure("tile-selection-task-read-failed", surface.data.taskLifecycle);
@@ -777,6 +819,8 @@ export async function prepareSelectedTaskAgentTileSelectionWithJevV1(
     readonly taskId: string;
     readonly phase: TileTaskLifecycleFact["phase"];
     readonly revision: number;
+    readonly activeRunId?: string | null;
+    readonly approvalRunId?: string | null;
   },
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<SelectedTaskTileSelectionResult<TileSelectionJevAdviceV1>> {
@@ -786,9 +830,15 @@ export async function prepareSelectedTaskAgentTileSelectionWithJevV1(
     expectedLifecycle && (
       surface.data.taskLifecycle.taskId !== expectedLifecycle.taskId ||
       surface.data.taskLifecycle.phase !== expectedLifecycle.phase ||
-      surface.data.taskLifecycle.revision !== expectedLifecycle.revision
+      surface.data.taskLifecycle.revision !== expectedLifecycle.revision ||
+      (expectedLifecycle.activeRunId !== undefined &&
+        surface.data.activeRunId !== expectedLifecycle.activeRunId) ||
+      (expectedLifecycle.approvalRunId !== undefined &&
+        surface.data.approvalRunId !== expectedLifecycle.approvalRunId)
     )
   )
+    return taskLifecycleFailure("tile-selection-task-read-failed", surface.data.taskLifecycle);
+  if (jev && !trustedSessionJevRunIdentity(surface.data))
     return taskLifecycleFailure("tile-selection-task-read-failed", surface.data.taskLifecycle);
   const effective = applySelectedTaskAgentTileProfile(surface.data);
   if (!effective.success) return effective;
@@ -810,11 +860,32 @@ export function decideSelectedTaskAgentTileSelection(
   root: string,
   decision: TileSelectionDecision,
   env: NodeJS.ProcessEnv = process.env,
+  sessionJevAdviceFingerprint?: string,
 ): SelectedTaskTileSelectionDecisionResult {
   const surface = loadSelectedTaskTileSelectionSurface(root, env);
   if (!surface.success) return surface;
   const effective = applySelectedTaskAgentTileProfile(surface.data);
   if (!effective.success) return effective;
+  const decisionRunIdentity = sessionJevAdviceFingerprint !== undefined
+    ? trustedSessionJevRunIdentity(surface.data)
+    : null;
+  if (sessionJevAdviceFingerprint !== undefined && !decisionRunIdentity)
+    return {
+      success: false,
+      diagnostics: [{ code: "tile-selection-session-jev-advice-stale", tileRef: null, relatedRef: null, path: "$.sessionJev" }],
+    };
+  if (sessionJevAdviceFingerprint !== undefined) {
+    const currentOffer = prepareTileSelection(
+      surface.data.catalog,
+      effective.data,
+      surface.data.facts,
+    );
+    if (!currentOffer.success || currentOffer.data.offer.fingerprint !== decision.offerFingerprint)
+      return {
+        success: false,
+        diagnostics: [{ code: "tile-selection-session-jev-advice-stale", tileRef: null, relatedRef: null, path: "$.sessionJev" }],
+      };
+  }
   const result = decideTileSelection(
     surface.data.catalog,
     effective.data,
@@ -822,6 +893,34 @@ export function decideSelectedTaskAgentTileSelection(
     decision,
   );
   if (!result.success) return result;
+  if (sessionJevAdviceFingerprint !== undefined) {
+    const latestSurface = loadSelectedTaskTileSelectionSurface(root, env);
+    if (!latestSurface.success)
+      return { success: false, diagnostics: latestSurface.diagnostics };
+    const latestRunIdentity = trustedSessionJevRunIdentity(latestSurface.data);
+    if (
+      !latestRunIdentity ||
+      latestRunIdentity.activeRunId !== decisionRunIdentity?.activeRunId ||
+      latestRunIdentity.approvalRunId !== decisionRunIdentity?.approvalRunId
+    )
+      return {
+        success: false,
+        diagnostics: [{ code: "tile-selection-session-jev-advice-stale", tileRef: null, relatedRef: null, path: "$.sessionJev" }],
+      };
+    const latestEffective = applySelectedTaskAgentTileProfile(latestSurface.data);
+    if (!latestEffective.success)
+      return { success: false, diagnostics: latestEffective.diagnostics };
+    const latestOffer = prepareTileSelection(
+      latestSurface.data.catalog,
+      latestEffective.data,
+      latestSurface.data.facts,
+    );
+    if (!latestOffer.success || latestOffer.data.offer.fingerprint !== result.data.offerFingerprint)
+      return {
+        success: false,
+        diagnostics: [{ code: "tile-selection-session-jev-advice-stale", tileRef: null, relatedRef: null, path: "$.sessionJev" }],
+      };
+  }
   const stored = writeTileSelectionSnapshot(
     root,
     surface.data.catalog,
@@ -829,6 +928,8 @@ export function decideSelectedTaskAgentTileSelection(
     surface.data.facts,
     decision,
     result.data,
+    sessionJevAdviceFingerprint,
+    decisionRunIdentity ?? undefined,
   );
   if (!stored.success)
     return {

@@ -17,8 +17,12 @@ import {
 } from "../registry.js";
 import {
   attachSessionJevReceiptV1,
+  createSessionJevRunIdentityFallbackV1,
   createSessionJevReceiptV1,
   createStaleSessionJevReceiptV1,
+  persistSessionJevReceiptV1,
+  type SessionJevKernelRunIdentityV1,
+  type SessionJevRunIdentityV1,
   type SessionJevReceiptV1,
 } from "./session-jev-receipt.js";
 import type {
@@ -46,6 +50,7 @@ interface SessionStampV1 {
   readonly phase: string;
   readonly activeRunId: string | null;
   readonly approvalRunId: string | null;
+  readonly hasTaskKernelV2: boolean;
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -104,7 +109,8 @@ function captureStamp(
   if (
     !fs.existsSync(path.join(taskDir, "kernel.json")) &&
     !readLegacyTaskImportRecord(root, taskDir)
-  ) return null;
+  )
+    return null;
   const read = readTaskKernel({ root, taskDir, cwd: root });
   if (read.kind === "task-kernel-v2") {
     const projected = projectTaskKernelLifecycle(read.kernel);
@@ -116,6 +122,7 @@ function captureStamp(
       phase: projected.phase,
       activeRunId: projected.gateSnapshot.runStart.activeRunId,
       approvalRunId: projected.approvalSnapshot.runId,
+      hasTaskKernelV2: true,
     };
   }
   return {
@@ -126,6 +133,27 @@ function captureStamp(
     phase: lifecycle.phase,
     activeRunId: null,
     approvalRunId: null,
+    hasTaskKernelV2: false,
+  };
+}
+
+function runIdentityFacts(stamp: SessionStampV1): SessionJevKernelRunIdentityV1 {
+  return {
+    activeRunId: stamp.activeRunId,
+    approvalRunId: stamp.approvalRunId,
+  };
+}
+
+function trustedRunIdentity(stamp: SessionStampV1): SessionJevRunIdentityV1 | null {
+  if (
+    !stamp.hasTaskKernelV2 ||
+    !stamp.activeRunId ||
+    !stamp.approvalRunId
+  )
+    return null;
+  return {
+    activeRunId: stamp.activeRunId,
+    approvalRunId: stamp.approvalRunId,
   };
 }
 
@@ -141,6 +169,7 @@ function sameStamp(
     left.taskId === right.taskId &&
     left.revision === right.revision &&
     left.phase === right.phase &&
+    left.hasTaskKernelV2 === right.hasTaskKernelV2 &&
     left.activeRunId === right.activeRunId &&
     left.approvalRunId === right.approvalRunId
   );
@@ -161,9 +190,25 @@ export async function compileSessionPackWithJevV1(
   if (!offer || !expected) return initialPack;
 
   const initialStamp = captureStamp(root, initialPack);
-  const preflight = prepareSelectedTaskAgentTileSelection(root, expected);
+  const initialRunIdentity = initialStamp
+    ? trustedRunIdentity(initialStamp)
+    : null;
+  if (initialStamp && !initialRunIdentity)
+    return attachSessionJevReceiptV1(
+      initialPack,
+      createSessionJevRunIdentityFallbackV1(
+        offer,
+        runIdentityFacts(initialStamp),
+      ),
+    );
+  const preflight = prepareSelectedTaskAgentTileSelection(root, {
+    ...expected,
+    activeRunId: initialStamp?.activeRunId,
+    approvalRunId: initialStamp?.approvalRunId,
+  });
   if (
     !initialStamp ||
+    !initialRunIdentity ||
     !preflight.success ||
     preflight.data.offer.fingerprint !== offer.fingerprint
   ) {
@@ -172,7 +217,12 @@ export async function compileSessionPackWithJevV1(
     return currentOfferValue
       ? attachSessionJevReceiptV1(
           current,
-          createStaleSessionJevReceiptV1(offer, null, "before-advice"),
+          createStaleSessionJevReceiptV1(
+            offer,
+            null,
+            "before-advice",
+            initialStamp ? runIdentityFacts(initialStamp) : undefined,
+          ),
         )
       : current;
   }
@@ -200,7 +250,11 @@ export async function compileSessionPackWithJevV1(
   const result = await prepareSelectedTaskAgentTileSelectionWithJevV1(
     root,
     { facade, callOptions: { egress } },
-    expected,
+    {
+      ...expected,
+      activeRunId: initialStamp?.activeRunId,
+      approvalRunId: initialStamp?.approvalRunId,
+    },
   );
 
   const currentPack = compileSessionPack(root, factGap);
@@ -223,14 +277,24 @@ export async function compileSessionPackWithJevV1(
     return currentOfferValue
       ? attachSessionJevReceiptV1(
           currentPack,
-          createStaleSessionJevReceiptV1(offer, jevDecision),
+              createStaleSessionJevReceiptV1(
+                offer,
+                jevDecision,
+                "during-advice",
+                initialStamp ? runIdentityFacts(initialStamp) : undefined,
+              ),
         )
       : currentPack;
   }
 
   if (!result.success) {
     const noAdvice: SessionJevReceiptV1 = {
-      ...createStaleSessionJevReceiptV1(offer, null),
+      ...createStaleSessionJevReceiptV1(
+        offer,
+        null,
+        "during-advice",
+        runIdentityFacts(initialStamp),
+      ),
       status: "fallback",
       application: "not-applied",
       fallback: {
@@ -242,8 +306,25 @@ export async function compileSessionPackWithJevV1(
     return attachSessionJevReceiptV1(currentPack, noAdvice);
   }
 
-  return attachSessionJevReceiptV1(
-    currentPack,
-    createSessionJevReceiptV1(offer, result.data),
-  );
+  const advice = createSessionJevReceiptV1(offer, result.data, initialRunIdentity);
+  try {
+    return attachSessionJevReceiptV1(
+      currentPack,
+      persistSessionJevReceiptV1(root, offer, advice),
+    );
+  } catch {
+    const { decisionCommand: _decisionCommand, ...unlinkedAdvice } = advice;
+    return attachSessionJevReceiptV1(currentPack, {
+      ...unlinkedAdvice,
+      status: "fallback",
+      suggestedRefs: [],
+      recommendedAction: null,
+      application: "not-applied",
+      fallback: {
+        reasonCode: "session-advice-receipt-write-failed",
+        explanation:
+          "Jev advice could not be recorded safely; use the deterministic Tile offer.",
+      },
+    });
+  }
 }

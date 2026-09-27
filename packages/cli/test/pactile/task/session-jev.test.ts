@@ -1,16 +1,21 @@
+import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { canonicalizePactileJsonV1 } from "../../../src/core/index.js";
+import {
+  canonicalizePactileJsonV1,
+  fingerprintPactileContractV1,
+} from "../../../src/core/index.js";
 import {
   projectTaskKernelLifecycle,
   readTaskKernel,
 } from "../../../src/core/task/index.js";
 import { runTaskCli } from "../../../src/commands/task.js";
 import { prepareSelectedTaskAgentTileSelection } from "../../../src/pactile/registry.js";
+import { readSessionJevReceiptV1 } from "../../../src/pactile/task/session-jev-receipt.js";
 
 const JEV_ORIGIN = "https://api.typesafe.ai";
 const API_KEY = "session-test-secret-key";
@@ -18,9 +23,13 @@ const CLI_ENTRY = fileURLToPath(
   new URL("../../../dist/cli/index.js", import.meta.url),
 );
 const FAKE_JEV_PRELOAD = fileURLToPath(
-  new URL("../../../.tmp/p31-script-build/fixtures/fake-jev-preload.js", import.meta.url),
+  new URL(
+    "../../../.tmp/p31-script-build/fixtures/fake-jev-preload.js",
+    import.meta.url,
+  ),
 );
 const roots: string[] = [];
+const externalArtifacts = new Set<string>();
 
 const DENIED_POLICY = {
   filesystem: "write",
@@ -54,11 +63,30 @@ afterEach(() => {
   vi.restoreAllMocks();
   for (const root of roots.splice(0))
     fs.rmSync(root, { recursive: true, force: true });
+  for (const artifact of externalArtifacts)
+    fs.rmSync(artifact, { force: true });
+  externalArtifacts.clear();
 });
+
+function testArtifactPath(root: string, name: string): string {
+  const file = path.join(
+    path.dirname(root),
+    `${path.basename(root)}-${name}`,
+  );
+  externalArtifacts.add(file);
+  return file;
+}
+
+function writeRunResultCandidate(root: string): string {
+  const bytes = Buffer.from("Run result fixture candidate\n", "utf8");
+  fs.writeFileSync(path.join(root, "result.txt"), bytes);
+  return createHash("sha256").update(bytes).digest("hex");
+}
 
 function createActiveTask(
   root: string,
   policy: typeof APPROVED_POLICY | typeof DENIED_POLICY,
+  writeSet?: readonly string[],
 ): {
   readonly slug: string;
   readonly runId: string;
@@ -115,6 +143,7 @@ function createActiveTask(
     grantScope,
     "--authorization-evidence",
     "tile-egress-approval.json",
+    ...(writeSet?.length ? ["--write-set", ...writeSet] : []),
   ]);
   const taskDir = path.join(
     root,
@@ -133,14 +162,17 @@ function createActiveTask(
   return { slug, runId: lifecycle.gateSnapshot.runStart.activeRunId };
 }
 
-function createRoot(policy: typeof APPROVED_POLICY | typeof DENIED_POLICY): {
+function createRoot(
+  policy: typeof APPROVED_POLICY | typeof DENIED_POLICY,
+  writeSet?: readonly string[],
+): {
   readonly root: string;
   readonly slug: string;
   readonly runId: string;
 } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-session-jev-"));
   roots.push(root);
-  const task = createActiveTask(root, policy);
+  const task = createActiveTask(root, policy, writeSet);
   return { root, ...task };
 }
 
@@ -150,7 +182,9 @@ function writeProjectConfig(root: string, content: string): void {
 
 function createPreload(): string {
   if (!fs.existsSync(FAKE_JEV_PRELOAD))
-    throw new Error("Compiled TypeScript fake Jev preload is missing; run pnpm test.");
+    throw new Error(
+      "Compiled TypeScript fake Jev preload is missing; run pnpm test.",
+    );
   return FAKE_JEV_PRELOAD;
 }
 
@@ -164,7 +198,10 @@ function childEnv(
   if (options.apiKey !== undefined) env.PACTILE_JEV_API_KEY = options.apiKey;
   if (options.enabled !== undefined) env.PACTILE_JEV_ENABLED = options.enabled;
   env.PACTILE_CONTEXT_ID = "codex_p34_session_jev";
-  env.PACTILE_TEST_JEV_CAPTURE = path.join(root, "fake-jev-capture.json");
+  env.PACTILE_TEST_JEV_CAPTURE = testArtifactPath(
+    root,
+    "fake-jev-capture.json",
+  );
   env.PACTILE_TEST_JEV_RESPONSE = options.response ?? "answer";
   env.PACTILE_TEST_JEV_SELECTED_REFS = JSON.stringify(
     options.selectedRefs ?? [],
@@ -173,10 +210,7 @@ function childEnv(
   return env;
 }
 
-function childArgs(
-  cliArgs: readonly string[],
-  preload?: string,
-): string[] {
+function childArgs(cliArgs: readonly string[], preload?: string): string[] {
   return [
     ...(preload ? ["--import", pathToFileURL(preload).href] : []),
     CLI_ENTRY,
@@ -268,7 +302,7 @@ function startCliProcess(
 
 describe("Pactile session Jev route", () => {
   it("uses the active Run grant and returns a receipt from the real CLI process", () => {
-    const { root } = createRoot(APPROVED_POLICY);
+    const { root, runId } = createRoot(APPROVED_POLICY);
     const preload = createPreload();
     const current = prepareSelectedTaskAgentTileSelection(root);
     if (!current.success)
@@ -289,7 +323,7 @@ describe("Pactile session Jev route", () => {
     };
     const advice = selection.jevAdvice as Record<string, unknown>;
     const capture = JSON.parse(
-      fs.readFileSync(path.join(root, "fake-jev-capture.json"), "utf8"),
+      fs.readFileSync(testArtifactPath(root, "fake-jev-capture.json"), "utf8"),
     ) as {
       callCount: number;
       url: string;
@@ -310,6 +344,8 @@ describe("Pactile session Jev route", () => {
       status: "answered",
       node: "tile-selection",
       model: "jev-test-model",
+      activeRunId: runId,
+      approvalRunId: runId,
       offerFingerprint: offer.fingerprint,
       outboundAttempted: true,
       attempts: 1,
@@ -334,7 +370,12 @@ describe("Pactile session Jev route", () => {
     );
     expect(advice.suggestedRefs).toEqual(advice.deterministicRefs);
     expect(advice.recommendedAction).toBe("adopt");
+    const adviceFingerprint = String(advice["adviceFingerprint"]);
+    expect(adviceFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
     expect(advice.decisionCommand).toContain("--kind adopt");
+    expect(advice.decisionCommand).toContain(
+      `--jev-advice-fingerprint ${adviceFingerprint}`,
+    );
     expect(capture).toMatchObject({
       callCount: 1,
       url: "https://api.typesafe.ai/v1/systemone",
@@ -352,8 +393,118 @@ describe("Pactile session Jev route", () => {
     expect(JSON.stringify(advice)).not.toContain(root);
     expect(JSON.stringify(pack)).not.toContain("plan.audit");
 
-    const decisionCommand = String(advice.decisionCommand);
+    const receiptsDir = path.join(root, ".pactile", "runtime", "receipts");
+    const persistedAdvicePath = path.join(
+      receiptsDir,
+      `session-jev-advice-${adviceFingerprint.slice(7)}.json`,
+    );
+    const originalAdviceBytes = fs.readFileSync(persistedAdvicePath);
+    expect(() =>
+      readSessionJevReceiptV1(root, adviceFingerprint, current.data.offer, {
+        activeRunId: "run-b-active",
+        approvalRunId: "run-b-approval",
+      }),
+    ).toThrow("session-jev-advice-run-identity-mismatch");
+    const forgedAdvice = JSON.parse(
+      originalAdviceBytes.toString("utf8"),
+    ) as Record<string, unknown>;
+    delete forgedAdvice["adviceFingerprint"];
+    forgedAdvice["activeRunId"] = "run-b-active";
+    forgedAdvice["approvalRunId"] = "run-b-approval";
+    const forgedAdviceFingerprint = fingerprintPactileContractV1(forgedAdvice);
+    const forgedAdvicePath = path.join(
+      receiptsDir,
+      `session-jev-advice-${forgedAdviceFingerprint.slice(7)}.json`,
+    );
+    fs.writeFileSync(
+      forgedAdvicePath,
+      `${canonicalizePactileJsonV1({
+        ...forgedAdvice,
+        adviceFingerprint: forgedAdviceFingerprint,
+      })}\n`,
+    );
+    const runBDecisionArgs = String(advice["decisionCommand"])
+      .trim()
+      .split(/\s+/)
+      .slice(1);
+    runBDecisionArgs[
+      runBDecisionArgs.indexOf("--jev-advice-fingerprint") + 1
+    ] = forgedAdviceFingerprint;
+    const snapshotsBeforeRunBDecision = fs
+      .readdirSync(receiptsDir)
+      .filter((file) => file.startsWith("tile-selection-"))
+      .sort();
+    const runBDecision = runCliCommand(root, runBDecisionArgs);
+    expect(runBDecision.status).toBe(1);
+    expect(parseOutput(runBDecision.stdout)).toMatchObject({
+      success: false,
+      diagnostics: [
+        { code: "tile-selection-snapshot-jev-run-identity-mismatch" },
+      ],
+    });
+    expect(
+      fs
+        .readdirSync(receiptsDir)
+        .filter((file) => file.startsWith("tile-selection-"))
+        .sort(),
+    ).toEqual(snapshotsBeforeRunBDecision);
+    fs.unlinkSync(forgedAdvicePath);
+
+    const ordinaryDecisionArgs = String(selection["decisionCommand"])
+      .trim()
+      .split(/\s+/)
+      .slice(1);
+    expect(ordinaryDecisionArgs).not.toContain("--jev-advice-fingerprint");
+    const ordinaryDecision = runCliCommand(root, ordinaryDecisionArgs);
+    expect(ordinaryDecision.status, ordinaryDecision.stderr).toBe(0);
+    const ordinarySnapshot = parseOutput(ordinaryDecision.stdout).snapshot as {
+      fingerprint: string;
+      fileName: string;
+    };
+    const ordinarySnapshotValue = JSON.parse(
+      fs.readFileSync(
+        path.join(receiptsDir, ordinarySnapshot.fileName),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    expect(ordinarySnapshotValue).toMatchObject({ schemaVersion: 2 });
+    expect(ordinarySnapshotValue).not.toHaveProperty("sessionJev");
+    const ordinaryReplay = runCliCommand(root, [
+      "tile-selection",
+      "replay",
+      "--snapshot-fingerprint",
+      ordinarySnapshot.fingerprint,
+    ]);
+    expect(ordinaryReplay.status, ordinaryReplay.stderr).toBe(0);
+
+    const tamperedAdvice = JSON.parse(
+      originalAdviceBytes.toString("utf8"),
+    ) as Record<string, unknown>;
+    tamperedAdvice["activeRunId"] = "tampered-run-id";
+    fs.writeFileSync(
+      persistedAdvicePath,
+      `${canonicalizePactileJsonV1(tamperedAdvice)}\n`,
+    );
+    const decisionCommand = String(advice["decisionCommand"]);
     const decisionArgs = decisionCommand.trim().split(/\s+/).slice(1);
+    const filesBeforeTamperDecision = fs
+      .readdirSync(receiptsDir)
+      .filter((file) => file.startsWith("tile-selection-"))
+      .sort();
+    const tamperedDecision = runCliCommand(root, decisionArgs);
+    expect(tamperedDecision.status).toBe(1);
+    expect(parseOutput(tamperedDecision.stdout)).toMatchObject({
+      success: false,
+      diagnostics: [{ code: "tile-selection-snapshot-jev-advice-invalid" }],
+    });
+    expect(
+      fs
+        .readdirSync(receiptsDir)
+        .filter((file) => file.startsWith("tile-selection-"))
+        .sort(),
+    ).toEqual(filesBeforeTamperDecision);
+    fs.writeFileSync(persistedAdvicePath, originalAdviceBytes);
+
     expect(decisionArgs.slice(0, 2)).toEqual(["tile-selection", "decide"]);
     const decisionResult = runCliCommand(root, decisionArgs);
     expect(decisionResult.status, decisionResult.stderr).toBe(0);
@@ -371,17 +522,62 @@ describe("Pactile session Jev route", () => {
       fingerprint: string;
       fileName: string;
     };
-    const snapshotFile = path.join(
-      root,
-      ".pactile",
-      "runtime",
-      "receipts",
-      snapshot.fileName,
-    );
+    const snapshotFile = path.join(receiptsDir, snapshot.fileName);
     const persisted = fs.readFileSync(snapshotFile, "utf8");
+    const snapshotValue = JSON.parse(persisted) as Record<string, unknown>;
+    expect(snapshotValue).toMatchObject({
+      schemaVersion: 3,
+      sessionJev: {
+        adviceFingerprint,
+        activeRunId: runId,
+        approvalRunId: runId,
+        offerFingerprint: offer.fingerprint,
+        decisionFingerprint: (
+          decisionReceipt.receipt as Record<string, unknown>
+        )["fingerprint"],
+        application: "adopted",
+      },
+    });
+    expect(
+      (snapshotValue["sessionJev"] as Record<string, unknown>)[
+        "taskLifecycleFingerprint"
+      ],
+    ).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    const persistedAdvice = fs.readFileSync(persistedAdvicePath, "utf8");
+    expect(JSON.parse(persistedAdvice)).toMatchObject({
+      adviceFingerprint,
+      status: "answered",
+      application: "pending-explicit-decision",
+      offerFingerprint: offer.fingerprint,
+    });
+    expect(persistedAdvice).not.toContain(API_KEY);
+    expect(persistedAdvice).not.toContain(root);
+    expect(persistedAdvice).not.toContain(capture.body.state.taskSummary);
     expect(persisted).toContain(snapshot.fingerprint);
     expect(persisted).not.toContain(root);
     expect(persisted).not.toContain(API_KEY);
+    const originalSnapshotBytes = fs.readFileSync(snapshotFile);
+    const tamperedSnapshot = JSON.parse(
+      originalSnapshotBytes.toString("utf8"),
+    ) as Record<string, unknown>;
+    const tamperedBinding = tamperedSnapshot["sessionJev"] as Record<string, unknown>;
+    tamperedBinding["activeRunId"] = "tampered-run-id";
+    fs.writeFileSync(
+      snapshotFile,
+      canonicalizePactileJsonV1(tamperedSnapshot),
+    );
+    const tamperedReplay = runCliCommand(root, [
+      "tile-selection",
+      "replay",
+      "--snapshot-fingerprint",
+      snapshot.fingerprint,
+    ]);
+    expect(tamperedReplay.status).toBe(1);
+    expect(parseOutput(tamperedReplay.stdout)).toMatchObject({
+      success: false,
+      diagnostics: [{ code: "tile-selection-snapshot-identity-mismatch" }],
+    });
+    fs.writeFileSync(snapshotFile, originalSnapshotBytes);
     const replay = runCliCommand(root, [
       "tile-selection",
       "replay",
@@ -395,11 +591,129 @@ describe("Pactile session Jev route", () => {
     });
   });
 
+  it("binds adopted, overridden, and no-match outcomes to the exact Jev advice", () => {
+    const overrideTask = createRoot(APPROVED_POLICY);
+    const current = prepareSelectedTaskAgentTileSelection(overrideTask.root);
+    if (!current.success)
+      throw new Error("Expected the authorized current session offer");
+    const deterministicRefs = current.data.offer.suggestion.selectedRefs;
+    const alternateRef = current.data.offer.candidates.find(
+      (candidate) => !deterministicRefs.includes(candidate.ref),
+    )?.ref;
+    if (!alternateRef)
+      throw new Error("Expected an eligible alternative Tile candidate");
+    const jevResult = runCliProcess(overrideTask.root, {
+      apiKey: API_KEY,
+      preload: createPreload(),
+      selectedRefs: [alternateRef],
+    });
+    expect(jevResult.status, jevResult.stderr).toBe(0);
+    const pack = parseOutput(jevResult.stdout);
+    const selection = pack.tileSelection as Record<string, unknown>;
+    const advice = selection["jevAdvice"] as Record<string, unknown>;
+    expect(advice).toMatchObject({
+      status: "answered",
+      recommendedAction: "override",
+      suggestedRefs: [alternateRef],
+    });
+    const generatedArgs = String(advice["decisionCommand"])
+      .trim()
+      .split(/\s+/)
+      .slice(1);
+    const staleArgs = [...generatedArgs];
+    staleArgs[staleArgs.indexOf("--offer-fingerprint") + 1] =
+      `sha256:${"0".repeat(64)}`;
+    const staleResult = runCliCommand(overrideTask.root, staleArgs);
+    expect(staleResult.status).toBe(1);
+    expect(parseOutput(staleResult.stdout)).toMatchObject({
+      success: false,
+      diagnostics: [{ code: "tile-selection-session-jev-advice-stale" }],
+    });
+
+    const accepted = runCliCommand(overrideTask.root, generatedArgs);
+    expect(accepted.status, accepted.stderr).toBe(0);
+    const acceptedSnapshot = parseOutput(accepted.stdout).snapshot as {
+      fileName: string;
+    };
+    const receiptsDir = path.join(
+      overrideTask.root,
+      ".pactile",
+      "runtime",
+      "receipts",
+    );
+    expect(
+      JSON.parse(
+        fs.readFileSync(
+          path.join(receiptsDir, acceptedSnapshot.fileName),
+          "utf8",
+        ),
+      ),
+    ).toMatchObject({ sessionJev: { application: "adopted" } });
+
+    const userOverrideArgs = [...generatedArgs];
+    userOverrideArgs[userOverrideArgs.indexOf("--kind") + 1] = "adopt";
+    for (let index = userOverrideArgs.length - 1; index >= 0; index -= 1) {
+      if (userOverrideArgs[index] === "--tile")
+        userOverrideArgs.splice(index, 2);
+    }
+    const overridden = runCliCommand(overrideTask.root, userOverrideArgs);
+    expect(overridden.status, overridden.stderr).toBe(0);
+    const overriddenSnapshot = parseOutput(overridden.stdout).snapshot as {
+      fileName: string;
+    };
+    expect(
+      JSON.parse(
+        fs.readFileSync(
+          path.join(receiptsDir, overriddenSnapshot.fileName),
+          "utf8",
+        ),
+      ),
+    ).toMatchObject({ sessionJev: { application: "overridden" } });
+
+    const noMatchTask = createRoot(APPROVED_POLICY);
+    const noMatchResult = runCliProcess(noMatchTask.root, {
+      apiKey: API_KEY,
+      preload: createPreload(),
+      selectedRefs: [],
+    });
+    expect(noMatchResult.status, noMatchResult.stderr).toBe(0);
+    const noMatchAdvice = (
+      parseOutput(noMatchResult.stdout).tileSelection as Record<string, unknown>
+    )["jevAdvice"] as Record<string, unknown>;
+    expect(noMatchAdvice).toMatchObject({
+      status: "answered",
+      recommendedAction: "no-match",
+    });
+    const noMatchArgs = String(noMatchAdvice["decisionCommand"])
+      .trim()
+      .split(/\s+/)
+      .slice(1);
+    const noMatchDecision = runCliCommand(noMatchTask.root, noMatchArgs);
+    expect(noMatchDecision.status, noMatchDecision.stderr).toBe(0);
+    const noMatchSnapshot = parseOutput(noMatchDecision.stdout).snapshot as {
+      fileName: string;
+    };
+    expect(
+      JSON.parse(
+        fs.readFileSync(
+          path.join(
+            noMatchTask.root,
+            ".pactile",
+            "runtime",
+            "receipts",
+            noMatchSnapshot.fileName,
+          ),
+          "utf8",
+        ),
+      ),
+    ).toMatchObject({ sessionJev: { application: "no-match" } });
+  });
+
   it("falls back without a key and does not invoke fake or real fetch", () => {
     const { root } = createRoot(APPROVED_POLICY);
     const result = runCliProcess(root, { preload: createPreload() });
     expect(result.status, result.stderr).toBe(0);
-    expect(fs.existsSync(path.join(root, "fake-jev-capture.json"))).toBe(false);
+    expect(fs.existsSync(testArtifactPath(root, "fake-jev-capture.json"))).toBe(false);
     const pack = parseOutput(result.stdout);
     expect(pack.tileSelection).toMatchObject({
       status: "offered",
@@ -442,7 +756,7 @@ describe("Pactile session Jev route", () => {
       fallback: { reasonCode: "low-confidence" },
     });
     expect(JSON.stringify(advice.jevAdvice)).not.toContain(API_KEY);
-    expect(fs.existsSync(path.join(root, "fake-jev-capture.json"))).toBe(true);
+    expect(fs.existsSync(testArtifactPath(root, "fake-jev-capture.json"))).toBe(true);
   });
 
   it("allows configured project egress when the active Run grant also permits it", () => {
@@ -466,7 +780,7 @@ describe("Pactile session Jev route", () => {
     });
     expect(
       JSON.parse(
-        fs.readFileSync(path.join(root, "fake-jev-capture.json"), "utf8"),
+        fs.readFileSync(testArtifactPath(root, "fake-jev-capture.json"), "utf8"),
       ),
     ).toMatchObject({ callCount: 1 });
     expect(result.stdout).not.toContain(API_KEY);
@@ -485,7 +799,7 @@ describe("Pactile session Jev route", () => {
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(fs.existsSync(path.join(root, "fake-jev-capture.json"))).toBe(false);
+    expect(fs.existsSync(testArtifactPath(root, "fake-jev-capture.json"))).toBe(false);
     const pack = parseOutput(result.stdout);
     expect(pack.tileSelection).toMatchObject({
       status: "offered",
@@ -510,7 +824,7 @@ describe("Pactile session Jev route", () => {
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(fs.existsSync(path.join(root, "fake-jev-capture.json"))).toBe(false);
+    expect(fs.existsSync(testArtifactPath(root, "fake-jev-capture.json"))).toBe(false);
     expect(parseOutput(result.stdout).tileSelection).toMatchObject({
       status: "offered",
       jevAdvice: {
@@ -531,7 +845,7 @@ describe("Pactile session Jev route", () => {
       preload: createPreload(),
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(fs.existsSync(path.join(root, "fake-jev-capture.json"))).toBe(false);
+    expect(fs.existsSync(testArtifactPath(root, "fake-jev-capture.json"))).toBe(false);
     expect(parseOutput(result.stdout).tileSelection).toMatchObject({
       status: "offered",
       jevAdvice: {
@@ -552,7 +866,7 @@ describe("Pactile session Jev route", () => {
       preload: createPreload(),
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(fs.existsSync(path.join(root, "fake-jev-capture.json"))).toBe(false);
+    expect(fs.existsSync(testArtifactPath(root, "fake-jev-capture.json"))).toBe(false);
     const pack = parseOutput(result.stdout);
     expect(pack.tileSelection).toMatchObject({
       status: "offered",
@@ -567,7 +881,8 @@ describe("Pactile session Jev route", () => {
   });
 
   it("does not use the approval grant after its active V2 Run has ended", () => {
-    const { root, slug, runId } = createRoot(APPROVED_POLICY);
+    const { root, slug, runId } = createRoot(APPROVED_POLICY, ["result.txt"]);
+    const candidateFingerprint = writeRunResultCandidate(root);
     const errorLog = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -581,7 +896,7 @@ describe("Pactile session Jev route", () => {
         "--summary",
         "Result recorded",
         "--candidate",
-        `result.txt=${"a".repeat(64)}`,
+        `result.txt=${candidateFingerprint}`,
       ],
       root,
     );
@@ -592,7 +907,7 @@ describe("Pactile session Jev route", () => {
       preload: createPreload(),
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(fs.existsSync(path.join(root, "fake-jev-capture.json"))).toBe(false);
+    expect(fs.existsSync(testArtifactPath(root, "fake-jev-capture.json"))).toBe(false);
     const pack = parseOutput(result.stdout);
     expect(pack.tileSelection).toMatchObject({
       status: "offered",
@@ -601,7 +916,7 @@ describe("Pactile session Jev route", () => {
         status: "fallback",
         outboundAttempted: false,
         attempts: 0,
-        fallback: { reasonCode: "egress-denied" },
+        fallback: { reasonCode: "session-run-identity-unavailable" },
       },
     });
     expect(result.stdout).not.toContain(API_KEY);
@@ -633,19 +948,19 @@ describe("Pactile session Jev route", () => {
       fallback: { reasonCode: "service-unavailable" },
     });
     const capture = JSON.parse(
-      fs.readFileSync(path.join(root, "fake-jev-capture.json"), "utf8"),
+      fs.readFileSync(testArtifactPath(root, "fake-jev-capture.json"), "utf8"),
     ) as { callCount: number };
     expect(capture.callCount).toBe(2);
   });
 
   it("discards a Jev answer when the selected Task Run changes during the request", async () => {
-    const { root, slug, runId } = createRoot(APPROVED_POLICY);
+    const { root, slug, runId } = createRoot(APPROVED_POLICY, ["result.txt"]);
     const before = prepareSelectedTaskAgentTileSelection(root);
     if (!before.success)
       throw new Error("Expected the approved session Tile offer");
     const originalFingerprint = before.data.offer.fingerprint;
-    const captureFile = path.join(root, "fake-jev-capture.json");
-    const releaseFile = path.join(root, "release-mock-jev");
+    const captureFile = testArtifactPath(root, "fake-jev-capture.json");
+    const releaseFile = testArtifactPath(root, "release-mock-jev");
     const preload = createPreload();
     const { child, completion } = startCliProcess(
       root,
@@ -659,6 +974,7 @@ describe("Pactile session Jev route", () => {
         .spyOn(console, "error")
         .mockImplementation(() => undefined);
       const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const candidateFingerprint = writeRunResultCandidate(root);
       expect(
         runTaskCli(
           [
@@ -670,7 +986,7 @@ describe("Pactile session Jev route", () => {
             "--summary",
             "The candidate is ready for verification",
             "--candidate",
-            `result.txt=${"a".repeat(64)}`,
+            `result.txt=${candidateFingerprint}`,
           ],
           root,
         ),

@@ -6,6 +6,12 @@ import {
   fingerprintPactileContractV1,
 } from "../../core/index.js";
 import {
+  readSessionJevReceiptV1,
+  sessionJevApplicationV1,
+  type SessionJevApplicationV1,
+  type SessionJevRunIdentityV1,
+} from "../task/session-jev-receipt.js";
+import {
   assertCanonicalWriteTarget,
   resolveCanonicalPaths,
 } from "../runtime/paths.js";
@@ -30,8 +36,7 @@ const TILE_SELECTION_SNAPSHOT_SCHEMA_VERSION = 2 as const;
 const TILE_SELECTION_SNAPSHOT_KIND = "pactile.tile-selection-replay" as const;
 const MAX_TILE_SELECTION_SNAPSHOT_BYTES = 4 * 1024 * 1024;
 
-interface TileSelectionSnapshotBody {
-  readonly schemaVersion: typeof TILE_SELECTION_SNAPSHOT_SCHEMA_VERSION;
+interface TileSelectionSnapshotCommonBody {
   readonly kind: typeof TILE_SELECTION_SNAPSHOT_KIND;
   readonly compilerAbiVersion: typeof TILE_COMPILER_ABI_VERSION;
   readonly projectFingerprint: string;
@@ -46,13 +51,44 @@ interface TileSelectionSnapshotBody {
   readonly receipt: TileSelectionDecisionReceipt;
 }
 
-export interface TileSelectionSnapshotV2 extends TileSelectionSnapshotBody {
+interface TileSelectionSnapshotBodyV2 extends TileSelectionSnapshotCommonBody {
+  readonly schemaVersion: typeof TILE_SELECTION_SNAPSHOT_SCHEMA_VERSION;
+}
+
+export interface TileSelectionSnapshotV2 extends TileSelectionSnapshotBodyV2 {
   readonly fingerprint: string;
+}
+
+export interface TileSelectionSessionJevBindingV1 {
+  readonly adviceFingerprint: string;
+  readonly activeRunId: string;
+  readonly approvalRunId: string;
+  readonly offerFingerprint: string;
+  readonly decisionFingerprint: string;
+  readonly taskLifecycleFingerprint: string;
+  readonly application: SessionJevApplicationV1;
+}
+
+interface TileSelectionSnapshotBodyV3 extends TileSelectionSnapshotCommonBody {
+  readonly schemaVersion: 3;
+  readonly sessionJev: TileSelectionSessionJevBindingV1;
+}
+
+export interface TileSelectionSnapshotV3 extends TileSelectionSnapshotBodyV3 {
+  readonly fingerprint: string;
+}
+
+type TileSelectionSnapshot = TileSelectionSnapshotV2 | TileSelectionSnapshotV3;
+type TileSelectionSnapshotBody = TileSelectionSnapshotBodyV2 | TileSelectionSnapshotBodyV3;
+
+function hasSessionJev(snapshot: TileSelectionSnapshot): snapshot is TileSelectionSnapshotV3 {
+  return snapshot.schemaVersion === 3;
 }
 
 export interface WrittenTileSelectionSnapshot {
   readonly fingerprint: string;
   readonly fileName: string;
+  readonly sessionJev?: TileSelectionSessionJevBindingV1;
 }
 
 export interface ReplayedTileSelectionSnapshot {
@@ -60,6 +96,7 @@ export interface ReplayedTileSelectionSnapshot {
   readonly offerFingerprint: string;
   readonly offer: TileSelectionOffer;
   readonly receipt: TileSelectionDecisionReceipt;
+  readonly sessionJev?: TileSelectionSessionJevBindingV1;
 }
 
 export type TileSelectionSnapshotResult<T> =
@@ -119,8 +156,8 @@ function ensureNoExistingConflict(target: string, expected: Buffer): boolean {
   }
 }
 
-function completeSnapshot(body: TileSelectionSnapshotBody): TileSelectionSnapshotV2 {
-  return { ...body, fingerprint: fingerprintPactileContractV1(body) };
+function completeSnapshot(body: TileSelectionSnapshotBody): TileSelectionSnapshot {
+  return { ...body, fingerprint: fingerprintPactileContractV1(body) } as TileSelectionSnapshot;
 }
 
 /**
@@ -135,6 +172,8 @@ export function writeTileSelectionSnapshot(
   facts: readonly TileSelectionFact[],
   decision: TileSelectionDecision,
   receipt: TileSelectionDecisionReceipt,
+  sessionJevAdviceFingerprint?: string,
+  sessionJevRunIdentity?: SessionJevRunIdentityV1,
 ): TileSelectionSnapshotResult<WrittenTileSelectionSnapshot> {
   try {
     const expectedProjectFingerprint = projectFingerprint(projectRoot);
@@ -188,8 +227,41 @@ export function writeTileSelectionSnapshot(
     if (candidateFacts.length !== offeredRefs.size)
       return failure("tile-selection-snapshot-offer-mismatch");
 
-    const body: TileSelectionSnapshotBody = {
-      schemaVersion: TILE_SELECTION_SNAPSHOT_SCHEMA_VERSION,
+    let sessionJev: TileSelectionSessionJevBindingV1 | undefined;
+    if (sessionJevAdviceFingerprint !== undefined) {
+      if (!sessionJevRunIdentity)
+        return failure("tile-selection-snapshot-jev-run-identity-unavailable");
+      let advice;
+      try {
+        advice = readSessionJevReceiptV1(
+          projectRoot,
+          sessionJevAdviceFingerprint,
+          offer.data.offer,
+          sessionJevRunIdentity,
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === "session-jev-advice-run-identity-mismatch"
+        )
+          return failure("tile-selection-snapshot-jev-run-identity-mismatch");
+        return failure("tile-selection-snapshot-jev-advice-invalid");
+      }
+      const application = sessionJevApplicationV1(advice, receipt);
+      if (!application || !normalized.data.request.taskLifecycle)
+        return failure("tile-selection-snapshot-jev-decision-mismatch");
+      sessionJev = {
+        adviceFingerprint: sessionJevAdviceFingerprint,
+        activeRunId: sessionJevRunIdentity.activeRunId,
+        approvalRunId: sessionJevRunIdentity.approvalRunId,
+        offerFingerprint: receipt.offerFingerprint,
+        decisionFingerprint: receipt.fingerprint,
+        taskLifecycleFingerprint: fingerprintPactileContractV1(normalized.data.request.taskLifecycle),
+        application,
+      };
+    }
+
+    const commonBody: TileSelectionSnapshotCommonBody = {
       kind: TILE_SELECTION_SNAPSHOT_KIND,
       compilerAbiVersion: TILE_COMPILER_ABI_VERSION,
       projectFingerprint: expectedProjectFingerprint,
@@ -203,6 +275,9 @@ export function writeTileSelectionSnapshot(
       offerFingerprint: receipt.offerFingerprint,
       receipt,
     };
+    const body: TileSelectionSnapshotBody = sessionJev
+      ? { ...commonBody, schemaVersion: 3, sessionJev }
+      : { ...commonBody, schemaVersion: TILE_SELECTION_SNAPSHOT_SCHEMA_VERSION };
     const snapshot = completeSnapshot(body);
     const bytes = Buffer.from(canonicalizePactileJsonV1(snapshot), "utf8");
     if (bytes.byteLength > MAX_TILE_SELECTION_SNAPSHOT_BYTES)
@@ -218,6 +293,7 @@ export function writeTileSelectionSnapshot(
         data: {
           fingerprint: snapshot.fingerprint,
           fileName: path.basename(target),
+          ...(sessionJev ? { sessionJev } : {}),
         },
       };
 
@@ -254,6 +330,7 @@ export function writeTileSelectionSnapshot(
               data: {
                 fingerprint: snapshot.fingerprint,
                 fileName: path.basename(target),
+                ...(sessionJev ? { sessionJev } : {}),
               },
             };
         }
@@ -273,6 +350,7 @@ export function writeTileSelectionSnapshot(
       data: {
         fingerprint: snapshot.fingerprint,
         fileName: path.basename(target),
+        ...(sessionJev ? { sessionJev } : {}),
       },
     };
   } catch {
@@ -284,7 +362,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function readSnapshot(projectRoot: string, fingerprint: string): TileSelectionSnapshotResult<TileSelectionSnapshotV2> {
+function readSnapshot(projectRoot: string, fingerprint: string): TileSelectionSnapshotResult<TileSelectionSnapshot> {
   if (!/^sha256:[a-f0-9]{64}$/.test(fingerprint))
     return failure("tile-selection-snapshot-fingerprint-invalid");
   try {
@@ -300,13 +378,15 @@ function readSnapshot(projectRoot: string, fingerprint: string): TileSelectionSn
     if (
       storedFingerprint !== fingerprint ||
       fingerprintPactileContractV1(body) !== fingerprint ||
-      parsed.schemaVersion !== TILE_SELECTION_SNAPSHOT_SCHEMA_VERSION ||
+      (parsed.schemaVersion !== TILE_SELECTION_SNAPSHOT_SCHEMA_VERSION && parsed.schemaVersion !== 3) ||
+      (parsed.schemaVersion === TILE_SELECTION_SNAPSHOT_SCHEMA_VERSION && "sessionJev" in parsed) ||
+      (parsed.schemaVersion === 3 && !isRecord(parsed.sessionJev)) ||
       parsed.kind !== TILE_SELECTION_SNAPSHOT_KIND ||
       parsed.compilerAbiVersion !== TILE_COMPILER_ABI_VERSION ||
       parsed.projectFingerprint !== projectFingerprint(projectRoot)
     )
       return failure("tile-selection-snapshot-identity-mismatch");
-    return { success: true, data: parsed as unknown as TileSelectionSnapshotV2 };
+    return { success: true, data: parsed as unknown as TileSelectionSnapshot };
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT")
       return failure("tile-selection-snapshot-not-found");
@@ -359,6 +439,24 @@ export function replayTileSelectionSnapshot(
     if (!replayed.success || replayed.data.fingerprint !== snapshot.receipt.fingerprint ||
       !sameJson(replayed.data, snapshot.receipt))
       return failure("tile-selection-snapshot-replay-mismatch");
+    if (hasSessionJev(snapshot)) {
+      let advice;
+      try {
+        advice = readSessionJevReceiptV1(projectRoot, snapshot.sessionJev.adviceFingerprint, snapshot.offer);
+      } catch {
+        return failure("tile-selection-snapshot-jev-advice-mismatch");
+      }
+      const application = sessionJevApplicationV1(advice, replayed.data);
+      if (!normalized.data.taskLifecycle ||
+        snapshot.sessionJev.offerFingerprint !== snapshot.offerFingerprint ||
+        snapshot.sessionJev.activeRunId !== advice.activeRunId ||
+        snapshot.sessionJev.approvalRunId !== advice.approvalRunId ||
+        snapshot.sessionJev.decisionFingerprint !== replayed.data.fingerprint ||
+        snapshot.sessionJev.taskLifecycleFingerprint !== fingerprintPactileContractV1(normalized.data.taskLifecycle) ||
+        !application ||
+        snapshot.sessionJev.application !== application)
+        return failure("tile-selection-snapshot-jev-decision-mismatch");
+    }
     return {
       success: true,
       data: {
@@ -366,6 +464,7 @@ export function replayTileSelectionSnapshot(
         offerFingerprint: snapshot.offer.fingerprint,
         offer: snapshot.offer,
         receipt: replayed.data,
+        ...(hasSessionJev(snapshot) ? { sessionJev: snapshot.sessionJev } : {}),
       },
     };
   } catch {
