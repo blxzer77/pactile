@@ -40,7 +40,7 @@ Close 通过 `closeTaskKernel` 提交；CLI 调用的也是同一个 Core API。
 
 Close 请求中的 candidate ID 和 fingerprint 必须匹配最新冻结的 Run snapshot，但调用方提供的 observer 字段不构成新鲜度证明：Core 会重新观察当前候选并记录自己的 observation。Git Run 会检查 HEAD、分支、Git 报告的暂存/未暂存/未跟踪/冲突/已提交路径，并为变化的写入范围路径及精确写入路径计算有界文件指纹；非 Git Run 则重新扫描有界项目文件快照。这不代表对磁盘上每个字节作出证明：Git 未跟踪路径发现使用 `--exclude-standard`，非 Git 观察器会跳过配置的排除路径，并限制文件数、路径数和字节数。Close 还会重新打开 Review 与验收证据文件，按 Review 中保存的验证结果复核指纹。只读 `readTaskKernel` reader 与 `projectTaskKernelLifecycle` projection 只导出已记录状态，不触发这些观察；projection 仅供只读参考，每次 mutation 仍由 Kernel 作最终门槛判断。
 
-0.5.x Kernel v1 与 `task.json` 记录仍可读取，并保留旧命令路径。V2 读取时不会迁移旧数据。`pactile task legacy-create` 是显式兼容入口；旧数据自动迁移由 P36 单独处理。
+0.5.x Kernel v1 与 `task.json` 记录仍可读取，并保留旧命令路径。V2 读取时不会迁移旧数据。`pactile update` 会按 P36 契约将符合条件的旧任务导入待补定义状态；缺少交付定义或依赖映射时，须显式协调后才能启用 V2 Task。原生命周期只作历史证据，不伪造新的 Run、Review 或 Close。`pactile task legacy-create` 仍是显式兼容入口。详见[升级与迁移](../lifecycle/upgrade-and-migrate.zh-CN.md#p36-held-task-reconciliation)。
 
 新 `task create` 命令必须提供 `--deliverable`、`--delivery-level` 和至少一条 `--accept`。旧的 `task create <title> --slug <slug>` 不再是 V2 创建方式；需要显式创建 0.5.x Task 时使用 `task legacy-create`。这样新写入不会静默沿用 Lite/Full 或 Parent/Child 预设。
 

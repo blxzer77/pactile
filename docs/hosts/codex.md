@@ -71,9 +71,11 @@ non-passing Pi Review, targeting a V2 Verify/Integrate Task with its current
 completed candidate and a bound Review thread:
 
 For a non-PASS Pi Review that does not trigger a mandatory escalation rule,
-Pactile may ask Jev's `review-routing` node one bounded question using a fixed,
-generic summary. The request contains no Task identity, candidate details,
-Review prose, evidence references, or source snippets. A provider-reported
+Pactile may ask Jev's `review-routing` node one bounded question. Its summary
+contains only the validated Pi Review verdict, coverage states and confidence,
+finding risk counts, and counts of blockers and unresolved questions. The
+request contains no Task identity, candidate details, Review prose, evidence
+references, or source snippets. A provider-reported
 confidence of at least 0.65 for `append-codex-review` prepares an optional P40
 request; `keep-pi-review`, unavailable advice, low confidence, or denied
 project egress leaves the current route in place. Each attempt or skip records
@@ -137,7 +139,20 @@ Worktree creation may first return only `clientThreadId`. Record `outcome: queue
 
 Receipts have `host-reported` assurance: Node records the native tool result supplied by the caller; it is not a product-authenticated desktop signature. A hash chain or receipt cannot upgrade simulated evidence to desktop evidence, and a simulated test does not establish native desktop acceptance. Receipts do not replace code review, Pi result checks, acceptance criteria evidence, or Kernel gates. A changed Kernel revision or Run candidate marks a receipt `contract_stale`; recheck the task contract. Planning requests require Open/Define/Approve; review requests require Verify/Integrate. The Node CLI cannot call desktop tools directly. Do not substitute a Codex CLI/App Server/ACP session or Codex subagent for a desktop task. This bridge needs no resident background service. If native coordination is unavailable, continue serially and record why.
 
-For an independent implementation task, use `--role execute` after its Execute approval. Creation requires `--target project --environment worktree`. The request carries the canonical absolute Pactile task path, because an App worktree may not contain ignored task state. If the approved task has `base_branch`, the request starts from that branch. A Parent Child reserves one shared parallel slot before the desktop create request; failed creation or a completed `wait_threads` receipt releases it. The native task remains user-owned. A receipt does not prove its changes were accepted; Parent review and `integrate-child` remain separate.
+The 0.5.x compatibility bridge still accepts `--role execute` for a legacy task
+after its Execute approval. That route creates an App-managed worktree and does
+not bind it to a P38-managed V2 Run workspace. For new Task Kernel V2 work, use
+Codex desktop tasks for planning and independent review; Pi executes approved
+Runs through `pactile pi run`.
+
+Legacy Execute creation requires `--target project --environment worktree` and
+carries the canonical absolute Pactile task path, because an App worktree may
+not contain ignored task state. If the approved legacy task has `base_branch`,
+the request starts from that branch. A legacy Parent Child reserves one shared
+parallel slot before desktop creation; failed creation or a completed
+`wait_threads` receipt releases it. The native task remains user-owned. A
+receipt does not prove its changes were accepted; legacy Parent review and
+`integrate-child` remain separate.
 
 After Pactile archives the task, `pactile codex status <task>` remains read-only available and shows the archived receipts. New requests and receipts require an active task; a late Host response is rejected and does not append to the archived Task.
 
