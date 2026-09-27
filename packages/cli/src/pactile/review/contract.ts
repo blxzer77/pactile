@@ -151,6 +151,7 @@ export interface PiReviewPromptBinding {
   authorizationScope: string;
   writeSetSnapshot: string[];
   candidateEntries: { ref: string; fingerprint: string }[];
+  allowedEvidenceRefs: string[];
   acceptanceCriteria: { id: string; description: string }[];
 }
 
@@ -251,12 +252,13 @@ export function buildIndependentPiReviewPrompt(binding: PiReviewPromptBinding): 
       authorizedScope: binding.authorizationScope,
       writeSetSnapshot: binding.writeSetSnapshot,
       candidateEntries: binding.candidateEntries,
+      allowedEvidenceRefs: binding.allowedEvidenceRefs,
     },
   };
   return [
     "Perform a read-only independent Pi Check of the fixed candidate shown below. Compare task scope, write-set boundaries, standards and maintainability, obvious security risks, required validation, and unresolved questions. Inspect the cited candidate and verification evidence; do not modify files.",
     "The Run, candidate snapshot ID, fingerprint, and acceptance-criterion IDs are fixed. Do not review a different candidate or infer PASS from this process having settled.",
-    "Return exactly one JSON object matching the following shape, without Markdown fences or additional keys. Replace every example evidence reference with a concrete path, test output, or other stable reference. Every coverage area needs evidence. PASS requires evidence for every acceptance criterion, no blockers or unresolved questions, and no Codex escalation.",
+    "Return exactly one JSON object matching the following shape, without Markdown fences or additional keys. The Run context contains the exact allowedEvidenceRefs path strings, derived only from recorded candidate files and completed Run evidence. Replace every example evidence reference in the template with one of those path strings. Every reference value in coverage[*].evidenceRefs, findings[*].evidenceRefs, blockers[*].evidenceRefs, unresolvedQuestions[*].evidenceRefs, top-level evidenceRefs, and acceptanceEvidence[*] must be copied exactly from that list. Put only those path strings in reference arrays; do not use explanations, summaries, or sentence fragments as evidence references. Do not add any path that is not listed. Every coverage area needs evidence. PASS requires evidence for every acceptance criterion, no blockers or unresolved questions, and no Codex escalation. If the listed files do not substantiate a claim, use needs-changes and explain the issue in the appropriate prose field.",
     "For each coverage area, status is clear, finding, or not-applicable; use a non-empty note only for not-applicable. Findings must cite evidence. Every blocker must reference a finding. Escalate to Codex when confidence is not high, impact is high, or a finding is disputed. Jev/advisor suggestions are not an independent Review.",
     "Provider token and cost values are unverified caller declarations. Use null when unavailable. The bridge will attach locally measured timing from its Pi run receipt.",
     "Fixed review context:",

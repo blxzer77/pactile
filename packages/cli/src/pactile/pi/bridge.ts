@@ -15,6 +15,7 @@ import {
   type TaskKernelSnapshotV2,
   type TaskRunV2,
 } from "../../core/task/index.js";
+import { isRunCandidateObservationEntry } from "../../core/task/task-candidate-observer.js";
 import { resolveTaskDir } from "../task/session.js";
 import {
   PiRpcClient,
@@ -595,6 +596,14 @@ export function preparePiReviewRoute(
       ref: entry.ref,
       fingerprint: entry.fingerprint,
     })),
+    allowedEvidenceRefs: [...new Set([
+      ...run.candidateSnapshot.entries
+        .filter((entry) => !isRunCandidateObservationEntry(entry.ref))
+        .map((entry) => entry.ref),
+      ...run.result.evidenceRefs.filter(
+        (reference) => !isRunCandidateObservationEntry(reference),
+      ),
+    ])].sort(),
     acceptanceCriteria: kernel.definition.acceptanceCriteria.map(
       (criterion) => ({
         id: criterion.id,
