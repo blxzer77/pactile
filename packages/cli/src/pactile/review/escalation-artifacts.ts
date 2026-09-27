@@ -4,7 +4,8 @@ import path from "node:path";
 import { readTaskKernel, verifyTaskReviewEvidenceV1, type TaskKernelSnapshotV2, type TaskReviewV2, type TaskRunV2 } from "../../core/task/index.js";
 import { resolveTaskDir } from "../task/session.js";
 import { INDEPENDENT_REVIEW_AREAS, type ValidatedIndependentPiReview } from "./contract.js";
-import { escalationIdPattern, exactKeys, fingerprintPattern, isRecord, objectValue, parseJsonObject, piReviewConcerns, preparedKeys, preparedSummaryFromPiReview, safeExistingArtifactFile, sha256, uuidPattern, type CodexEscalationReviewReplyV1, type PreparedPiReviewEscalationV1, type ReadPiReviewEscalationV1 } from "./escalation-contract.js";
+import { escalationIdPattern, exactKeys, fingerprintPattern, isRecord, legacyPreparedKeys, objectValue, parseJsonObject, piReviewConcerns, preparedKeys, preparedSummaryFromPiReview, safeExistingArtifactFile, sha256, uuidPattern, type CodexEscalationReviewReplyV1, type PreparedPiReviewEscalationV1, type ReadPiReviewEscalationV1 } from "./escalation-contract.js";
+import { readPiReviewRoutingAdviceV1 } from "./jev-escalation-advice.js";
 
 /** Read the actual P40 prepared artifact and verify it against its immutable Review artifact. */
 export function readPiReviewEscalationV1(
@@ -25,29 +26,41 @@ export function readPiReviewEscalationV1(
   const requestFile = safeExistingArtifactFile(task, requestRef);
   const requestBytes = fs.readFileSync(requestFile);
   const requestValue = parseJsonObject(requestBytes, "Pi Review escalation request");
-  exactKeys(requestValue, preparedKeys(), "Pi Review escalation request");
-  const request = requestValue as unknown as PreparedPiReviewEscalationV1;
+  const legacyRequest = JSON.stringify(Object.keys(requestValue).sort()) ===
+    JSON.stringify([...legacyPreparedKeys()].sort());
+  exactKeys(
+    requestValue,
+    legacyRequest ? legacyPreparedKeys() : preparedKeys(),
+    "Pi Review escalation request",
+  );
   const requestCore = { ...requestValue };
   delete requestCore["preparedFingerprint"];
   if (
-    request.schemaVersion !== 1 ||
-    request.source !== "pactile-pi-review-escalation-v1" ||
-    request.status !== "prepared" ||
-    request.target !== "codex" ||
-    request.piRunId !== piRunId ||
-    request.reviewId !== `pi-review-${piRunId}` ||
-    request.escalationId !== escalationId ||
-    !uuidPattern.test(request.requestId) ||
-    request.sentAt !== null ||
-    request.responseRef !== null ||
-    !fingerprintPattern.test(request.candidateFingerprint) ||
-    !fingerprintPattern.test(request.reviewArtifactSha256) ||
-    !fingerprintPattern.test(request.reviewContentFingerprint) ||
-    !fingerprintPattern.test(request.preparedFingerprint) ||
-    sha256(JSON.stringify(requestCore)) !== request.preparedFingerprint
+    requestValue["schemaVersion"] !== 1 ||
+    requestValue["source"] !== "pactile-pi-review-escalation-v1" ||
+    requestValue["status"] !== "prepared" ||
+    requestValue["target"] !== "codex" ||
+    requestValue["piRunId"] !== piRunId ||
+    requestValue["reviewId"] !== `pi-review-${piRunId}` ||
+    requestValue["escalationId"] !== escalationId ||
+    typeof requestValue["requestId"] !== "string" ||
+    !uuidPattern.test(requestValue["requestId"]) ||
+    requestValue["sentAt"] !== null ||
+    requestValue["responseRef"] !== null ||
+    !fingerprintPattern.test(String(requestValue["candidateFingerprint"])) ||
+    !fingerprintPattern.test(String(requestValue["reviewArtifactSha256"])) ||
+    !fingerprintPattern.test(String(requestValue["reviewContentFingerprint"])) ||
+    !fingerprintPattern.test(String(requestValue["preparedFingerprint"])) ||
+    sha256(JSON.stringify(requestCore)) !== requestValue["preparedFingerprint"]
   ) {
     throw new Error("Pi Review escalation request failed its prepared binding check");
   }
+  const request = {
+    ...requestValue,
+    basis: legacyRequest ? "hard-rule" : requestValue["basis"],
+    jevAdviceRef: legacyRequest ? null : requestValue["jevAdviceRef"],
+    jevAdviceSha256: legacyRequest ? null : requestValue["jevAdviceSha256"],
+  } as unknown as PreparedPiReviewEscalationV1;
 
   const reviewFile = safeExistingArtifactFile(task, request.reviewArtifactRef);
   const reviewBytes = fs.readFileSync(reviewFile);
@@ -83,10 +96,7 @@ export function readPiReviewEscalationV1(
     request.candidateSnapshotId !== review["candidateSnapshotId"] ||
     request.candidateFingerprint !== review["candidateFingerprint"] ||
     review["verdict"] === "pass" ||
-    escalation["required"] !== true ||
-    escalation["target"] !== "codex" ||
     !Array.isArray(escalation["reasons"]) ||
-    JSON.stringify(escalation["reasons"]) !== JSON.stringify(request.reasons) ||
     request.summary !== preparedSummaryFromPiReview(review, request.reasons) ||
     kernelReview["decision"] !== review["verdict"] ||
     kernelReview["runId"] !== request.runId ||
@@ -94,6 +104,47 @@ export function readPiReviewEscalationV1(
     kernelReview["candidateFingerprint"] !== request.candidateFingerprint
   ) {
     throw new Error("Pi Review escalation does not match its prepared binding");
+  }
+  if (request.basis === "hard-rule") {
+    if (
+      request.jevAdviceRef !== null ||
+      request.jevAdviceSha256 !== null ||
+      escalation["required"] !== true ||
+      escalation["target"] !== "codex" ||
+      JSON.stringify(escalation["reasons"]) !== JSON.stringify(request.reasons)
+    ) {
+      throw new Error("Pi Review hard-rule escalation does not match its required risk signals");
+    }
+  } else if (request.basis === "jev-recommended") {
+    if (
+      request.jevAdviceRef !== `pi-bridge/jev-review-advice/${request.piRunId}.json` ||
+      typeof request.jevAdviceSha256 !== "string" ||
+      !fingerprintPattern.test(request.jevAdviceSha256) ||
+      escalation["required"] !== false ||
+      escalation["target"] !== "none" ||
+      JSON.stringify(escalation["reasons"]) !== JSON.stringify([]) ||
+      JSON.stringify(request.reasons) !== JSON.stringify(["jev-recommended"])
+    ) {
+      throw new Error("Optional Pi Review escalation has no valid Jev recommendation binding");
+    }
+    readPiReviewRoutingAdviceV1({
+      taskDir: task,
+      ref: request.jevAdviceRef,
+      expectedSha256: request.jevAdviceSha256,
+      expectedBinding: {
+        taskId: request.taskId,
+        reviewId: request.reviewId,
+        piRunId: request.piRunId,
+        runId: request.runId,
+        candidateSnapshotId: request.candidateSnapshotId,
+        candidateFingerprint: request.candidateFingerprint,
+        reviewArtifactRef: request.reviewArtifactRef,
+        reviewArtifactSha256: request.reviewArtifactSha256,
+        reviewContentFingerprint: request.reviewContentFingerprint,
+      },
+    });
+  } else {
+    throw new Error("Pi Review escalation has an unsupported basis");
   }
   return { ref: requestRef, request, reviewArtifact: artifact, taskDir: task };
 }
@@ -167,6 +218,9 @@ export function assertCurrentPiReviewEscalationV1(
     piRun["review_file"] !== request.reviewArtifactRef ||
     piRun["kernel_review_id"] !== request.reviewId ||
     piRun["codex_escalation_request_ref"] !== prepared.ref ||
+    (request.basis === "jev-recommended" &&
+      (piRun["jev_review_advice_ref"] !== request.jevAdviceRef ||
+        piRun["jev_review_advice_status"] !== "adopted")) ||
     !["prepared", "review-recorded"].includes(
       String(piRun["codex_escalation_request_status"]),
     )
@@ -323,22 +377,64 @@ export function preparePiReviewEscalationV1(input: {
   reviewArtifactRef: string;
   reviewArtifactSha256: string;
   reviewContentFingerprint: string;
+  basis?: "hard-rule" | "jev-recommended";
+  jevAdviceRef?: string;
+  jevAdviceSha256?: string;
 }): { ref: string; request: PreparedPiReviewEscalationV1 } {
-  if (
-    !input.review.escalation.required ||
-    input.review.escalation.target !== "codex"
-  ) {
-    throw new Error("Pi Review does not require Codex escalation");
+  const basis = input.basis ?? "hard-rule";
+  let jevAdviceRef: string | null = null;
+  let jevAdviceSha256: string | null = null;
+  let reasons: string[];
+  if (basis === "hard-rule") {
+    if (!input.review.escalation.required || input.review.escalation.target !== "codex")
+      throw new Error("Pi Review does not authorize this Codex escalation basis");
+    reasons = [...input.review.escalation.reasons];
+  } else {
+    const adviceRef = input.jevAdviceRef;
+    const adviceSha256 = input.jevAdviceSha256;
+    if (
+      input.review.escalation.required ||
+      input.review.escalation.target !== "none" ||
+      input.review.escalation.reasons.length > 0 ||
+      !adviceRef ||
+      !adviceSha256 ||
+      !fingerprintPattern.test(adviceSha256)
+    ) {
+      throw new Error("Pi Review does not authorize this Codex escalation basis");
+    }
+    jevAdviceRef = adviceRef;
+    jevAdviceSha256 = adviceSha256;
+    reasons = ["jev-recommended"];
   }
   const piRunId = input.review.piReceipt.piRunId;
   if (!uuidPattern.test(piRunId) || input.reviewId !== `pi-review-${piRunId}`) {
     throw new Error("Pi Review escalation ID is not bound to its Pi Check Run");
   }
+  if (basis === "jev-recommended") {
+    if (!jevAdviceRef || !jevAdviceSha256)
+      throw new Error("Optional Pi escalation is missing its Jev advice reference");
+    readPiReviewRoutingAdviceV1({
+      taskDir: input.taskDir,
+      ref: jevAdviceRef,
+      expectedSha256: jevAdviceSha256,
+      expectedBinding: {
+        taskId: input.taskId,
+        reviewId: input.reviewId,
+        piRunId,
+        runId: input.review.runId,
+        candidateSnapshotId: input.review.candidateSnapshotId,
+        candidateFingerprint: input.review.candidateFingerprint,
+        reviewArtifactRef: input.reviewArtifactRef,
+        reviewArtifactSha256: input.reviewArtifactSha256,
+        reviewContentFingerprint: input.reviewContentFingerprint,
+      },
+    });
+  }
   const summaryParts = [
     `Review verdict: ${input.review.verdict}`,
     `Run: ${input.review.runId}`,
     `Candidate: ${input.review.candidateSnapshotId} (${input.review.candidateFingerprint})`,
-    `Escalation reasons: ${input.review.escalation.reasons.join(", ")}`,
+    `Escalation reasons: ${reasons.join(", ")}`,
     ...input.review.findings.map(
       (finding) =>
         `Finding ${finding.id} [${finding.severity}]: ${finding.summary}`,
@@ -363,7 +459,10 @@ export function preparePiReviewEscalationV1(input: {
     reviewArtifactRef: input.reviewArtifactRef,
     reviewArtifactSha256: input.reviewArtifactSha256,
     reviewContentFingerprint: input.reviewContentFingerprint,
-    reasons: [...input.review.escalation.reasons],
+    basis,
+    jevAdviceRef,
+    jevAdviceSha256,
+    reasons,
     summary: summaryParts.join("\n"),
     preparedAt: new Date().toISOString(),
     sentAt: null,

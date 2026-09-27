@@ -24,6 +24,10 @@ import type { PiRpcLaunch } from "../../src/pactile/pi/rpc.js";
 import { codexBridgeStatus } from "../../src/pactile/codex/bridge.js";
 import type { CodexBridgeRequest } from "../../src/pactile/codex/bridge.js";
 import { resolveTaskDir } from "../../src/pactile/task/session.js";
+import {
+  assertCurrentPiReviewEscalationV1,
+  readPiReviewEscalationV1,
+} from "../../src/pactile/review/escalation.js";
 
 const roots: string[] = [];
 const fakePiScript = path.resolve(
@@ -33,6 +37,8 @@ const fakePiScript = path.resolve(
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0))
     fs.rmSync(root, { recursive: true, force: true });
 });
@@ -52,6 +58,7 @@ function fixture(
   options: {
     implementationSessionId?: string;
     includeRunEvidence?: boolean;
+    taskId?: string;
   } = {},
 ): ReviewFixture {
   const root = fs.mkdtempSync(
@@ -65,8 +72,8 @@ function fixture(
     "verification evidence\n",
   );
 
-  const task = "pi-review";
-  const taskDir = path.join(root, ".pactile", "tasks", "09-27-pi-review");
+  const task = options.taskId ?? "pi-review";
+  const taskDir = path.join(root, ".pactile", "tasks", `09-27-${task}`);
   fs.mkdirSync(taskDir, { recursive: true });
   fs.writeFileSync(
     path.join(taskDir, "verify.md"),
@@ -193,6 +200,69 @@ function report(fixture: ReviewFixture): Record<string, unknown> {
     escalation: { required: false, target: "none", reasons: [] },
     usage: { inputTokens: 10, outputTokens: 20, estimatedCostMicros: null },
   };
+}
+
+function nonPassingWithoutMandatoryEscalation(
+  task: ReviewFixture,
+): Record<string, unknown> {
+  const value = report(task);
+  value["verdict"] = "needs-changes";
+  value["findings"] = [
+    {
+      id: "bounded-review-finding",
+      area: "security",
+      severity: "warning",
+      confidence: "high",
+      impact: "low",
+      disputed: false,
+      summary: "A low-impact issue needs another implementation pass.",
+      evidenceRefs: ["tests/verify.txt"],
+    },
+  ];
+  const coverage = value["coverage"] as Record<
+    string,
+    { status: string; confidence: string; evidenceRefs: string[]; note: null }
+  >;
+  coverage["security"] = { ...coverage["security"], status: "finding" };
+  return value;
+}
+
+function installJevResponse(
+  choice: "append-codex-review" | "keep-pi-review",
+  confidence = 0.92,
+) {
+  const requests: Record<string, unknown>[] = [];
+  const fetchImpl = vi.fn(
+    async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      void input;
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push(body);
+      return new Response(
+        JSON.stringify({
+          model: "jev-test",
+          answers: {
+            append_codex_review: {
+              type: "choice",
+              choice,
+              confidence,
+              probabilities: {
+                "append-codex-review":
+                  choice === "append-codex-review" ? 0.92 : 0.08,
+                "keep-pi-review":
+                  choice === "keep-pi-review" ? 0.92 : 0.08,
+              },
+            },
+          },
+          usage: { input_tokens: 35, output_tokens: 3 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+  );
+  vi.stubEnv("PACTILE_JEV_ENABLED", "true");
+  vi.stubEnv("PACTILE_JEV_API_KEY", "jev-test-key");
+  vi.stubGlobal("fetch", fetchImpl);
+  return { fetchImpl, requests };
 }
 
 function fakePi(
@@ -1057,6 +1127,258 @@ describe("P40 independent Pi Review route", () => {
     expect(JSON.parse(fs.readFileSync(receiptFile, "utf8"))).toMatchObject({
       reply_evidence: { body: boundedBody },
     });
+  });
+
+  it("routes a confident Jev recommendation through the existing P40 prepare gate without changing Pi or Kernel Review", async () => {
+    const task = fixture({ taskId: "p34-private-task-id-marker" });
+    const jev = installJevResponse("append-codex-review", 0.94);
+    const review = nonPassingWithoutMandatoryEscalation(task);
+    expect(await runReview(task, review)).toBe(1);
+    const kernel = readKernel(task.root, task.taskDir);
+    expect(kernel.reviews.at(-1)?.decision).toBe("needs-changes");
+    expect(kernel.phase).toBe("verify");
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(piRun).toMatchObject({
+      review_status: "recorded",
+      codex_escalation: { required: false, target: "none", reasons: [] },
+      codex_escalation_request_status: "prepared",
+      jev_review_advice_status: "adopted",
+    });
+    const adviceRef = String(piRun["jev_review_advice_ref"]);
+    const advice = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, adviceRef), "utf8"),
+    ) as Record<string, unknown>;
+    expect(advice).toMatchObject({
+      status: "answered",
+      recommendationDisposition: "adopted",
+      escalationAction: "append-codex-review",
+      basis: "jev-recommended",
+      recommendation: "append-codex-review",
+      confidence: { append_codex_review: { status: "available", value: 0.94 } },
+      request: { sentInputSha256: expect.stringMatching(/^[a-f0-9]{64}$/u) },
+      transport: {
+        outcome: "answered",
+        attempts: 1,
+        latencyMs: expect.any(Number),
+        inputTokens: 35,
+        estimatedInputCostMicrousd: expect.any(Number),
+      },
+    });
+    const sentBody = JSON.stringify(jev.requests[0]);
+    expect(sentBody).not.toContain(task.task);
+    expect(sentBody).not.toContain("bounded-review-finding");
+    expect(sentBody).not.toContain("A low-impact issue needs another implementation pass.");
+
+    const requestValue = JSON.parse(
+      fs.readFileSync(
+        path.join(task.taskDir, String(piRun["codex_escalation_request_ref"])),
+        "utf8",
+      ),
+    ) as { escalationId: string; basis: string; jevAdviceRef: string; jevAdviceSha256: string };
+    expect(requestValue).toMatchObject({
+      basis: "jev-recommended",
+      jevAdviceRef: adviceRef,
+      jevAdviceSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+    const prepared = readPiReviewEscalationV1(task.root, task.task, requestValue.escalationId);
+    assertCurrentPiReviewEscalationV1(task.root, task.task, prepared);
+    const adviceFile = path.join(task.taskDir, adviceRef);
+    const originalAdviceBytes = fs.readFileSync(adviceFile);
+    const tamperedAdvice = JSON.parse(originalAdviceBytes.toString("utf8")) as Record<string, unknown>;
+    tamperedAdvice["recommendation"] = "keep-pi-review";
+    fs.writeFileSync(adviceFile, `${JSON.stringify(tamperedAdvice, null, 2)}\n`);
+    expect(() => readPiReviewEscalationV1(task.root, task.task, requestValue.escalationId)).toThrow(/hash/u);
+    fs.writeFileSync(adviceFile, originalAdviceBytes);
+
+    const target = createCodexReviewerTask(task.root);
+    expect(
+      runCodexCli(
+        [
+          "prepare", target.task, "--tool", "create", "--role", "review",
+          "--target", "projectless", "--prompt-file", target.promptFile,
+        ],
+        task.root,
+      ),
+    ).toBe(0);
+    const createRequest = readRequest(task.root, target.task);
+    const threadId = "p34-jeV-review-route-thread";
+    const hostId = "p34-local-host";
+    recordNativeCodexReceipt(task.root, target.task, createRequest, {
+      request_id: createRequest.request_id,
+      tool: "create_thread",
+      outcome: "ok",
+      thread_id: threadId,
+      host_id: hostId,
+    });
+    const sourceRun = readKernel(task.root, task.taskDir).runs.at(-1);
+    if (!sourceRun) throw new Error("Pi source Run is missing");
+    expect(
+      runCodexCli(
+        [
+          "prepare", task.task, "--tool", "message", "--thread-id", threadId,
+          "--to-task", target.task, "--run-id", sourceRun.id,
+          "--to-run-id", target.runId, "--escalation-id", requestValue.escalationId,
+        ],
+        task.root,
+      ),
+    ).toBe(0);
+    expect(codexBridgeStatus(task.root, task.task).pending).toHaveLength(1);
+  });
+
+  it("records Jev declines, low-confidence fallback, and egress denial without creating optional P40 requests", async () => {
+    const declined = fixture();
+    installJevResponse("keep-pi-review", 0.91);
+    expect(await runReview(declined, nonPassingWithoutMandatoryEscalation(declined))).toBe(1);
+    let receipt = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          declined.taskDir,
+          String((JSON.parse(fs.readFileSync(path.join(declined.taskDir, "pi-bridge", "latest.json"), "utf8")) as Record<string, unknown>)["jev_review_advice_ref"]),
+        ),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    expect(receipt).toMatchObject({
+      recommendationDisposition: "adopted",
+      escalationAction: "keep-pi-review",
+      basis: "jev-declined",
+      recommendation: "keep-pi-review",
+      confidence: { append_codex_review: { status: "available", value: 0.91 } },
+    });
+    let piRun = JSON.parse(
+      fs.readFileSync(path.join(declined.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(piRun["jev_review_advice_status"]).toBe("adopted");
+    expect(piRun["codex_escalation_request_ref"]).toBeNull();
+    expect(readKernel(declined.root, declined.taskDir).reviews.at(-1)?.decision).toBe("needs-changes");
+
+    const lowConfidence = fixture();
+    installJevResponse("append-codex-review", 0.4);
+    expect(await runReview(lowConfidence, nonPassingWithoutMandatoryEscalation(lowConfidence))).toBe(1);
+    piRun = JSON.parse(
+      fs.readFileSync(path.join(lowConfidence.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    receipt = JSON.parse(
+      fs.readFileSync(path.join(lowConfidence.taskDir, String(piRun["jev_review_advice_ref"])), "utf8"),
+    ) as Record<string, unknown>;
+    expect(receipt).toMatchObject({
+      status: "fallback",
+      recommendationDisposition: "unavailable",
+      escalationAction: "keep-pi-review",
+      basis: "jev-unavailable",
+      confidence: { append_codex_review: { status: "available", value: 0.4 } },
+      transport: { reasonCode: "low-confidence" },
+    });
+    expect(piRun["codex_escalation_request_ref"]).toBeNull();
+
+    const missingConfig = fixture();
+    vi.stubEnv("PACTILE_JEV_ENABLED", "true");
+    vi.stubEnv("PACTILE_JEV_API_KEY", "");
+    const missingConfigFetch = vi.fn(async (): Promise<Response> => {
+      throw new Error("Missing configuration must prevent HTTP");
+    });
+    vi.stubGlobal("fetch", missingConfigFetch);
+    expect(await runReview(missingConfig, nonPassingWithoutMandatoryEscalation(missingConfig))).toBe(1);
+    expect(missingConfigFetch).not.toHaveBeenCalled();
+    piRun = JSON.parse(
+      fs.readFileSync(path.join(missingConfig.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    receipt = JSON.parse(
+      fs.readFileSync(path.join(missingConfig.taskDir, String(piRun["jev_review_advice_ref"])), "utf8"),
+    ) as Record<string, unknown>;
+    expect(receipt).toMatchObject({
+      recommendationDisposition: "unavailable",
+      escalationAction: "keep-pi-review",
+      basis: "jev-unavailable",
+      transport: { reasonCode: "configuration-missing", attempts: 0 },
+      confidence: { append_codex_review: { status: "unavailable", reasonCode: "not-returned" } },
+    });
+    expect(piRun["codex_escalation_request_ref"]).toBeNull();
+
+    const timeoutTask = fixture();
+    vi.stubEnv("PACTILE_JEV_ENABLED", "true");
+    vi.stubEnv("PACTILE_JEV_API_KEY", "jev-test-key");
+    const timeoutFetch = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        await new Promise<Response>((resolve) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => resolve(new Response(null, { status: 408 })),
+            { once: true },
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", timeoutFetch);
+    expect(await runReview(timeoutTask, nonPassingWithoutMandatoryEscalation(timeoutTask))).toBe(1);
+    piRun = JSON.parse(
+      fs.readFileSync(path.join(timeoutTask.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    receipt = JSON.parse(
+      fs.readFileSync(path.join(timeoutTask.taskDir, String(piRun["jev_review_advice_ref"])), "utf8"),
+    ) as Record<string, unknown>;
+    expect(receipt).toMatchObject({
+      status: "fallback",
+      recommendationDisposition: "unavailable",
+      escalationAction: "keep-pi-review",
+      transport: { reasonCode: "deadline-exceeded", attempts: 1, latencyMs: expect.any(Number) },
+    });
+    expect(piRun["codex_escalation_request_ref"]).toBeNull();
+
+    const denied = fixture();
+    fs.mkdirSync(path.join(denied.root, ".pactile"), { recursive: true });
+    fs.writeFileSync(path.join(denied.root, ".pactile", "config.yaml"), "jev:\n  egress: deny\n");
+    const blockedFetch = installJevResponse("append-codex-review");
+    expect(await runReview(denied, nonPassingWithoutMandatoryEscalation(denied))).toBe(1);
+    expect(blockedFetch.fetchImpl).not.toHaveBeenCalled();
+    piRun = JSON.parse(
+      fs.readFileSync(path.join(denied.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    receipt = JSON.parse(
+      fs.readFileSync(path.join(denied.taskDir, String(piRun["jev_review_advice_ref"])), "utf8"),
+    ) as Record<string, unknown>;
+    expect(receipt).toMatchObject({
+      recommendationDisposition: "unavailable",
+      escalationAction: "keep-pi-review",
+      transport: { reasonCode: "egress-denied", attempts: 0 },
+      projectEgressPolicy: { before: "egress-denied", after: "egress-denied", changed: false },
+      confidence: { append_codex_review: { status: "unavailable", reasonCode: "not-returned" } },
+    });
+    expect(piRun["codex_escalation_request_ref"]).toBeNull();
+  });
+
+  it("keeps forced Pi escalation ahead of Jev and persists a skip basis", async () => {
+    const task = fixture();
+    const jev = installJevResponse("keep-pi-review");
+    const escalated = report(task);
+    escalated["verdict"] = "needs-changes";
+    const coverage = escalated["coverage"] as Record<
+      string,
+      { status: string; confidence: string; evidenceRefs: string[]; note: null }
+    >;
+    coverage["security"] = { ...coverage["security"], confidence: "low" };
+    escalated["escalation"] = {
+      required: true,
+      target: "codex",
+      reasons: ["uncertainty"],
+    };
+    expect(await runReview(task, escalated)).toBe(1);
+    expect(jev.fetchImpl).not.toHaveBeenCalled();
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    const advice = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, String(piRun["jev_review_advice_ref"])), "utf8"),
+    ) as Record<string, unknown>;
+    expect(advice).toMatchObject({
+      status: "skipped",
+      recommendationDisposition: "skipped",
+      escalationAction: "not-applicable",
+      basis: "hard-rule-required",
+      confidence: { append_codex_review: { status: "unavailable", reasonCode: "not-returned" } },
+    });
+    expect(piRun["codex_escalation_request_status"]).toBe("prepared");
   });
 
   it("records a bound native Codex reply as a new Kernel Review without closing the Task", async () => {
