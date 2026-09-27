@@ -1,0 +1,9 @@
+{
+  "version": "0.6.1",
+  "description": "Stable correction for legacy project worktree, scratch and personal template generation boundaries.",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "Pactile update excludes existing worktrees, worktree archives, scratch and personal templates from sealed framework generations while preserving their files.",
+  "migrations": [],
+  "notes": "The beta manifest records this fix for beta users; direct upgrades to 0.6.1 require no one-time migration."
+}

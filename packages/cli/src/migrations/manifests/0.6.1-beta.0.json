@@ -1,0 +1,9 @@
+{
+  "version": "0.6.1-beta.0",
+  "description": "Exclude existing worktrees, archives, scratch and personal templates from sealed framework generations.",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "Pactile update no longer traverses .pactile/worktrees, .pactile/worktree-archives, .pactile/tmp or .pactile/templates when building the managed generation. Existing user state is preserved.",
+  "migrations": [],
+  "notes": "This fixes a 0.6.0 migration failure on projects with dependency links inside old worktrees. No one-time migration is needed."
+}
