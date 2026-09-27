@@ -22,6 +22,14 @@ import {
   type CoordinationTaskBlocked,
   type CoordinationTaskUnblocked,
 } from "../coordination/index.js";
+import {
+  assertCurrentPiReviewEscalationV1,
+  assertCodexEscalationSendPromptV1,
+  buildCodexEscalationPromptV1,
+  readCodexEscalationSendV1,
+  readPiReviewEscalationV1,
+} from "../review/escalation.js";
+import { withProjectSchedulerMutex } from "../scheduler/project-lease-store.js";
 
 export {
   readCodexHostStopReceipts,
@@ -63,6 +71,14 @@ export interface CodexBridgeRequest {
   coordination_message_id?: string | null;
   escalation_id?: string;
   reply_to_escalation_id?: string;
+  escalation_source_task?: string;
+  escalation_source_task_id?: string;
+  escalation_prepared_request_ref?: string;
+  escalation_prepared_fingerprint?: string;
+  escalation_send_request_id?: string;
+  escalation_send_request_fingerprint?: string;
+  escalation_send_receipt_sha256?: string;
+  escalation_send_receipt_recorded_at?: string;
   created_at: string;
   tool: CodexBridgeTool;
   role: CodexBridgeRole;
@@ -85,6 +101,14 @@ export interface CodexBridgeReceipt {
   to_candidate_fingerprint?: string | null;
   escalation_id?: string;
   reply_to_escalation_id?: string;
+  escalation_source_task?: string;
+  escalation_source_task_id?: string;
+  escalation_prepared_request_ref?: string;
+  escalation_prepared_fingerprint?: string;
+  escalation_send_request_id?: string;
+  escalation_send_request_fingerprint?: string;
+  escalation_send_receipt_sha256?: string;
+  escalation_send_receipt_recorded_at?: string;
   reply_evidence?: {
     reply_to_escalation_id: string;
     response_turn_id: string;
@@ -763,6 +787,8 @@ export function prepareCodexRequest(input: {
   resumeExecute?: boolean;
   escalationId?: string;
   replyToEscalationId?: string;
+  sourceTask?: string;
+  sendRequestId?: string;
 }): CodexBridgeRequest {
   const context = taskContext(input.root, input.task);
   if (
@@ -781,6 +807,21 @@ export function prepareCodexRequest(input: {
   }
   if (input.escalationId && input.replyToEscalationId) {
     throw new Error("A Codex request cannot send and reply to an escalation");
+  }
+  if (input.sourceTask && !input.replyToEscalationId) {
+    throw new Error("--source-task is only valid with --reply-to-escalation-id");
+  }
+  if (input.replyToEscalationId && !input.sourceTask) {
+    throw new Error("--reply-to-escalation-id requires --source-task");
+  }
+  if (input.replyToEscalationId && !input.sendRequestId) {
+    throw new Error("--reply-to-escalation-id requires --send-request-id");
+  }
+  if (input.sendRequestId && !input.replyToEscalationId) {
+    throw new Error("--send-request-id is only valid with --reply-to-escalation-id");
+  }
+  if (input.escalationId && input.promptFile) {
+    throw new Error("P40 Codex escalation uses its bound Review prompt; additional prompt files are not accepted");
   }
   if (input.escalationId && input.tool !== "send_message_to_thread") {
     throw new Error("--escalation-id is only valid for a Codex message");
@@ -863,7 +904,7 @@ export function prepareCodexRequest(input: {
   ) {
     throw new Error("wait/read do not accept --prompt-file");
   }
-  const prompt = input.promptFile ? textFile(input.promptFile) : null;
+  let prompt = input.promptFile ? textFile(input.promptFile) : null;
   if (crossTask && prompt && Buffer.byteLength(prompt, "utf8") > 4_096) {
     throw new Error(
       "cross-task message body must be at most 4096 bytes for the coordination journal",
@@ -905,12 +946,26 @@ export function prepareCodexRequest(input: {
     );
   }
   if (input.escalationId) {
+    const prepared = readPiReviewEscalationV1(
+      input.root,
+      context.task,
+      input.escalationId,
+    );
+    const current = assertCurrentPiReviewEscalationV1(
+      input.root,
+      context.task,
+      prepared,
+    );
     const sourceRun = context.runs.at(-1);
-    const review = context.reviews.at(-1);
     if (
       !crossTask ||
       context.kernelKind !== "task-kernel-v2" ||
       context.phase !== "verify" ||
+      role !== "review" ||
+      bound?.role !== "review" ||
+      targetContext.kernelKind !== "task-kernel-v2" ||
+      targetRun.run?.state !== "completed" ||
+      !targetRun.run.candidateSnapshot ||
       !input.runId ||
       sourceRun?.id !== input.runId ||
       sourceRun.state !== "completed" ||
@@ -919,15 +974,95 @@ export function prepareCodexRequest(input: {
       selectedRun.candidateSnapshotId !== sourceRun.candidateSnapshot.id ||
       selectedRun.candidateFingerprint !==
         sourceRun.candidateSnapshot.fingerprint ||
-      !review ||
-      review.decision === "pass" ||
-      review.runId !== sourceRun.id ||
-      review.candidateSnapshotId !== sourceRun.candidateSnapshot.id ||
-      review.candidateFingerprint !== sourceRun.candidateSnapshot.fingerprint
+      current.run.id !== sourceRun.id ||
+      current.kernel.reviews.at(-1)?.id !== prepared.request.reviewId ||
+      current.kernel.reviews.at(-1)?.decision === "pass"
     ) {
       throw new Error(
-        "Codex escalation send requires the current V2 non-passing Review and candidate Run",
+        "Codex escalation send requires its current prepared non-passing Pi Review, source candidate and bound Review thread",
       );
+    }
+    prompt = buildCodexEscalationPromptV1({
+      prepared,
+      hostId: bound.hostId,
+      threadId: bound.threadId,
+    });
+  }
+  let escalationBinding: {
+    sourceTask: string;
+    sourceTaskId: string;
+    preparedRequestRef: string;
+    preparedFingerprint: string;
+  } | null = null;
+  let escalationSendBinding: {
+    requestId: string;
+    requestFingerprint: string;
+    receiptSha256: string;
+    receiptRecordedAt: string;
+  } | null = null;
+  if (input.escalationId) {
+    const prepared = readPiReviewEscalationV1(
+      input.root,
+      context.task,
+      input.escalationId,
+    );
+    escalationBinding = {
+      sourceTask: context.task,
+      sourceTaskId: prepared.request.taskId,
+      preparedRequestRef: prepared.ref,
+      preparedFingerprint: prepared.request.preparedFingerprint,
+    };
+  }
+  if (input.replyToEscalationId) {
+    if (role !== "review" || bound?.role !== "review") {
+      throw new Error("Pi escalation replies require a bound Codex Review thread");
+    }
+    const prepared = readPiReviewEscalationV1(
+      input.root,
+      input.sourceTask as string,
+      input.replyToEscalationId,
+    );
+    assertCurrentPiReviewEscalationV1(
+      input.root,
+      input.sourceTask as string,
+      prepared,
+    );
+    const send = readCodexEscalationSendV1({
+      root: input.root,
+      sourceTask: input.sourceTask as string,
+      escalationId: input.replyToEscalationId,
+      sendRequestId: input.sendRequestId as string,
+    });
+    if (
+      send.request["to_task"] !== path.basename(context.dir) ||
+      send.request["to_task_id"] !== context.taskId ||
+      send.request["thread_id"] !== bound.threadId ||
+      send.request["host_id"] !== bound.hostId ||
+      send.request["to_run_id"] !== selectedRun.runId ||
+      send.request["to_candidate_snapshot_id"] !== selectedRun.candidateSnapshotId ||
+      send.request["to_candidate_fingerprint"] !== selectedRun.candidateFingerprint
+    ) {
+      throw new Error("Escalation reply read must follow the selected send to this exact Review Task and thread");
+    }
+    escalationSendBinding = {
+      requestId: input.sendRequestId as string,
+      requestFingerprint: send.requestFingerprint,
+      receiptSha256: send.receiptSha256,
+      receiptRecordedAt: send.receiptRecordedAt,
+    };
+    const sourceDir = prepared.taskDir;
+      escalationBinding = {
+      sourceTask: path.relative(input.root, sourceDir).replaceAll("\\", "/"),
+      sourceTaskId: prepared.request.taskId,
+      preparedRequestRef: prepared.ref,
+      preparedFingerprint: prepared.request.preparedFingerprint,
+    };
+    if (
+      context.kernelKind !== "task-kernel-v2" ||
+      selectedRun.run?.state !== "completed" ||
+      !selectedRun.run.candidateSnapshot
+    ) {
+      throw new Error("Pi escalation reply read requires the current completed Review Task candidate");
     }
   }
   if (
@@ -1071,7 +1206,9 @@ export function prepareCodexRequest(input: {
       args = {
         threadId: bound.threadId,
         hostId: bound.hostId,
-        prompt: crossTask
+        prompt: input.escalationId
+          ? prompt
+          : crossTask
           ? input.resumeExecute
             ? `Pactile cross-task Execute dispatch from ${context.taskId} to ${targetContext.taskId}.\n${runContextLine(context, selectedRun, false)}\nRecipient ${runContextLine(targetContext, targetRun)}\n${roleBoundary(role)} ${scopeLine}\nDo not change Kernel approval or claim acceptance from this message. Do not dispatch Codex subagents.\n\n${prompt}`
             : `Pactile coordination-only message from ${context.taskId} to ${targetContext.taskId}. This message and any send receipt do not resume a Run, change Task state, grant Execute permission, or authorize file writes. Preserve any blocked or waiting state. Do not edit files, change approval, or dispatch Codex subagents; wait for an explicit Kernel Resume and P37 dispatch admission before executing.\n${runContextLine(context, selectedRun, false)}\nRecipient ${runContextLine(targetContext, targetRun, false)}\n\n${prompt}`
@@ -1123,6 +1260,26 @@ export function prepareCodexRequest(input: {
     ...(input.escalationId ? { escalation_id: input.escalationId } : {}),
     ...(input.replyToEscalationId
       ? { reply_to_escalation_id: input.replyToEscalationId }
+      : {}),
+    ...(escalationBinding
+      ? {
+          escalation_source_task: escalationBinding.sourceTask,
+          escalation_source_task_id: escalationBinding.sourceTaskId,
+          escalation_prepared_request_ref:
+            escalationBinding.preparedRequestRef,
+          escalation_prepared_fingerprint:
+            escalationBinding.preparedFingerprint,
+        }
+      : {}),
+    ...(escalationSendBinding
+      ? {
+          escalation_send_request_id: escalationSendBinding.requestId,
+          escalation_send_request_fingerprint:
+            escalationSendBinding.requestFingerprint,
+          escalation_send_receipt_sha256: escalationSendBinding.receiptSha256,
+          escalation_send_receipt_recorded_at:
+            escalationSendBinding.receiptRecordedAt,
+        }
       : {}),
     created_at: new Date().toISOString(),
     tool: input.tool,
@@ -1178,6 +1335,42 @@ export function recordCodexReceipt(
   evidenceLevelInput?: "simulated" | "desktop-native",
 ): CodexBridgeReceipt {
   if (!uuidPattern.test(requestId)) throw new Error("Invalid request id");
+  const initialContext = taskContextIncludingArchive(root, task);
+  if (initialContext.archived) {
+    throw new Error("Cannot record a new Codex receipt for an archived Task");
+  }
+  const initialRequest = readJson(requestFile(initialContext.dir, requestId)) as unknown as CodexBridgeRequest;
+  const initialFingerprint = codexRequestFingerprint(initialRequest);
+  const record = (): CodexBridgeReceipt => recordCodexReceiptUnlocked(
+    root,
+    task,
+    requestId,
+    resultFile,
+    evidenceLevelInput,
+    initialRequest.tool,
+    initialFingerprint,
+  );
+  if (initialRequest.tool !== "send_message_to_thread") return record();
+  return withProjectSchedulerMutex(root, () => {
+    const lockedContext = taskContextIncludingArchive(root, task);
+    const lockedRequest = readJson(requestFile(lockedContext.dir, requestId)) as unknown as CodexBridgeRequest;
+    if (codexRequestFingerprint(lockedRequest) !== initialFingerprint) {
+      throw new Error("Codex send request changed while acquiring the receipt lock");
+    }
+    return record();
+  });
+}
+
+function recordCodexReceiptUnlocked(
+  root: string,
+  task: string,
+  requestId: string,
+  resultFile: string,
+  evidenceLevelInput: "simulated" | "desktop-native" | undefined,
+  expectedTool: CodexBridgeTool,
+  expectedFingerprint: string,
+): CodexBridgeReceipt {
+  if (!uuidPattern.test(requestId)) throw new Error("Invalid request id");
   const context = taskContextIncludingArchive(root, task);
   if (context.archived) {
     throw new Error("Cannot record a new Codex receipt for an archived Task");
@@ -1185,6 +1378,9 @@ export function recordCodexReceipt(
   const request = readJson(
     requestFile(context.dir, requestId),
   ) as unknown as CodexBridgeRequest;
+  if (request.tool !== expectedTool || codexRequestFingerprint(request) !== expectedFingerprint) {
+    throw new Error("Codex request changed before its receipt was recorded");
+  }
   if (
     request.request_id !== requestId ||
     (request.task_id && request.task_id !== context.taskId) ||
@@ -1315,10 +1511,25 @@ export function recordCodexReceipt(
       ? result.status
       : null;
   if (request.escalation_id) {
+    const prepared = readPiReviewEscalationV1(
+      root,
+      context.task,
+      request.escalation_id,
+    );
+    const currentPiReview = assertCurrentPiReviewEscalationV1(root, context.task, prepared);
+    assertCodexEscalationSendPromptV1(prepared, request as unknown as Record<string, unknown>);
     if (
       request.tool !== "send_message_to_thread" ||
       request.reply_to_escalation_id ||
       evidenceLevel !== "desktop-native" ||
+      (successful && currentPiReview.kernel.reviews.at(-1)?.id !== prepared.request.reviewId) ||
+      request.role !== "review" ||
+      request.escalation_source_task !== context.task ||
+      request.escalation_source_task_id !== prepared.request.taskId ||
+      request.escalation_prepared_request_ref !== prepared.ref ||
+      request.escalation_prepared_fingerprint !==
+        prepared.request.preparedFingerprint ||
+      request.escalation_id !== prepared.request.escalationId ||
       !request.to_task_id ||
       !request.thread_id ||
       !request.host_id ||
@@ -1333,10 +1544,46 @@ export function recordCodexReceipt(
   }
   let replyEvidence: CodexBridgeReceipt["reply_evidence"];
   if (request.reply_to_escalation_id) {
+    if (!request.escalation_source_task) {
+      throw new Error("P40 reply read is missing its source Task binding");
+    }
+    const prepared = readPiReviewEscalationV1(
+      root,
+      request.escalation_source_task,
+      request.reply_to_escalation_id,
+    );
+    assertCurrentPiReviewEscalationV1(
+      root,
+      request.escalation_source_task,
+      prepared,
+    );
+    const send = readCodexEscalationSendV1({
+      root,
+      sourceTask: request.escalation_source_task,
+      escalationId: request.reply_to_escalation_id,
+      sendRequestId: request.escalation_send_request_id ?? "",
+    });
+    if (
+      request.escalation_send_request_fingerprint !== send.requestFingerprint ||
+      request.escalation_send_receipt_sha256 !== send.receiptSha256 ||
+      request.escalation_send_receipt_recorded_at !== send.receiptRecordedAt ||
+      Date.parse(request.created_at) < Date.parse(send.receiptRecordedAt)
+    ) {
+      throw new Error("Escalation reply read request is not causally bound to the latest successful native send");
+    }
     if (
       request.tool !== "read_thread" ||
       request.escalation_id ||
       evidenceLevel !== "desktop-native" ||
+      request.role !== "review" ||
+      request.escalation_source_task_id !== prepared.request.taskId ||
+      request.escalation_prepared_request_ref !== prepared.ref ||
+      request.escalation_prepared_fingerprint !==
+        prepared.request.preparedFingerprint ||
+      !request.escalation_send_request_id ||
+      !request.escalation_send_request_fingerprint ||
+      !request.escalation_send_receipt_sha256 ||
+      !request.escalation_send_receipt_recorded_at ||
       !request.thread_id ||
       !request.host_id
     ) {
@@ -1436,6 +1683,35 @@ export function recordCodexReceipt(
     ...(request.escalation_id ? { escalation_id: request.escalation_id } : {}),
     ...(request.reply_to_escalation_id
       ? { reply_to_escalation_id: request.reply_to_escalation_id }
+      : {}),
+    ...(request.escalation_source_task
+      ? { escalation_source_task: request.escalation_source_task }
+      : {}),
+    ...(request.escalation_source_task_id
+      ? { escalation_source_task_id: request.escalation_source_task_id }
+      : {}),
+    ...(request.escalation_prepared_request_ref
+      ? {
+          escalation_prepared_request_ref:
+            request.escalation_prepared_request_ref,
+        }
+      : {}),
+    ...(request.escalation_prepared_fingerprint
+      ? {
+          escalation_prepared_fingerprint:
+            request.escalation_prepared_fingerprint,
+        }
+      : {}),
+    ...(request.escalation_send_request_id
+      ? {
+          escalation_send_request_id: request.escalation_send_request_id,
+          escalation_send_request_fingerprint:
+            request.escalation_send_request_fingerprint,
+          escalation_send_receipt_sha256:
+            request.escalation_send_receipt_sha256,
+          escalation_send_receipt_recorded_at:
+            request.escalation_send_receipt_recorded_at,
+        }
       : {}),
     ...(replyEvidence ? { reply_evidence: replyEvidence } : {}),
     ...(threadCreationState

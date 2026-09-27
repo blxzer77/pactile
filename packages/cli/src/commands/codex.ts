@@ -8,6 +8,7 @@ import {
   type CodexBridgeRole,
   type CodexBridgeTool,
 } from "../pactile/codex/bridge.js";
+import { recordCodexEscalationReviewV1 } from "../pactile/review/escalation.js";
 
 function option(args: string[], flag: string): string | undefined {
   const index = args.indexOf(flag);
@@ -33,6 +34,31 @@ export function runCodexCli(argv: string[], root = process.cwd()): number {
     const task = required(reference, "task");
     if (operation === "status") {
       console.log(JSON.stringify(codexBridgeStatus(root, task), null, 2));
+      return 0;
+    }
+    if (operation === "review-escalation") {
+      console.log(
+        JSON.stringify(
+          recordCodexEscalationReviewV1({
+            root,
+            sourceTask: task,
+            escalationId: required(
+              option(args, "--escalation-id"),
+              "--escalation-id",
+            ),
+            sendRequestId: required(
+              option(args, "--send-request-id"),
+              "--send-request-id",
+            ),
+            readRequestId: required(
+              option(args, "--read-request-id"),
+              "--read-request-id",
+            ),
+          }),
+          null,
+          2,
+        ),
+      );
       return 0;
     }
     if (operation === "receipt") {
@@ -91,7 +117,7 @@ export function runCodexCli(argv: string[], root = process.cwd()): number {
     }
     if (operation !== "prepare")
       throw new Error(
-        "Usage: pactile codex <prepare|receipt|status|block|unblock> <task> ...",
+        "Usage: pactile codex <prepare|receipt|review-escalation|status|block|unblock> <task> ...",
       );
     const toolName = required(
       option(args, "--tool"),
@@ -113,6 +139,8 @@ export function runCodexCli(argv: string[], root = process.cwd()): number {
       resumeExecute: args.includes("--resume-execute"),
       escalationId: option(args, "--escalation-id"),
       replyToEscalationId: option(args, "--reply-to-escalation-id"),
+      sourceTask: option(args, "--source-task"),
+      sendRequestId: option(args, "--send-request-id"),
       promptFile: promptFile ? path.resolve(root, promptFile) : undefined,
       projectId: option(args, "--project-id"),
       targetType: option(args, "--target") as

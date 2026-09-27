@@ -56,7 +56,21 @@ pactile codex unblock <receiver-task> <block-id> --resolution-message-id <reques
 
 跨 Task 消息正文上限为 4096 UTF-8 字节。默认是纯协调消息：允许目标 Task 正在 waiting/blocked 时接收，但不会改 Run、解除阻塞或授予写权限，提示会要求收件方保留阻塞状态。当前切片因尚未接入 P37 admission、lease、Resume 和 block 校验，对 Task Kernel v2 Execute create 与 `--resume-execute` 一律 fail closed。完成这些 gate 接线后，写入派发仍须先由 Kernel 明确 Resume 并通过 P37 admission；发送回执本身不授予派发许可。只有非 stale 的成功发送回执可用于创建与消息关联的 block；消息关联的 unblock 要求成功的 `desktop-native` resolution 证据，模拟发送不能解除阻塞。“sent”只表示 Host 接受发送请求，不表示收件方已读。每次解除都会留下独立日志事件。用户也可在给出原因后手动解除。
 
-Pi Review 升级消息可在跨 Task `message` 请求上添加 `--escalation-id pi-escalation:<pi-run-uuid>`；来源必须是当前 V2 Verify Task、最新的非通过 Review 和匹配的候选 Run。配对请求与规范化回执会记录升级 ID、来源/目标 Task 与 Run/候选、thread/Host 及请求指纹。读取回复时，在目标 Task 上准备带相同 `--reply-to-escalation-id` 的 `read` 请求；成功的原生结果必须含 `status: completed` 和有界 `reply_evidence`，其中包含精确升级 ID、响应 turn ID、正文与 SHA-256。只有从 Codex 桌面工具实际取得的结果才可标记 `desktop-native`。此桥只写自己的 request/receipt 文件，不会把 P40 升级产物改为 `sent` 或 `answered`；P40 reader 与状态更新仍是单独的集成门。
+### Pi Review 升级到 Codex Review
+
+已准备的 P40 升级可以请求另一个已绑定的 Codex `review` thread 给出独立、只读 Review。Pi Review 产物保持不可变。发送必须从来源 Task 当前 V2 Verify Run 和非通过 Pi Review 发起，并发给具有当前已完成候选的 V2 Verify/Integrate Task 及其已绑定 Review thread：
+
+```text
+pactile codex prepare <source-task> --tool message --thread-id <review-thread> --to-task <review-task> --run-id <source-run> --to-run-id <review-run> --escalation-id pi-escalation:<pi-run-uuid>
+pactile codex receipt <source-task> <send-request-id> --result-file send-result.json --evidence-level desktop-native
+pactile codex prepare <review-task> --tool read --thread-id <review-thread> --reply-to-escalation-id pi-escalation:<pi-run-uuid> --source-task <source-task> --send-request-id <send-request-id>
+pactile codex receipt <review-task> <read-request-id> --result-file read-result.json --evidence-level desktop-native
+pactile codex review-escalation <source-task> --escalation-id pi-escalation:<pi-run-uuid> --send-request-id <send-request-id> --read-request-id <read-request-id>
+```
+
+发送准备会读取并验证真实 Pi 升级产物与 Pi Review 证据，再为已绑定 Review thread 生成固定 P40 提示。原生 read 结果必须包含已完成且相关联的 `reply_evidence`；正文是一个 JSON 对象，精确绑定升级 ID、Task/Run/候选与 Pi 产物，并包含审核者 `hostId`、`threadId`、`role: review`、`independent: true`，`pass`、`fail` 或 `needs-changes` 结论，coverage、findings、blockers、questions、逐项处理每个原 Pi finding/blocker/question 且带证据的 `concernResolutions`、AC 证据与引用。Concern ID 是稳定的不透明标识；跨 Task 提示不会转发 Pi 自由文本摘要。正文不能含额外字段或 Markdown fence。PASS 必须有证据地解决所有原 Pi concern。每个报告引用必须与当前按字节验真的候选/Run 证据集完全一致；由原生 thread 推导的审核者身份必须不同于 Run 执行者和批准者。
+
+`pactile codex review-escalation` 会重新读取两端准备请求与原生回执，将原始字节复制到来源 Task 的证据树，校验完整回复，再调用现有 public Kernel Review mutation。PASS 会让 Kernel Review condition 变为 ready；该命令不会 Close Task，也不会授权新 Run。旧 Pi Review 保留在 Kernel 历史中，产物不改写。派发前和记入前都会复验旧 Pi Kernel Review 的 Core 证据摘要；新 Review 会继承全部旧 Pi 证据引用，使 public Close 再次核对 Check start/stop/result。Reply read 绑定指定成功 send 的 request/receipt 摘要，必须发生在 send 之后，结算时仍须对应最新成功 send。来源或回复 Task 过期、模拟回执、ID/thread 错绑、候选不符、证据缺失、非 JSON 文本、遗漏或未解决 Pi concern、结构化合同无效或凭据样式的 Pi 文本，都会在外发或新增 Kernel Review 前 fail closed。相同输入重复 finalization 是幂等的；不同回复不能替换已记录 Review。`desktop-native` 仍只是 Host 报告的 assurance，并非经签名验证的桌面身份；只有结果直接来自当前 Codex 桌面工具调用时才可如此标记。即使使用原生结果，也必须通过结构化回复合同和 Kernel independence 校验。
 
 创建 worktree 任务时，App 可能先只返回 `clientThreadId`。此时记录 `outcome: queued` 与 `client_thread_id`；临时 ID 不能用于发消息或等待。App 报告就绪的 `threadId`、`hostId` 后，再记录最终 `outcome: ok`，同时带上原 `client_thread_id` 和就绪 ID。`pactile codex status` 在此期间显示排队请求。
 

@@ -119,6 +119,13 @@ export interface UnresolvedReviewQuestion {
   evidenceRefs: string[];
 }
 
+export interface CodexEscalationConcernResolution {
+  concernId: string;
+  disposition: "resolved" | "still-blocking";
+  rationale: string;
+  evidenceRefs: string[];
+}
+
 export interface ReviewTelemetry {
   startupMs: number | null;
   firstEventMs: number | null;
@@ -439,6 +446,37 @@ function parseQuestions(value: unknown): UnresolvedReviewQuestion[] {
   return parsed;
 }
 
+function parseCodexConcernResolutions(
+  value: unknown,
+): CodexEscalationConcernResolution[] {
+  if (!Array.isArray(value) || value.length > MAX_ITEMS) {
+    invalid("concernResolutions must be a bounded array");
+  }
+  const parsed = value.map((item, index): CodexEscalationConcernResolution => {
+    const field = `concernResolutions[${index}]`;
+    const input = record(item, field);
+    exactKeys(input, ["concernId", "disposition", "rationale", "evidenceRefs"], field);
+    const rationale = boundedText(input["rationale"], `${field}.rationale`);
+    if (/\b(?:placeholder|replace with|insert rationale|todo|tbd)\b/iu.test(rationale)) {
+      invalid(`${field}.rationale cannot be a placeholder`);
+    }
+    return {
+      concernId: identifier(input["concernId"], `${field}.concernId`),
+      disposition: enumValue(
+        input["disposition"],
+        ["resolved", "still-blocking"] as const,
+        `${field}.disposition`,
+      ),
+      rationale,
+      evidenceRefs: evidenceRefs(input["evidenceRefs"], `${field}.evidenceRefs`),
+    };
+  });
+  if (new Set(parsed.map((item) => item.concernId)).size !== parsed.length) {
+    invalid("concernResolutions cannot contain duplicate concern IDs");
+  }
+  return parsed;
+}
+
 function parseAcceptanceEvidence(
   value: unknown,
   criteria: readonly string[],
@@ -550,16 +588,201 @@ function parsePayload(value: unknown, acceptanceCriteria: readonly string[]): {
   };
 }
 
-function allReportedEvidenceRefs(parsed: ReturnType<typeof parsePayload>): string[] {
+type ReviewEvidenceRefPayload = Pick<
+  ReturnType<typeof parsePayload>,
+  | "evidenceRefs"
+  | "coverage"
+  | "findings"
+  | "blockers"
+  | "unresolvedQuestions"
+  | "acceptanceEvidence"
+> & { concernResolutions?: CodexEscalationConcernResolution[] };
+
+function allReportedEvidenceRefs(parsed: ReviewEvidenceRefPayload): string[] {
   const references = [
     ...parsed.evidenceRefs,
     ...Object.values(parsed.coverage).flatMap((coverage) => coverage.evidenceRefs),
     ...parsed.findings.flatMap((finding) => finding.evidenceRefs),
     ...parsed.blockers.flatMap((blocker) => blocker.evidenceRefs),
     ...parsed.unresolvedQuestions.flatMap((question) => question.evidenceRefs),
+    ...(parsed.concernResolutions ?? []).flatMap((resolution) => resolution.evidenceRefs),
     ...Object.values(parsed.acceptanceEvidence).flat(),
   ];
   return [...new Set(references)].sort();
+}
+
+export interface ValidatedIndependentReviewPayloadV1
+  extends Omit<ReturnType<typeof parsePayload>, "escalation"> {
+  contractVersion: 1;
+  escalation: ValidatedIndependentPiReview["escalation"];
+  allEvidenceRefs: string[];
+}
+
+export type IndependentReviewPayloadParseResult =
+  | { ok: true; value: ValidatedIndependentReviewPayloadV1 }
+  | { ok: false; errors: string[] };
+
+export interface ValidatedCodexEscalationReviewContentV1 {
+  contractVersion: 1;
+  runId: string;
+  candidateSnapshotId: string;
+  candidateFingerprint: string;
+  verdict: ReviewDecision;
+  coverage: Record<IndependentReviewArea, ReviewCoverage>;
+  findings: ReviewFinding[];
+  blockers: ReviewBlocker[];
+  unresolvedQuestions: UnresolvedReviewQuestion[];
+  concernResolutions: CodexEscalationConcernResolution[];
+  evidenceRefs: string[];
+  acceptanceEvidence: Record<string, string[]>;
+  allEvidenceRefs: string[];
+}
+
+export type CodexEscalationReviewContentParseResult =
+  | { ok: true; value: ValidatedCodexEscalationReviewContentV1 }
+  | { ok: false; errors: string[] };
+
+/** Validate the shared structured Review body without asserting a host identity. */
+export function safeParseIndependentReviewPayload(
+  input: unknown,
+  acceptanceCriterionIds: readonly string[],
+): IndependentReviewPayloadParseResult {
+  try {
+    const criteria = uniqueIdentifiers(
+      acceptanceCriterionIds,
+      "acceptanceCriterionIds",
+    );
+    const parsed = parsePayload(input, criteria);
+    validateCoverageConsistency(
+      parsed.coverage,
+      parsed.findings,
+      parsed.unresolvedQuestions,
+    );
+    validateBlockers(parsed.findings, parsed.blockers);
+    if (
+      parsed.verdict === "pass" &&
+      (parsed.blockers.length > 0 || parsed.unresolvedQuestions.length > 0)
+    ) {
+      invalid("a passing Review cannot contain unresolved blockers or questions");
+    }
+    const escalationReasons = deriveEscalationReasons(
+      parsed.coverage,
+      parsed.findings,
+      parsed.unresolvedQuestions,
+    );
+    const escalation = parseEscalation(
+      parsed.escalation,
+      escalationReasons,
+      parsed.verdict,
+    );
+    return {
+      ok: true,
+      value: {
+        contractVersion: 1,
+        ...parsed,
+        escalation,
+        allEvidenceRefs: allReportedEvidenceRefs(parsed),
+      },
+    };
+  } catch (error) {
+    const message = error instanceof ReviewValidationError
+      ? error.message
+      : "review input could not be safely parsed";
+    return { ok: false, errors: [message] };
+  }
+}
+
+/** Strict P40 reply body; escalation is not recursively delegated to Codex. */
+export function safeParseCodexEscalationReviewContentV1(
+  value: unknown,
+  acceptanceCriterionIds: readonly string[],
+): CodexEscalationReviewContentParseResult {
+  try {
+    const criteria = uniqueIdentifiers(
+      acceptanceCriterionIds,
+      "acceptanceCriterionIds",
+    );
+    const input = record(value, "review");
+    exactKeys(
+      input,
+      [
+        "contractVersion",
+        "runId",
+        "candidateSnapshotId",
+        "candidateFingerprint",
+        "verdict",
+        "coverage",
+        "findings",
+        "blockers",
+        "unresolvedQuestions",
+        "concernResolutions",
+        "evidenceRefs",
+        "acceptanceEvidence",
+      ],
+      "review",
+    );
+    if (input["contractVersion"] !== 1)
+      invalid("review.contractVersion must be 1");
+    const verdict = enumValue(
+      input["verdict"],
+      ["pass", "fail", "needs-changes"] as const,
+      "review.verdict",
+    );
+    const parsed = {
+      contractVersion: 1 as const,
+      runId: identifier(input["runId"], "review.runId"),
+      candidateSnapshotId: identifier(
+        input["candidateSnapshotId"],
+        "review.candidateSnapshotId",
+      ),
+      candidateFingerprint: fingerprint(
+        input["candidateFingerprint"],
+        "review.candidateFingerprint",
+      ),
+      verdict,
+      coverage: parseCoverage(input["coverage"]),
+      findings: parseFindings(input["findings"]),
+      blockers: parseBlockers(input["blockers"]),
+      unresolvedQuestions: parseQuestions(input["unresolvedQuestions"]),
+      concernResolutions: parseCodexConcernResolutions(input["concernResolutions"]),
+      evidenceRefs: evidenceRefs(input["evidenceRefs"], "review.evidenceRefs"),
+      acceptanceEvidence: parseAcceptanceEvidence(
+        input["acceptanceEvidence"],
+        criteria,
+        verdict,
+      ),
+    };
+    validateCoverageConsistency(
+      parsed.coverage,
+      parsed.findings,
+      parsed.unresolvedQuestions,
+    );
+    validateBlockers(parsed.findings, parsed.blockers);
+    if (
+      parsed.verdict === "pass" &&
+      (parsed.blockers.length > 0 ||
+        parsed.unresolvedQuestions.length > 0 ||
+        parsed.concernResolutions.some(
+          (resolution) =>
+            resolution.disposition !== "resolved" ||
+            resolution.evidenceRefs.length === 0,
+        ))
+    ) {
+      invalid("a passing Review cannot contain unresolved blockers, questions, or Pi concerns");
+    }
+    return {
+      ok: true,
+      value: {
+        ...parsed,
+        allEvidenceRefs: allReportedEvidenceRefs(parsed),
+      },
+    };
+  } catch (error) {
+    const message = error instanceof ReviewValidationError
+      ? error.message
+      : "Codex Review reply could not be safely parsed";
+    return { ok: false, errors: [message] };
+  }
 }
 
 export function collectIndependentPiReviewEvidenceRefs(
@@ -751,24 +974,23 @@ export function safeParseIndependentPiReview(
 ): IndependentReviewParseResult {
   try {
     const trusted = parseContext(context);
-    const parsed = parsePayload(input, trusted.acceptanceCriterionIds);
+    const payload = safeParseIndependentReviewPayload(
+      input,
+      trusted.acceptanceCriterionIds,
+    );
+    if (!payload.ok) invalid(payload.errors[0] ?? "Review payload is invalid");
+    const parsed = payload.value;
     if (parsed.runId !== trusted.runId) invalid("review.runId does not match the latest completed Run");
     if (
       parsed.candidateSnapshotId !== trusted.candidateSnapshotId ||
       parsed.candidateFingerprint !== trusted.candidateFingerprint
     ) invalid("Review candidate snapshot is stale or mismatched");
-    const reportedEvidenceRefs = allReportedEvidenceRefs(parsed);
+    const reportedEvidenceRefs = parsed.allEvidenceRefs;
     const verifiedEvidenceRefs = trusted.evidenceVerification.items.map((item) => item.ref).sort();
     if (JSON.stringify(reportedEvidenceRefs) !== JSON.stringify(verifiedEvidenceRefs)) {
       invalid("Review evidence references do not match the byte-verified evidence receipt");
     }
-    validateCoverageConsistency(parsed.coverage, parsed.findings, parsed.unresolvedQuestions);
-    validateBlockers(parsed.findings, parsed.blockers);
-    if (parsed.verdict === "pass" && (parsed.blockers.length > 0 || parsed.unresolvedQuestions.length > 0)) {
-      invalid("a passing Review cannot contain unresolved blockers or questions");
-    }
-    const escalationReasons = deriveEscalationReasons(parsed.coverage, parsed.findings, parsed.unresolvedQuestions);
-    const escalation = parseEscalation(parsed.escalation, escalationReasons, parsed.verdict);
+    const escalation = parsed.escalation;
     const unresolvedBlockers = [
       ...parsed.blockers.map((blocker) => blocker.id + ": " + blocker.summary),
       ...parsed.unresolvedQuestions.map((question) => question.id + ": " + question.question),

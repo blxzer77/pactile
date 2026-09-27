@@ -62,7 +62,58 @@ pactile codex unblock <receiver-task> <block-id> --resolution-message-id <reques
 
 Cross-task message bodies are limited to 4096 UTF-8 bytes. By default, a cross-task message is coordination only: a waiting or blocked Task may receive it, but it does not change a Run, clear a block, or grant write permission. Its prompt tells the recipient to preserve the blocked state. This slice fails closed for Task Kernel v2 Execute creates and `--resume-execute` sends because P37 admission, lease, Resume, and block validation are not yet connected. After those gates are integrated, a write dispatch will still require an explicit Kernel Resume and a P37 admission; the send receipt itself will not grant dispatch permission. Only a non-stale successful send receipt can support a message-linked block. A message-linked unblock requires successful `desktop-native` resolution evidence; a simulated send is insufficient. `sent` means the Host accepted the send request; it does not confirm that the recipient read it. Each unblock has its own journal event. A user can also unblock manually with a reason.
 
-For Pi Review escalation transport, add `--escalation-id pi-escalation:<pi-run-uuid>` to a cross-task `message` request from the current V2 Verify Task, latest non-passing Review, and matching candidate Run. The paired request and normalized receipt retain the escalation ID, source/target Task and Run/candidate IDs, thread/Host IDs, and request fingerprint. To capture a reply, prepare a `read` request on the target Task with `--reply-to-escalation-id <same-id>`; a successful native result must include `status: completed` and bounded `reply_evidence` with the exact escalation ID, response turn ID, body, and SHA-256. Use `desktop-native` only for a result collected from the Codex desktop tool. This bridge writes its own request/receipt files; it does not advance the P40 escalation artifact to `sent` or `answered`. The P40 reader and status update remain a separate integration gate.
+### Pi Review escalation to Codex Review
+
+A prepared P40 escalation can ask a separately bound Codex `review` thread to
+return an independent, read-only Review. The Pi Review artifact remains
+immutable. Start the send from the source Task's current V2 Verify Run and
+non-passing Pi Review, targeting a V2 Verify/Integrate Task with its current
+completed candidate and a bound Review thread:
+
+```text
+pactile codex prepare <source-task> --tool message --thread-id <review-thread> --to-task <review-task> --run-id <source-run> --to-run-id <review-run> --escalation-id pi-escalation:<pi-run-uuid>
+pactile codex receipt <source-task> <send-request-id> --result-file send-result.json --evidence-level desktop-native
+pactile codex prepare <review-task> --tool read --thread-id <review-thread> --reply-to-escalation-id pi-escalation:<pi-run-uuid> --source-task <source-task> --send-request-id <send-request-id>
+pactile codex receipt <review-task> <read-request-id> --result-file read-result.json --evidence-level desktop-native
+pactile codex review-escalation <source-task> --escalation-id pi-escalation:<pi-run-uuid> --send-request-id <send-request-id> --read-request-id <read-request-id>
+```
+
+The send preparation reads and verifies the actual Pi escalation artifact and
+Pi Review evidence, then creates a fixed P40 prompt for the bound Review
+thread. The native read result must carry a completed, correlated
+`reply_evidence` whose body is one JSON object with the exact escalation,
+Task/Run/candidate and Pi artifact bindings; reviewer `hostId`, `threadId`,
+`role: review`, and `independent: true`; a `pass`, `fail`, or `needs-changes`
+verdict; coverage, findings, blockers, questions, one evidence-backed
+`concernResolutions` disposition for every original Pi finding, blocker, and
+question, acceptance evidence, and evidence references. Concern IDs are opaque
+stable identifiers; the cross-task prompt does not forward Pi free-text
+summaries. The body cannot contain extra fields or Markdown fences. A PASS must
+resolve every original Pi concern with evidence. Every reported reference must
+equal the current byte-verified candidate/Run evidence set, and the reviewer
+identity derived from the native thread must differ from the Run executor and
+approver.
+
+`pactile codex review-escalation` re-reads both prepared/native transport
+request and receipt pairs, copies their bytes into the source Task's evidence
+tree, validates the complete reply, and calls the existing public Kernel Review
+mutation. A PASS makes the Kernel Review condition ready; it does not Close the
+Task or authorize a new Run. The prior Pi Review stays in Kernel history and its
+artifact is not rewritten. Before dispatch and again before recording, the
+route rechecks the original Pi Kernel Review's Core evidence digest; the new
+Review retains the original Pi evidence references so public Close checks the
+Check start/stop/result evidence again. Reply reads bind the selected successful
+send request and receipt digests, must follow that send, and must still match
+the latest successful send at settlement. Stale source or reply Tasks, simulated receipts,
+wrong IDs or thread, mismatched candidate, missing evidence, non-JSON text, and
+missing or unresolved Pi concern dispositions, invalid review contracts, and
+credential-shaped Pi text fail closed before external send or a new Kernel
+Review is recorded. A repeated identical finalization is idempotent; a different
+reply cannot replace the recorded Review.
+`desktop-native` remains a host-reported assurance label, not a signed desktop
+identity; only mark it when the result was copied from the current Codex desktop
+tool call. The structured reply contract and Kernel independence checks remain
+required even for native results.
 
 Worktree creation may first return only `clientThreadId`. Record `outcome: queued` with `client_thread_id`; this ID cannot be messaged or waited on. Once the App reports a ready `threadId` and `hostId`, record a final `outcome: ok` receipt containing the same `client_thread_id` and the ready IDs. `pactile codex status` shows queued requests until then.
 
