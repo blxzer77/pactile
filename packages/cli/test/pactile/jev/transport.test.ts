@@ -60,6 +60,42 @@ const fakeFetch = (impl: typeof fetch) =>
   vi.fn(impl) as unknown as typeof fetch;
 
 describe("optional Jev transport input and egress boundary", () => {
+  it("honors HTTPS_PROXY and NO_PROXY for the fixed Jev origin without overriding injected fetch", async () => {
+    vi.stubEnv("https_proxy", "http://127.0.0.1:9");
+    vi.stubEnv("HTTPS_PROXY", "http://127.0.0.1:9");
+    vi.stubEnv("no_proxy", "");
+    vi.stubEnv("NO_PROXY", "");
+    const defaultFetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => response(success));
+    try {
+      const proxied = await createJevTransportV1({ apiKey: "test-key" })(request, { egress });
+      expect(proxied.status).toBe("answered");
+      expect((defaultFetch.mock.calls[0]?.[1] as RequestInit & { dispatcher?: unknown }).dispatcher).toBeDefined();
+
+      vi.stubEnv("no_proxy", "typesafe.ai");
+      vi.stubEnv("NO_PROXY", "typesafe.ai");
+      const direct = await createJevTransportV1({ apiKey: "test-key" })(request, { egress });
+      expect(direct.status, direct.fallback?.reasonCode ?? "").toBe("answered");
+      expect((defaultFetch.mock.calls[1]?.[1] as RequestInit & { dispatcher?: unknown }).dispatcher).toBeUndefined();
+
+      const injected = fakeFetch(async () => response(success));
+      const custom = await createJevTransportV1({ apiKey: "test-key", fetchImpl: injected })(request, { egress });
+      expect(custom.status).toBe("answered");
+      expect(injected).toHaveBeenCalledTimes(1);
+      expect(defaultFetch).toHaveBeenCalledTimes(2);
+
+      vi.stubEnv("no_proxy", "");
+      vi.stubEnv("NO_PROXY", "");
+      vi.stubEnv("https_proxy", "not-a-url");
+      vi.stubEnv("HTTPS_PROXY", "not-a-url");
+      const invalid = await createJevTransportV1({ apiKey: "test-key" })(request, { egress });
+      expect(invalid.fallback?.reasonCode).toBe("configuration-invalid");
+      expect(defaultFetch).toHaveBeenCalledTimes(2);
+    } finally {
+      defaultFetch.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("sends only to the fixed endpoint after policy approval, then returns bounded usage and cost", async () => {
     const fetchImpl = fakeFetch(async (_input, init) => {
       expect(init?.method).toBe("POST");
