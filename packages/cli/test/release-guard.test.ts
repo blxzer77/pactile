@@ -153,11 +153,13 @@ describe("single-package release policy", () => {
       "dist/bin/cli-cursor.js",
       "dist/bin/restore-cursor.js",
       "dist/pactile/retrieval/pagination.js",
+      "dist/pactile/retrieval/cursor.js",
     ];
     const safeContent = new Map([
       ["dist/bin/cli-cursor.js", "cli-cursor is a terminal command."],
       ["dist/bin/restore-cursor.js", "restore-cursor is a terminal command."],
       ["dist/pactile/retrieval/pagination.js", "const cursor = receipt.cursor;"],
+      ["dist/pactile/retrieval/cursor.js", "export const cursor = nextPage;"],
     ]);
     expect(
       validateReleasePackPaths(safePaths, (file) => safeContent.get(file) ?? ""),
@@ -177,6 +179,15 @@ describe("single-package release policy", () => {
         "forbidden Cursor IDE editor command option in packed file: README.md",
       ]),
     );
+    expect(
+      validateReleasePackPaths(
+        [...safePaths, "dist/templates/cursor-ide/commands/pactile.md"],
+        (file) => file === "README.md" ? "Use cursor IDE." : "",
+      ),
+    ).toEqual(expect.arrayContaining([
+      "forbidden Cursor IDE packed path: dist/templates/cursor-ide/commands/pactile.md",
+      "forbidden Cursor IDE host phrase in packed file: README.md",
+    ]));
   });
 
   it("checks the sealed install with a private Node-only PATH and default lifecycle scripts", () => {
