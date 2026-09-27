@@ -1772,10 +1772,51 @@ export function planTaskKernelGraphV1(
   return { ...snapshot, plan: planTaskScheduleV1(snapshot.request) };
 }
 
+function taskKernelPersistedValueFingerprint(value: unknown): string {
+  // Fingerprint the same JSON value that is persisted and later read back.
+  // Null-prototype records are valid receipt values, but the generic task
+  // fingerprint preserves their insertion order unlike parsed JSON records.
+  const serialized = JSON.stringify(value);
+  if (!serialized)
+    throw new Error("Task Kernel schedule receipt is not JSON serializable");
+  return fingerprintTaskValue(JSON.parse(serialized));
+}
+
 function taskKernelReceiptFingerprint(
   receipt: Omit<TaskKernelScheduleDecisionReceiptV1, "receiptFingerprint">,
 ): string {
-  return fingerprintTaskValue(receipt);
+  // Jev confidence maps are null-prototype records, so normalize the envelope
+  // before hashing both new receipt fingerprints and request identities.
+  return taskKernelPersistedValueFingerprint(receipt);
+}
+
+function legacyTaskKernelReceiptFingerprint(
+  receipt: Omit<TaskKernelScheduleDecisionReceiptV1, "receiptFingerprint">,
+): string | null {
+  const audit = receipt.jevAdviceAudit;
+  if (!audit) return null;
+  const confidence = audit.transport.confidence;
+  if (
+    !confidence ||
+    typeof confidence !== "object" ||
+    Array.isArray(confidence)
+  )
+    return null;
+
+  // Older v2 receipts hashed the in-memory null-prototype confidence map.
+  // Recreate that one JSON field so those already-written receipts remain
+  // verifiable after parsing without mutating the returned receipt object.
+  const legacyConfidence = Object.assign(Object.create(null), confidence);
+  return fingerprintTaskValue({
+    ...receipt,
+    jevAdviceAudit: {
+      ...audit,
+      transport: {
+        ...audit.transport,
+        confidence: legacyConfidence,
+      },
+    },
+  });
 }
 
 function taskKernelScheduleRequestFingerprint(
@@ -1790,7 +1831,7 @@ function taskKernelScheduleRequestFingerprint(
     scheduleKey: _scheduleKey,
     ...request
   } = receipt;
-  return fingerprintTaskValue(request);
+  return taskKernelPersistedValueFingerprint(request);
 }
 
 function readExistingTaskKernelReceipt(
@@ -1815,7 +1856,8 @@ function readExistingTaskKernelReceipt(
   const fullFingerprint =
     integrityVersion === 2 &&
     typeof createdAt === "string" &&
-    fingerprintTaskValue(fullEnvelope) === fingerprint;
+    (taskKernelReceiptFingerprint(fullEnvelope) === fingerprint ||
+      legacyTaskKernelReceiptFingerprint(fullEnvelope) === fingerprint);
   if (
     schemaVersion !== RECEIPT_SCHEMA_VERSION ||
     scope !== "task-kernel-v2" ||
@@ -1868,13 +1910,19 @@ function persistTaskKernelReceipt(
     | "integrityVersion"
   >,
 ): PersistedTaskKernelScheduleV1 {
-  const requestFingerprint = fingerprintTaskValue(receiptBase);
+  const requestFingerprint = taskKernelPersistedValueFingerprint(receiptBase);
+  const legacyRequestFingerprint = fingerprintTaskValue(receiptBase);
+  const requestFingerprints = new Set([
+    requestFingerprint,
+    legacyRequestFingerprint,
+  ]);
   const folder = path.join(root, ".pactile", ".runtime", "scheduler", "receipts");
   return withProjectSchedulerMutex(root, () => {
     fs.mkdirSync(folder, { recursive: true });
-    const legacyFile = path.join(folder, `${requestFingerprint}.json`);
-    if (fs.existsSync(legacyFile)) {
-      const receipt = readExistingTaskKernelReceipt(legacyFile, requestFingerprint);
+    for (const fingerprint of requestFingerprints) {
+      const legacyFile = path.join(folder, `${fingerprint}.json`);
+      if (!fs.existsSync(legacyFile)) continue;
+      const receipt = readExistingTaskKernelReceipt(legacyFile, fingerprint);
       if (taskKernelScheduleRequestFingerprint(receipt) !== requestFingerprint)
         throw new Error(`Task Kernel schedule receipt request does not match its content: ${legacyFile}`);
       return { receipt, receiptFile: legacyFile, created: false };
@@ -1895,7 +1943,9 @@ function persistTaskKernelReceipt(
         !value ||
         typeof value !== "object" ||
         Array.isArray(value) ||
-        (value as { scheduleKey?: unknown }).scheduleKey !== requestFingerprint
+        !requestFingerprints.has(
+          (value as { scheduleKey?: string }).scheduleKey ?? "",
+        )
       )
         continue;
       const receipt = readExistingTaskKernelReceipt(file, fingerprint);
