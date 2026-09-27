@@ -1,23 +1,23 @@
-# 发布边界：PACTILE 与 pactile-byok
+# 发布边界：PACTILE 当前范围与历史 BYOK 规划
 
-PACTILE（pactile）本批带走**中间件协议**与**并行原则**，外加半页用户升级说明。**pactile-byok** 是另一条产品线、另一个仓库、另一次发布。两者可并行准备，互不门禁。
+本文记录 PACTILE 当前文档范围，并保留早期 BYOK 规划的历史说明。中间件协议模板中的 `pactile-byok` 只是一个 optional 占位，明确无实现；本文不表示当前存在独立 BYOK 产品、仓库或发布轨。
 
-## PACTILE 本批带走
+## PACTILE 当前文档范围
 
 - Middleware Protocol v1（义务 + Manifest 样例 + `update` 不顶掉）。Overlay 路径写死为 `.pactile/middleware/`。
-- 并行第一原则（workflow / 池 / 规划模板）。强度是约定 + 审核指出，不是新 CLI gate。
+- Task/Run 调度依据硬依赖、授权、写集冲突、隔离和端到端完成时间；没有固定数值并发上限，宿主派发为可选适配路径。
 - 升级合同给终端用户看的半页：升包 → `pactile update` → 确认 → 接着干活。官方面可随 `update` 开迁；产物先双读；Contract 另批。
-- 池注意力刻度（`priority`）与可并行组说明。注意力排序不是串行锁。
+- 池注意力刻度（`priority`）只表示注意力顺序，不授予并发许可，也不构成串行锁。
 
 文档/约定即可。本批不强制写完安装器，不实现产物迁移器。
 
-## PACTILE 本批不带走
+## 历史 BYOK 规划（非当前范围）
 
-- pactile-byok 建仓、分析、合成、npm/改名、Cursor patch 安装器。
-- 任何 BYOK 实现或可选安装器。全库 BYOK 盘点仍搁置。
+- 早期规划曾提到 `pactile-byok` 建仓、分析、合成、npm 包/改名与 Cursor patch 安装器；这些只是历史提案，不表示当前存在相应仓库、产品或实现。
+- BYOK 不是 PACTILE 当前能力，也不构成 PACTILE 发布门禁。
 - 已退役的替代客户端入口不回默认安装面。
 
-未就绪的 BYOK **不是** PACTILE 发版硬依赖。成功标准看 PACTILE 自己的工作流轴，不用「BYOK 是否合成」当门禁。
+PACTILE 的发布范围按当前自身工作流与验收证据判断，不以历史 BYOK 规划为门禁。
 
 ## 用户说明边界
 
@@ -27,4 +27,4 @@ PACTILE（pactile）本批带走**中间件协议**与**并行原则**，外加�
 
 - [middleware-protocol.md](./middleware-protocol.md)
 - [upgrade.md](./upgrade.md)
-- [parallel-first-execution.md](./parallel-first-execution.md)
+- [Task/Run 关键路径调度](./parallel-first-execution.md)（保留旧文件名供已有安装更新）

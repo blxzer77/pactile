@@ -21,6 +21,8 @@ Reviews are independent records bound to one Run and exact candidate ID/fingerpr
 
 Schedule work for completion-time benefit, subject to hard dependencies, authorization, and write conflicts. There is no fixed numeric concurrency cap. Overlapping write sets are sequential by default; explicit overlap needs recorded authorization and an integration plan. A scheduler suggestion cannot override Kernel gates or write-conflict admission.
 
+For the detailed Task/Run scheduling, isolation, and optional host-dispatch rules, see [critical-path scheduling](./framework/parallel-first-execution.md). The filename is retained for compatibility with existing installations.
+
 ## V2 command surface
 
 Use the current Task commands for the stored V2 Kernel: `pactile task create`, `add-dependency`, `run-start`, `run-resume`, `run-result`, `review`, and `close`. Run `pactile task --help` for current arguments. The V2 flow does not use the V1 `start-execution` or directory-archive command.
