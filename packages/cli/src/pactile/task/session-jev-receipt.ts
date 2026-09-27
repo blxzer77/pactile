@@ -85,6 +85,16 @@ function equalRefs(left: readonly string[], right: readonly string[]): boolean {
   );
 }
 
+function equalRefMultiset(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  if (left.length !== right.length) return false;
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return sortedLeft.every((ref, index) => ref === sortedRight[index]);
+}
+
 function decisionCommand(
   offer: TileSelectionOffer,
   decision: TileSelectionDecision,
@@ -110,7 +120,7 @@ function decisionCommand(
     decision.kind === "adopt"
       ? offer.suggestion.selectedRefs
       : (decision.selectedRefs ?? []);
-  const action = equalRefs(refs, offer.suggestion.selectedRefs)
+  const action = equalRefMultiset(refs, offer.suggestion.selectedRefs)
     ? "adopt"
     : "override";
   const command = [
@@ -424,7 +434,7 @@ export function readSessionJevReceiptV1(
   const expectedAction =
     receipt.suggestedRefs.length === 0
       ? "no-match"
-      : equalRefs(receipt.suggestedRefs, receipt.deterministicRefs)
+      : equalRefMultiset(receipt.suggestedRefs, receipt.deterministicRefs)
         ? "adopt"
         : "override";
   if (receipt.recommendedAction !== expectedAction)
@@ -452,7 +462,7 @@ export function sessionJevApplicationV1(
     (decision.decision !== "adopt" && decision.decision !== "override")
   )
     return null;
-  return equalRefs(decision.selectedRefs, advice.suggestedRefs)
+  return equalRefMultiset(decision.selectedRefs, advice.suggestedRefs)
     ? "adopted"
     : "overridden";
 }

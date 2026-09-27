@@ -15,7 +15,11 @@ import {
 } from "../../../src/core/task/index.js";
 import { runTaskCli } from "../../../src/commands/task.js";
 import { prepareSelectedTaskAgentTileSelection } from "../../../src/pactile/registry.js";
-import { readSessionJevReceiptV1 } from "../../../src/pactile/task/session-jev-receipt.js";
+import {
+  createSessionJevReceiptV1,
+  readSessionJevReceiptV1,
+  sessionJevApplicationV1,
+} from "../../../src/pactile/task/session-jev-receipt.js";
 
 const JEV_ORIGIN = "https://api.typesafe.ai";
 const API_KEY = "session-test-secret-key";
@@ -307,10 +311,15 @@ describe("Pactile session Jev route", () => {
     const current = prepareSelectedTaskAgentTileSelection(root);
     if (!current.success)
       throw new Error("Expected the authorized current session offer");
+    const suggestedRefs = current.data.offer.candidates
+      .slice(0, 2)
+      .map((candidate) => candidate.ref);
+    if (suggestedRefs.length !== 2)
+      throw new Error("Expected two candidates for the Jev order regression");
     const result = runCliProcess(root, {
       apiKey: API_KEY,
       preload,
-      selectedRefs: current.data.offer.suggestion.selectedRefs,
+      selectedRefs: suggestedRefs,
     });
     expect(result.status, result.error?.message ?? result.stderr).toBe(0);
     expect(result.stdout).not.toContain(API_KEY);
@@ -368,11 +377,11 @@ describe("Pactile session Jev route", () => {
         "parent-child@1.0.0",
       ]),
     );
-    expect(advice.suggestedRefs).toEqual(advice.deterministicRefs);
-    expect(advice.recommendedAction).toBe("adopt");
+    expect(advice.suggestedRefs).toEqual(suggestedRefs);
+    expect(advice.recommendedAction).toBe("override");
+    expect(advice.decisionCommand).toContain("--kind override");
     const adviceFingerprint = String(advice["adviceFingerprint"]);
     expect(adviceFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
-    expect(advice.decisionCommand).toContain("--kind adopt");
     expect(advice.decisionCommand).toContain(
       `--jev-advice-fingerprint ${adviceFingerprint}`,
     );
@@ -399,6 +408,30 @@ describe("Pactile session Jev route", () => {
       `session-jev-advice-${adviceFingerprint.slice(7)}.json`,
     );
     const originalAdviceBytes = fs.readFileSync(persistedAdvicePath);
+    const sidecarAdvice = readSessionJevReceiptV1(
+      root,
+      adviceFingerprint,
+      current.data.offer,
+      { activeRunId: runId, approvalRunId: runId },
+    );
+    expect(sidecarAdvice.suggestedRefs).toEqual(suggestedRefs);
+    expect(sidecarAdvice.recommendedAction).toBe("override");
+    const [firstRef, secondRef] = suggestedRefs;
+    if (!firstRef || !secondRef)
+      throw new Error("Expected two Tile refs for duplicate-count coverage");
+    const duplicateAdvice = {
+      ...sidecarAdvice,
+      suggestedRefs: [firstRef, firstRef],
+    };
+    const differentCountsDecision = {
+      offerFingerprint: sidecarAdvice.offerFingerprint,
+      outcome: "selected",
+      decision: "adopt",
+      selectedRefs: [firstRef, secondRef],
+    } as Parameters<typeof sessionJevApplicationV1>[1];
+    expect(
+      sessionJevApplicationV1(duplicateAdvice, differentCountsDecision),
+    ).toBe("overridden");
     expect(() =>
       readSessionJevReceiptV1(root, adviceFingerprint, current.data.offer, {
         activeRunId: "run-b-active",
@@ -513,11 +546,16 @@ describe("Pactile session Jev route", () => {
       success: true,
       executionAuthorization: "not-granted",
       receipt: {
-        outcome: "selected",
+        outcome: "overridden",
         compilerPassed: true,
         offerFingerprint: offer.fingerprint,
       },
     });
+    const acceptedRefs = (decisionReceipt.receipt as Record<string, unknown>)[
+      "selectedRefs"
+    ] as string[];
+    expect(acceptedRefs).toEqual([...suggestedRefs].sort());
+    expect(acceptedRefs).not.toEqual(suggestedRefs);
     const snapshot = decisionReceipt.snapshot as {
       fingerprint: string;
       fileName: string;
@@ -589,6 +627,102 @@ describe("Pactile session Jev route", () => {
       success: true,
       data: { offerFingerprint: offer.fingerprint },
     });
+
+    const oldErrorLabelSnapshot = JSON.parse(
+      originalSnapshotBytes.toString("utf8"),
+    ) as Record<string, unknown>;
+    delete oldErrorLabelSnapshot["fingerprint"];
+    const oldErrorLabelBinding = oldErrorLabelSnapshot["sessionJev"] as Record<
+      string,
+      unknown
+    >;
+    oldErrorLabelBinding["application"] = "overridden";
+    const oldErrorLabelFingerprint = fingerprintPactileContractV1(
+      oldErrorLabelSnapshot,
+    );
+    const oldErrorLabelPath = path.join(
+      receiptsDir,
+      `tile-selection-${oldErrorLabelFingerprint.slice(7)}.json`,
+    );
+    fs.writeFileSync(
+      oldErrorLabelPath,
+      canonicalizePactileJsonV1({
+        ...oldErrorLabelSnapshot,
+        fingerprint: oldErrorLabelFingerprint,
+      }),
+    );
+    const oldErrorLabelReplay = runCliCommand(root, [
+      "tile-selection",
+      "replay",
+      "--snapshot-fingerprint",
+      oldErrorLabelFingerprint,
+    ]);
+    expect(oldErrorLabelReplay.status).toBe(1);
+    expect(parseOutput(oldErrorLabelReplay.stdout)).toMatchObject({
+      success: false,
+      diagnostics: [{ code: "tile-selection-snapshot-jev-decision-mismatch" }],
+    });
+  });
+
+  it("compares Jev ref sets without discarding duplicate counts", () => {
+    const offerFingerprint = `sha256:${"a".repeat(64)}`;
+    const offer = {
+      fingerprint: offerFingerprint,
+      candidates: [
+        { ref: "alpha@1.0.0", outputScore: 1 },
+        { ref: "beta@1.0.0", outputScore: 1 },
+      ],
+      suggestion: { selectedRefs: ["alpha@1.0.0", "beta@1.0.0"] },
+    } as unknown as Parameters<typeof createSessionJevReceiptV1>[0];
+    const advice = {
+      source: "jev-advised",
+      suggestedDecision: {
+        kind: "override",
+        offerFingerprint,
+        selectedRefs: ["beta@1.0.0", "alpha@1.0.0"],
+      },
+      jevDecision: null,
+      fallback: null,
+    } as unknown as Parameters<typeof createSessionJevReceiptV1>[1];
+    const receipt = createSessionJevReceiptV1(offer, advice, {
+      activeRunId: "run-active-a",
+      approvalRunId: "run-approval-a",
+    });
+    expect(receipt.recommendedAction).toBe("adopt");
+    expect(receipt.decisionCommand).toContain("--kind adopt");
+
+    const reorderedDecision = {
+      offerFingerprint,
+      outcome: "selected",
+      decision: "override",
+      selectedRefs: ["beta@1.0.0", "alpha@1.0.0"],
+    } as unknown as Parameters<typeof sessionJevApplicationV1>[1];
+    expect(
+      sessionJevApplicationV1(receipt, reorderedDecision),
+    ).toBe("adopted");
+
+    const repeatedDecision = {
+      ...reorderedDecision,
+      selectedRefs: ["alpha@1.0.0", "alpha@1.0.0"],
+    };
+    expect(
+      sessionJevApplicationV1(receipt, repeatedDecision),
+    ).toBe("overridden");
+
+    const repeatedAdvice = {
+      ...advice,
+      suggestedDecision: {
+        kind: "override",
+        offerFingerprint,
+        selectedRefs: ["alpha@1.0.0", "alpha@1.0.0"],
+      },
+    } as unknown as Parameters<typeof createSessionJevReceiptV1>[1];
+    expect(
+      createSessionJevReceiptV1(offer, repeatedAdvice, {
+        activeRunId: "run-active-a",
+        approvalRunId: "run-approval-a",
+      }).recommendedAction,
+    ).toBe("override");
   });
 
   it("binds adopted, overridden, and no-match outcomes to the exact Jev advice", () => {
