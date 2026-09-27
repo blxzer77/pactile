@@ -46,8 +46,8 @@ function skippedControlPath(relativePath: string): boolean {
     CONTROL_METADATA.has(relativePath) ||
     relativePath === "runtime" ||
     relativePath.startsWith("runtime/") ||
-    relativePath === "local/cursor2plus" ||
-    relativePath.startsWith("local/cursor2plus/") ||
+    relativePath === "local" ||
+    relativePath.startsWith("local/") ||
     relativePath.split("/").some((part) => part.startsWith(".backup-"))
   );
 }
@@ -55,7 +55,7 @@ function skippedControlPath(relativePath: string): boolean {
 /**
  * Copy an explicitly selected `.cstl` tree into a new canonical root without
  * mutating the source or following links. Runtime/control metadata is rebuilt
- * by Pactile and retired Cursor++ payloads stay only in the read-only source.
+ * by Pactile and machine-local payloads stay only in the read-only source.
  */
 export function prepareLegacyCstlImport(
   projectRoot: string,

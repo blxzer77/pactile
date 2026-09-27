@@ -60,8 +60,26 @@ function copyDir(src, dest) {
 copyDir("src/templates", "dist/templates");
 console.log("Copied src/templates/ to dist/templates/");
 
-// Copy src/migrations/manifests to dist/migrations/manifests
-copyDir("src/migrations/manifests", "dist/migrations/manifests");
-console.log("Copied src/migrations/manifests/ to dist/migrations/manifests/");
+// Preserve old manifests in source history; ship only current migrations.
+const manifestSource = "src/migrations/manifests";
+const manifestTarget = "dist/migrations/manifests";
+mkdirSync(manifestTarget, { recursive: true });
+for (const entry of readdirSync(manifestSource)) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?\.json$/u.exec(entry);
+  if (!match) continue;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  const stage = match[4];
+  const stageNumber = Number(match[5] ?? 0);
+  const current =
+    major > 0 ||
+    minor > 6 ||
+    (minor === 6 && patch > 0) ||
+    (minor === 6 && patch === 0 &&
+      (stage === undefined || stage === "rc" || (stage === "beta" && stageNumber >= 1)));
+  if (current) cpSync(join(manifestSource, entry), join(manifestTarget, entry));
+}
+console.log("Copied current migration manifests to dist/migrations/manifests/");
 
 console.log("Template copy complete.");

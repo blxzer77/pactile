@@ -22,7 +22,7 @@ export interface ScrubResult {
  *
  * Pactile-emitted hook commands have the shape
  *   `<python-cmd> [interpreter-flags] <manifest-path> [hook-args…]`
- * e.g. `python .cursor/hooks/event-bridge.py --event sessionStart`.
+ * e.g. `python .legacy/hooks/event-bridge.py --event sessionStart`.
  * The invoked script is the first non-flag token after the interpreter, not
  * necessarily the last token. Matching only the last token left leftover
  * `event-bridge.py` references after uninstall.

@@ -170,7 +170,7 @@ describe("update() P36 A+B+C", () => {
     vi.mocked(inquirer.prompt).mockResolvedValue({ proceed: true });
     await update({ skipReadiness: true, skipPostUpdateSmoke: true });
     expect(fs.existsSync(projectFile(".cursor/rules/cstl-triage.mdc"))).toBe(
-      false,
+      true,
     );
     expect(isWaveCConfirmed(tmpDir)).toBe(true);
     const disk = JSON.parse(
@@ -234,7 +234,7 @@ describe("update() P36 A+B+C", () => {
     const taskDir = plantLegacySurfaces();
     await update({ force: true, skipReadiness: true, skipPostUpdateSmoke: true });
     expect(fs.existsSync(projectFile(".cursor/rules/cstl-triage.mdc"))).toBe(
-      false,
+      true,
     );
     expect(fs.existsSync(projectFile(WAVE_C_STATE_REL))).toBe(false);
     expect(isWaveCConfirmed(tmpDir)).toBe(false);

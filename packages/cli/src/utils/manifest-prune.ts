@@ -56,7 +56,7 @@ export interface PruneResult {
 export function isHostProjectionPath(rawPath: string): boolean {
   const key = toPosix(rawPath);
   return key === FILE_NAMES.AGENTS ||
-    [".agents", ".cursor", ".codex"].some(
+    [".agents", ".codex"].some(
       (root) => key === root || key.startsWith(`${root}/`),
     );
 }

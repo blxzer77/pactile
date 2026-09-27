@@ -1,5 +1,5 @@
 /**
- * Preserved migration manifests for pre-Pactile versions
+ * Active migration manifests for the current Pactile release line.
  *
  * Each version's migrations are stored in separate JSON files under manifests/
  * Format: manifests/{version}.json (e.g., manifests/0.1.9.json)
@@ -18,6 +18,7 @@ import { compareVersions } from "../utils/compare-versions.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MANIFESTS_DIR = path.join(__dirname, "manifests");
+const MIN_ACTIVE_MANIFEST_VERSION = "0.6.0-beta.1";
 
 /**
  * Cache for loaded manifests
@@ -51,8 +52,11 @@ function loadManifests(): Record<string, MigrationManifest> {
       const content = fs.readFileSync(filePath, "utf-8");
       const manifest = JSON.parse(content) as MigrationManifest;
 
-      // Use version from manifest as key
-      if (manifest.version) {
+      // Older manifests remain source history but are no longer executable.
+      if (
+        manifest.version &&
+        compareVersions(manifest.version, MIN_ACTIVE_MANIFEST_VERSION) >= 0
+      ) {
         manifests[manifest.version] = manifest;
       }
     } catch {

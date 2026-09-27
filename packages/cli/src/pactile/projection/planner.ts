@@ -289,7 +289,7 @@ export function planProjection(
             control: "pactile-owned",
             // Ownership belongs to the Pactile projection layer; Adapter
             // participation is represented separately by claimants. Keeping
-            // this identity stable makes Cursor/Codex install order semantic.
+            // this identity stable keeps host installation order semantic.
             owner: { kind: "pactile", id: "pactile" },
             claimants: [...claimants.values()],
             preimage: current,

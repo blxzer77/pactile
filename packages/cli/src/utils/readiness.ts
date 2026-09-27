@@ -607,7 +607,7 @@ function printReadinessReport(
 
 /**
  * Print update readiness. Failures are unverified warnings, not a hard stop.
- * `--skip-readiness` remains a maintainer hatch, not the Cursor-user default.
+ * `--skip-readiness` remains a maintainer hatch, not the user default.
  */
 export function reportUpdateReadiness(snapshot: UpdateReadinessSnapshot): void {
   printReadinessReport(snapshot, {
@@ -618,7 +618,7 @@ export function reportUpdateReadiness(snapshot: UpdateReadinessSnapshot): void {
 
 /**
  * Print init readiness. Failures are unverified warnings, not a hard stop.
- * `--skip-readiness` remains a maintainer hatch, not the Cursor-user default.
+ * `--skip-readiness` remains a maintainer hatch, not the user default.
  */
 export function reportInitReadiness(snapshot: UpdateReadinessSnapshot): void {
   printReadinessReport(snapshot, {

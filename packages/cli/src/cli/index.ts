@@ -376,7 +376,7 @@ program
 
 program
   .command("detach <adapter>")
-  .description("Safely detach a Codex or legacy Cursor Adapter")
+  .description("Safely detach the Codex Adapter")
   .option("--dry-run", "Preview ownership decisions without changing state")
   .action((adapter: string, options: Record<string, unknown>) => {
     try {
