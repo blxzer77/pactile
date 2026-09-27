@@ -82,7 +82,7 @@ export function candidateValidationCommands({
     {
       command: "pnpm",
       args: ["exec", "tsx", "scripts/release-conformance.ts"],
-      cwd: repoRoot,
+      cwd: cliDir,
       label: "single tarball Node-only install",
     },
   ];
