@@ -8,11 +8,18 @@ import {
   type PiRunRecord,
 } from "../pi/bridge.js";
 import type { PiRpcLaunch } from "../pi/rpc.js";
+import { createJevDecisionFacadeV1 } from "../jev/index.js";
+import {
+  JEV_ORIGIN_V1,
+  type JevEgressAuthorizationV1,
+} from "../jev/contracts.js";
+import type { JevScheduleAdviceOptionsV1 } from "../jev/scheduler-advice.js";
 import { resolveTaskDir } from "../task/session.js";
 import { readTaskMap } from "../task/task-map.js";
 import {
   planParentTaskScheduleV1,
   scheduleParentTaskGraph,
+  scheduleParentTaskGraphWithJevV1,
   type SchedulerCostVectorV1,
   type TaskMapScheduleOptionsV1,
 } from "../scheduler/index.js";
@@ -45,6 +52,8 @@ export interface BatchResult {
   event_file: string;
   schedule_receipt_fingerprint: string;
   schedule_receipt_file: string;
+  /** Explicit manifest advice retains the legacy synchronous planner. */
+  schedule_advice_route: "manifest-explicit" | "jev-aware";
   compatibility_limit_ignored: number | null;
   parent: string;
   integration_owner: "parent";
@@ -194,6 +203,31 @@ function atomicJson(file: string, value: unknown): void {
   fs.renameSync(temporary, file);
 }
 
+function createBatchScheduleJevOptions(): JevScheduleAdviceOptionsV1 {
+  const explicitlyDisabled =
+    process.env.PACTILE_JEV_ENABLED?.trim().toLowerCase() === "false";
+  const deadlineMs = 2_500;
+  const facade = createJevDecisionFacadeV1({
+    ...(explicitlyDisabled ? { enabled: false } : {}),
+    maxDecisions: 1,
+    maxDeadlineMs: deadlineMs,
+    transport: {
+      apiKey: process.env.PACTILE_JEV_API_KEY,
+      deadlineMs,
+      maxRetries: 1,
+    },
+  });
+  const egress: JevEgressAuthorizationV1 = {
+    network: "project-authorized",
+    privacy: "project-approved-egress",
+    credentials: "project-authorized",
+    destination: JEV_ORIGIN_V1,
+    egressDestinations: [JEV_ORIGIN_V1],
+    contentDecision: "task-summary-approved",
+  };
+  return { facade, egress };
+}
+
 /** Runs only approved Pi Child tasks. Parent review and integration remain manual, serial gates. */
 export async function runParallelBatch(
   root: string,
@@ -256,7 +290,17 @@ export async function runParallelBatch(
     childTaskIds,
     initialPlan,
   );
-  const schedule = scheduleParentTaskGraph(root, parentDir, scheduleOptions);
+  const scheduleAdviceRoute = manifest.jev_advice
+    ? "manifest-explicit"
+    : "jev-aware";
+  const schedule = manifest.jev_advice
+    ? scheduleParentTaskGraph(root, parentDir, scheduleOptions)
+    : await scheduleParentTaskGraphWithJevV1(
+        root,
+        parentDir,
+        scheduleOptions,
+        createBatchScheduleJevOptions(),
+      );
   const selectedByTaskId = new Map(
     [...childTaskIds.entries()].map(([childId, taskId]) => [
       taskId,
@@ -337,6 +381,7 @@ export async function runParallelBatch(
       type: "schedule_persisted",
       schedule_receipt_fingerprint: schedule.receipt.receiptFingerprint,
       schedule_receipt_file: schedule.receiptFile,
+      schedule_advice_route: scheduleAdviceRoute,
       wave_count: scheduledWaves.length,
     });
     for (const wave of scheduledWaves) {
@@ -411,6 +456,7 @@ export async function runParallelBatch(
       event_file: path.relative(parentDir, eventFile).replaceAll("\\", "/"),
       schedule_receipt_fingerprint: schedule.receipt.receiptFingerprint,
       schedule_receipt_file: schedule.receiptFile,
+      schedule_advice_route: scheduleAdviceRoute,
       compatibility_limit_ignored:
         typeof manifest.limit === "number" &&
         Number.isSafeInteger(manifest.limit)
@@ -441,6 +487,9 @@ export async function runParallelBatch(
     atomicJson(path.join(folder, "runs", `${batchId}.failure.json`), {
       schema_version: 1,
       batch_id: batchId,
+      schedule_receipt_fingerprint: schedule.receipt.receiptFingerprint,
+      schedule_receipt_file: schedule.receiptFile,
+      schedule_advice_route: scheduleAdviceRoute,
       parent: path.basename(parentDir),
       started_at: startedAt,
       ended_at: new Date().toISOString(),
