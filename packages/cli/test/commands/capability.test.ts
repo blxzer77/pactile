@@ -14,6 +14,19 @@ const cliEntry = fileURLToPath(
 let root = "";
 let output: string[] = [];
 
+function sameReceiptEntry(left: string, right: string): boolean {
+  const leftName = path.basename(left);
+  const rightName = path.basename(right);
+  if (process.platform === "win32" ? leftName.toLowerCase() !== rightName.toLowerCase() : leftName !== rightName) return false;
+  try {
+    const a = fs.statSync(path.dirname(left), { bigint: true });
+    const b = fs.statSync(path.dirname(right), { bigint: true });
+    return a.isDirectory() && b.isDirectory() && a.ino !== 0n && a.dev === b.dev && a.ino === b.ino;
+  } catch {
+    return false;
+  }
+}
+
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-p32-cli-"));
   fs.writeFileSync(path.join(root, "note.txt"), "bounded capability request\n");
@@ -169,7 +182,7 @@ describe("pactile capability CLI", () => {
       .spyOn(fsp, "realpath")
       .mockImplementation(async (...args) => {
         const target = typeof args[0] === "string" ? args[0] : "";
-        if (path.resolve(target) === claimPath && fs.existsSync(marker)) {
+        if (sameReceiptEntry(target, claimPath) && fs.existsSync(marker)) {
           throw Object.assign(new Error("injected receipt failure"), {
             code: "EACCES",
           });
