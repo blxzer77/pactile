@@ -130,8 +130,26 @@ export function ensureAllowedRoot(identity: GitIdentity): string {
 }
 
 export function assertAllowedPath(identity: GitIdentity, candidateValue: string): string {
-  const candidate = assertAbsolute(candidateValue, "Canonical worktree path");
+  let candidate = assertAbsolute(candidateValue, "Canonical worktree path");
   const root = allowedWorktreeRoot(identity.root);
+  if (!pathWithin(root, candidate) && process.platform === "win32") {
+    // Git expands some Windows 8.3 project roots while Node can preserve the
+    // caller's short spelling. Rebase only a path below this same physical
+    // project's .pactile/worktrees directory; never rebase a symlinked root.
+    let marker = path.dirname(candidate);
+    while (marker !== path.dirname(marker)) {
+      if (path.basename(marker).toLowerCase() === "worktrees"
+        && path.basename(path.dirname(marker)).toLowerCase() === ".pactile") {
+        const apparentRoot = path.dirname(path.dirname(marker));
+        if (sameGitRoot(apparentRoot, identity.root)) {
+          assertNoSymlinkBetween(path.parse(apparentRoot).root, apparentRoot);
+          candidate = path.resolve(root, path.relative(marker, candidate));
+        }
+        break;
+      }
+      marker = path.dirname(marker);
+    }
+  }
   if (!pathWithin(root, candidate)) throw new WorktreeManagerError("path-anomaly", "Worktree path must be inside .pactile/worktrees", candidate);
   assertNoSymlinkBetween(identity.root, candidate);
   let real: string;

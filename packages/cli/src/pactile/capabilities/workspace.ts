@@ -11,6 +11,7 @@ import {
   isInside,
   isReceiptControlPath,
   mapFilesystemError,
+  relativeInside,
   safeChild,
   sameFileIdentity,
   stopReason,
@@ -272,7 +273,12 @@ export async function collectFiles(
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
         const child = path.join(current, entry.name);
-        const childRelative = path.relative(root, child).replaceAll("\\", "/");
+        const childRelative = relativeInside(root, child)?.replaceAll("\\", "/");
+        if (childRelative === undefined) {
+          partial = true;
+          error ??= { code: "OUT_OF_SCOPE", message: "A workspace entry resolved outside the workspace." };
+          continue;
+        }
         if (
           !SKIP_DIRECTORIES.has(entry.name) &&
           !isReceiptControlPath(childRelative)
@@ -281,9 +287,12 @@ export async function collectFiles(
         continue;
       }
       if (!entry.isFile()) continue;
-      const relative = path
-        .relative(root, path.join(current, entry.name))
-        .replaceAll("\\", "/");
+      const relative = relativeInside(root, path.join(current, entry.name))?.replaceAll("\\", "/");
+      if (relative === undefined) {
+        partial = true;
+        error ??= { code: "OUT_OF_SCOPE", message: "A workspace entry resolved outside the workspace." };
+        continue;
+      }
       if (
         isReceiptControlPath(relative) ||
         isExcludedPath(relative, excludedPaths)
