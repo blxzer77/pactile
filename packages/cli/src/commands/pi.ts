@@ -263,6 +263,7 @@ async function recordIndependentPiReview(
     const routingAdvice = await createPiReviewRoutingAdviceV1({
       root,
       taskDir,
+      review,
       binding: {
         taskId: current.kernel.identity.taskId,
         reviewId,

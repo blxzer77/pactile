@@ -131,6 +131,7 @@ export function readPiReviewEscalationV1(
       taskDir: task,
       ref: request.jevAdviceRef,
       expectedSha256: request.jevAdviceSha256,
+      review: review as unknown as ValidatedIndependentPiReview,
       expectedBinding: {
         taskId: request.taskId,
         reviewId: request.reviewId,
@@ -417,6 +418,7 @@ export function preparePiReviewEscalationV1(input: {
       taskDir: input.taskDir,
       ref: jevAdviceRef,
       expectedSha256: jevAdviceSha256,
+      review: input.review,
       expectedBinding: {
         taskId: input.taskId,
         reviewId: input.reviewId,

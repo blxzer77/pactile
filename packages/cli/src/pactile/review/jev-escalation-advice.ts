@@ -13,33 +13,65 @@ import {
 } from "../jev/contracts.js";
 import { projectJevConfidenceReceiptV1 } from "../jev/response.js";
 import { resolveJevProjectEgressPolicyV1 } from "../jev/project-policy.js";
+import type { ValidatedIndependentPiReview } from "./contract.js";
 
 export const PI_REVIEW_ROUTING_QUESTION_ID_V1 = "append_codex_review";
 export const PI_REVIEW_ROUTING_CONFIDENCE_THRESHOLD_V1 = 0.65;
 
-const ROUTING_REQUEST = Object.freeze({
-  taskSummary:
-    "A completed implementation candidate has a non-passing independent review. Decide whether to add a separate read-only review.",
-  questions: Object.freeze({
-    [PI_REVIEW_ROUTING_QUESTION_ID_V1]: Object.freeze({
-      type: "choice" as const,
-      instructions:
-        "Should an optional independent Codex read-only review be added?",
-      criteria: Object.freeze({
-        "append-codex-review": "Add the optional independent review.",
-        "keep-pi-review": "Keep the current Pi Review only.",
-      }),
+const ROUTING_QUESTIONS = Object.freeze({
+  [PI_REVIEW_ROUTING_QUESTION_ID_V1]: Object.freeze({
+    type: "choice" as const,
+    instructions:
+      "Based only on the structured Pi Review risk signals, would an additional Codex read-only review materially improve the next decision? Account for Codex quota and review latency.",
+    criteria: Object.freeze({
+      "append-codex-review": "Add an optional second review when multiple findings or review areas make an independent judgment valuable.",
+      "keep-pi-review": "Keep Pi Review when the findings clearly call for implementation changes; avoid unnecessary Codex cost.",
     }),
   }),
 });
-const ROUTING_PROVIDER_PAYLOAD = Object.freeze({
-  state: Object.freeze({
-    taskSummary: ROUTING_REQUEST.taskSummary,
-    sourceSnippets: Object.freeze([]),
-  }),
-  model: "jev-latest",
-  questions: ROUTING_REQUEST.questions,
-});
+
+/** Only validated enum values and counts leave the project; model-authored prose stays local. */
+function reviewRiskSummary(review: ValidatedIndependentPiReview): string {
+  const coverage = Object.entries(review.coverage).map(([area, value]) => ({
+    area,
+    status: value.status,
+    confidence: value.confidence,
+  }));
+  const findings = {
+    total: review.findings.length,
+    highImpact: review.findings.filter((item) => item.impact === "high").length,
+    blockerSeverity: review.findings.filter((item) => item.severity === "blocker").length,
+    lowConfidence: review.findings.filter((item) => item.confidence === "low").length,
+    disputed: review.findings.filter((item) => item.disputed).length,
+  };
+  return JSON.stringify({
+    purpose: "Decide whether a separate read-only Codex Review would help after this non-passing independent Pi Review.",
+    verdict: review.verdict,
+    coverage,
+    findings,
+    blockers: review.blockers.length,
+    unresolvedQuestions: review.unresolvedQuestions.length,
+    mandatoryEscalation: review.escalation.required,
+  });
+}
+
+function routingRequest(review: ValidatedIndependentPiReview): {
+  taskSummary: string;
+  questions: typeof ROUTING_QUESTIONS;
+} {
+  return {
+    taskSummary: reviewRiskSummary(review),
+    questions: ROUTING_QUESTIONS,
+  };
+}
+
+function routingProviderPayload(request: ReturnType<typeof routingRequest>): Record<string, unknown> {
+  return {
+    state: { taskSummary: request.taskSummary, sourceSnippets: [] },
+    model: "jev-latest",
+    questions: request.questions,
+  };
+}
 
 export type PiReviewRoutingAdviceBasisV1 =
   | "hard-rule-required"
@@ -242,17 +274,19 @@ function unexpectedFallback(): JevDecisionResultV1 {
 }
 
 /**
- * Suggest an optional second review using only a static, non-sensitive prompt.
+ * Suggest an optional second review using only bounded, non-sensitive risk signals.
  * Hard-rule and PASS cases are persisted as local skip receipts without calling Jev.
  */
 export async function createPiReviewRoutingAdviceV1(input: {
   readonly root: string;
   readonly taskDir: string;
   readonly binding: PiReviewRoutingAdviceReceiptV1["binding"];
+  readonly review: ValidatedIndependentPiReview;
   readonly skipReason?: "hard-rule-required" | "passing-review";
   readonly isStillCurrent?: () => boolean;
 }): Promise<CreatedPiReviewRoutingAdviceV1> {
-  const providerPayload = JSON.stringify(ROUTING_PROVIDER_PAYLOAD);
+  const request = routingRequest(input.review);
+  const providerPayload = JSON.stringify(routingProviderPayload(request));
   const inputBytes = Buffer.byteLength(providerPayload, "utf8");
   const inputSha256 = sha256(providerPayload);
   const before = resolveJevProjectEgressPolicyV1(input.root);
@@ -295,7 +329,7 @@ export async function createPiReviewRoutingAdviceV1(input: {
   try {
     result = await facade.decide({
       node: "review-routing",
-      request: ROUTING_REQUEST,
+      request,
       options: {
         egress: requestEgress(before.allowed),
         minimumDecisionConfidence: PI_REVIEW_ROUTING_CONFIDENCE_THRESHOLD_V1,
@@ -406,6 +440,7 @@ export function readPiReviewRoutingAdviceV1(input: {
   readonly ref: string;
   readonly expectedSha256: string;
   readonly expectedBinding: PiReviewRoutingAdviceReceiptV1["binding"];
+  readonly review: ValidatedIndependentPiReview;
 }): PiReviewRoutingAdviceReceiptV1 {
   const file = receiptPath(input.taskDir, input.ref);
   const task = fs.realpathSync(input.taskDir);
@@ -439,7 +474,7 @@ export function readPiReviewRoutingAdviceV1(input: {
   const { contentFingerprint, ...core } = receipt;
   const reportedConfidence =
     receipt.confidence?.[PI_REVIEW_ROUTING_QUESTION_ID_V1];
-  const expectedInputBody = JSON.stringify(ROUTING_PROVIDER_PAYLOAD);
+  const expectedInputBody = JSON.stringify(routingProviderPayload(routingRequest(input.review)));
   if (
     receipt.schemaVersion !== 1 ||
     receipt.source !== "pactile-pi-review-routing-advice-v1" ||

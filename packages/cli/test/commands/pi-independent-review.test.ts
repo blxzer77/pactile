@@ -2013,6 +2013,24 @@ describe("P40 independent Pi Review route", () => {
       },
     });
     const sentBody = JSON.stringify(jev.requests[0]);
+    const sentState = jev.requests[0]?.["state"] as Record<string, unknown>;
+    const riskSummary = JSON.parse(String(sentState["taskSummary"])) as Record<string, unknown>;
+    expect(riskSummary).toMatchObject({
+      verdict: "needs-changes",
+      findings: {
+        total: 1,
+        highImpact: 0,
+        blockerSeverity: 0,
+        lowConfidence: 0,
+        disputed: 0,
+      },
+      blockers: 0,
+      unresolvedQuestions: 0,
+      mandatoryEscalation: false,
+    });
+    expect(riskSummary["coverage"]).toContainEqual({
+      area: "security", status: "finding", confidence: "high",
+    });
     expect(sentBody).not.toContain(task.task);
     expect(sentBody).not.toContain("bounded-review-finding");
     expect(sentBody).not.toContain("A low-impact issue needs another implementation pass.");
