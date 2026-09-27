@@ -12,6 +12,29 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.2-beta.0] - 2026-09-28
+
+### Fixed
+
+- Legacy Task source snapshot verification keeps only the current file's bytes
+  in memory. It no longer retains a second full copy of a large historical task
+  tree while recomputing the source fingerprint.
+- Source backup writes prepare each parent directory once. Every file write
+  still checks the full path, rejects links and collisions, and flushes its
+  bytes before the migration journal can advance.
+- CLI upgrade preflight retains counts and findings instead of keeping another
+  full source tree alive while the approved migration runs.
+- Task listing uses one verified migration snapshot for the whole observation,
+  instead of verifying all historical source files again for every Task.
+  Each Task overlay and Kernel document still receives its integrity checks.
+- Recovery verifies and reuses a completed immutable source snapshot left
+  before its journal advanced, without replaying all exclusive source writes.
+
+Existing source snapshots and journals remain compatible. All source files,
+byte fingerprints, and migration recovery checks are preserved.
+
+---
+
 ## [0.6.1] - 2026-09-28
 
 ### Fixed

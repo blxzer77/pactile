@@ -236,7 +236,12 @@ export function listTaskKernelSnapshots(root: string): { taskDir: string; kernel
   directories.push(...listLegacyTaskMigrationDirectories(canonicalRoot, migrationView));
   for (const taskDir of [...new Set(directories)]) {
     try {
-      const document = readTaskKernel({ root: canonicalRoot, taskDir });
+      const document = readTaskKernelUsingMigrationView(
+        canonicalRoot,
+        resolveInsideTasksRoot(canonicalRoot, taskDir),
+        undefined,
+        migrationView,
+      );
       if (document?.kind === "task-kernel-v2") output.push({ taskDir, kernel: document.kernel });
     } catch (error) {
       const importRecord = readLegacyTaskImportRecord(canonicalRoot, taskDir, migrationView);

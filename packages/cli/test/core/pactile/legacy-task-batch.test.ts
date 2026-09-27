@@ -8,12 +8,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildLegacyTaskV2Import } from "../../../src/core/task/legacy-task-v2-import.js";
 import { readLegacyTaskMigrationView } from "../../../src/core/task/legacy-task-migration-reader.js";
 import { scanLegacyTaskMigration } from "../../../src/core/task/legacy-task-migration.js";
+import { listTaskKernelSnapshots } from "../../../src/core/task/task-kernel-store-v2.js";
 import {
   readPreparedLegacyTaskBatch,
   runLegacyTaskBatch,
   type LegacyTaskBatchRequest,
   type LegacyTaskBatchTargetFile,
 } from "../../../src/pactile/migration/legacy-task-batch.js";
+import {
+  verifySourceBackup,
+  writeSourceBackup,
+} from "../../../src/pactile/migration/legacy-task-batch-source.js";
+import { normalizeRequest } from "../../../src/pactile/migration/legacy-task-batch-types.js";
 import {
   applyLegacyTaskUpdate,
   inspectLegacyTaskUpdate,
@@ -1162,5 +1168,93 @@ describe("legacy Task batch staging transaction", () => {
       expect(bytes.byteLength).toBe(file.byteLength);
       expect(sha256(bytes)).toBe(file.fingerprint);
     }
+  });
+
+  it("verifies an unordered source manifest and rejects duplicate file claims", async () => {
+    const root = tempProject();
+    const result = await runLegacyTaskBatch(requestFor(root), { approved: true });
+    if (result.status !== "completed")
+      throw new Error("expected completed result");
+    const manifestPath = storePath(
+      root,
+      "sources",
+      result.sourceFingerprint.slice("sha256:".length),
+      "manifest.json",
+    );
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+      files: { path: string; byteLength: number; fingerprint: string }[];
+    };
+    manifest.files.reverse();
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
+    expect(() => verifySourceBackup(root, result.sourceFingerprint)).not.toThrow();
+
+    const first = manifest.files[0];
+    if (!first) throw new Error("expected source files");
+    manifest.files.push({ ...first });
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
+    expect(() => verifySourceBackup(root, result.sourceFingerprint)).toThrow(
+      "migration-source-backup-invalid",
+    );
+  });
+
+  it("lists Tasks from one verified migration view instead of rechecking the source per Task", async () => {
+    const root = tempProject();
+    for (const id of ["second", "third"]) {
+      const directory = path.join(root, ".pactile", "tasks", id);
+      fs.mkdirSync(directory);
+      fs.writeFileSync(
+        path.join(directory, "task.json"),
+        JSON.stringify({ id, status: "planning" }),
+        "utf8",
+      );
+    }
+    const plan = scanLegacyTaskMigration({ projectRoot: root });
+    const result = await runLegacyTaskBatch(
+      { projectRoot: root, plan, targets: buildLegacyTaskV2Import(plan).targets },
+      { approved: true },
+    );
+    if (result.status !== "completed")
+      throw new Error("expected completed result");
+    const manifestPath = storePath(
+      root,
+      "sources",
+      result.sourceFingerprint.slice("sha256:".length),
+      "manifest.json",
+    );
+    const read = vi.spyOn(fs, "readFileSync");
+    try {
+      expect(listTaskKernelSnapshots(root)).toEqual([]);
+      expect(
+        read.mock.calls.filter(([file]) => String(file) === manifestPath),
+      ).toHaveLength(1);
+    } finally {
+      read.mockRestore();
+    }
+  });
+
+  it("reuses an existing source snapshot only when its immutable manifest bytes match", async () => {
+    const root = tempProject();
+    const request = requestFor(root);
+    const result = await runLegacyTaskBatch(request, { approved: true });
+    const normalized = normalizeRequest(request);
+    if (result.status !== "completed" || !normalized)
+      throw new Error("expected completed result and normalized request");
+    expect(() => writeSourceBackup(normalized)).not.toThrow();
+    const manifestPath = storePath(
+      root,
+      "sources",
+      result.sourceFingerprint.slice("sha256:".length),
+      "manifest.json",
+    );
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+      files: { role: string }[];
+    };
+    const first = manifest.files[0];
+    if (!first) throw new Error("expected source files");
+    first.role = "changed-metadata";
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
+    expect(() => writeSourceBackup(normalized)).toThrow(
+      "migration-immutable-collision",
+    );
   });
 });
