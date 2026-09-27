@@ -9,9 +9,7 @@ Pactile 只保留一份项目 canonical 状态，并向 Codex 投影。宿主页
 | 需求 | 从这里开始 | 结果 |
 | --- | --- | --- |
 | 新项目 | [Codex](codex.zh-CN.md) | `.pactile/`、受管 `AGENTS.md` 和 `.agents/skills/`；原生绑定取决于 readiness。 |
-| 旧 Cursor 安装 | [生命周期安全](../lifecycle/index.zh-CN.md) | 先用 `pactile detach cursor --dry-run` 预览清理。 |
-
-所有宿主都遵循同一顺序：
+当前支持的宿主遵循以下顺序：
 
 ```text
 detect -> install or adopt -> bind -> reconcile -> report readiness

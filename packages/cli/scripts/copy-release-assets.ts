@@ -10,7 +10,7 @@ const packageRoot = path.resolve(
 );
 const repoRoot = path.resolve(packageRoot, "../..");
 
-for (const file of ["README.md", "LICENSE"]) {
+for (const file of ["README.md", "README.zh-CN.md", "LICENSE"]) {
   const source = path.join(repoRoot, file);
   const target = path.join(packageRoot, file);
   if (!fs.existsSync(source)) {

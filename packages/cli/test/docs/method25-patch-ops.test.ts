@@ -11,22 +11,21 @@ function readUtf8(filePath: string): string {
   return fs.readFileSync(filePath, "utf-8");
 }
 
-describe("Method 2.5 / Cursor++ docs retired (P23)", () => {
+describe("retired host URL cleanup (P23)", () => {
   const DOC_PATHS = [
     path.join(repoRoot, "docs/cursor.md"),
     path.join(repoRoot, "docs/cursor.zh-CN.md"),
   ];
 
-  it("marks Cursor++ / Method 2.5 as retired without live setup steps", () => {
+  it("keeps the old host entry pages non-operational", () => {
     for (const docPath of DOC_PATHS) {
       const content = readUtf8(docPath);
       expect(content, docPath).toMatch(
-        /(?:alternate client|Cursor adapter) is retired|(?:替代客户端|Cursor 适配器)已退役/i,
+        /former host adapter has been\s+removed|原宿主适配器已移除/i,
       );
-      expect(content, docPath).toMatch(
-        /do not run|勿.*运行|retired|已退役|已废弃|not a current product path|不是当前产品路径/i,
-      );
+      expect(content, docPath).toMatch(/hosts\/cursor(?:\.zh-CN)?\.md/);
       expect(content, docPath).not.toMatch(/cstl init --cursor --cursor2plus/);
+      expect(content, docPath).not.toMatch(/pactile\s+detach\s+cursor/i);
       expect(content, docPath).not.toMatch(
         /python \.cstl\/local\/cursor2plus\/patch_wpelc8\.py --check-compat/,
       );

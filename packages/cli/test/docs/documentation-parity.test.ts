@@ -131,8 +131,14 @@ describe("Batch 4 documentation links and locale parity", () => {
     const failures: string[] = [];
     for (const mapping of documentationMap.sourceMappings) {
       if (!mapping.path.endsWith(".md")) continue;
+      const linkBasePath =
+        mapping.path === "packages/cli/README.md"
+          ? "README.md"
+          : mapping.path === "packages/cli/README.zh-CN.md"
+            ? "README.zh-CN.md"
+            : mapping.path;
       for (const link of markdownLinks(readUtf8(mapping.path))) {
-        const resolved = resolveRelative(mapping.path, link);
+        const resolved = resolveRelative(linkBasePath, link);
         if (
           resolved === null ||
           !fs.existsSync(path.join(repoRoot, ...resolved.split("/")))
@@ -142,6 +148,13 @@ describe("Batch 4 documentation links and locale parity", () => {
       }
     }
     expect(failures).toEqual([]);
+  });
+
+  it("keeps package release readmes synchronized with the root readmes", () => {
+    expect(readUtf8("packages/cli/README.md")).toBe(readUtf8("README.md"));
+    expect(readUtf8("packages/cli/README.zh-CN.md")).toBe(
+      readUtf8("README.zh-CN.md"),
+    );
   });
 
   it("keeps parity-required target pages aligned on outline, commands, and destinations", () => {

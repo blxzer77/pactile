@@ -1,5 +1,6 @@
+import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { createCommandRunner } from "./release-guard.js";
 
@@ -39,8 +40,57 @@ const FORBIDDEN_FRAGMENTS = [
   ".egg-info",
 ];
 const FORBIDDEN_SUFFIXES = [".py", ".pyc", ".pyo"];
+const CURSOR_IDE_CONTENT_RULES = [
+  { label: "host name", pattern: /\bCursor\b/u },
+  {
+    label: "editor file surface",
+    pattern: /\.cursor(?:[/\\]|(?=[\s"'`]|$))/iu,
+  },
+  {
+    label: "editor command option",
+    pattern: /(?:^|\s)--cursor(?=[\s=.,;:]|$)/iu,
+  },
+  {
+    label: "legacy editor command",
+    pattern: /\bpactile\s+(?:init|install|detach)\s+cursor\b/iu,
+  },
+  {
+    label: "legacy editor package name",
+    pattern: /@blxzer\/cursor-trellis(?:-core)?\b/iu,
+  },
+  { label: "editor rule extension", pattern: /\.mdc\b/iu },
+];
 
-export function validateReleasePackPaths(inputPaths: string[]) {
+function resolvePackageRoot(): string {
+  const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    process.cwd(),
+    path.resolve(scriptDirectory, ".."),
+    path.resolve(scriptDirectory, "../.."),
+  ];
+  for (const candidate of candidates) {
+    const packageJsonPath = path.join(candidate, "package.json");
+    if (!fs.existsSync(packageJsonPath)) continue;
+    try {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+      if (packageJson.name === "@blxzer/pactile") return candidate;
+    } catch {
+      // Keep looking when the candidate does not contain readable package data.
+    }
+  }
+  throw new Error("unable to locate the @blxzer/pactile package root");
+}
+
+const packageRoot = resolvePackageRoot();
+
+function isCursorIdePath(file: string): boolean {
+  return /(?:^|\/)(?:\.cursor|cursor)(?:\.[^/]+)?(?:\/|$)/iu.test(file);
+}
+
+export function validateReleasePackPaths(
+  inputPaths: string[],
+  readPackedContent?: (file: string) => string | null,
+) {
   const paths = new Set<string>(
     inputPaths.map((file) => String(file).replace(/\\/g, "/")),
   );
@@ -50,12 +100,34 @@ export function validateReleasePackPaths(inputPaths: string[]) {
     if (!paths.has(file)) errors.push(`missing required packed file: ${file}`);
   }
   for (const file of paths) {
+    if (isCursorIdePath(file)) {
+      errors.push(`forbidden Cursor IDE packed path: ${file}`);
+    }
     for (const fragment of FORBIDDEN_FRAGMENTS) {
       if (file.includes(fragment))
         errors.push(`forbidden packed path: ${file}`);
     }
     for (const suffix of FORBIDDEN_SUFFIXES) {
       if (file.endsWith(suffix)) errors.push(`forbidden packed path: ${file}`);
+    }
+    if (readPackedContent !== undefined) {
+      let content: string | null;
+      try {
+        content = readPackedContent(file);
+      } catch (error) {
+        errors.push(
+          `unable to inspect packed file ${file}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        continue;
+      }
+      if (content === null) continue;
+      for (const rule of CURSOR_IDE_CONTENT_RULES) {
+        if (rule.pattern.test(content)) {
+          errors.push(
+            `forbidden Cursor IDE ${rule.label} in packed file: ${file}`,
+          );
+        }
+      }
     }
   }
   if (
@@ -85,7 +157,15 @@ export function checkReleasePackContents({
   );
   const payload = JSON.parse(String(raw));
   const paths = (payload[0]?.files ?? []).map((file) => file.path);
-  const errors = validateReleasePackPaths(paths);
+  const errors = validateReleasePackPaths(paths, (file) => {
+    const absolutePath = path.resolve(packageRoot, ...file.split("/"));
+    const relativePath = path.relative(packageRoot, absolutePath);
+    if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+      throw new Error("packed path resolves outside the CLI package");
+    }
+    const content = fs.readFileSync(absolutePath);
+    return content.includes(0) ? null : content.toString("utf8");
+  });
   if (errors.length > 0) {
     throw new Error(
       `Release pack contents check failed:\n${errors

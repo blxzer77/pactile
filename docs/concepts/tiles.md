@@ -21,7 +21,7 @@ The compiler checks dependencies, conflicts, policy ceilings, deterministic orde
 
 ## Boundaries
 
-A Tile contains no steps DSL, tool or MCP server name, Cursor/Codex path, prompt transcript, arbitrary URL, credential value, or private chain of thought. An intent such as `structural` or `external` is resolved later through Middleware. MCP is one possible Provider integration, not a Tile.
+A Tile contains no steps DSL, tool or MCP server name, host-specific path, prompt transcript, arbitrary URL, credential value, or private chain of thought. An intent such as `structural` or `external` is resolved later through Middleware. MCP is one possible Provider integration, not a Tile.
 
 Fallback cannot broaden permission, destination, egress, credential, telemetry, cost, or assurance policy. Network-forbidden Tiles cannot smuggle remote behavior through a fallback.
 

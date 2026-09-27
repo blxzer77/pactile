@@ -1,5 +1,5 @@
 # Cursor 限制文档已迁移
 
-**历史资料（v0.5）：** Cursor 适配已退役。v0.6 开发线仅支持 Codex。旧安装可先运行 `pactile detach cursor --dry-run` 预览安全清理。
+本旧文档 URL 为历史入站链接保留。原宿主适配器已从 v0.6 发布线移除；当前支持范围见[宿主索引](hosts/index.zh-CN.md)。
 
-历史页面见[宿主 / Cursor 限制](hosts/cursor-limitations.zh-CN.md)与[Hosts / Cursor limitations](hosts/cursor-limitations.md)。此指针不包含当前操作步骤。
+历史背景见[宿主限制参考](hosts/cursor-limitations.md)及[中文宿主限制参考](hosts/cursor-limitations.zh-CN.md)。

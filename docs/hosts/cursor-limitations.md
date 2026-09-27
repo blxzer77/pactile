@@ -1,39 +1,22 @@
 # Cursor limitations and safe fallbacks
 
-**Historical v0.5 reference:** The Cursor adapter is retired in the v0.6 development line, which targets Codex. For an older installation, preview safe cleanup with `pactile detach cursor --dry-run`.
+**Historical v0.5 reference:** The host adapter was removed from the v0.6 release line. This page records past behavior and is not a current setup or cleanup guide.
 
 English | [简体中文](cursor-limitations.zh-CN.md)
 
-The Cursor adapter is intentionally conservative. A host feature can be
-available while its context channel is best-effort; Pactile labels that
-difference instead of turning an optimistic probe into assurance.
+The adapter reported host capability separately from its context channel and
+kept uncertain behavior at best-effort or degraded assurance. These observations
+are preserved to explain v0.5 receipts and user reports.
 
-| Observation                                                              | Mode                        | Evidence                                                  | Safe fallback                                                            |
-| ------------------------------------------------------------------------ | --------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Project rules and the bootstrap rule are loaded.                         | `native`                    | `pactile validate-rules` and the installed rule manifest. | Continue with the canonical workflow.                                    |
-| A session hook runs but its additional context is absent from the Agent. | `heuristic`/`degraded`      | Hook receipt plus a missing-context diagnostic.           | Read `AGENTS.md`, `.pactile/workflow.md`, and the CLI dispatch prompt.   |
-| A selected MCP or Provider is not installed or its probe is stale.       | `unsupported` or `degraded` | `pactile capability-smoke --json` readiness and action.   | Install or authorize the dependency yourself, then re-run the probe.     |
-| A host file is modified, foreign, locked, or ambiguous.                  | `degraded`                  | Ownership preimage and current-byte comparison.           | Keep the file, resolve ownership explicitly, and retry the adapter only. |
+| v0.5 observation                                                        | Reported mode               | Historical evidence                            | Recorded fallback                                                      |
+| ------------------------------------------------------------------------ | --------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------- |
+| Project rules and the bootstrap rule were loaded.                       | `native`                    | The installed rule manifest.                  | Continue with the canonical workflow.                                  |
+| A session hook ran but its additional context was absent from the Agent. | `heuristic`/`degraded`      | Hook receipt and missing-context diagnostic.  | Read `AGENTS.md`, `.pactile/workflow.md`, and the CLI dispatch prompt. |
+| A selected MCP or Provider was not installed or its probe was stale.     | `unsupported` or `degraded` | Readiness and action output.                   | Install or authorize the dependency, then re-run its probe.             |
+| A host file was modified, foreign, locked, or ambiguous.                 | `degraded`                  | Ownership preimage and current-byte comparison. | Keep the file and resolve ownership explicitly.                        |
 
-## What not to infer
+The historical ownership rule was conservative: seeing a host configuration
+directory did not prove Pactile owned every file in it; Provider names did not
+prove readiness; and a host projection did not become canonical state.
 
-- A visible `.cursor/` directory does not prove that Pactile owns every file in
-  it.
-- A Provider name in a config file does not prove readiness, authorization, or
-  assurance.
-- A hook log does not replace a Kernel gate or an Evidence receipt.
-- A Cursor projection does not become canonical state; regenerate it from
-  `.pactile/` after a reviewed change.
-
-## Diagnostics
-
-```bash
-pactile capability-smoke --json
-pactile validate-rules
-pactile update --dry-run
-```
-
-Capture the JSON output and the affected receipt when asking for help. Do not
-paste credentials, private logs, or a whole user directory. If the issue is
-only context injection, use the [Codex or shared workflow page](../lifecycle/workflow.md)
-to continue with the same canonical Task.
+Use the current [Codex guide](codex.md) for supported diagnostics and operations.

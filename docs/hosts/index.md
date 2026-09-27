@@ -2,8 +2,8 @@
 
 English | [简体中文](index.zh-CN.md)
 
-Pactile keeps one canonical project state and projects it into Codex. Host
-pages describe the observable support contract; they do not imply that a
+Pactile keeps one canonical project state and projects it into Codex. The host
+page describes the observable support contract; it does not imply that a
 host-native tool or provider is installed.
 
 ## Choose a path
@@ -11,9 +11,7 @@ host-native tool or provider is installed.
 | Need | Start here | Result |
 | --- | --- | --- |
 | New project | [Codex](codex.md) | `.pactile/`, managed `AGENTS.md`, and `.agents/skills/`; optional native bindings depend on readiness. |
-| Old Cursor installation | [Lifecycle safety](../lifecycle/index.md) | Preview legacy cleanup with `pactile detach cursor --dry-run`. |
-
-Every host follows the same sequence:
+The supported host follows this sequence:
 
 ```text
 detect -> install or adopt -> bind -> reconcile -> report readiness

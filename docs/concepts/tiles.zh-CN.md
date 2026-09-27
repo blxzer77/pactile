@@ -21,7 +21,7 @@ Compiler 在执行前检查依赖、冲突、策略上限、确定性顺序和 f
 
 ## 边界
 
-Tile 不包含 steps DSL、tool/MCP server 名、Cursor/Codex 路径、prompt 记录、任意 URL、credential value 或私有 chain of thought。`structural`、`external` 等 intent 稍后通过 Middleware 解析。MCP 是一种可能的 Provider 集成，不是 Tile。
+Tile 不包含 steps DSL、tool/MCP server 名、宿主专属路径、prompt 记录、任意 URL、credential value 或私有 chain of thought。`structural`、`external` 等 intent 稍后通过 Middleware 解析。MCP 是一种可能的 Provider 集成，不是 Tile。
 
 Fallback 不能扩大 permission、destination、egress、credential、telemetry、cost 或 assurance policy。禁止网络的 Tile 也不能通过 fallback 偷渡远程行为。
 

@@ -228,20 +228,20 @@
     "^scripts/"
   ],
   "baselineSnapshot": {
-    "sha256": "41865854c2529f04ee7820bff5786d2b7565b9293b3dfebca837a53071771fe9",
-    "occurrences": 4242,
+    "sha256": "9f844e1631232b59d1b54b17f8b200760541fbc1b2ad8a3c485cf3d4d3f21d63",
+    "occurrences": 4239,
     "files": 288,
     "byClassification": {
       "attribution": 3,
-      "compat": 889,
+      "compat": 886,
       "history": 3350
     },
     "byToken": {
-      "cursor-plus-plus": 165,
+      "cursor-plus-plus": 163,
       "legacy-cstl-token": 685,
       "legacy-environment-name": 59,
       "legacy-managed-marker": 27,
-      "legacy-package-name": 223,
+      "legacy-package-name": 222,
       "legacy-product-name": 202,
       "legacy-runtime-path": 306,
       "legacy-trellis-token": 2172,
