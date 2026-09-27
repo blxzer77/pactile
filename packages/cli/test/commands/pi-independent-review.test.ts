@@ -869,6 +869,51 @@ describe("P40 independent Pi Review route", () => {
     expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(1);
   });
 
+  it("binds exact candidate and Run evidence paths in the Pi Review prompt", async () => {
+    const task = fixture({ includeRunEvidence: true });
+    expect(await runReview(task, report(task))).toBe(0);
+
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    const session = fs.readFileSync(
+      path.join(
+        task.taskDir,
+        "pi-bridge",
+        "review-sessions",
+        String(piRun["run_id"]),
+        "fake-review-session.jsonl",
+      ),
+      "utf8",
+    );
+    const marker = "Fixed review context:\n";
+    const contextStart = session.indexOf(marker);
+    const contextEnd = session.indexOf("\n\nRequired JSON shape:", contextStart);
+    expect(contextStart).toBeGreaterThanOrEqual(0);
+    expect(contextEnd).toBeGreaterThan(contextStart);
+    const context = JSON.parse(
+      session.slice(contextStart + marker.length, contextEnd),
+    ) as {
+      Run: {
+        allowedEvidenceRefs: string[];
+        candidateEntries: { ref: string }[];
+        references: string[];
+      };
+    };
+
+    expect(context.Run.allowedEvidenceRefs).toEqual([
+      "result.txt",
+      "run-completion.log",
+      "tests/verify.txt",
+    ]);
+    expect(context.Run.references).toEqual(["prd.md"]);
+    expect(context.Run.allowedEvidenceRefs).not.toContain("prd.md");
+    expect(context.Run.allowedEvidenceRefs.some((reference) => reference.startsWith("pactile:"))).toBe(false);
+    expect(context.Run.candidateEntries.some((entry) => entry.ref.startsWith("pactile:"))).toBe(true);
+    expect(session).toContain("Put only those path strings in reference arrays");
+    expect(session).toContain("do not use explanations, summaries, or sentence fragments as evidence references");
+  });
+
   it("persists both bounded redacted responses as independently bound evidence", async () => {
     const task = fixture();
     expect(
