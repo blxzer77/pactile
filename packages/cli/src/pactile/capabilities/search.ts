@@ -198,6 +198,13 @@ export async function search(
     outcome: partial ? "partial" : matches.length === 0 ? "empty" : "complete",
     partial,
     error,
-    nextPage: hasMore ? request.offset + matches.length : null,
+    nextPage:
+      hasMore &&
+      !scan.partial &&
+      !readLimited &&
+      !fileTooLarge &&
+      !outputLimited
+        ? request.offset + matches.length
+        : null,
   };
 }

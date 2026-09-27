@@ -192,6 +192,22 @@ describe("Node workspace capability adapter", () => {
     ).toBeDefined();
   });
 
+  it("does not offer a search page when the scan budget stopped collection", async () => {
+    const result = await execute(
+      request(
+        "search",
+        { query: "answer", directory: "src", caseSensitive: true },
+        { maxFilesScanned: 1, maxResults: 1 },
+      ),
+    );
+    expect(result.outcome).toBe("partial");
+    expect(result.error?.code).toBe("SCAN_LIMIT");
+    expect(result.nextPage).toBeNull();
+    expect(
+      result.data && "matches" in result.data ? result.data.matches : [],
+    ).toHaveLength(1);
+  });
+
   it("continues discover and search pages with explicit nextPage offsets", async () => {
     const firstDiscover = await execute(
       request("discover", {}, { maxResults: 2 }),
@@ -564,18 +580,22 @@ describe("Node workspace capability adapter", () => {
   it("checks that the receipt boundary is writable before running a command", async () => {
     fs.writeFileSync(path.join(root, ".pactile"), "not a directory");
     const marker = path.join(root, "must-not-exist.txt");
-    await expect(
-      execute(
-        request("run", {
-          command: "node",
-          args: [
-            "-e",
-            `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`,
-          ],
-        }),
-        ["node"],
-      ),
-    ).rejects.toThrow();
+    const result = await execute(
+      request("run", {
+        command: "node",
+        args: [
+          "-e",
+          `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`,
+        ],
+      }),
+      ["node"],
+    );
+    expect(result).toMatchObject({
+      outcome: "out_of_scope",
+      partial: false,
+      error: { code: "OUT_OF_SCOPE" },
+      receipt: null,
+    });
     expect(fs.existsSync(marker)).toBe(false);
   });
 

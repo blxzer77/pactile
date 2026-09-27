@@ -17,6 +17,7 @@ import {
   CapabilityNodeError,
   RECEIPT_ROOT,
   jsonBytes,
+  mapFilesystemError,
   stopResult,
   type OperationResult,
 } from "./shared.js";
@@ -28,6 +29,7 @@ import { claimRequestId } from "./claim.js";
 import {
   ensureReceiptDirectory,
   writeReceipt,
+  type ReceiptDirectory,
   type ReceiptClaim,
 } from "./receipts.js";
 
@@ -121,7 +123,12 @@ export async function executeNodeCapabilityRequestV1(
   // Establish the receipt boundary and claim this id before any capability can
   // run. A pre-existing symlinked receipt directory must never permit an
   // operation to execute before we discover that the audit write is unsafe.
-  const receiptDirectory = await ensureReceiptDirectory(root);
+  let receiptDirectory: ReceiptDirectory;
+  try {
+    receiptDirectory = await ensureReceiptDirectory(root);
+  } catch (error) {
+    return makeResult(request, failureResult(error), null);
+  }
   let receiptClaim: ReceiptClaim;
   try {
     receiptClaim = await claimRequestId(
@@ -160,7 +167,9 @@ export async function executeNodeCapabilityRequestV1(
         null,
       );
     }
-    throw error;
+    const failure =
+      error instanceof CapabilityNodeError ? error : mapFilesystemError(error);
+    return makeResult(request, failureResult(failure), null);
   }
   let operation: OperationResult;
   const decision = authorizeBoundedCapabilityRequestV1(request, options.policy);

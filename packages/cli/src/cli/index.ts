@@ -78,7 +78,13 @@ const cwd = process.cwd();
 const argvRest = process.argv.slice(2);
 const isStdioMcp = argvRest.includes("mcp");
 const isKernelJson = argvRest[0] === "kernel";
-if (isWorkflowInitialized(cwd) && !isStdioMcp && !isKernelJson) {
+const isCapabilityJson = argvRest[0] === "capability";
+if (
+  isWorkflowInitialized(cwd) &&
+  !isStdioMcp &&
+  !isKernelJson &&
+  !isCapabilityJson
+) {
   checkForUpdates(cwd);
 }
 

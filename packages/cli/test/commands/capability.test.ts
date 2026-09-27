@@ -1,10 +1,15 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runCapabilityCli } from "../../src/commands/capability.js";
 import { defaultCapabilityLimitsV1 } from "../../src/pactile/capabilities/node.js";
 
+const cliEntry = fileURLToPath(
+  new URL("../../bin/pactile.js", import.meta.url),
+);
 let root = "";
 let output: string[] = [];
 
@@ -56,6 +61,79 @@ describe("pactile capability CLI", () => {
       "receipt.receiptRef",
       ".pactile/runtime/receipts/capabilities/cli-search-01.json",
     );
+  });
+
+  it("writes one JSON line when the project version is older than the CLI", () => {
+    const pactileRoot = path.join(root, ".pactile");
+    fs.mkdirSync(pactileRoot, { recursive: true });
+    fs.writeFileSync(path.join(pactileRoot, ".version"), "0.0.1\n");
+    fs.writeFileSync(
+      path.join(root, "request.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        requestId: "cli-version-skew",
+        operation: "search",
+        query: "bounded",
+        directory: null,
+        caseSensitive: true,
+        limits: defaultCapabilityLimitsV1(),
+      }),
+    );
+
+    const child = spawnSync(
+      process.execPath,
+      [cliEntry, "capability", "request.json"],
+      { cwd: root, encoding: "utf8", windowsHide: true },
+    );
+
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(0);
+    expect(child.stderr).toBe("");
+    expect(child.stdout.trimEnd().split(/\r?\n/u)).toHaveLength(1);
+    expect(JSON.parse(child.stdout)).toMatchObject({
+      schemaVersion: 1,
+      requestId: "cli-version-skew",
+      operation: "search",
+      outcome: "complete",
+    });
+  });
+
+  it("returns a structured receipt-boundary failure without running the command", () => {
+    fs.writeFileSync(path.join(root, ".pactile"), "not a directory");
+    const marker = path.join(root, "must-not-exist.txt");
+    fs.writeFileSync(
+      path.join(root, "request.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        requestId: "cli-receipt-boundary",
+        operation: "run",
+        command: "node",
+        args: [
+          "-e",
+          `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`,
+        ],
+        cwd: null,
+        limits: defaultCapabilityLimitsV1(),
+      }),
+    );
+
+    const child = spawnSync(
+      process.execPath,
+      [cliEntry, "capability", "request.json", "--allow-command", "node"],
+      { cwd: root, encoding: "utf8", windowsHide: true },
+    );
+
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(1);
+    expect(child.stderr).toBe("");
+    expect(child.stdout.trimEnd().split(/\r?\n/u)).toHaveLength(1);
+    expect(JSON.parse(child.stdout)).toMatchObject({
+      outcome: "out_of_scope",
+      partial: false,
+      error: { code: "OUT_OF_SCOPE" },
+      receipt: null,
+    });
+    expect(fs.existsSync(marker)).toBe(false);
   });
 
   it("keeps commands denied by default and requires the explicit allowlist flag", async () => {
