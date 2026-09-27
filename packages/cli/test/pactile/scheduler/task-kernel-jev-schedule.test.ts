@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createTaskKernel,
+  fingerprintTaskValue,
   readTaskKernel,
   resumeTaskRun,
   startTaskRun,
@@ -16,6 +17,7 @@ import {
   type JevEgressAuthorizationV1,
 } from "../../../src/pactile/jev/index.js";
 import * as jevProjectPolicy from "../../../src/pactile/jev/project-policy.js";
+import * as jevResponse from "../../../src/pactile/jev/response.js";
 import {
   acquireTaskKernelRunDispatchV1,
   planTaskKernelGraphV1,
@@ -38,6 +40,7 @@ const egress: JevEgressAuthorizationV1 = {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   for (const root of roots.splice(0))
@@ -233,6 +236,205 @@ function realJevFacade(fetchImpl: typeof fetch): JevDecisionFacadeV1 {
 }
 
 describe("V2 Task Jev schedule advice", () => {
+  it("reuses a schedule receipt when multi-key confidence insertion order differs from sort order", async () => {
+    const root = makeGitRoot();
+    const first = makeTask(root, "jev-schedule-confidence-a");
+    const second = makeTask(root, "jev-schedule-confidence-b");
+    attachManagedWorktree(root, first);
+    attachManagedWorktree(root, second);
+    const confidence = Object.assign(Object.create(null), {
+      z_question: { status: "available", value: 0.75 },
+      a_question: { status: "unavailable", reasonCode: "not-returned" },
+    }) as ReturnType<typeof jevResponse.projectJevConfidenceReceiptV1>;
+    vi.spyOn(jevResponse, "projectJevConfidenceReceiptV1").mockReturnValue(
+      confidence,
+    );
+    const facade = answerFacade();
+    vi.useFakeTimers({ now: new Date("2026-09-27T00:00:00.000Z") });
+
+    const firstPlan = await scheduleTaskKernelGraphWithJevV1(
+      root,
+      [first.taskId, second.taskId],
+      {},
+      { facade, egress },
+    );
+    expect(
+      Object.keys(firstPlan.receipt.jevAdviceAudit?.transport.confidence ?? {}),
+    ).toEqual(["z_question", "a_question"]);
+
+    const repeatedPlan = await scheduleTaskKernelGraphWithJevV1(
+      root,
+      [first.taskId, second.taskId],
+      {},
+      { facade, egress },
+    );
+
+    expect(repeatedPlan.created).toBe(false);
+    expect(repeatedPlan.receipt.receiptFingerprint).toBe(
+      firstPlan.receipt.receiptFingerprint,
+    );
+
+    const firstAudit = firstPlan.receipt.jevAdviceAudit;
+    if (!firstAudit) throw new Error("Schedule receipt Jev audit is missing");
+    const legacyReceiptBody = {
+      ...firstPlan.receipt,
+      jevAdviceAudit: {
+        ...firstAudit,
+        transport: { ...firstAudit.transport, confidence },
+      },
+    };
+    const legacyScheduleKey = fingerprintTaskValue(
+      Object.fromEntries(
+        Object.entries(legacyReceiptBody).filter(
+          ([key]) =>
+            ![
+              "schemaVersion",
+              "scope",
+              "receiptFingerprint",
+              "createdAt",
+              "integrityVersion",
+              "scheduleKey",
+            ].includes(key),
+        ),
+      ),
+    );
+    const legacyUnsignedReceipt = {
+      ...legacyReceiptBody,
+      scheduleKey: legacyScheduleKey,
+    };
+    const legacyFingerprint = fingerprintTaskValue(
+      Object.fromEntries(
+        Object.entries(legacyUnsignedReceipt).filter(
+          ([key]) => key !== "receiptFingerprint",
+        ),
+      ),
+    );
+    const legacyReceipt = {
+      ...legacyUnsignedReceipt,
+      receiptFingerprint: legacyFingerprint,
+    };
+    const receiptDir = path.join(
+      root,
+      ".pactile",
+      ".runtime",
+      "scheduler",
+      "receipts",
+    );
+    fs.rmSync(path.resolve(root, firstPlan.receiptFile), { force: true });
+    fs.writeFileSync(
+      path.join(receiptDir, `${legacyFingerprint}.json`),
+      `${JSON.stringify(legacyReceipt, null, 2)}\n`,
+      { flag: "wx" },
+    );
+
+    const reusedLegacyPlan = await scheduleTaskKernelGraphWithJevV1(
+      root,
+      [first.taskId, second.taskId],
+      {},
+      { facade, egress },
+    );
+    expect(reusedLegacyPlan.created).toBe(false);
+    expect(reusedLegacyPlan.receipt.receiptFingerprint).toBe(legacyFingerprint);
+  });
+
+  it("round-trips unavailable confidence receipts and verifies legacy fingerprints", async () => {
+    const root = makeGitRoot();
+    const candidate = makeTask(root, "jev-schedule-unavailable-confidence");
+    const facade = answerFacade();
+    const result = await scheduleTaskKernelGraphWithJevV1(
+      root,
+      [candidate.taskId],
+      {},
+      { facade, egress },
+    );
+    const confidence = result.receipt.jevAdviceAudit?.transport.confidence;
+
+    expect(result.receipt.jevAdviceAudit).toMatchObject({
+      status: "skipped",
+      reasonCode: "insufficient-candidates",
+      transport: {
+        confidence: {
+          first_task: { status: "unavailable", reasonCode: "not-returned" },
+        },
+      },
+    });
+    const loaded = readTaskKernelScheduleReceiptV1(
+      root,
+      result.receipt.receiptFingerprint,
+    );
+    expect(loaded.integrity).toBe("fingerprint-verified");
+    expect(loaded.receipt.jevAdviceAudit).toEqual(
+      result.receipt.jevAdviceAudit,
+    );
+
+    if (!confidence || !result.receipt.jevAdviceAudit)
+      throw new Error("Unavailable confidence audit is missing");
+    const legacyEnvelope = JSON.parse(
+      JSON.stringify(result.receipt),
+    ) as typeof result.receipt;
+    const legacyAudit = legacyEnvelope.jevAdviceAudit;
+    if (!legacyAudit) throw new Error("Schedule receipt Jev audit is missing");
+    const legacyConfidence = Object.assign(Object.create(null), {
+      z_question: { status: "available", value: 0.75 },
+      a_question: { status: "unavailable", reasonCode: "not-returned" },
+    }) as NonNullable<typeof confidence>;
+    legacyEnvelope.jevAdviceAudit = {
+      ...legacyAudit,
+      transport: {
+        ...legacyAudit.transport,
+        confidence: legacyConfidence,
+      },
+    };
+    const legacyFingerprintBase = Object.fromEntries(
+      Object.entries(legacyEnvelope).filter(
+        ([key]) => key !== "receiptFingerprint",
+      ),
+    );
+    const legacyFingerprint = fingerprintTaskValue(legacyFingerprintBase);
+    const legacyReceipt = {
+      ...legacyEnvelope,
+      receiptFingerprint: legacyFingerprint,
+    };
+    const receiptDir = path.join(
+      root,
+      ".pactile",
+      ".runtime",
+      "scheduler",
+      "receipts",
+    );
+    fs.writeFileSync(
+      path.join(receiptDir, `${legacyFingerprint}.json`),
+      `${JSON.stringify(legacyReceipt, null, 2)}\n`,
+      { flag: "wx" },
+    );
+    expect(
+      readTaskKernelScheduleReceiptV1(root, legacyFingerprint),
+    ).toMatchObject({
+      integrity: "fingerprint-verified",
+      receipt: { receiptFingerprint: legacyFingerprint },
+    });
+
+    const tampered = JSON.parse(
+      fs.readFileSync(
+        path.join(receiptDir, `${legacyFingerprint}.json`),
+        "utf8",
+      ),
+    ) as typeof legacyReceipt;
+    const tamperedConfidence = tampered.jevAdviceAudit?.transport.confidence as
+      | Record<string, { status: string; reasonCode?: string }>
+      | undefined;
+    if (!tamperedConfidence?.a_question)
+      throw new Error("Legacy confidence entry is missing");
+    tamperedConfidence.a_question.reasonCode = "invalid";
+    fs.writeFileSync(
+      path.join(receiptDir, `${legacyFingerprint}.json`),
+      `${JSON.stringify(tampered, null, 2)}\n`,
+    );
+    expect(() =>
+      readTaskKernelScheduleReceiptV1(root, legacyFingerprint),
+    ).toThrow(/fingerprint does not match its contents/);
+  });
+
   it("advises only the first-wave eligible Run tie and binds adoption into the receipt", async () => {
     const root = makeGitRoot();
     const first = makeTask(root, "jev-schedule-a");
