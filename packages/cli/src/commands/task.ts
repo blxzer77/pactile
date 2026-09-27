@@ -107,32 +107,6 @@ import {
   type TaskArtifactStageV1,
 } from "../pactile/artifacts/index.js";
 
-interface PiTaskRunEvidence {
-  taskId: string;
-  taskRunId: string;
-  evidenceRefs: string[];
-  executionMeasurementRef: string;
-  assurance: "manager-owned-child-exit";
-  outcome: "settled";
-}
-
-function readPiTaskRunEvidence(
-  root: string,
-  taskDir: string,
-  taskRunId: string,
-): PiTaskRunEvidence | null {
-  const reader = (
-    piBridge as unknown as {
-      readPiTaskRunEvidence?: (
-        root: string,
-        taskDir: string,
-        taskRunId: string,
-      ) => PiTaskRunEvidence | null;
-    }
-  ).readPiTaskRunEvidence;
-  return typeof reader === "function" ? reader(root, taskDir, taskRunId) : null;
-}
-
 function option(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
@@ -825,7 +799,24 @@ function runResultTask(root: string, args: string[]): number {
       );
     }
     const piBound = run.host?.host === "pi";
-    let piEvidence: ReturnType<typeof readPiTaskRunEvidence> = null;
+    const hostEvidenceRefs = run.host
+      ? [
+          ...run.host.requestRefs,
+          ...run.host.eventRefs,
+          ...run.host.resultRefs,
+        ]
+      : [];
+    if (
+      !piBound &&
+      hostEvidenceRefs.some((reference) =>
+        reference.replaceAll("\\", "/").startsWith("pi-bridge/"),
+      )
+    ) {
+      throw new Error(
+        "Pi evidence references cannot complete a Run bound to another host",
+      );
+    }
+    let piEvidence: ReturnType<typeof piBridge.readPiTaskRunEvidence> = null;
     if (piBound) {
       if (
         run.host?.role !== "implement" ||
@@ -835,7 +826,7 @@ function runResultTask(root: string, args: string[]): number {
           "Pi Run completion requires implement role and manager-owned-child-exit assurance",
         );
       }
-      piEvidence = readPiTaskRunEvidence(root, dir, runId);
+      piEvidence = piBridge.readPiTaskRunEvidence(root, dir, runId);
       if (!piEvidence) {
         throw new Error(
           "Pi Run has no valid settled host-stop and persisted result receipt; it cannot be recorded completed",

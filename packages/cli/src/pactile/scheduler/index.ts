@@ -49,6 +49,7 @@ export {
   acquireTaskKernelRunDispatchV1,
   assertTaskKernelRunDispatchLeaseV1,
   assertTaskKernelRunDispatchPreSpawnV1,
+  readPiRunSettlementSealV1,
   releaseTaskKernelRunDispatchV1,
   validateTaskKernelRunDispatchStopProofV1,
   type TaskKernelRunDispatchRequestV1,

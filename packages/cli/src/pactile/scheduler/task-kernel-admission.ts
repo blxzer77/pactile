@@ -176,6 +176,67 @@ type DispatchLease = ProjectWriteLeaseRecordV1 & {
 const ADMISSION_SCHEMA_VERSION = 1;
 const STOP_PROOF_SCOPE = "task-kernel-v2-run-dispatch-stop";
 
+const PI_RUN_OUTCOMES: readonly string[] = [
+  "settled",
+  "needs_review",
+  "failed",
+  "cancelled",
+  "timed_out",
+  "interrupted",
+];
+
+export interface PiRunSettlementSealV1 {
+  outcome: string;
+  tool_errors: number;
+  started_at: string;
+  ended_at: string;
+  elapsed_ms: number;
+  result_file: string | null;
+  result_sha256: string | null;
+}
+
+export function readPiRunSettlementSealV1(
+  runRecord: Record<string, unknown>,
+): PiRunSettlementSealV1 | null {
+  const outcome = runRecord.outcome;
+  const toolErrors = runRecord.tool_errors;
+  const startedAt = runRecord.started_at;
+  const endedAt = runRecord.ended_at;
+  const elapsedMs = runRecord.elapsed_ms;
+  const resultFile = runRecord.result_file;
+  const resultSha256 = runRecord.result_sha256;
+  if (
+    typeof outcome !== "string" ||
+    !PI_RUN_OUTCOMES.includes(outcome) ||
+    typeof toolErrors !== "number" ||
+    !Number.isSafeInteger(toolErrors) ||
+    toolErrors < 0 ||
+    typeof startedAt !== "string" ||
+    !Number.isFinite(Date.parse(startedAt)) ||
+    typeof endedAt !== "string" ||
+    !Number.isFinite(Date.parse(endedAt)) ||
+    typeof elapsedMs !== "number" ||
+    !Number.isSafeInteger(elapsedMs) ||
+    elapsedMs < 0 ||
+    (typeof resultFile !== "string" && resultFile !== null) ||
+    (typeof resultFile === "string" && !resultFile.trim()) ||
+    (typeof resultSha256 !== "string" && resultSha256 !== null) ||
+    (typeof resultSha256 === "string" && !/^[a-f0-9]{64}$/u.test(resultSha256)) ||
+    (resultFile === null) !== (resultSha256 === null)
+  ) {
+    return null;
+  }
+  return {
+    outcome,
+    tool_errors: toolErrors,
+    started_at: startedAt,
+    ended_at: endedAt,
+    elapsed_ms: elapsedMs,
+    result_file: resultFile,
+    result_sha256: resultSha256,
+  };
+}
+
 export interface TaskKernelRunDispatchStopProofV1 {
   schema_version: 1;
   scope: typeof STOP_PROOF_SCOPE;
@@ -201,6 +262,7 @@ export interface TaskKernelRunDispatchStopProofV1 {
   request_fingerprint: string;
   native_receipt_ref: string;
   native_receipt_fingerprint: string;
+  native_run_settlement_fingerprint?: string;
 }
 
 function relative(root: string, file: string): string {
@@ -692,8 +754,14 @@ function verifyPiHostStopProof(
     nativeReceipt.process_stop_receipt,
     "Pi process stop receipt",
   );
+  const runSettlementSeal = readPiRunSettlementSealV1(runRecord);
   const processExit = asRecord(stop.processExit, "Pi process exit evidence");
   if (
+    !runSettlementSeal ||
+    typeof proof.native_run_settlement_fingerprint !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(proof.native_run_settlement_fingerprint) ||
+    proof.native_run_settlement_fingerprint !==
+      fingerprintTaskValue(runSettlementSeal) ||
     proof.source !== "pi-host" ||
     proof.disposition !== "native-terminal" ||
     owner.host !== "pi" ||
@@ -780,27 +848,30 @@ function verifyStopProof(
     "dispatch stop proof",
   ) as unknown as TaskKernelRunDispatchStopProofV1;
   const { proof_fingerprint: storedProofFingerprint, ...proofBase } = proof;
+  const proofKeys = [
+    "schema_version",
+    "scope",
+    "proof_fingerprint",
+    "lease_id",
+    "task_id",
+    "run_id",
+    "schedule_receipt_fingerprint",
+    "admission_receipt_fingerprint",
+    "source",
+    "disposition",
+    "writer_exited",
+    "owner",
+    "request_ref",
+    "request_fingerprint",
+    "native_receipt_ref",
+    "native_receipt_fingerprint",
+  ];
+  if (proof.source === "pi-host")
+    proofKeys.push("native_run_settlement_fingerprint");
   if (
     proof.schema_version !== 1 ||
     proof.scope !== STOP_PROOF_SCOPE ||
-    !hasExactKeys(proof as unknown as Record<string, unknown>, [
-      "schema_version",
-      "scope",
-      "proof_fingerprint",
-      "lease_id",
-      "task_id",
-      "run_id",
-      "schedule_receipt_fingerprint",
-      "admission_receipt_fingerprint",
-      "source",
-      "disposition",
-      "writer_exited",
-      "owner",
-      "request_ref",
-      "request_fingerprint",
-      "native_receipt_ref",
-      "native_receipt_fingerprint",
-    ]) ||
+    !hasExactKeys(proof as unknown as Record<string, unknown>, proofKeys) ||
     !hasExactKeys(proof.owner as unknown as Record<string, unknown>, [
       "host",
       "role",

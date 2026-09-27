@@ -35,7 +35,10 @@ import {
   type PiProcessExitEvidence,
   type PiV2RunDispatch,
 } from "./v2-dispatch.js";
-export { readPiHostStopReceipt } from "./v2-dispatch.js";
+export {
+  readPiHostStopReceipt,
+  readPiTaskRunEvidence,
+} from "./v2-dispatch.js";
 
 export type PiRunOutcome =
   | "settled"
