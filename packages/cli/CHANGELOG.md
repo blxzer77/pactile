@@ -12,7 +12,7 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [Unreleased] - v0.6.0
+## [0.6.0] - 2026-09-28
 
 ### Changed
 
@@ -57,9 +57,12 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
   lifecycle, and simulated Pi/Codex paths. Live providers, desktop-host behavior,
   migration samples, and end-to-end acceptance are separate evidence gates.
 
-This entry describes the development target. No stable v0.6.0 package or tag has
-been published yet. Follow the [upgrade guide](../../docs/lifecycle/upgrade-and-migrate.md)
-and [release procedure](../../docs/governance/releasing.md) for acceptance.
+The accepted beta was `0.6.0-beta.4`: its tag Publish workflow succeeded,
+the npm package installed in a fresh local project, and `develop` CI passed on
+Ubuntu and Windows. Follow the
+[upgrade guide](../../docs/lifecycle/upgrade-and-migrate.md) and
+[release procedure](../../docs/governance/releasing.md) for adoption and
+promotion.
 
 ---
 
