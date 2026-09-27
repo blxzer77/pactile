@@ -651,7 +651,7 @@ describe("Run worktree manager", () => {
         ownerRunId: binding.ownerRunId,
         expectedHeadSha: git(binding.canonicalPath, "rev-parse", "HEAD"),
         targetBranch: "main",
-        command: { executable: "git", args: ["worktree", "remove", binding.canonicalPath], cwd: root },
+        command: { executable: "git", args: ["worktree", "remove", binding.canonicalPath], cwd: repoIdentity(root).root },
       },
     });
     expect(fs.existsSync(binding.canonicalPath)).toBe(true);

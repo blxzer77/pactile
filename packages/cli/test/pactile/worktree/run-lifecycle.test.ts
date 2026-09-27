@@ -857,7 +857,7 @@ describe("managed Run worktree reclamation", () => {
     expect(result.state, JSON.stringify(result)).toBe("reclaimed");
     expect(result.binding.cleanupLease?.riskDisclosure).toContain("ignored file");
     expect(removal).toHaveBeenCalledTimes(1);
-    expect(removal.mock.calls[0]?.slice(0, 2)).toEqual([root, prepared.workspace.canonicalPath]);
+    expect(removal.mock.calls[0]?.slice(0, 2)).toEqual([repoIdentity(root).root, prepared.workspace.canonicalPath]);
     expect(fs.existsSync(prepared.workspace.canonicalPath)).toBe(false);
     expect(hasRegisteredWorktree(root, prepared.workspace.canonicalPath)).toBe(false);
     const kernel = readKernel(root, prepared.taskDir);
