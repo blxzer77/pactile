@@ -18,7 +18,7 @@ policy remain explicit.
 Select capabilities during init only when the project needs them:
 
 ```bash
-pactile init --cursor --codex --capability codebase-retrieval -y
+pactile init --codex --capability codebase-retrieval -y
 pactile capability-smoke --json
 ```
 

@@ -27,15 +27,20 @@ vi.mock("node:child_process", () => ({
 // === Imports ===
 
 import { init } from "../../src/commands/init.js";
+import { readTaskKernel } from "../../src/core/task/index.js";
+import { runTaskCli } from "../../src/commands/task.js";
+import { scheduleTaskKernelGraph } from "../../src/pactile/scheduler/index.js";
 import { VERSION } from "../../src/constants/version.js";
 import { DIR_NAMES, FILE_NAMES, PATHS } from "../../src/constants/paths.js";
 import { frameworkDocs } from "../../src/templates/markdown/index.js";
-import { replacePythonCommandLiterals } from "../../src/configurators/shared.js";
+import { contextMdTemplate } from "../../src/templates/pactile/index.js";
+import { compileSessionPack } from "../../src/pactile/task/session-pack.js";
 import {
   PACTILE_BLOCK_END,
   PACTILE_BLOCK_START,
   extractBlock,
 } from "../../src/utils/agents-md.js";
+import { computeHash } from "../../src/utils/template-hash.js";
 import { execSync } from "node:child_process";
 import inquirer from "inquirer";
 
@@ -91,13 +96,13 @@ describe("init() integration", () => {
 
     // Core workflow structure
     expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(true);
-    expect(fs.existsSync(path.join(tmpDir, PATHS.SCRIPTS))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, PATHS.SCRIPTS))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, PATHS.WORKSPACE))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, PATHS.TASKS))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, PATHS.SPEC))).toBe(true);
 
-    // Default platforms: Cursor + Codex share host-neutral Pactile resources.
-    expect(fs.existsSync(path.join(tmpDir, ".cursor"))).toBe(true);
+    // Codex is the only active host; baseline native project support may be unavailable.
+    expect(fs.existsSync(path.join(tmpDir, ".cursor"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, ".codex"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, ".agents", "skills"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, ".agent", "workflows"))).toBe(false);
@@ -120,32 +125,31 @@ describe("init() integration", () => {
     expect(fs.existsSync(path.join(tmpDir, ".mcp.json"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, ".cursor", "mcp.json"))).toBe(false);
 
-    // ProjectionStore owns host surfaces: one Pactile command/rule/agent plus
-    // host-neutral shared skills. Retired alternate-client surfaces stay absent.
+    // No Cursor command, rule, or agent is installed.
     expect(
       fs.existsSync(
         path.join(tmpDir, ".cursor", "commands", "pactile.md"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       fs.existsSync(
         path.join(tmpDir, ".cursor", "rules", "pactile.mdc"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       fs.existsSync(
         path.join(tmpDir, ".cursor", "agents", "pactile.md"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, ".cursor", "skills"))).toBe(false);
   });
 
   it("#1f writes selected capability facts without bypassing ProjectionStore", async () => {
     await init({
       yes: true,
-      cursor: true,
+      codex: true,
       user: "dev",
-      capability: ["fast-context-mcp", "playwright"],
+      capability: ["fast-context-mcp", "fastctx"],
     });
 
     const capabilities = JSON.parse(
@@ -160,14 +164,14 @@ describe("init() integration", () => {
     };
     expect(capabilities.selected).toEqual([
       "codebase-retrieval",
-      "playwright-mcp",
+      "fastctx",
     ]);
     expect(capabilities.schema_version).toBe(3);
     expect(
       capabilities.capabilities["codebase-retrieval"]?.readiness_status,
     ).toBe("pending");
     expect(
-      capabilities.capabilities["playwright-mcp"]?.readiness_status,
+      capabilities.capabilities["fastctx"]?.readiness_status,
     ).toBe("pending");
 
     // Canonical capability facts are committed first. Init does not call the
@@ -180,39 +184,35 @@ describe("init() integration", () => {
       path.join(tmpDir, PATHS.TASKS, "00-bootstrap-guidelines", "prd.md"),
       "utf-8",
     );
-    expect(bootstrapPrd).toContain("## Capability readiness (required before archive)");
+    expect(bootstrapPrd).toContain(
+      "## Capability readiness (record before Review and Close)",
+    );
     expect(bootstrapPrd).toContain("`codebase-retrieval`");
-    expect(bootstrapPrd).toContain("`playwright-mcp`");
+    expect(bootstrapPrd).toContain("`fastctx`");
     expect(bootstrapPrd).toContain("watcher auto-syncs later edits");
   });
 
 
-  it("#1f.0 default init does NOT install optional skills (chrome-cdp absent)", async () => {
+  it("#1f.0 default init never writes the optional-skill directory", async () => {
     await init({ yes: true });
 
-    // 06-12 convention: assert the exact optional skill path never materializes.
-    expect(
-      fs.existsSync(path.join(tmpDir, ".cursor", "skills", "chrome-cdp")),
-    ).toBe(false);
+    // No optional skill ships today; the machinery must stay off by default.
     expect(fs.existsSync(path.join(tmpDir, ".cursor", "skills"))).toBe(false);
   });
 
   it("#1f.0a --with-optional fails before writing host or canonical state", async () => {
     await expect(
-      init({ yes: true, withOptional: ["chrome-cdp"] }),
+      init({ yes: true, withOptional: ["example-skill"] }),
     ).rejects.toThrow(/no longer writes host skill directories/);
     expect(fs.existsSync(path.join(tmpDir, ".cursor", "skills"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(false);
   });
 
-  it("#1f.1 records GitHub capability without persisting its token", async () => {
-    vi.stubEnv("GITHUB_TOKEN", "test-token");
-    vi.stubEnv("GITHUB_PERSONAL_ACCESS_TOKEN", "");
-
+  it("#1f.1 records fastctx without projecting a machine-local path", async () => {
     await init({
       yes: true,
-      cursor: true,
-      capability: ["github-mcp"],
+      codex: true,
+      capability: ["fastctx"],
     });
 
     const capabilities = JSON.parse(
@@ -221,13 +221,10 @@ describe("init() integration", () => {
         "utf-8",
       ),
     ) as { selected: string[] };
-    expect(capabilities.selected).toEqual(["github-mcp"]);
+    expect(capabilities.selected).toEqual(["fastctx"]);
 
-    const canonicalCapabilityBytes = fs.readFileSync(
-      path.join(tmpDir, DIR_NAMES.WORKFLOW, "capabilities.json"),
-      "utf-8",
-    );
-    expect(canonicalCapabilityBytes).not.toContain("test-token");
+    // fastctx declares no MCP server, and its stable binary lives under the
+    // user profile. init must not invent a project-level MCP entry for it.
     expect(fs.existsSync(path.join(tmpDir, ".cursor", "mcp.json"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, ".mcp.json"))).toBe(false);
   });
@@ -282,7 +279,7 @@ describe("init() integration", () => {
       return "";
     }) as typeof execSync);
 
-    await init({ yes: true, cursor: true });
+    await init({ yes: true, codex: true });
 
     expect(execSync).not.toHaveBeenCalledWith(
       "smart-search setup",
@@ -293,7 +290,7 @@ describe("init() integration", () => {
       fs.existsSync(
         path.join(tmpDir, ".cursor", "rules", "pactile.mdc"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(console.warn).toHaveBeenCalledWith(
       expect.stringMatching(/Smart Search readiness unverified/),
     );
@@ -386,7 +383,7 @@ describe("init() integration", () => {
 
     await init({
       yes: true,
-      cursor: true,
+      codex: true,
       capability: ["codebase-retrieval"],
     });
     expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(true);
@@ -394,7 +391,7 @@ describe("init() integration", () => {
       fs.existsSync(
         path.join(tmpDir, ".cursor", "rules", "pactile.mdc"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(console.warn).toHaveBeenCalledWith(
       expect.stringMatching(/codebase-retrieval capability unverified/),
     );
@@ -444,7 +441,7 @@ describe("init() integration", () => {
 
     await init({
       user: "test-dev",
-      cursor: true,
+      codex: true,
       capability: ["codebase-retrieval"],
     });
 
@@ -527,7 +524,7 @@ describe("init() integration", () => {
 
     await init({
       yes: true,
-      cursor: true,
+      codex: true,
       capability: ["codebase-retrieval"],
     });
     expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(true);
@@ -535,40 +532,44 @@ describe("init() integration", () => {
       fs.existsSync(
         path.join(tmpDir, ".cursor", "rules", "pactile.mdc"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(console.warn).toHaveBeenCalledWith(
       expect.stringMatching(/codebase-retrieval capability unverified/),
     );
   });
 
-  it("#1k continues init when GitHub MCP token env is not visible", async () => {
-    vi.stubEnv("GITHUB_TOKEN", "");
-    vi.stubEnv("GITHUB_PERSONAL_ACCESS_TOKEN", "");
-    vi.stubEnv("GH_TOKEN", "legacy-token");
+  it("#1k continues init when a selected capability is not adopted yet", async () => {
+    // fastctx readiness depends on a machine-local stable binary, so this
+    // asserts the outcome-agnostic contract: a capability that is declared but
+    // not adopted must be reported, never treated as a hard stop.
+    await init({ yes: true, codex: true, capability: ["fastctx"] });
 
-    await init({ yes: true, cursor: true, capability: ["github-mcp"] });
     expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(true);
     expect(
       fs.existsSync(
         path.join(tmpDir, ".cursor", "rules", "pactile.mdc"),
       ),
-    ).toBe(true);
-    expect(console.warn).toHaveBeenCalledWith(
-      expect.stringMatching(/github-mcp capability unverified/),
-    );
+    ).toBe(false);
+    const capabilities = JSON.parse(
+      fs.readFileSync(
+        path.join(tmpDir, DIR_NAMES.WORKFLOW, "capabilities.json"),
+        "utf-8",
+      ),
+    ) as { selected: string[] };
+    expect(capabilities.selected).toEqual(["fastctx"]);
   });
 
-  it("#2 single platform creates only that platform directory", async () => {
-    await init({ yes: true, cursor: true });
+  it("#2 Codex-only init does not create another host directory", async () => {
+    await init({ yes: true, codex: true });
 
-    expect(fs.existsSync(path.join(tmpDir, ".cursor"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, ".cursor"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, ".claude"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, ".codex"))).toBe(false);
     expect(
       fs.existsSync(
         path.join(tmpDir, ".cursor", "commands", "pactile.md"),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   
@@ -660,60 +661,16 @@ describe("init() integration", () => {
     ).toEqual(afterFirstReinit);
   });
 
-  it("#7 passes developer name to init_developer script", async () => {
+  it("#7 initializes identity and guidance without a Python probe", async () => {
     await init({ yes: true, user: "testdev" });
-
-    const calls = vi.mocked(execSync).mock.calls;
-    const match = calls.find(
-      ([cmd]) => typeof cmd === "string" && cmd.includes("init_developer.py"),
-    );
-    expect(match).toBeDefined();
-    const command = String((match as [unknown])[0]);
-    const expectedPythonCmd =
-      process.platform === "win32" ? "python" : "python3";
-    expect(command).toContain(`${expectedPythonCmd} "`);
-    expect(command).toContain('"testdev"');
-  });
-
-  it("#7b throws when the selected Python command is below 3.9", async () => {
-    // v0.5.7: init now tries a fallback chain (#236). Mock every candidate to
-    // return the same too-old version so all candidates fail uniformly.
-    vi.mocked(execSync).mockImplementation(
-      (() => "Python 3.8.18") as typeof execSync,
-    );
-
-    await expect(init({ yes: true, cursor: true })).rejects.toThrow(
-      /No supported Python command found.*Python 3\.8\.18 \(< 3\.9\)/s,
-    );
-    expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(false);
-  });
-
-  it("#7c throws when the selected Python command is missing", async () => {
-    // v0.5.7: init now tries a fallback chain (#236). Mock every candidate to
-    // throw "not found" so all candidates fail.
-    vi.mocked(execSync).mockImplementation((() => {
-      throw new Error("not found");
-    }) as typeof execSync);
-
-    await expect(init({ yes: true, cursor: true })).rejects.toThrow(
-      /No supported Python command found.*not found/s,
-    );
-    expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(false);
-  });
-
-  it("#7d renders the platform Python command into canonical generated text", async () => {
-    const expectedPythonCmd =
-      process.platform === "win32" ? "python" : "python3";
-
-    await init({ yes: true, cursor: true });
-
+    expect(fs.readFileSync(path.join(tmpDir, ".pactile", ".developer"), "utf8")).toContain("name=testdev");
+    expect(vi.mocked(execSync).mock.calls.every(([command]) => !/\bpython(?:3)?\b/i.test(String(command)))).toBe(true);
     const workspaceIndex = fs.readFileSync(
       path.join(tmpDir, PATHS.WORKSPACE, "index.md"),
       "utf-8",
     );
-    expect(workspaceIndex).toContain(
-      `${expectedPythonCmd} ./.pactile/scripts/init_developer.py`,
-    );
+    expect(workspaceIndex).toContain("pactile init --user <your-name>");
+    expect(workspaceIndex).not.toContain(".pactile/scripts/");
   });
 
   it("#8 writes correct version file", async () => {
@@ -777,10 +734,70 @@ describe("init() integration", () => {
       // same-version updates are a true no-op
       expect(
         fs.readFileSync(path.join(frameworkDir, doc.name), "utf-8"),
-      ).toBe(replacePythonCommandLiterals(doc.content));
+      ).toBe(doc.content);
     }
     expect(fs.existsSync(path.join(frameworkDir, "index.md"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, PATHS.MIDDLEWARE))).toBe(false);
+  });
+
+  it("generates a V2 Session Pack from the six current baseline contracts without V1 workflow instructions", async () => {
+    await init({ yes: true });
+    vi.stubEnv("PACTILE_CONTEXT_ID", "fresh_generated_v2");
+
+    const unselectedPack = compileSessionPack(tmpDir);
+    expect(unselectedPack).toMatchObject({ proposalModel: "task-kernel-v2" });
+    expect(unselectedPack.kernel).toMatchObject({ taskId: null, schemaVersion: null, revision: null, phase: null, condition: null, selected: false });
+    expect(unselectedPack).not.toHaveProperty("rigor");
+    expect(unselectedPack).not.toHaveProperty("topologyKind");
+    const unselectedLayers = unselectedPack.layers as { moduleIds?: string[]; text: string }[];
+    expect(unselectedLayers[0].text).toContain("Phase: Intake (no Task selected)");
+    expect(unselectedLayers[0].text).toContain("V2 Task Proposal");
+    expect(unselectedLayers[0].text).toContain("Create the Task only after the user agrees");
+    expect(unselectedLayers[1].moduleIds).toContain("intake-basic");
+    expect(JSON.stringify(unselectedPack)).not.toMatch(/Rigor=lite|topology=single|Open Proposal|Open approval|\bLite\b|\bFull\b|\bParent\b|\bChild\b/);
+
+    expect(runTaskCli([
+      "create", "Fresh generated V2", "--slug", "fresh-generated-v2", "--description", "Generated Session Pack acceptance",
+      "--deliverable", "A reviewable local result", "--delivery-level", "local-result", "--accept", "AC-1=The result is testable",
+    ], tmpDir)).toBe(0);
+    expect(runTaskCli(["select", "fresh-generated-v2"], tmpDir)).toBe(0);
+
+    const pack = compileSessionPack(tmpDir);
+    expect(pack.kernel).toMatchObject({ taskId: "fresh-generated-v2", schemaVersion: 2, phase: "define", deliveryLevel: "local-result" });
+    const activeContracts = pack.layers[1] as { moduleIds: string[]; text: string };
+    expect(activeContracts.moduleIds).toContain("define-basic");
+    expect(activeContracts.text).toContain("验收标准");
+    expect(activeContracts.text).not.toMatch(/pactile task (?:start-execution|archive)/i);
+
+    const baselineIds = ["intake-basic", "define-basic", "approval-personal", "execute-agent", "verify-basic", "close-basic"];
+    for (const id of baselineIds) {
+      const contract = fs.readFileSync(path.join(tmpDir, PATHS.MODULES, id, "contract.md"), "utf8");
+      expect(contract).not.toMatch(/\b(?:Lite|Full|Parent|Child)\b/);
+      expect(contract).not.toMatch(/pactile task (?:start-execution|archive)/i);
+    }
+
+    const templateHashes = JSON.parse(fs.readFileSync(path.join(tmpDir, PATHS.WORKFLOW, ".template-hashes.json"), "utf8")) as { hashes?: Record<string, string> };
+    const generatedWorkflow = fs.readFileSync(path.join(tmpDir, PATHS.WORKFLOW_GUIDE_FILE), "utf8");
+    expect(templateHashes.hashes?.[PATHS.WORKFLOW_GUIDE_FILE]).toBe(computeHash(generatedWorkflow));
+    for (const id of baselineIds) {
+      const contractPath = `${PATHS.MODULES}/${id}/contract.md`;
+      const contract = fs.readFileSync(path.join(tmpDir, contractPath), "utf8");
+      expect(templateHashes.hashes?.[contractPath]).toBe(computeHash(contract));
+    }
+
+    const workflow = generatedWorkflow;
+    const legacyBoundary = workflow.indexOf("## Compatibility boundary: explicit V1 legacy Tasks");
+    expect(legacyBoundary).toBeGreaterThan(0);
+    expect(workflow.slice(0, legacyBoundary)).not.toMatch(/pactile task (?:start-execution|archive)/i);
+    expect(workflow.slice(legacyBoundary)).toContain("pactile task start-execution <task> --approved");
+    expect(workflow.slice(legacyBoundary)).toContain("pactile task archive <task>");
+    expect(workflow.slice(legacyBoundary)).toContain("A CLI flag does not authenticate the caller");
+
+    // CONTEXT.md is a root template, outside the canonical lifecycle generation.
+    // Keep its source current without assuming fresh init publishes it.
+    expect(fs.existsSync(path.join(tmpDir, "CONTEXT.md"))).toBe(false);
+    expect(contextMdTemplate).toContain("## Task Kernel V2 terms");
+    expect(contextMdTemplate).not.toMatch(/Task Ladder|\bLite\b|\bFull\b|\bParent\b|\bChild\b/);
   });
 
   it("#10b spec/guides seeds stay init-only (8 guides + index; no moved docs, no maintainer runbooks)", async () => {
@@ -956,38 +973,58 @@ describe("init() integration", () => {
     const taskDir = path.join(tmpDir, PATHS.TASKS, "00-bootstrap-guidelines");
     expect(fs.existsSync(taskDir)).toBe(true);
 
-    const taskJson = JSON.parse(
-      fs.readFileSync(path.join(taskDir, "task.json"), "utf-8"),
+    const kernel = readTaskKernel({ root: tmpDir, taskDir, cwd: tmpDir });
+    expect(kernel.kind).toBe("task-kernel-v2");
+    if (kernel.kind !== "task-kernel-v2")
+      throw new Error("expected V2 bootstrap Task");
+    expect(kernel.kernel.identity.taskId).toBe("00-bootstrap-guidelines");
+    expect(kernel.kernel.phase).toBe("define");
+    expect(kernel.kernel.definition.deliveryLevel).toBe("documentation");
+    expect(kernel.kernel.definition.dependencies).toEqual([]);
+    expect(kernel.kernel.definition.acceptanceCriteria.length).toBeGreaterThan(
+      0,
     );
+    expect(kernel.kernel.runs).toEqual([]);
+    expect(kernel.kernel.reviews).toEqual([]);
+    expect(kernel.kernel.closure).toBeNull();
+    expect(fs.existsSync(path.join(taskDir, FILE_NAMES.TASK_JSON))).toBe(false);
 
-    // task.json.subtasks is canonical string[] (child task dir names);
-    // per-package checklist items now live in prd.md as markdown checkboxes.
-    expect(Array.isArray(taskJson.subtasks)).toBe(true);
-    expect(taskJson.subtasks).toEqual([]);
-
-    // Canonical shape: legacy current_phase / next_action must NOT appear
-    expect(taskJson.current_phase).toBeUndefined();
-    expect(taskJson.next_action).toBeUndefined();
-
-    // relatedFiles point to spec/<name>/
-    expect(taskJson.relatedFiles).toContain(".pactile/spec/core/");
-    expect(taskJson.relatedFiles).toContain(".pactile/spec/ui/");
+    // The new V2 Task is readable and schedulable as a proposal without creating a Run.
+    const scheduled = scheduleTaskKernelGraph(tmpDir, [
+      kernel.kernel.identity.taskId,
+    ]);
+    expect(scheduled.receipt.scope).toBe("task-kernel-v2");
+    expect(scheduled.receipt.candidateTaskIds).toEqual([
+      "00-bootstrap-guidelines",
+    ]);
+    expect(scheduled.receipt.taskKernelRevisions).toMatchObject({
+      "00-bootstrap-guidelines": 1,
+    });
+    expect(scheduled.receipt.plan.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ taskId: "00-bootstrap-guidelines" }),
+      ]),
+    );
+    const afterPlan = readTaskKernel({ root: tmpDir, taskDir, cwd: tmpDir });
+    expect(afterPlan.kind).toBe("task-kernel-v2");
+    if (afterPlan.kind === "task-kernel-v2")
+      expect(afterPlan.kernel.runs).toEqual([]);
 
     // prd.md mentions packages + renders per-package checklist items
     const prd = fs.readFileSync(path.join(taskDir, "prd.md"), "utf-8");
-    const expectedPythonCmd =
-      process.platform === "win32" ? "python" : "python3";
     expect(prd).toContain("core");
     expect(prd).toContain("ui");
     expect(prd).toContain("spec/");
     expect(prd).toContain("- [ ] Fill guidelines for core");
     expect(prd).toContain("- [ ] Fill guidelines for ui");
-    expect(prd).not.toContain(
-      `${expectedPythonCmd} ./.pactile/scripts/task.py finish`,
-    );
-    expect(prd).toContain(
-      `${expectedPythonCmd} ./.pactile/scripts/task.py archive 00-bootstrap-guidelines`,
-    );
+    expect(prd).not.toContain("pactile task finish");
+    expect(prd).toContain("candidate-bound independent Review");
+    expect(prd).toContain("No Run exists");
+    expect(prd).not.toMatch(/pactile task (?:start-execution|archive)/i);
+    expect(prd).not.toContain("pactile-implement");
+    expect(prd).not.toContain("pactile-check");
+    expect(prd).not.toContain("auto-injects");
+    expect(prd).not.toContain("Integrate?");
   });
 
   it("#16 --no-monorepo skips detection even with workspace config", async () => {
@@ -1099,7 +1136,7 @@ describe("init() integration", () => {
   });
 
   it("#19 init does not bypass ProjectionStore to create hook config", async () => {
-    await init({ yes: true, cursor: true });
+    await init({ yes: true, codex: true });
     expect(fs.existsSync(path.join(tmpDir, ".cursor", "hooks.json"))).toBe(false);
   });
 
@@ -1129,7 +1166,7 @@ describe("init() integration", () => {
       `# Project\n\n<!-- TRELLIS:START -->\n# upstream trellis block\n<!-- TRELLIS:END -->\n\n# User footer\n`,
     );
 
-    await init({ yes: true, cursor: true });
+    await init({ yes: true, codex: true });
 
     // Canonical state is created while the foreign tree remains byte-identical.
     expect(fs.existsSync(path.join(tmpDir, DIR_NAMES.WORKFLOW))).toBe(true);
@@ -1141,13 +1178,13 @@ describe("init() integration", () => {
       ),
     ).toBe("upstream-owned");
 
-    // Pactile adds its projection without overwriting unrelated foreign host
-    // files or claiming the upstream hook configuration.
+    // Pactile preserves unrelated foreign host files and does not create
+    // Cursor projection files or claim the upstream hook configuration.
     expect(
       fs.existsSync(
         path.join(tmpDir, ".cursor", "commands", "pactile.md"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     const hooks = JSON.parse(
       fs.readFileSync(path.join(tmpDir, ".cursor", "hooks.json"), "utf-8"),
     ) as { upstream?: boolean; hooks?: unknown };

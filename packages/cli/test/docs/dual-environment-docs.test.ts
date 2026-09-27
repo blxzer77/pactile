@@ -10,6 +10,8 @@ const repoRoot = path.resolve(cliRoot, "../..");
 const README_FILES = [
   path.join(repoRoot, "README.md"),
   path.join(repoRoot, "README.zh-CN.md"),
+  path.join(cliRoot, "README.md"),
+  path.join(cliRoot, "README.zh-CN.md"),
 ];
 
 const MUTUAL_EXCLUSION_PATTERNS = [
@@ -22,33 +24,35 @@ function readUtf8(filePath: string): string {
   return fs.readFileSync(filePath, "utf-8");
 }
 
-describe("Cursor env docs after Cursor++ retirement (P23)", () => {
-  it("cursor docs mark Cursor++ retired and keep Native product path", () => {
+describe("retired host documentation (P24)", () => {
+  it("old documentation links route to current support and history", () => {
     const en = readUtf8(path.join(repoRoot, "docs/cursor.md"));
     const zh = readUtf8(path.join(repoRoot, "docs/cursor.zh-CN.md"));
 
-    expect(en).toMatch(/alternate client is retired/i);
-    expect(zh).toContain("替代客户端已废弃");
-    expect(en).toContain("history/cursor-plus-plus.md");
-    expect(zh).toContain("history/cursor-plus-plus.zh-CN.md");
-    expect(en).toContain("Native Cursor");
+    expect(en).toMatch(/former host adapter has been\s+removed/);
+    expect(zh).toContain("原宿主适配器已移除");
     expect(en).toContain("hosts/cursor.md");
+    expect(en).toContain("hosts/cursor.zh-CN.md");
+    expect(zh).toContain("hosts/cursor.md");
     expect(zh).toContain("hosts/cursor.zh-CN.md");
-    expect(en).not.toMatch(/cstl init --cursor --cursor2plus/);
-    expect(zh).not.toMatch(/cstl init --cursor --cursor2plus/);
+    expect(en).not.toMatch(/pactile\s+detach\s+cursor/i);
+    expect(zh).not.toMatch(/pactile\s+detach\s+cursor/i);
   });
 
-  it("README files do not offer live Cursor++ install steps", () => {
+  it("README files offer only Codex installation", () => {
     for (const readmePath of README_FILES) {
       const content = readUtf8(readmePath);
-      expect(content, readmePath).toMatch(/retired|已废弃|Native/);
-      expect(content, readmePath).not.toMatch(
-        /cstl init --cursor --cursor2plus/,
-      );
+      expect(content, readmePath).toContain("pactile init --codex -y");
+      expect(content, readmePath).not.toMatch(/pactile init --cursor/);
       expect(content, readmePath).not.toMatch(/patch_wpelc8\.py --apply/);
       for (const pattern of MUTUAL_EXCLUSION_PATTERNS) {
         expect(content, readmePath).not.toMatch(pattern);
       }
+    }
+    for (const readmePath of README_FILES) {
+      const content = readUtf8(readmePath);
+      expect(content, readmePath).not.toMatch(/\bCursor\b/);
+      expect(content, readmePath).not.toMatch(/pactile\s+detach\s+cursor/i);
     }
   });
 

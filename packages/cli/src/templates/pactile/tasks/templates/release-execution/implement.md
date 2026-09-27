@@ -21,7 +21,7 @@ quality_gates:
 4. On approval only, run approved release commands.
 5. Run post-publish smoke and registry verification.
 6. Write `handoff.md` (**Published** / **Not published** / residual risks).
-7. `task.py validate` and archive when complete.
+7. `pactile task validate` and archive when complete.
 
 ## Validation
 

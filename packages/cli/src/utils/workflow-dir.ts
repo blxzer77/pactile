@@ -2,7 +2,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { resolveLegacyWorkflowDirName } from "../pactile/runtime/paths.js";
 
-/** Pre-0.3.1 cursor-trellis runtime directory (upstream Trellis still uses this name). */
+/** Legacy workflow root retained as a read-only migration input. */
 export const LEGACY_WORKFLOW_DIR = ".trellis";
 export const LEGACY_CSTL_WORKFLOW_DIR = ".cstl";
 export const CANONICAL_WORKFLOW_DIR = ".pactile";

@@ -8,7 +8,7 @@
 #-------------------------------------------------------------------------------
 
 # Commit message used when auto-committing journal/index changes
-# after running add_session.py
+# after running pactile session add
 session_commit_message: "chore: record journal"
 
 # Maximum lines per journal file before rotating to a new one
@@ -20,7 +20,7 @@ max_journal_lines: 2000
 
 # Auto-commit behavior for session journal + task archive operations.
 # - true (default): scripts auto-stage and auto-commit journal / task changes
-#   after add_session.py / task.py archive runs.
+#   after pactile session add / pactile task archive runs.
 # - false: scripts do not touch git. Files (journal-*.md, task archive moves)
 #   are still written to disk; you decide whether to git add / commit.
 #
@@ -97,34 +97,15 @@ max_journal_lines: 2000
 #-------------------------------------------------------------------------------
 # Smart Search CLI (optional per-machine override)
 #-------------------------------------------------------------------------------
-# run_smart_search.py resolves: env PACTILE_SMART_SEARCH_COMMAND, then this
+# The Smart Search adapter resolves env PACTILE_SMART_SEARCH_COMMAND, then this
 # setting, then PATH, then node_modules/.bin and repo wrappers. No .runtime cache.
 #
 # smart_search:
 #   command: smart-search
 
 #-------------------------------------------------------------------------------
-# Cursor subagent dispatch (documentation only — not Cursor product settings)
+# Codex desktop task bridge (CLI and App-native tools; no config switch)
 #-------------------------------------------------------------------------------
-# See .pactile/framework/cursor-subagent-policy.md
-#
-# cursor:
-#   subagent_dispatch:
-#     mode: agent
-#     model_policy: cursor-configured
-#   child_worker:
-#     mode: separate_writable_agent_session
-#     reuse_policy: true
-
-#-------------------------------------------------------------------------------
-# Codex (dispatch behavior)
-#-------------------------------------------------------------------------------
-# Codex-only knob; other platforms ignore it. Default ("inline") makes the
-# main Codex agent edit code directly because Codex sub-agents run with
-# `fork_turns="none"` isolation and can't inherit the parent session's
-# task context. Set to "sub-agent" to opt into the legacy dispatch model
-# (main agent spawns pactile-implement / pactile-check / pactile-research
-# sub-agents).
-#
-# codex:
-#   dispatch_mode: inline  # or "sub-agent" to dispatch pactile-* sub-agents
+# Use `pactile codex prepare|receipt|status` for native desktop task requests
+# and host-reported receipts. Pactile does not dispatch Codex subagents. See
+# .pactile/framework/codex-worker-dispatch.md.

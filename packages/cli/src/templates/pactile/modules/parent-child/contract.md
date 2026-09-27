@@ -42,4 +42,4 @@ Agent 看见：
 
 ## 不得带走
 
-Kernel 的 `topology` / `parent_id` / 合法 Integrate 边（Kernel 单写）；工人派工（`worker-orchestration`）；Git worktree 命令细节（`vcs-integration`，本块只要求 Child 可隔离交付）；跨窗 `/pactile-handoff`（`session-transfer`）；池条目（`candidate-pool`）。
+Kernel 的 `topology` / `parent_id` / 合法 Integrate 边（Kernel 单写）；工人派工（`worker-orchestration`）；Git worktree 命令细节（`vcs-integration`，本块只要求 Child 可隔离交付）；跨窗 `/pactile-handoff`（`session-transfer`）。

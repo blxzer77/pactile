@@ -1,0 +1,516 @@
+/** Verify that one sealed tarball installs and runs with Node as its runtime. */
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+import { createCommandRunner } from "./release-guard.js";
+import { assertNoPythonOrPiOnPath } from "./assert-no-python-on-path.js";
+import {
+  inspectReleaseTarball,
+  prepareReleaseArtifacts,
+  readPreparedReleaseArtifacts,
+} from "./release-validation.js";
+import {
+  assertCredentialFreePreparation,
+  readPackageInfo,
+} from "./publish-packages.js";
+import type { CommandRunner, PackageInfo } from "./types.js";
+import { resolveCliPackageRoot } from "./script-paths.js";
+
+const NODE_ENGINE = ">=20.0.0";
+const EXPECTED_BINS = {
+  pactile: "dist/bin/pactile.js",
+  cstl: "dist/bin/cstl.js",
+};
+
+export function assertSinglePackageContract(packedPackage: {
+  name: string;
+  version: string;
+  engines?: { node?: string };
+  bin?: Record<string, unknown>;
+  exports?: Record<string, unknown>;
+  dependencies?: Record<string, unknown>;
+  optionalDependencies?: Record<string, unknown>;
+}) {
+  if (packedPackage.name !== "@blxzer/pactile") {
+    throw new Error(
+      `Expected one @blxzer/pactile tarball, got ${packedPackage.name}.`,
+    );
+  }
+  if (packedPackage.engines?.node !== NODE_ENGINE) {
+    throw new Error(`Pactile must declare Node ${NODE_ENGINE}.`);
+  }
+  for (const [name, target] of Object.entries(EXPECTED_BINS)) {
+    const binTarget = packedPackage.bin?.[name];
+    if (
+      typeof binTarget !== "string" ||
+      binTarget.replace(/^\.\//, "") !== target
+    ) {
+      throw new Error(`Packed Pactile bin ${name} must point to ${target}.`);
+    }
+  }
+  if (
+    packedPackage.bin?.["smart-search"] !== undefined ||
+    packedPackage.dependencies?.["@blxzer/smart-search"] !== undefined ||
+    packedPackage.optionalDependencies?.["@blxzer/smart-search"] !== undefined
+  ) {
+    throw new Error(
+      "Smart Search is an external Middleware Provider, not a Pactile bin or package dependency.",
+    );
+  }
+  const actualBins = Object.keys(packedPackage.bin ?? {}).sort();
+  const expectedBins = Object.keys(EXPECTED_BINS).sort();
+  if (JSON.stringify(actualBins) !== JSON.stringify(expectedBins)) {
+    throw new Error(
+      `Pactile must expose exactly these bins: ${expectedBins.join(", ")}.`,
+    );
+  }
+  for (const subpath of ["./core", "./core/task", "./core/compat"]) {
+    if (!packedPackage.exports?.[subpath]) {
+      throw new Error(`Packed Pactile is missing ${subpath}.`);
+    }
+  }
+  return packedPackage.version;
+}
+
+function runtimeEnvironment(root, userConfig) {
+  const bin = path.join(root, "node-only-bin");
+  fs.mkdirSync(bin);
+  const launcher = path.join(
+    bin,
+    process.platform === "win32" ? "node.exe" : "node",
+  );
+  if (process.platform === "win32") fs.copyFileSync(process.execPath, launcher);
+  else fs.symlinkSync(process.execPath, launcher);
+  const systemPath =
+    process.platform === "win32"
+      ? `${bin};${path.join(process.env.SystemRoot ?? "C:\\Windows", "System32")}`
+      : bin;
+  return {
+    PATH: systemPath,
+    Path: systemPath,
+    NODE_AUTH_TOKEN: undefined,
+    NPM_TOKEN: undefined,
+    NPM_CONFIG_USERCONFIG: userConfig,
+    PYTHON: undefined,
+    PYTHON3: undefined,
+    PYTHONHOME: undefined,
+    PYTHONPATH: undefined,
+    PY_PYTHON: undefined,
+    UV_PYTHON: undefined,
+    VIRTUAL_ENV: undefined,
+    CONDA_PREFIX: undefined,
+  };
+}
+
+export function createNodeOnlyInstallEnvironment(root, userConfig) {
+  const nodeBin = path.join(root, "node-only-install-bin");
+  fs.mkdirSync(nodeBin, { recursive: true });
+  const nodeExecutable = path.join(
+    nodeBin,
+    process.platform === "win32" ? "node.exe" : "node",
+  );
+  if (process.platform === "win32") {
+    fs.copyFileSync(process.execPath, nodeExecutable);
+  } else {
+    fs.symlinkSync(process.execPath, nodeExecutable);
+  }
+  const supportBin = path.join(root, "node-only-install-tools");
+  fs.mkdirSync(supportBin, { recursive: true });
+  if (process.platform !== "win32") {
+    fs.symlinkSync("/bin/sh", path.join(supportBin, "sh"));
+  }
+  const pathEntries = [nodeBin, supportBin];
+  if (process.platform === "win32") {
+    pathEntries.push(
+      path.join(process.env.SystemRoot ?? "C:\\Windows", "System32"),
+    );
+  }
+  const restrictedPath = pathEntries.join(path.delimiter);
+  return {
+    PATH: restrictedPath,
+    Path: restrictedPath,
+    PATHEXT: process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
+    NODE_AUTH_TOKEN: undefined,
+    NPM_TOKEN: undefined,
+    NPM_CONFIG_USERCONFIG: userConfig,
+    NPM_CONFIG_CACHE: path.join(root, "npm-cache"),
+    npm_config_ignore_scripts: undefined,
+    NPM_CONFIG_IGNORE_SCRIPTS: undefined,
+    PYTHON: undefined,
+    PYTHON3: undefined,
+    PYTHONHOME: undefined,
+    PYTHONPATH: undefined,
+    PY_PYTHON: undefined,
+    UV_PYTHON: undefined,
+    VIRTUAL_ENV: undefined,
+    CONDA_PREFIX: undefined,
+  };
+}
+
+export function resolveNpmCliPath({
+  executablePath = process.execPath,
+  platform = process.platform,
+  isFile = (candidate: string) => {
+    try {
+      return fs.statSync(candidate).isFile();
+    } catch {
+      return false;
+    }
+  },
+}: {
+  executablePath?: string;
+  platform?: NodeJS.Platform;
+  isFile?: (candidate: string) => boolean;
+} = {}): string {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const nodeHome = pathApi.dirname(executablePath);
+  const nodePrefix = pathApi.resolve(nodeHome, "..");
+  const candidates = [
+    // Windows Node distributions bundle npm beside node.exe.
+    pathApi.join(nodeHome, "node_modules", "npm", "bin", "npm-cli.js"),
+    // setup-node, nvm, official Unix archives, and Homebrew use the Node prefix.
+    pathApi.join(nodePrefix, "lib", "node_modules", "npm", "bin", "npm-cli.js"),
+    // Debian and Ubuntu can install npm under /usr/share/nodejs.
+    pathApi.join(nodePrefix, "share", "nodejs", "npm", "bin", "npm-cli.js"),
+  ];
+  const candidate = candidates.find(
+    (value): value is string =>
+      pathApi.isAbsolute(value) &&
+      pathApi.basename(value).toLowerCase() === "npm-cli.js" &&
+      isFile(value),
+  );
+  if (!candidate) {
+    throw new Error(
+      `Could not find npm-cli.js in the supported layouts for Node at ${executablePath}.`,
+    );
+  }
+  return pathApi.resolve(candidate);
+}
+
+function findGitExecutable(environmentPath = process.env.PATH ?? "") {
+  const executable = process.platform === "win32" ? "git.exe" : "git";
+  for (const folder of environmentPath.split(path.delimiter)) {
+    if (!folder) continue;
+    const candidate = path.resolve(folder, executable);
+    if (!fs.existsSync(candidate)) continue;
+    try {
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      // Continue looking through PATH if an entry disappears during the scan.
+    }
+  }
+  throw new Error(`Could not find ${executable} on the host PATH.`);
+}
+
+export function buildSealedTarballInstallArgs({
+  prefix,
+  cacheDir,
+  tarballPath,
+}: {
+  prefix: string;
+  cacheDir: string;
+  tarballPath: string;
+}) {
+  return [
+    "--prefix",
+    prefix,
+    "install",
+    "--no-audit",
+    "--no-fund",
+    "--no-save",
+    "--package-lock=false",
+    "--cache",
+    cacheDir,
+    "--registry=https://registry.npmjs.org/",
+    tarballPath,
+  ];
+}
+
+export async function verifyReleaseConformance({
+  runner = createCommandRunner(),
+  packageInfo = readPackageInfo(),
+  temporaryRoot,
+  log = console.log,
+}: {
+  runner?: CommandRunner;
+  packageInfo?: PackageInfo;
+  temporaryRoot?: string;
+  log?: (...data: unknown[]) => void;
+} = {}) {
+  assertCredentialFreePreparation(process.env);
+  const ownedTemporary = temporaryRoot === undefined;
+  const root =
+    temporaryRoot ??
+    fs.mkdtempSync(path.join(os.tmpdir(), "pactile-release-one-"));
+  const artifactDir = path.join(root, "artifacts");
+  const prefix = path.join(root, "install");
+  const cacheDir = path.join(root, "npm-cache");
+  const userConfig = path.join(root, "empty-npmrc");
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(userConfig, "", "utf8");
+  if (ownedTemporary) {
+    const relative = path.relative(
+      path.resolve(os.tmpdir()),
+      path.resolve(root),
+    );
+    if (
+      !relative.startsWith("pactile-release-one-") ||
+      relative.includes(path.sep)
+    ) {
+      throw new Error(
+        `Refusing to remove unexpected conformance directory: ${root}`,
+      );
+    }
+  }
+  try {
+    const prepared = prepareReleaseArtifacts({
+      runner,
+      repoRoot: path.resolve(packageInfo.cliDir, "../.."),
+      artifactDir,
+      packageInfo,
+      provenance: {
+        head: process.env.GITHUB_SHA ?? "local-conformance",
+        tag: null,
+      },
+    });
+    const sealed = readPreparedReleaseArtifacts({
+      runner,
+      artifactDir,
+      packageInfo,
+      expectedReleaseTag: null,
+      expectedManifestSha256: prepared.manifestSha256,
+    });
+    if (sealed.packages.length !== 1 || sealed.packages[0].key !== "cli") {
+      throw new Error(
+        "Release conformance requires exactly one Pactile tarball.",
+      );
+    }
+    const tarball = sealed.packages[0];
+    const { packedPackage } = inspectReleaseTarball({
+      runner,
+      tarballPath: tarball.tarballPath,
+      key: "cli",
+      expected: { name: packageInfo.cliName, version: packageInfo.cliVersion },
+    });
+    assertSinglePackageContract(packedPackage);
+
+    const offline = process.env.PACTILE_CONFORMANCE_OFFLINE === "1";
+    let installScriptsEnabled = false;
+    let noPythonOrPiOnInstallPath = false;
+    if (offline) {
+      // Local rehearsal: unpack the sealed bytes and borrow the already locked
+      // workspace dependencies. CI uses the clean npm install path below.
+      const target = path.join(prefix, "node_modules", "@blxzer", "pactile");
+      fs.mkdirSync(target, { recursive: true });
+      runner(
+        "tar",
+        [
+          "-xzf",
+          path.basename(tarball.tarballPath),
+          "-C",
+          target,
+          "--strip-components=1",
+        ],
+        { cwd: path.dirname(tarball.tarballPath), capture: true },
+      );
+      for (const name of Object.keys({
+        ...packedPackage.dependencies,
+        ...packedPackage.optionalDependencies,
+      })) {
+        const source = path.join(packageInfo.cliDir, "node_modules", name);
+        if (!fs.existsSync(source)) {
+          if (packedPackage.dependencies?.[name])
+            throw new Error(`Offline dependency is missing: ${name}`);
+          continue;
+        }
+        const destination = path.join(prefix, "node_modules", name);
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        fs.symlinkSync(
+          fs.realpathSync(source),
+          destination,
+          process.platform === "win32" ? "junction" : "dir",
+        );
+      }
+    } else {
+      fs.mkdirSync(prefix, { recursive: true });
+      const env = createNodeOnlyInstallEnvironment(root, userConfig);
+      const npmCliPath = resolveNpmCliPath();
+      const ignoreScripts = String(
+        runner(
+          process.execPath,
+          [npmCliPath, "config", "get", "ignore-scripts"],
+          { cwd: prefix, capture: true, env },
+        ),
+      ).trim();
+      if (ignoreScripts !== "false") {
+        throw new Error(
+          `Default npm install must run lifecycle scripts (ignore-scripts=${ignoreScripts}).`,
+        );
+      }
+      installScriptsEnabled = true;
+      assertNoPythonOrPiOnPath({ env });
+      noPythonOrPiOnInstallPath = true;
+      runner(
+        process.execPath,
+        [
+          npmCliPath,
+          ...buildSealedTarballInstallArgs({
+            prefix,
+            cacheDir,
+            tarballPath: tarball.tarballPath,
+          }),
+        ],
+        { capture: false, env },
+      );
+    }
+    const installed = path.join(prefix, "node_modules", "@blxzer", "pactile");
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(installed, "package.json"), "utf8"),
+    );
+    if (manifest.version !== packageInfo.cliVersion) {
+      throw new Error(
+        "Installed Pactile version differs from the sealed tarball.",
+      );
+    }
+    if (
+      fs.existsSync(
+        path.join(prefix, "node_modules", "@blxzer", "pactile-core"),
+      )
+    ) {
+      throw new Error(
+        "Single-package install unexpectedly pulled Pactile Core.",
+      );
+    }
+    const taskApi = await import(
+      pathToFileURL(path.join(installed, "dist", "core", "task", "index.js"))
+        .href
+    );
+    if (typeof taskApi.emptyTaskRecord !== "function") {
+      throw new Error("Installed Pactile Core task API is unavailable.");
+    }
+    const nodeOnly = runtimeEnvironment(root, userConfig);
+    const cli = path.join(installed, "dist", "bin", "pactile.js");
+    const version = String(
+      runner(process.execPath, [cli, "--version"], {
+        cwd: prefix,
+        capture: true,
+        env: nodeOnly,
+      }),
+    ).trim();
+    if (version !== packageInfo.cliVersion) {
+      throw new Error(
+        `Installed Pactile bin returned ${version}, expected ${packageInfo.cliVersion}.`,
+      );
+    }
+    runner(process.execPath, [cli, "task", "--help"], {
+      cwd: prefix,
+      capture: true,
+      env: nodeOnly,
+    });
+    const gitExecutable = findGitExecutable();
+    const acceptance = JSON.parse(
+      String(
+        runner(
+          process.execPath,
+          [
+            path.join(
+              resolveCliPackageRoot(import.meta.url),
+              ".tmp/p31-script-build/node-only-acceptance.js",
+            ),
+            installed,
+            path.join(root, "node-only-project"),
+            gitExecutable,
+          ],
+          { cwd: prefix, capture: true, env: nodeOnly },
+        ),
+      )
+        .trim()
+        .split(/\r?\n/)
+        .at(-1),
+    );
+    if (acceptance.nodeOnly !== true || acceptance.installedTarball !== true) {
+      throw new Error(
+        "Installed tarball did not complete Node-only product acceptance.",
+      );
+    }
+    if (
+      acceptance.taskContract !== "task-kernel-v2" ||
+      acceptance.v2TaskReadBack?.schemaVersion !== 2 ||
+      acceptance.v2TaskReadBack?.phase !== "execute" ||
+      acceptance.v2TaskReadBack?.runState !== "running"
+    ) {
+      throw new Error(
+        "Installed tarball did not complete the V2 Task create, run-start, and read-back smoke.",
+      );
+    }
+    if (
+      acceptance.v2PiParallel?.taskIds?.length !== 2 ||
+      acceptance.v2PiParallel?.scheduledWaveCount !== 1 ||
+      JSON.stringify(acceptance.v2PiParallel?.outcomes) !==
+        JSON.stringify(["settled", "settled"]) ||
+      JSON.stringify(acceptance.v2PiParallel?.schemaVersions) !==
+        JSON.stringify([2, 2]) ||
+      JSON.stringify(acceptance.v2PiParallel?.dispatchLeasesReleased) !==
+        JSON.stringify([true, true])
+    ) {
+      throw new Error(
+        "Installed tarball did not complete the V2 scheduler and parallel Pi dispatch smoke.",
+      );
+    }
+    if (acceptance.v2AfterUpdate?.status !== "passed") {
+      throw new Error(
+        `Installed tarball failed the update-to-V2 Task smoke (${acceptance.v2AfterUpdate?.errorCode ?? "unknown"}): ${acceptance.v2AfterUpdate?.errorMessage ?? "no details"}`,
+      );
+    }
+    if (
+      !acceptance.explicitBlockers?.some(
+        (blocker) =>
+          typeof blocker === "string" &&
+          blocker.includes("runParallelBatch remains a separate V1"),
+      )
+    ) {
+      throw new Error(
+        "Installed tarball acceptance must preserve the separate V1 runParallelBatch blocker.",
+      );
+    }
+    const result = {
+      version,
+      manifestSha256: sealed.manifestSha256,
+      packageOrder: ["cli"],
+      nodeOnlyVerified: true,
+      offlineDependencyFixture: offline,
+      installScriptsEnabled,
+      noPythonOrPiOnInstallPath,
+      acceptance,
+    };
+    log(
+      `ok release conformance ${version}: one sealed tarball; default npm lifecycle install=${installScriptsEnabled}, no Python or Pi on install PATH=${noPythonOrPiOnInstallPath}; fresh-init and post-update V2 Task scheduler/Pi acceptance, including two parallel fresh-init dispatches (${acceptance.endToEndMs} ms E2E).`,
+    );
+    log(
+      `baseline ms: CLI cold=${acceptance.coldStartMs}, subsequent=${acceptance.steadyCliMs}, Pi starts=${acceptance.piColdStartupMs?.join(",")}, V2 parallel=${acceptance.parallelWallMs}; offline dependency fixture=${offline}.`,
+    );
+    for (const blocker of acceptance.explicitBlockers) {
+      log(`unresolved legacy acceptance: ${blocker}`);
+    }
+    return result;
+  } finally {
+    if (ownedTemporary && fs.existsSync(root)) {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+    }
+  }
+}
+
+const invokedAs = process.argv[1];
+if (
+  invokedAs &&
+  import.meta.url === pathToFileURL(path.resolve(invokedAs)).href
+) {
+  verifyReleaseConformance().catch((error) => {
+    console.error(
+      `x ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exitCode = 1;
+  });
+}

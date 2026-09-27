@@ -9,7 +9,7 @@ import {
   type ExternalAssetSourceV1,
   type ExternalAssetScopeV1,
   type InstallHintV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 import {
   diagnostic,
   diagnostics,

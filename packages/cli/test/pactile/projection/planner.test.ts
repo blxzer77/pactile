@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseOwnershipLedgerV1,
   type OwnershipLedgerV1,
-} from "@blxzer/pactile-core";
+} from "../../../src/core/index.js";
 import {
   canonicalOwnershipLedger,
   fingerprintBytes,

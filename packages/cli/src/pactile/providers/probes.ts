@@ -1,11 +1,10 @@
 import type {
   AssuranceLevelV1,
   ProviderRuntimeFactV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 
 export const PACTILE_PROVIDER_PROBE_IDS = [
   "rg",
-  "cursor-semantic",
   "codex-explorer",
   "codegraph",
   "fast-context",
@@ -91,11 +90,6 @@ const DEFINITIONS: Readonly<Record<PactileProviderProbeId, ProviderProbeDefiniti
     providerId: "rg",
     assurance: "evidence-backed",
     maxAgeSeconds: 86_400,
-  },
-  "cursor-semantic": {
-    providerId: "cursor-semantic",
-    assurance: "best-effort",
-    maxAgeSeconds: 900,
   },
   "codex-explorer": {
     providerId: "codex-explorer",

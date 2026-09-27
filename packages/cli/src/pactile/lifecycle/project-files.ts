@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { canonicalizePactileJsonV1 } from "@blxzer/pactile-core";
+import { canonicalizePactileJsonV1 } from "../../core/index.js";
 import type { PactilePlatform } from "../registry.js";
 import { assertCanonicalWriteTarget } from "../runtime/paths.js";
 import type {
@@ -12,10 +12,14 @@ import type {
 const CANONICAL_PREFIX = ".pactile/";
 const EXCLUDED_PREFIXES = [
   ".pactile/runtime/",
+  ".pactile/.runtime/",
   ".pactile/tasks/",
   ".pactile/workspace/",
   ".pactile/spec/",
   ".pactile/middleware/",
+  // Pre-Node installations can retain locally edited Python scripts. They are
+  // compatibility residue, not files in a new active generation.
+  ".pactile/scripts/",
   ".pactile/.backup-",
 ] as const;
 const EXCLUDED_FILES = new Set([

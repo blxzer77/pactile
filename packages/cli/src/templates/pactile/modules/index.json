@@ -14,7 +14,6 @@
       "observability-local"
     ],
     "on-demand": [
-      "candidate-pool",
       "define-extended",
       "independent-check",
       "worker-orchestration",
@@ -68,11 +67,6 @@
       "id": "observability-local",
       "layer": "baseline",
       "contract": "observability-local/contract.md"
-    },
-    {
-      "id": "candidate-pool",
-      "layer": "on-demand",
-      "contract": "candidate-pool/contract.md"
     },
     {
       "id": "define-extended",

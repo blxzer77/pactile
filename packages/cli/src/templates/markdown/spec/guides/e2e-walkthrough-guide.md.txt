@@ -6,19 +6,19 @@
 
 ## 1. Non-goals
 
-- **不是 Close 硬门**：走查失败只报告；不得接入 `task.py archive` 硬失败，不得新增 Close gate。
+- **不是 Close 硬门**：走查失败只报告；不得接入 `pactile task archive` 硬失败，不得新增 Close gate。
 - **不是合成任务 runner 平台**：不实现完整编排器。约定 + 可选小脚本足够。
 - **不替代测试积木 / P08**：何时写软件测试、怎么写，见 [Test Discipline Guide](./test-discipline-guide.md)。
 - **不替代 P06**：closeout 要验多深仍由 Verification Strength Guide 管。本 guide 不重写 P06。
 - **不改投影实现**：`build_notes_projection` 行为由记忆层任务拥有（P41 / P42 wave2）。本 guide **引用**投影槽，不改它。
-- **不削弱 kernel 护栏**：`.pactile/scripts/common/test_task_gates.py` 等接口完整性测试保留；大改后仍应跑，但那是既有护栏，不是本走查新门。
+- **不削弱 Kernel 护栏**：Pactile CLI 的接口完整性测试保留；大改后仍应跑，但那是既有护栏，不是本走查新门。
 
 ## 2. When — large change vs skip
 
 **必走查（大改）** — 改动触及任一：
 
 - kernel 命令 / `kernel.json` extras 契约
-- `task.py archive` / `_archive_one_task` / 归档路径
+- `pactile task archive` / `_archive_one_task` / 归档路径
 - `notes_projection` 槽的写入或收集（白名单、落盘位置）
 - 任务生命周期接口（create / start-execution / record-gate / archive 的签名或记账语义）
 
@@ -34,8 +34,8 @@
 4. **archive** — 先非变更预检，再归档（或只做 `--check` 并在 `verify.md` 记录「稍后正式 archive」——预检不能代替投影落盘；**投影断言必须对着已归档的 `kernel.json`**）：
 
    ```powershell
-   python ./.pactile/scripts/task.py archive <task-dir> --check
-   python ./.pactile/scripts/task.py archive <task-dir>
+   pactile task archive <task-dir> --check
+   pactile task archive <task-dir>
    ```
 
 5. **检查 `notes_projection` 落盘** — 归档后的 `kernel.json` 里 **`projection.extras.notes_projection`** 存在且为对象。`summary` 为空不失败（P41：缺要点不挡 Close，只留槽）。
@@ -50,22 +50,17 @@
 - [ ] `prd.md` 存在且有可验收句子
 - [ ] 实现完成（合成任务允许 no-op / docs-only）
 - [ ] `verify.md` 有任务验证证据（P06 深度）
-- [ ] `python ./.pactile/scripts/task.py archive <task> --check` 可解释的通过或已记录的阻塞原因（阻塞时先修证据，不把走查脚本接到 archive）
+- [ ] `pactile task archive <task> --check` 可解释的通过或已记录的阻塞原因（阻塞时先修证据，不把走查脚本接到 archive）
 - [ ] 正式 `archive` 后，归档目录 `kernel.json` 的 `projection.extras` 含 `notes_projection`
-- [ ] 触及投影/归档代码时，另跑既有护栏（仍不是 Close 门）：
+- [ ] 触及投影/归档代码时，另跑 Pactile CLI 对应的 Node 测试（仍不是 Close 门）。
 
-  ```powershell
-  python -m pytest .pactile/scripts/common/test_task_gates.py -q
-  ```
-
-可选检查脚本（只打印 PASS/FAIL，不调用 archive，不接入硬门）：
+可选只读检查：
 
 ```powershell
-python ./.pactile/scripts/e2e_walkthrough_check.py
-python ./.pactile/scripts/e2e_walkthrough_check.py .pactile/tasks/archive/<yyyy-mm>/<task>
+pactile task archive <task-dir> --check
 ```
 
-无参数打印本清单；给定归档任务目录或 `kernel.json` 时，断言 `projection.extras.notes_projection` 槽存在。退出码 1 仅表示这次检查未看到槽——**不是** `task.py archive` 失败。
+归档后读取该任务的 `kernel.json`，确认 `projection.extras.notes_projection` 槽存在；这项人工走查不改变归档门槛。
 
 ## 5. What “projection landed” means
 

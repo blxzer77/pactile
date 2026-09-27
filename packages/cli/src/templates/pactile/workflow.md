@@ -1,64 +1,61 @@
-# Development Workflow
+# Task Workflow
 
-> **Human overview — not runtime SSOT.** Gates, Rigor, Topology, and Task state are Kernel / `task.json` projections. Do not parse this document as the runtime program of record.
+> Human overview only, not runtime SSOT. The unified Task Kernel reader determines the stored schema. For a V2 Task, `kernel.json` is the source of lifecycle state, definition, Runs, candidate snapshots, Reviews, dependencies, and Close history.
 
-## Interfaces
+The installed guide index is `.pactile/framework/index.md`. Load only the guide
+needed for the current decision; reading a guide does not change Kernel state.
 
-Constraints live in artifacts and Kernel records:
+## V2 Task contract
 
-| Interface | Role |
-| --- | --- |
-| `prd.md` | Definition and acceptance |
-| `implement.md` | Execution / verification contract (when present) |
-| `verify.md` | Evidence (when recorded) |
-| `task.json` | Status and metadata (accounting) |
-| `kernel.json` | Audit chain |
-| `task.py archive` | Close: `status=completed`, Kernel audit, notes projection |
+A V2 Task is one reviewable deliverable. Its Kernel definition records:
 
-## User commands
+- the deliverable;
+- measurable acceptance criteria (ACs);
+- one delivery level: `local-result`, `pull-request`, `merged-result`, or `documentation`;
+- hard dependency Task IDs. Every dependency must close successfully before this Task may start or close.
 
-- `pactile-continue` — resume the selected task. Details: `.pactile/framework/index.md`.
-- `pactile-finish-work` — closeout / archive path. Details: `.pactile/framework/index.md`.
-- `pactile-handoff` — session handoff (reports a temp path). Details: `.pactile/framework/index.md`.
-- `pactile-start` — only when the framework needs a refresh and no task is selected.
+Create a Task only after the user agrees to its proposal. Kernel V2 begins at Define; do not project V1 `task.json` phases onto a V2 Task.
 
-## Gates
+## Runs, scheduling, and Review
 
-- **Execute:** `python ./.pactile/scripts/task.py start-execution <task> --approved` (`--check` is preflight only; it does not impersonate approval).
-- **Close:** `python ./.pactile/scripts/task.py archive <task>` — writes `completed`, Kernel audit, and notes projection.
+A Task may have multiple Runs. Each attempt preserves its authorization, write-set snapshot, estimates and measurements, outcome, and (on completion) candidate snapshot. Retrying creates a new Run; it does not overwrite earlier evidence. The latest recorded Run must be completed and is the only one eligible for Review and Close.
 
-## Pointers
+Reviews are independent records bound to one Run and exact candidate ID/fingerprint. Close must use the latest Review for that candidate, and that verdict must pass with no blockers and evidence for every AC. If a new Run produces a new candidate, review that candidate separately.
 
-Start at `.pactile/framework/index.md`. Do not expand methodology here.
+Schedule work for completion-time benefit, subject to hard dependencies, authorization, and write conflicts. There is no fixed numeric concurrency cap. Overlapping write sets are sequential by default; explicit overlap needs recorded authorization and an integration plan. A scheduler suggestion cannot override Kernel gates or write-conflict admission.
 
-- Parallel first → `.pactile/framework/parallel-first-execution.md`
-- Pool → `.pactile/pool/`
-- Full Quality / graded verify → `.pactile/framework/verification-strength-guide.md`
-- Retrieval → `.pactile/framework/retrieval-daily-guide.md`
-- Subagent dispatch → `.pactile/framework/cursor-subagent-policy.md`
+For the detailed Task/Run scheduling, isolation, and optional host-dispatch rules, see [critical-path scheduling](./framework/parallel-first-execution.md). The filename is retained for compatibility with existing installations.
 
-<!--
-  Codex/Claude UserPromptSubmit parses [workflow-state:STATUS] blocks.
-  Bodies are status facts (1–2 sentences), not process teaching.
-  STATUS charset: [A-Za-z0-9_-]+
--->
+## V2 command surface
+
+Use the current Task commands for the stored V2 Kernel: `pactile task create`, `add-dependency`, `run-start`, `run-resume`, `run-result`, `review`, and `close`. Run `pactile task --help` for current arguments. The V2 flow does not use the V1 `start-execution` or directory-archive command.
+
+At Close, the delivery evidence level must equal the definition. `pull-request` and `merged-result` require an HTTPS reference; the other levels still require a nonempty evidence reference and summary. A mismatched level, unmet hard dependency, stale candidate, incomplete AC evidence, or a non-passing latest Review keeps the Task open.
+
+## Compatibility boundary: explicit V1 legacy Tasks
+
+The unified reader preserves existing legacy state and identifies it as V1; do not migrate it by merely editing this overview. Only when the reader identifies a V1 legacy Task should its V1-specific artifacts and commands be considered. For that legacy path, `pactile task start-execution <task> --approved` records the caller's approval declaration, and `pactile task archive <task>` performs the legacy close/archive operation. These commands and the `--approved` flag are not V2 instructions. A CLI flag does not authenticate the caller; human authorization must come from the actual authorized interaction and its evidence.
+
+## Session status hints
+
+The following blocks are compatibility hints for legacy V1 `task.json` status injection. They are not V2 Kernel phase instructions. V2 session guidance comes from the selected Task's compiled Session Pack and Kernel snapshot.
 
 [workflow-state:no_task]
-No task is selected.
-This status is an accounting fact, not a step list.
+No task is selected. This is a legacy status hint only; the V2 Session Pack determines whether a V2 Task is selected.
 [/workflow-state:no_task]
 
 [workflow-state:planning]
-Selected task status is `planning`.
-Constraints are `prd.md` and optional `design.md`/`implement.md`; Execute starts only after `task.py start-execution --approved`.
+Legacy V1 only: the task is in planning. Use its V1 artifacts and compatibility flow; do not apply this hint to a V2 Kernel Task.
 [/workflow-state:planning]
 
 [workflow-state:in_progress]
-Selected task status is `in_progress`.
-Implement against the approved artifacts; Close is `task.py archive` (Kernel audit plus notes projection).
+Legacy V1 only: the task is in progress. Its V1 artifacts remain the execution boundary; do not apply this hint to a V2 Kernel Task.
 [/workflow-state:in_progress]
 
+[workflow-state:review]
+Legacy V1 only: verification is pending under that task's legacy contract. V2 Review must bind to the exact candidate recorded in its Kernel.
+[/workflow-state:review]
+
 [workflow-state:completed]
-Task status is `completed`.
-`task.py archive` writes this status in the same call that moves the directory.
+Legacy V1 only: the task is complete under its recorded legacy lifecycle. A directory move is not a V2 Close.
 [/workflow-state:completed]

@@ -3,7 +3,7 @@
 English | [简体中文](skills.zh-CN.md)
 
 A Skill is a reusable capability surface, not a second workflow. Pactile may
-project a Tile into `.agents/skills/`, while Cursor or Codex supplies the host
+project a Tile into `.agents/skills/`, while Codex supplies the host
 binding that discovers it. The canonical Tile definition and task policy stay
 under `.pactile/`.
 

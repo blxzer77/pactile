@@ -5,7 +5,7 @@
 ## Pactile context / Pactile 上下文
 
 - Pactile version / 版本:
-- Host (`cursor`, `codex`, or both) / 宿主:
+- Host or executor (`codex`, `pi`, or both) / 宿主或执行端:
 - Capability mode and Provider (if any) / 能力 mode 与 Provider（如有）:
 - Task or issue:
 
@@ -15,7 +15,7 @@
 
 - [ ] Focused tests or docs smoke:
 - [ ] `pnpm typecheck` / `pnpm lint` as applicable:
-- [ ] Full Core + CLI suite (final release preflight only, if actually run):
+- [ ] Full single-package suite (final release preflight only, if actually run):
 - [ ] Ownership, projection, and rollback impact reviewed:
 
 ## Safety / 安全
@@ -24,3 +24,12 @@
 - [ ] Historical, foreign, borrowed, and modified resources are preserved.
 - [ ] No tag, publish, remote mutation, or destructive purge was run unless
       explicitly authorized by the release owner.
+
+## Release PR only / 仅 develop → main 发布 PR
+
+<!-- Fill these fields with actual evidence; leave blank for ordinary PRs. -->
+
+Beta tag:
+Beta validation:
+Beta acceptance:
+Post-beta changes:

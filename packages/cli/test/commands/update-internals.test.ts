@@ -17,10 +17,22 @@ import {
   collectTemplateFiles,
   loadUpdateSkipPaths,
   removeUpdateSkipPathsFromConfig,
+  retiredPythonScriptMigrations,
   shouldExcludeFromBackup,
   sortMigrationsForExecution,
 } from "../../src/commands/update.js";
 import { FILE_NAMES, PATHS } from "../../src/constants/paths.js";
+
+describe("retired Python migration paths", () => {
+  it("rejects traversal and only considers tracked scripts", () => {
+    const hash = "a".repeat(64);
+    expect(retiredPythonScriptMigrations({
+      ".pactile/scripts/task.py": hash,
+      ".pactile/scripts/../../user.py": hash,
+      ".pactile/tasks/user.py": hash,
+    }).map((item) => item.from)).toEqual([".pactile/scripts/task.py"]);
+  });
+});
 
 // =============================================================================
 // cleanupEmptyDirs
@@ -38,10 +50,9 @@ describe("cleanupEmptyDirs", () => {
   });
 
   it("removes empty subdirectory under managed path", () => {
-    // Create .cursor/commands/ (empty)
-    fs.mkdirSync(path.join(tmpDir, ".cursor", "commands"), { recursive: true });
-    cleanupEmptyDirs(tmpDir, ".cursor/commands");
-    expect(fs.existsSync(path.join(tmpDir, ".cursor", "commands"))).toBe(false);
+    fs.mkdirSync(path.join(tmpDir, ".codex", "generated"), { recursive: true });
+    cleanupEmptyDirs(tmpDir, ".codex/generated");
+    expect(fs.existsSync(path.join(tmpDir, ".codex", "generated"))).toBe(false);
   });
 
   it("does not remove non-empty directory", () => {
@@ -62,10 +73,9 @@ describe("cleanupEmptyDirs", () => {
   });
 
   it("[CR#1] does not delete managed root directories even if empty", () => {
-    // This is the bug that CR#1 identified: .cursor itself should never be deleted
-    fs.mkdirSync(path.join(tmpDir, ".cursor"), { recursive: true });
-    cleanupEmptyDirs(tmpDir, ".cursor");
-    expect(fs.existsSync(path.join(tmpDir, ".cursor"))).toBe(true);
+    fs.mkdirSync(path.join(tmpDir, ".codex"), { recursive: true });
+    cleanupEmptyDirs(tmpDir, ".codex");
+    expect(fs.existsSync(path.join(tmpDir, ".codex"))).toBe(true);
   });
 
   it("[CR#1] does not delete .pactile root even if empty", () => {
@@ -411,7 +421,7 @@ describe("collectMissingTemplateHashes", () => {
     expect(missing.get(modulePath)).toBe("# intake-basic\n");
   });
 
-  it("still records AGENTS.md when the file matches and the hash is missing", () => {
+  it("does not re-add excluded files or host projections after pruning", () => {
     const missing = collectMissingTemplateHashes(
       {
         unchangedFiles: [
@@ -421,11 +431,23 @@ describe("collectMissingTemplateHashes", () => {
             newContent: "block\n",
             status: "unchanged",
           },
+          {
+            path: "/tmp/.agents/skills/intake-basic/SKILL.md",
+            relativePath: ".agents/skills/intake-basic/SKILL.md",
+            newContent: "skill\n",
+            status: "unchanged",
+          },
+          {
+            path: "/tmp/.pactile/.gitignore",
+            relativePath: ".pactile/.gitignore",
+            newContent: "runtime/\n",
+            status: "unchanged",
+          },
         ],
       },
       {},
     );
-    expect(missing.get(FILE_NAMES.AGENTS)).toBe("block\n");
+    expect(missing.size).toBe(0);
   });
 
   it("skips unchanged files that already have a hash", () => {

@@ -25,7 +25,7 @@ Read the selected task artifacts in order:
 - `implement.md` if present
 
 ```bash
-python ./.pactile/scripts/get_context.py --mode packages
+pactile context --mode packages
 ```
 
 For each changed package/layer, read the spec index and follow its **Quality Check** section:
@@ -67,7 +67,7 @@ Follow `.pactile/framework/verification-strength-guide.md` for **graded** valida
 - [ ] **Lite:** focused validation on touched behavior recorded in `verify.md` (`Validation:` line + result)
 - [ ] **Full:** above + `Check evidence:` + `Reviewed change-set:` when contract requires code-review gate
 - [ ] New function / bug fix → add or update tests **when the project's norms and task scope require it** — not as automatic TDD ceremony
-- [ ] `python ./.pactile/scripts/task.py validate <task>` passing JSONL schema **≠** task acceptance; substantive `verify.md` signals still required
+- [ ] `pactile task validate <task>` passing JSONL schema **≠** task acceptance; substantive `verify.md` signals still required
 
 #### Fowler 12 Smells
 

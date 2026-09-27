@@ -8,7 +8,7 @@ import {
   parseMigrationPlanV1,
   type MigrationJournalV1,
   type MigrationPlanV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 import { GenerationStore, InstallStateStore } from "../runtime/stores.js";
 import {
   assertCanonicalWriteTarget,

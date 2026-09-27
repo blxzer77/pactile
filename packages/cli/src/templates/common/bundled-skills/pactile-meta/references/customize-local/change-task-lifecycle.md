@@ -1,15 +1,13 @@
 # Change Local Task Lifecycle
 
-Task lifecycle includes creation, selection, execution start, context configuration, archive, parent/child tasks, and lifecycle hooks. The default customization targets are `.pactile/tasks/`, `.pactile/config.yaml`, and `.pactile/scripts/`.
+Task lifecycle includes creation, selection, execution start, context configuration, archive, parent/child tasks, and lifecycle hooks. Project customization targets are `.pactile/tasks/` and `.pactile/config.yaml`; runtime behavior lives in the Pactile Node CLI.
 
 ## Read These Files First
 
 1. `.pactile/workflow.md`
 2. `.pactile/config.yaml`
-3. `.pactile/scripts/task.py`
-4. `.pactile/scripts/common/task_store.py`
-5. `.pactile/scripts/common/task_utils.py`
-6. The selected task's `.pactile/tasks/<task>/task.json`
+3. `pactile task dashboard` and `pactile task selected --source`
+4. The selected task's `.pactile/tasks/<task>/task.json`
 
 ## Common Needs And Edit Points
 
@@ -18,9 +16,9 @@ Task lifecycle includes creation, selection, execution start, context configurat
 | Automatically sync an external system after task creation | `hooks.after_create` in `.pactile/config.yaml`. |
 | Automatically update status after execution start | `hooks.after_start` in `.pactile/config.yaml`. |
 | Clean external resources after archive | `hooks.after_archive` in `.pactile/config.yaml`. |
-| Change default task fields | `.pactile/scripts/common/task_store.py`. |
-| Change task parsing/search | `.pactile/scripts/common/task_utils.py`. |
-| Change selected task behavior | `.pactile/scripts/common/active_task.py`. |
+| Change default task fields | Pactile CLI Node implementation (product change). |
+| Change task parsing/search | Pactile CLI Node implementation (product change). |
+| Change selected task behavior | Pactile CLI Node implementation and platform session bridge. |
 
 ## lifecycle hooks
 
@@ -29,11 +27,11 @@ Task lifecycle includes creation, selection, execution start, context configurat
 ```yaml
 hooks:
   after_create:
-    - "python3 .pactile/scripts/hooks/my_sync.py create"
+    - "node .pactile/hooks/my-sync.mjs create"
   after_start:
-    - "python3 .pactile/scripts/hooks/my_sync.py start"
+    - "node .pactile/hooks/my-sync.mjs start"
   after_archive:
-    - "python3 .pactile/scripts/hooks/my_sync.py archive"
+    - "node .pactile/hooks/my-sync.mjs archive"
 ```
 
 Hook commands receive the `TASK_JSON_PATH` environment variable, pointing to the task's `task.json`. Hook failures should usually warn, but not block the main task operation.
@@ -51,34 +49,30 @@ Example:
 }
 ```
 
-If standard fields really need to change, inspect every local script that reads `task.json`.
+If standard fields really need to change, update the Pactile CLI implementation and its contract tests.
 
 ## Change Selected Task
 
-Selected task is session-level state stored in `.pactile/.runtime/sessions/`. Do not fall back to a global `.current-task` model. If the user wants to change selected task behavior, edit:
+Selected task is session-level state stored in `.pactile/.runtime/sessions/`. Check `pactile task selected --source` and the platform session bridge when selection is lost. Do not fall back to a global `.current-task` model.
 
-- `.pactile/scripts/common/active_task.py`
-- platform hooks or shell session bridges
-- selected task descriptions in `.pactile/workflow.md`
+### `pactile task create` Does Not Select
 
-### `task.py create` Does Not Select
-
-`cmd_create` in `.pactile/scripts/common/task_store.py` writes the task directory and planning artifacts only. The behavior:
+`pactile task create` writes the task directory and planning artifacts only. The behavior:
 
 - The task's `status=planning` is written.
 - No selected-task pointer is written, even when session identity exists.
-- The user or AI selects the task later with `task.py select <dir>` when they explicitly choose to enter it.
+- The user or AI selects the task later with `pactile task select <dir>` when they explicitly choose to enter it.
 
 This keeps new sessions and bare task creation at `Selected task: none` until a live-session choice is made.
 
-If you fork `task.py` to add a new creation path (e.g. an external import that bypasses `cmd_create`), audit that it does not auto-select or auto-start the created task. The full status writer table is in `.pactile/spec/cli/backend/workflow-state-contract.md`.
+If you add a new creation path to the Pactile product, verify that it does not auto-select or auto-start the created task.
 
 ## Modification Steps
 
-1. Confirm the selected task with `python3 ./.pactile/scripts/task.py selected --source`.
+1. Confirm the selected task with `pactile task selected --source`.
 2. Read the selected task's `task.json` and confirm status and fields.
 3. For configuration needs, edit `.pactile/config.yaml` first.
-4. For script behavior needs, then edit `.pactile/scripts/`.
+4. For runtime behavior needs, change the Pactile product source and verify the Node CLI.
 5. If the AI flow changed, synchronize `.pactile/workflow.md`.
 
 ## Do Not

@@ -12,7 +12,7 @@ import {
   type MigrationJournalV1,
   type MigrationPlanV1,
   type OwnershipLedgerV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 import {
   runMigrationTransaction,
   type MigrationFileClassification,

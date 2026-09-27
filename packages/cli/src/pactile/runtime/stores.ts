@@ -6,7 +6,7 @@ import {
   fingerprintPactileContractV1,
   parseInstallStateV1,
   type InstallStateV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 import {
   RuntimeError,
   assertCanonicalWriteTarget,

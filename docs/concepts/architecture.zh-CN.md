@@ -2,7 +2,7 @@
 
 [English](architecture.md) | 简体中文
 
-Pactile 只有一个 canonical runtime，可以有多个宿主投影。这是架构的中心约束：Adapter 可以描述并协调宿主所需内容，但不能重新定义持久项目真相。
+Pactile 只有一个 canonical runtime 和可重建的 Codex 宿主投影。Adapter 可以描述并协调宿主所需内容，但不能重新定义持久项目真相。
 
 ## 组件
 
@@ -28,19 +28,19 @@ Tile catalog + task intent
         +------------- canonical commit --+
                                           v
                                 sealed .pactile generation
-                                   /                  \
-                           Cursor Adapter         Codex Adapter
-                                |                       |
-                         Projection Plan         Projection Plan
-                                \                       /
-                                  Ownership-aware Reconciler
+                                           |
+                                     Codex Adapter
+                                           |
+                                     Projection Plan
+                                           |
+                              Ownership-aware Reconciler
                                              |
                                  宿主文件 + bindings + receipts
                                              |
                                      Evidence + Trace
 ```
 
-每个 Adapter 都有独立结果和重试次数。因此 canonical generation 可以保持健康，而某一个 Adapter 处于 degraded；不会仅为了状态看起来一致而回滚已成功的 sibling Adapter。
+Adapter 有独立结果和重试次数。宿主投影处于 degraded 时，已提交的 canonical generation 仍可保持健康。
 
 ## 权威规则
 
@@ -51,6 +51,8 @@ Tile catalog + task intent
 5. 每次覆盖、恢复或删除都受 Ownership 与当前 bytes 检查约束。
 6. 外部资产和 Provider 保留原 owner、安装面、认证状态与删除边界。
 
+`.pactile/.runtime/` 保存本机会话选择和更新重试记录，属于项目内的私有运行状态，不进入 sealed generation。`update` 在 canonical lifecycle 完成后才写非 canonical 的项目模板文件；它先保存待写计划，写入前核对当前 bytes，失败时回滚已尝试的文件。重跑 `update` 只会在记录的 generation 仍为 active 时恢复待写计划；若 generation 已发生无法确认的变化，则要求人工核对。
+
 ## 故障隔离
 
 | 故障                                | 必须采取的行为                                                 |
@@ -58,13 +60,13 @@ Tile catalog + task intent
 | Tile 非法或请求扩大策略权限         | 调用前拒绝，并输出 diagnostics。                               |
 | Provider 缺席或探测过期             | 报告实际更低 assurance 或 degraded/unsupported，并给用户动作。 |
 | Canonical commit 失败               | 不启动 Adapter reconcile。                                     |
-| Commit 后一个 Adapter 失败          | 保留 canonical 真相与成功 sibling，留下可重试 receipt。        |
+| Commit 后 Adapter 失败              | 保留 canonical 真相，留下可重试 receipt。                       |
 | 当前宿主 bytes 与受管 snapshot 不同 | 保留并进入 review，不覆盖、不删除。                            |
 | 迁移中断                            | 根据 journal 与保留的 backup 恢复，不写旧源。                  |
 
 ## 用户场景
 
-一个项目先使用 Codex，后来增加 Cursor。Pactile 不会再建一份项目真相：它读取 active generation，生成 Cursor Projection Plan，识别已存在的共享 Skill 和 `AGENTS.md` block，增加 Cursor claimant，只写 Cursor 特定叶。以后分离 Cursor 时只移除该 claimant，Codex 继续保留共享资源。
+一个项目使用 Codex，且已有用户安装的 Skill。Pactile 读取 active generation，生成 Codex Projection Plan，并将该 Skill 记为 borrowed binding。分离 Codex 时移除其 claim，同时保留用户资产。
 
 ## 边界
 

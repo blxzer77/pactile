@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CapabilityBindingV1 } from "@blxzer/pactile-core";
+import type { CapabilityBindingV1 } from "../../../src/core/index.js";
 import { discoverSnapshot } from "../../../src/pactile/adoption/inventory.js";
 import { planBinding } from "../../../src/pactile/adoption/bindings.js";
 import { fingerprintBytes, planProjection } from "../../../src/pactile/projection/planner.js";

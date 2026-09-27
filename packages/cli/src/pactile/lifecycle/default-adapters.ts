@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { CapabilityBindingV1 } from "@blxzer/pactile-core";
+import type { CapabilityBindingV1 } from "../../core/index.js";
 import { planBinding } from "../adoption/bindings.js";
 import { discoverSnapshot } from "../adoption/inventory.js";
 import {
@@ -112,39 +112,14 @@ function buildProjection(
       surfaces: sharedSurfaces,
     },
   };
-  const composed =
-    platform === "cursor"
-      ? composeBatch2Plan({
-          ...common,
-          platform,
-          adapter: {
-            hostCapabilities: {
-              commands: true,
-              rules: true,
-              agents: true,
-              hooks: true,
-              mcp: true,
-            },
-            composition: ["commands", "rules", "agents"],
-            surfaces: [
-              ".cursor/commands/pactile.md",
-              ".cursor/rules/pactile.mdc",
-              ".cursor/agents/pactile.md",
-            ].map((targetPath) => ({
-              targetPath,
-              content: readUtf8(projectRoot, targetPath),
-            })),
-          },
-        })
-      : composeBatch2Plan({
-          ...common,
-          platform,
-          adapter: {
-            appReadiness: "ready",
-            composition: [],
-            surfaces: [],
-          },
-        });
+  const composed = composeBatch2Plan({
+    ...common,
+    adapter: {
+      appReadiness: "ready",
+      composition: [],
+      surfaces: [],
+    },
+  });
   if (
     (composed.status !== "ready" && composed.status !== "degraded") ||
     composed.projection === null

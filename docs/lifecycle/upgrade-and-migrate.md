@@ -22,3 +22,120 @@ record the evidence, and resolve it before `--force`.
 
 `pactile rollout --project <path> --dry-run --json` can aggregate previews for
 explicitly listed projects; it must not be used as an implicit global scan.
+
+<a id="p36-held-task-reconciliation"></a>
+## Held Task reconciliation after P36 import
+
+P36 imports legacy Task records through the project `update` command. Inspect the
+plan first, then apply the update. In an interactive terminal, confirm
+`pactile update` after review. The `--skip-all` example below is for a confirmed
+non-interactive update that should preserve every locally modified managed file:
+
+```bash
+pactile update --dry-run --json
+pactile update --skip-all --json
+pactile task list
+```
+
+`pactile task list` shows unresolved imported items as `needs definition` or
+`needs dependency coordination` and marks them `not runnable`. Add a missing
+definition or map dependencies only for those held Tasks. Use `--check` to
+inspect the reconciliation plan for one Task before applying it:
+
+```bash
+pactile legacy-task reconcile .pactile/tasks/09-26-v050-migration-sample \
+  --idempotency-key p36-migration-definition-2026-09-26 \
+  --activation-at 2026-09-26T12:00:00.000Z \
+  --deliverable "An explicitly defined migrated Task" \
+  --delivery-level local-result \
+  --accept "AC-1=The original Task source remains available" \
+  --accept "AC-2=The V2 Task begins without inferred lifecycle history" \
+  --check
+```
+
+The `AC-1=` and `AC-2=` prefixes in these examples are literal parts of the
+`--accept` description values, not submitted criterion IDs; reconciliation
+generates its own V2 criterion IDs.
+
+Fill the definition from the source record and project evidence. A
+`needs-coordination` Task also requires an explicit
+`--resolve-dependency "<legacy-reference>=<existing-task-id>"` for every pending
+reference. Pass the same mappings to the check and approved execution. After
+reviewing the plan, use the same arguments and idempotency key, replacing the
+final `--check` with `--approved`:
+
+```bash
+pactile legacy-task reconcile .pactile/tasks/09-26-v050-migration-sample \
+  --idempotency-key p36-migration-definition-2026-09-26 \
+  --activation-at 2026-09-26T12:00:00.000Z \
+  --deliverable "An explicitly defined migrated Task" \
+  --delivery-level local-result \
+  --accept "AC-1=The original Task source remains available" \
+  --accept "AC-2=The V2 Task begins without inferred lifecycle history" \
+  --approved
+pactile task artifacts 09-26-v050-migration-sample --agent
+```
+
+`--check` returns a dry run and does not write or activate the Task. `--approved`
+activates only this held Task. Reconciliation uses a new migration generation,
+preserves the original `task.json` and authored documentation byte-for-byte, and
+does not infer V2 Run, Review, or Close history. An activated Task accepts only
+a retry with the same idempotency key and request; a different request cannot
+redefine it. If source files change after import, reconciliation is rejected;
+inspect `pactile task list` and the source state before deciding whether to
+retry. For the structured Task artifact read pattern, see the
+[Chinese structured Task artifacts guide](../capabilities/structured-task-artifacts.zh-CN.md).
+
+Archived Tasks receive a verifiable historical-only index during `update`; the
+archive tree remains byte-for-byte unchanged and never receives a V2 Kernel.
+Read one with `pactile legacy-task history archive/<month>/<directory> --json`.
+To restore it as a new active Task, reconcile with an explicit `--target-path`
+and the missing definition fields. The new target starts in Define and does not
+inherit historical Run, Review, or Close state.
+
+A malformed or truncated legacy `kernel.json` is retained as an explicit
+`legacyHistoryGap` on a held Task. Read it with
+`pactile legacy-task history held/<task-path> --json`. After completing the
+definition and reviewing the gap, continue into a separate active target with
+`--acknowledge-history-gap --target-path <active-task-path> --approved`. This
+acknowledges only that the old lifecycle bytes cannot be parsed; it does not
+repair or reinterpret them, and the new V2 Task starts in Define.
+
+## Existing installations moving to the Node entry (v0.6.0)
+
+Run these commands from each installed project's root after installing the
+v0.6.0 CLI:
+
+```bash
+pactile update --dry-run --json
+pactile update --skip-all --json
+pactile task list
+```
+
+The preview's `plan.files` lists added and refreshed Node-era templates,
+`safeDeleted` candidates, `legacyPythonPreserved` files with local edits, and
+`legacyPythonUnprocessed` files that are unclaimed or skipped. It also lists
+`legacyPythonHashClaimsReleased` so retained scripts no longer appear owned by
+Pactile. The apply report lists actual deletions. Inspect its backup path and
+lifecycle/Adapter status;
+resolve a degraded or interrupted result before relying on the new entry.
+`--skip-all` keeps locally modified managed files; review each skipped file
+before choosing a later overwrite. A retained `.pactile/scripts/*.py` file is
+never included in the active Node generation. The update does not run Python,
+and user tasks, specs, middleware, and foreign files remain outside the
+replacement set.
+
+The unpublished `0.5.1-beta.0` pool preset is part of the `0.6.0-beta.1`
+migration manifest, also shipped with stable `0.6.0`. It runs for both direct
+`0.5.0` to stable upgrades and beta upgrades, without repeating during
+beta-to-stable upgrades. Only three old skeleton paths are candidates for
+hash-checked deletion: `.pactile/pool/README.md`, `.pactile/pool/plan.md`, and
+`.pactile/pool/items/.gitkeep`. User-written pool items are never targeted.
+There is no separate `0.5.1-beta.0` upgrade step.
+
+Before a release, maintainers run the sealed-tarball
+[`release-conformance.ts`](../../packages/cli/scripts/release-conformance.ts)
+check. It measures CLI cold start, a subsequent CLI invocation, Pi cold and
+warm RPC startup, parallel batch wall time, and total smoke time in a PATH
+without Python. The Codex receipt and Pi responses in this smoke are simulated;
+record actual desktop-host and provider outcomes separately.

@@ -11,13 +11,13 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Pactile turns governed capability tiles into an evidence-backed workspace for Cursor and Codex.
+Pactile turns governed capability tiles into an evidence-backed workspace for Codex.
 
-It gives an AI coding project one host-neutral source of truth for instructions, tasks, ownership, and lifecycle state. Cursor and Codex receive projections suited to their own integration surfaces; neither host becomes the authority for the other.
+It gives an AI coding project one source of truth for instructions, tasks, ownership, and lifecycle state. The Codex integration receives a projection from that canonical state.
 
 ## Five-minute path
 
-Prerequisites: Node.js 18.17 or newer. Generated project scripts and hooks require Python 3.9 or newer.
+Prerequisites: Node.js 20 or newer. Pactile task, context, and session commands run on Node.js; Python is not required.
 
 ```bash
 npm install -g @blxzer/pactile
@@ -25,11 +25,11 @@ pactile --version
 
 mkdir my-pactile-project
 cd my-pactile-project
-pactile init --cursor --codex -y
+pactile init --codex -y
 pactile capability-smoke --json
 ```
 
-Use only the host flags you need: `--cursor`, `--codex`, or both. `init` creates canonical state under `.pactile/`, then reconciles the selected host adapters. The final command reports actual capability readiness; a degraded provider remains visible instead of being presented as native support.
+`init` creates canonical state under `.pactile/`, then reconciles the Codex adapter. The final command reports actual capability readiness; a degraded provider remains visible instead of being presented as native support.
 
 After initialization, ask the agent to work normally. For durable work it will use the generated workflow and task tools; you do not need to memorize an extra prompt language.
 
@@ -38,15 +38,15 @@ After initialization, ask the agent to work normally. For durable work it will u
 ```text
 my-pactile-project/
   .pactile/        canonical workflow, tasks, Tiles, runtime state, and Evidence
-  .agents/         shared Skills claimed by one or more host adapters
-  .cursor/         Cursor projection, when selected
-  .codex/          Optional Codex project projection when native support is ready
+  .agents/         projected Skills for Codex
+  .codex/          Optional Codex project configuration when native support is ready
   AGENTS.md        shared managed instructions plus preserved user content
 ```
 
 Pactile owns only the managed content recorded in its ownership ledger. Existing host-native Skills, MCP configuration, plugins, and user-authored files remain external or borrowed unless a reviewed plan says otherwise.
 
-The default Cursor product path is Native Cursor; Pactile does **not** embed BYOK.
+Pactile changes only managed content recorded in its ownership ledger. Borrowed,
+modified, and user-authored files remain available for review.
 
 ## Mental model
 
@@ -62,11 +62,9 @@ Start with [Core concepts](docs/concepts/index.md), then read the focused pages 
 
 ## Hosts and capabilities
 
-| Host   | Project surface                                                   | Pactile behavior                                       |
-| ------ | ----------------------------------------------------------------- | ------------------------------------------------------ |
-| Cursor | `.cursor/` rules, commands, agents, hooks, and supported bindings | Reconciled from the active canonical generation.       |
-| Codex  | Optional `.codex/` project configuration and supported bindings  | Reconciled independently when native project support is ready; otherwise reported as degraded. |
-| Both   | Shared `.agents/` resources and managed `AGENTS.md` content       | Host-neutral identity with separate adapter claimants. |
+| Host  | Project surface                                                  | Pactile behavior                                                    |
+| ----- | ---------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Codex | Managed `AGENTS.md` and `.agents/skills/`; optional project config | Reconciled from canonical state; unavailable native bindings degrade. |
 
 Pactile reports capability origin (`native`, `provider`, `heuristic`, or `unsupported`) separately from assurance. An optional provider can improve a capability, but its presence never makes a claim verified without Evidence and a passing freshness-bounded probe.
 
@@ -75,23 +73,22 @@ See [Hosts](docs/hosts/index.md) and [Capabilities](docs/capabilities/index.md) 
 ## Lifecycle and safety
 
 - `pactile update --dry-run` previews official-file and projection changes before applying them.
-- `pactile detach cursor` or `pactile detach codex` removes one adapter's claims while preserving shared resources still in use.
+- `pactile detach codex` removes the active adapter's claims while preserving borrowed resources.
 - `pactile uninstall --dry-run` previews detaching every adapter while retaining canonical `.pactile/` state.
 - `pactile rollback <generation> --dry-run` verifies a sealed generation before switching.
 - `pactile purge --dry-run` only produces a target fingerprint. Destructive cleanup requires a second, explicit confirmation using that exact fingerprint.
 
 Migration inputs are read-only. Modified, foreign, unknown, or borrowed resources fail safe and remain available for review. See [Lifecycle](docs/lifecycle/index.md) and [Troubleshooting](docs/troubleshooting/index.md).
 
+`pactile capability <request.json>` executes a versioned, bounded workspace request. See [bounded workspace requests](docs/capabilities/bounded-workspace-requests.md) for budgets, cancellation, outcomes, and receipts.
+
 ## Packages
 
-| Package                | Status                                        | Purpose                                                       |
-| ---------------------- | --------------------------------------------- | ------------------------------------------------------------- |
-| `@blxzer/pactile`      | Canonical                                     | CLI, adapters, templates, lifecycle, and project integration. |
-| `@blxzer/pactile-core` | Canonical                                     | Strict host-neutral contracts and domain primitives.          |
-| Legacy CLI bridge      | Deprecated for the 0.5.x compatibility window | Delegates to the canonical CLI and emits a migration warning. |
-| Legacy core bridge     | Deprecated for the 0.5.x compatibility window | Re-exports canonical core contracts.                          |
-
-New documentation and automation should use only the canonical package and executable names. Historical release facts remain unchanged in the changelog.
+`@blxzer/pactile` is the single release package. It includes the CLI, templates,
+adapters, lifecycle, and host-neutral Core contracts. Import those contracts
+from `@blxzer/pactile/core` or `@blxzer/pactile/core/task`. The separate Core
+and legacy bridge packages remain only as previously published 0.5.x history;
+v0.6.0 does not publish them. Historical release facts remain in the changelog.
 
 ## Documentation
 
@@ -119,7 +116,7 @@ The complete Core and CLI test suite is the final release gate. Focused changes 
 
 ## Scope
 
-Pactile is local project tooling. It does not promise cloud orchestration, a plugin marketplace, automatic installation of host-native assets, or ownership of credentials and OAuth state. Optional middleware providers remain independently installed and explicitly probed.
+Pactile is local project tooling. It does not promise cloud orchestration, a plugin marketplace, automatic installation of host-native assets, or ownership of credentials and OAuth state. Optional middleware providers remain independently installed and explicitly probed. Smart Search is a separate optional package; install and configure it independently if you need external-knowledge searches. Its prerequisites are separate from Pactile's Node-only runtime.
 
 Lineage, copyright, and license notices are preserved in [COPYRIGHT](COPYRIGHT) and [LICENSE](LICENSE).
 

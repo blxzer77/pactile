@@ -1,0 +1,9 @@
+{
+  "version": "0.6.0-beta.6",
+  "description": "Release PR policy checks GitHub's tag-run identity fields.",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "Validates the real GitHub workflow path and tag head branch in release PR policy. Product runtime and project migration rules are unchanged from beta.5.",
+  "migrations": [],
+  "notes": "Earlier beta manifests remain available for direct upgrades; this beta adds no one-time project migration."
+}

@@ -1,0 +1,9 @@
+{
+  "version": "0.6.0",
+  "description": "Stable promotion of the Node-only Pactile workflow. The pool cleanup is carried by the 0.6.0-beta.1 manifest so it also runs for direct upgrades to stable without repeating for beta users.",
+  "breaking": true,
+  "recommendMigrate": false,
+  "changelog": "Node.js is the only required runtime. Run `pactile update --dry-run --json` to review replacements and legacy scripts, then `pactile update --skip-all --json` to preserve locally modified files while applying unchanged templates. Hash-verified retired Python files are removed after the Node generation is active; modified, skipped and unclaimed files remain on disk but are excluded from active generations. The 0.6.0-beta.1 manifest handles the retired review-pool skeleton for both beta and stable upgrade paths.",
+  "migrations": [],
+  "notes": "The 0.6.0-beta.1 manifest carries the pool cleanup for direct 0.5.0-to-stable upgrades and beta users. No migration is repeated on beta-to-stable upgrades."
+}

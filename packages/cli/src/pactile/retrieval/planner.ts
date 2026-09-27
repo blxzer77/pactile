@@ -15,7 +15,7 @@ import {
   type AssuranceLevelV1,
   type PactileIntentV1,
   type PolicyCeilingV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 
 import {
   RETRIEVAL_ABI_VERSION,

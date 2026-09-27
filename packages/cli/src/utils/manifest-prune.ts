@@ -16,10 +16,9 @@
  * Rules:
  *   - Canonical `.pactile/*` entries are kept only for framework-managed
  *     content; user task/workspace/spec and middleware state is excluded.
- *   - Root-level `AGENTS.md` is kept only when it still looks Pactile-managed
- *     (contains the managed block markers) or is missing on disk. This
- *     self-heals old poisoned manifests for user-owned AGENTS.md files that
- *     predated init and were skipped.
+ *   - Canonical host projections, including `AGENTS.md`, belong to the
+ *     projection ledger and are removed from template hashes. Legacy
+ *     `AGENTS.md` claims are retained only when their managed markers remain.
  *   - Paths referenced by `from`/`to` of any migration manifest entry
  *     (rename, rename-dir, delete, safe-file-delete) are preserved. Pruning
  *     them would prevent legitimate pending migrations from finding their
@@ -32,7 +31,6 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { collectPlatformTemplates } from "../configurators/index.js";
 import { getWorkflowRootTemplateFiles } from "../configurators/workflow.js";
 import { FILE_NAMES, isUserMiddlewareOverlayPath } from "../constants/paths.js";
 import { getAllMigrations } from "../migrations/index.js";
@@ -54,6 +52,15 @@ export interface PruneResult {
   hashes: TemplateHashes;
 }
 
+/** Host projections are owned by the projection ledger, never template hashes. */
+export function isHostProjectionPath(rawPath: string): boolean {
+  const key = toPosix(rawPath);
+  return key === FILE_NAMES.AGENTS ||
+    [".agents", ".codex"].some(
+      (root) => key === root || key.startsWith(`${root}/`),
+    );
+}
+
 /**
  * Compute the union of what Pactile writes across:
  *   - every configured platform's collectTemplates() output
@@ -63,13 +70,7 @@ export interface PruneResult {
  */
 function buildKnownKeys(configuredPlatforms: readonly AITool[]): Set<string> {
   const known = new Set<string>();
-  for (const id of configuredPlatforms) {
-    const templates = collectPlatformTemplates(id);
-    if (!templates) continue;
-    for (const key of templates.keys()) {
-      known.add(toPosix(key));
-    }
-  }
+  void configuredPlatforms;
   // Root-level files written by the workflow configurator (CONTEXT.md,
   // docs/adr/README.md) — they live outside platform config dirs but are
   // Pactile-owned, so lifecycle reconciliation must recognize them.
@@ -147,21 +148,9 @@ export function pruneOrphanManifestKeys(
   const pruned: string[] = [];
   const kept: TemplateHashes = {};
   const canonicalInstall = fs.existsSync(path.join(cwd, ".pactile"));
-  const projectionOwned = [
-    "AGENTS.md",
-    ".agents/",
-    ".cursor/",
-    ".codex/",
-  ];
-
   for (const [rawKey, value] of Object.entries(hashes)) {
     const key = toPosix(rawKey);
-    if (
-      canonicalInstall &&
-      projectionOwned.some(
-        (prefix) => key === prefix || key.startsWith(prefix),
-      )
-    ) {
+    if (canonicalInstall && isHostProjectionPath(key)) {
       pruned.push(key);
       continue;
     }

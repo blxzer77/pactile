@@ -12,7 +12,7 @@ import {
 import { fileURLToPath } from "node:url";
 
 import { computeHash } from "../../src/utils/template-hash.js";
-import { planArtifactMigration } from "@blxzer/pactile-core/task";
+import { planArtifactMigration } from "../../src/core/task/index.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const UPGRADE_MD = path.join(
@@ -43,7 +43,7 @@ describe("P36 official-surface A planner", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("retires unmodified known always-on and preserves user edits", () => {
+  it("leaves retired host files untouched while planning current official files", () => {
     const triage = path.join(tmp, ".cursor", "rules", "cstl-triage.mdc");
     const routing = path.join(tmp, ".cursor", "rules", "retrieval-routing.mdc");
     fs.mkdirSync(path.dirname(triage), { recursive: true });
@@ -60,12 +60,8 @@ describe("P36 official-surface A planner", () => {
       refresh: [".cstl/workflow.md"],
       preserved: ["AGENTS.md"],
     });
-    expect(official.retire.map((item) => item.path)).toEqual([
-      ".cursor/rules/cstl-triage.mdc",
-    ]);
-    expect(official.preserve.map((item) => item.path)).toEqual([
-      ".cursor/rules/retrieval-routing.mdc",
-    ]);
+    expect(official.retire).toEqual([]);
+    expect(official.preserve).toEqual([]);
 
     const artifacts = planArtifactMigration({ root: tmp });
     const plan = composeP36Plan({
@@ -94,8 +90,8 @@ describe("P36 official-surface A planner", () => {
     expect(text).not.toMatch(/artifact_locale\.py/);
 
     const deleted = applyOfficialRetire(tmp, official);
-    expect(deleted).toBe(1);
-    expect(fs.existsSync(triage)).toBe(false);
+    expect(deleted).toBe(0);
+    expect(fs.existsSync(triage)).toBe(true);
     expect(fs.existsSync(routing)).toBe(true);
   });
 

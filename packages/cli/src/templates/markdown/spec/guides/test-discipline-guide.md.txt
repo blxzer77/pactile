@@ -40,14 +40,14 @@
 | **性能瓶颈** | 预算与放大是否把主路径拖死 | 摘要截断、Parent 带子任务归档、过大 `verify.md` |
 | **安全风险** | 不可信路径 / 密钥 / 注入是否进产物 | 任务路径穿越、`verify.md` / 投影里的密钥、未校验的外部输入 |
 
-**不是墙：** 本积木**不**把软件测试变成 Close / `task.py archive` 硬门。失效边界仍在：测试靠自觉，无新的机器兜底。既有 kernel 接口护栏（如 `.pactile/scripts/common/test_task_gates.py`）保留——那是接口完整性测试，不是本积木新加的门。
+**不是墙：** 本积木**不**把软件测试变成 Close / `pactile task archive` 硬门。失效边界仍在：测试靠自觉，无新的机器兜底。Pactile CLI 的 Kernel 接口护栏保留——那是接口完整性测试，不是本积木新加的门。
 
 与写作纪律的关系：积木决定**要不要测、测哪类风险**；§4–§8 决定**测点落在 seam、不 tautological、不 mock 内部**。
 
 ## 3. Non-goals
 
 - **不是 TDD 手册**：不要求测试先行，不要求红-绿循环，不把 red-before-green 写成强制流程。
-- **不是 archive / Close 硬门**：不恢复测试硬门；走查失败不得接入 `task.py archive` 硬失败。
+- **不是 archive / Close 硬门**：不恢复测试硬门；走查失败不得接入 `pactile task archive` 硬失败。
 - **不选型**：不规定 pytest 以外的框架，不做 mock 库选型。
 - **不替代 Verification Strength Guide**：验证强度（closeout 深度 / false-green 探针）由该 guide 管；本 guide 管积木定义与测试写作。不重写 P06。
 - **不替代 Debug Loop Guide Phase 5**：bug 驱动的回归落地由 debug-loop 管，本 guide 只定义何为 good seam（见 §10）。
@@ -161,7 +161,7 @@ def process_payment(order):
 
 ## 11. Relation to e2e walkthrough
 
-大改（kernel / archive / `notes_projection` / 任务生命周期接口）必须按 [E2E Walkthrough Guide](./e2e-walkthrough-guide.md) 走一遍 `prd → 实现 → verify → archive → 检查投影落盘`。小改不强制。走查约定与可选检查脚本**不是** Close 硬门，也不替代 `test_task_gates.py` 接口护栏。
+大改（Kernel / archive / `notes_projection` / 任务生命周期接口）必须按 [E2E Walkthrough Guide](./e2e-walkthrough-guide.md) 走一遍 `prd → 实现 → verify → archive → 检查投影落盘`。小改不强制。走查约定**不是** Close 硬门，也不替代 Pactile CLI 的接口测试。
 
 ## 12. Checklist before writing tests
 

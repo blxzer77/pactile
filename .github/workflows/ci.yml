@@ -2,15 +2,40 @@ name: CI
 
 on:
   push:
-    branches: [main, beta, "release/**"]
+    branches: [main, develop, "feat/**", "fix/**", "chore/**"]
   pull_request:
-    branches: [main, beta]
+    branches: [main, develop]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  pr-policy:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.32.1
+      - name: Install locked tooling without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Verify PR target and beta evidence for a release PR
+        run: pnpm --filter @blxzer/pactile exec tsx scripts/release-pr-check.ts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   test:
     name: test (${{ matrix.os }})
     strategy:
@@ -36,7 +61,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Verify strict Pactile brand surface
-        run: node packages/cli/scripts/check-pactile-brand-surface.js --release
+        run: pnpm --filter @blxzer/pactile exec tsx scripts/check-pactile-brand-surface.ts --release
 
       - name: Build
         run: pnpm build
@@ -47,26 +72,19 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      - name: Materialize dogfood for tests
-        # Git Bash is available on both hosted runners. Keeping one materializer
-        # means Linux and Windows execute the same test fixture.
-        shell: bash
-        run: |
-          rm -rf .cursor/rules .cursor/agents .pactile/scripts
-          mkdir -p .cursor/rules .cursor/agents .pactile/scripts
-          cp packages/cli/src/templates/cursor/rules/* .cursor/rules/
-          cp packages/cli/src/templates/cursor/agents/* .cursor/agents/
-          cp -r packages/cli/src/templates/pactile/scripts/* .pactile/scripts/
-
       - name: Test
-        env:
-          # task.py archive/create/start-execution need `pactile kernel --json`.
-          # A clean runner has no global CLI; point at this checkout's bin.
-          PACTILE_KERNEL_CLI: node ${{ github.workspace }}/packages/cli/bin/pactile.js kernel --json
+        if: runner.os != 'Windows'
         run: pnpm test
 
-      - name: Mirror-check
-        run: pnpm mirror-check
+      # Hosted Windows runners can exceed the default 120s per case when
+      # several init/update integration files run together. Bound concurrency
+      # and allow those filesystem-heavy cases to finish before judging them.
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: pnpm --filter @blxzer/pactile exec vitest run --maxWorkers=2 --testTimeout=240000
+
+      - name: Documentation smoke
+        run: pnpm docs:smoke
 
       - name: Verify package file contract
         run: pnpm --filter @blxzer/pactile check:pack-files
@@ -75,7 +93,7 @@ jobs:
         run: pnpm --filter @blxzer/pactile check:release-pack
 
       - name: Verify packed dependency and bins
-        run: node packages/cli/scripts/release-preflight.js verify-packed-cli
+        run: pnpm --filter @blxzer/pactile exec tsx scripts/release-preflight.ts verify-packed-cli
 
   release-conformance:
     name: release conformance (${{ matrix.os }}, Node ${{ matrix.node }})
@@ -83,7 +101,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        node: ["18.17.0", "lts/*", "current"]
+        node: ["20.0.0", "lts/*", "current"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -100,8 +118,19 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build release packages
+      - name: Build the single release package
         run: pnpm build
 
-      - name: Verify four-package release and isolated installs
-        run: node packages/cli/scripts/release-conformance.js
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Vite 7 requires >=20.19; Node 20.0.0 uses the compiled package acceptance below.
+      - name: Test Node-only and package release contracts
+        if: ${{ matrix.node != '20.0.0' }}
+        run: >-
+          pnpm --filter @blxzer/pactile exec vitest run --maxWorkers=2
+          test/release-guard.test.ts
+          test/assert-no-python-on-path.test.ts
+
+      - name: Verify default lifecycle install with no Python on PATH and V2 Task smoke
+        run: node packages/cli/.tmp/p31-script-build/release-conformance.js

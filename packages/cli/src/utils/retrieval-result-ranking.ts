@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 
-import type { PactileIntentV1 } from "@blxzer/pactile-core";
+import type { PactileIntentV1 } from "../core/index.js";
 
 export type RetrievalRankingIntent = PactileIntentV1;
 

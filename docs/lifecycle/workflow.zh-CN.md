@@ -2,7 +2,7 @@
 
 [English](workflow.md) | 简体中文
 
-Workflow 是与宿主无关的 intent、definition、approval、execution、verification、integration 与 close 顺序。Cursor 斜杠命令和 Codex task conversation 都只是投影，任何宿主都不是权威。
+Workflow 是与宿主无关的 intent、definition、approval、execution、verification、integration 与 close 顺序。Codex task conversation 消费这个顺序；canonical Task 记录才是权威。
 
 ```text
 triage -> define -> approve -> execute -> verify -> integrate -> close
@@ -13,8 +13,8 @@ triage -> define -> approve -> execute -> verify -> integrate -> close
 ## 宿主无关检查
 
 ```bash
-python ./.pactile/scripts/task.py start-execution <task-dir> --check
-python ./.pactile/scripts/task.py record-gate <task-dir> --transition full-task-complete --gate code-review --result PASS --evidence verify.md
+pactile task start-execution <task-dir> --check
+pactile task record-gate <task-dir> --transition full-task-complete --gate code-review --result PASS --reviewer <reviewer-id> --evidence verify.md
 ```
 
 具体 gate 选项以生成的 Task 契约为准。Host Hook 与上下文注入只是尽力而为；缺失时直接阅读 `.pactile/workflow.md`、Task 工件和 CLI 生成的 dispatch prompt。

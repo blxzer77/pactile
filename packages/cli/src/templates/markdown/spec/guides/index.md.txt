@@ -30,7 +30,7 @@ These guides help you **ask the right questions before coding**.
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
 | [Cross-Platform Thinking Guide](./cross-platform-thinking-guide.md) | Catch OS / filesystem assumptions (paths, shells, line endings, command availability) before they become bugs | Code that may run on Windows / macOS / Linux; paths or shell commands in scripts, hooks, or docs |
 
-> **Framework & platform docs live in `.pactile/framework/`** (framework-owned, refreshed by `pactile update`) — verification strength, injection budget, retrieval routing, Cursor modes/agents/injection, PRD Grill, execution strategy, artifact locale, and more. See [`.pactile/framework/index.md`](../../framework/index.md).
+> **Framework docs live in `.pactile/framework/`** (framework-owned, refreshed by `pactile update`) — verification strength, context budget, retrieval routing, PRD Grill, execution strategy, artifact locale, and more. See [`.pactile/framework/index.md`](../../framework/index.md).
 
 ---
 

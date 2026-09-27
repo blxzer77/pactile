@@ -6,7 +6,6 @@
 
 ```bash
 pactile capability-smoke --json
-pactile validate-rules
 pactile update --dry-run
 ```
 
@@ -17,5 +16,4 @@ pactile update --dry-run
 | JSON capability 为 `ready`     | 选定 Provider 通过声明的 probe。       | 使用前仍检查 assurance 与 freshness。               |
 | `pending` 或 readiness unknown | 没有当前 probe 证明可用。              | 授权/安装依赖，再运行检查。                         |
 | `failed`/`degraded`            | 能力或投影被限制在失败范围。           | 遵循 user action，保留 canonical 状态，只重试局部。 |
-| Rule validation 失败           | 已安装 Cursor rules 与 manifest 不同。 | 审阅修改文件，再运行审阅后的 update。               |
 | Update preview 报告冲突        | Ownership 或当前字节不安全替换。       | 保留 preimage，显式解决 ownership。                 |

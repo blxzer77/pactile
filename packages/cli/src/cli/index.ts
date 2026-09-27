@@ -18,15 +18,23 @@ import {
   runWorkflowCommand,
   WorkflowCommandError,
 } from "../commands/workflow.js";
-// import { registerChannelCommand } from "../commands/channel/index.js";
-import { runValidateRules } from "../commands/validate-rules.js";
 import { isWorkflowInitialized, workflowPath } from "../utils/workflow-dir.js";
 import { PACKAGE_NAME, VERSION } from "../constants/version.js";
-import { runKernelJsonCli } from "@blxzer/pactile-core/task";
+import { runKernelJsonCli } from "../core/task/index.js";
+import { runTaskCliWithWorkspaceReclaim } from "../commands/task-worktree-close.js";
+import { runWorktreeCommand } from "../commands/worktree.js";
+import { runPiCli } from "../commands/pi.js";
+import { runParallelCli } from "../commands/parallel.js";
+import { runLegacyTaskCli } from "../commands/legacy-task.js";
+import { runCodexCli } from "../commands/codex.js";
+import { runContextCliAsync } from "../commands/context.js";
+import { runTileSelectionCli } from "../commands/tile-selection.js";
+import { runSessionCli } from "../commands/session.js";
+import { runCapabilityCli } from "../commands/capability.js";
 import {
   PACTILE_ENVIRONMENT_KEYS,
   readPactileEnvironment,
-} from "@blxzer/pactile-core";
+} from "../core/index.js";
 import { compareVersions } from "../utils/compare-versions.js";
 import {
   LEGACY_IMPORT_DESCRIPTION,
@@ -39,50 +47,63 @@ export { VERSION, PACKAGE_NAME };
 /**
  * Check if a Pactile update is available (compare project and CLI versions).
  */
-function checkForUpdates(cwd: string): void {
+function checkForUpdates(cwd: string, writeToStderr = false): void {
   const versionFile = workflowPath(cwd, ".version");
   if (!versionFile || !fs.existsSync(versionFile)) return;
 
   const projectVersion = fs.readFileSync(versionFile, "utf-8").trim();
   const cliVersion = VERSION;
   const comparison = compareVersions(cliVersion, projectVersion);
+  const writeNotice = (message: string): void => {
+    if (writeToStderr) console.error(message);
+    else console.log(message);
+  };
 
   if (comparison > 0) {
     // CLI is newer than project - update available
-    console.log(
+    writeNotice(
       chalk.yellow(
         `\n⚠️  Pactile update available: ${projectVersion} → ${cliVersion}`,
       ),
     );
-    console.log(chalk.gray(`   Run: pactile update\n`));
+    writeNotice(chalk.gray(`   Run: pactile update\n`));
   } else if (comparison < 0) {
     // CLI is older than project - CLI needs updating
-    console.log(
+    writeNotice(
       chalk.yellow(
         `\n⚠️  Your CLI (${cliVersion}) is older than project (${projectVersion})`,
       ),
     );
-    console.log(chalk.gray(`   Run: pactile upgrade\n`));
+    writeNotice(chalk.gray(`   Run: pactile upgrade\n`));
   }
 }
 
 // Check for updates at CLI startup when a workflow dir exists.
-// Never print to stdout when running an MCP stdio server — Cursor hosts
+// Never print to stdout when running an MCP stdio server — hosts
 // treat any non-framed stdout as a handshake failure.
 const cwd = process.cwd();
 const argvRest = process.argv.slice(2);
 const isStdioMcp = argvRest.includes("mcp");
 const isKernelJson = argvRest[0] === "kernel";
-if (isWorkflowInitialized(cwd) && !isStdioMcp && !isKernelJson) {
-  checkForUpdates(cwd);
+const isCapabilityJson = argvRest[0] === "capability";
+const isMachineReadableLegacyTask =
+  argvRest[0] === "legacy-task" &&
+  (argvRest[1] === "reconcile" ||
+    (argvRest[1] === "history" && argvRest.includes("--json")));
+if (
+  isWorkflowInitialized(cwd) &&
+  !isStdioMcp &&
+  !isKernelJson &&
+  !isCapabilityJson
+) {
+  checkForUpdates(cwd, isMachineReadableLegacyTask);
 }
 
 const program = new Command();
 
 function debugEnabled(): boolean {
   return Boolean(
-    process.env.DEBUG ??
-      readPactileEnvironment(PACTILE_ENVIRONMENT_KEYS.debug),
+    process.env.DEBUG ?? readPactileEnvironment(PACTILE_ENVIRONMENT_KEYS.debug),
   );
 }
 
@@ -92,15 +113,12 @@ function collectOption(value: string, previous: string[]): string[] {
 
 program
   .name("pactile")
-  .description(
-    "Evidence-backed governed capability workspace for Cursor and Codex",
-  )
+  .description("Evidence-backed governed capability workspace for Codex")
   .version(VERSION, "-v, --version", "output the version number");
 
 program
   .command("init")
   .description("Initialize Pactile in the current project")
-  .option("--cursor", "Include Cursor commands")
   .option("--codex", "Include Codex project integration")
   .option(LEGACY_IMPORT_OPTION, LEGACY_IMPORT_DESCRIPTION)
   .option("-y, --yes", "Skip prompts and use defaults")
@@ -122,7 +140,7 @@ program
   )
   .option(
     "--with-optional <name>",
-    "Install an optional/experimental skill into the project skills directory (repeatable; e.g. chrome-cdp)",
+    "Install an optional/experimental skill into the project skills directory (repeatable; no optional skill ships today)",
     collectOption,
     [],
   )
@@ -143,7 +161,7 @@ program
   )
   .option(
     "--workflow <id>",
-    "Workflow template id for .pactile/workflow.md (default: native; e.g., tdd, channel-driven-subagent-dispatch)",
+    "Workflow template id for .pactile/workflow.md (default: native; e.g., tdd)",
   )
   .option(
     "--workflow-source <source>",
@@ -210,13 +228,10 @@ program
     "--skip-readiness",
     "Skip Smart Search and selected capability readiness checks and report framework readiness as unverified",
   )
-  .option(
-    "--json",
-    "Emit one-line JSON rollout evidence (dry-run or apply)",
-  )
+  .option("--json", "Emit one-line JSON rollout evidence (dry-run or apply)")
   .option(
     "--skip-post-update-smoke",
-    "Skip post-apply Python script smoke checks",
+    "Skip post-apply Node runtime smoke checks",
   )
   .option(
     "--write-artifacts",
@@ -368,7 +383,7 @@ program
 
 program
   .command("detach <adapter>")
-  .description("Safely detach one Pactile Adapter (cursor or codex)")
+  .description("Safely detach the Codex Adapter")
   .option("--dry-run", "Preview ownership decisions without changing state")
   .action((adapter: string, options: Record<string, unknown>) => {
     try {
@@ -426,12 +441,9 @@ program
 program
   .command("workflow")
   .description(
-    "List or switch the project's .pactile/workflow.md template (native, tdd, channel-driven-subagent-dispatch, or marketplace)",
+    "List or switch the project's .pactile/workflow.md template (native, tdd, or marketplace)",
   )
-  .option(
-    "-t, --template <id>",
-    "Workflow template id (e.g., native, tdd, channel-driven-subagent-dispatch)",
-  )
+  .option("-t, --template <id>", "Workflow template id (e.g., native, tdd)")
   .option(
     "-m, --marketplace <source>",
     "Custom marketplace source (e.g., gh:myorg/myrepo/marketplace)",
@@ -467,35 +479,164 @@ program
     }
   });
 
-// The experimental multi-agent `channel` runtime remains unregistered.
-// registerChannelCommand(program);
+program
+  .command("context")
+  .description(
+    "Read Pactile task, package, and session context with the Node runtime",
+  )
+  .addHelpText(
+    "after",
+    "\nModes: default, record, packages, phase, lite, session, retrieval-pack\nExamples:\n  pactile context --mode packages --json\n  pactile context --mode session --json\n  pactile context --mode phase --step 1\n  pactile context --mode retrieval-pack --input collected-evidence.json --max-items 8 --json\n",
+  )
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[arguments...]")
+  .action(async () => {
+    process.exitCode = await runContextCliAsync(process.argv.slice(3));
+  });
 
 program
-  .command("validate-rules")
+  .command("tile-selection")
+  .description("Prepare, decide, and replay a current-Task Tile selection")
+  .addHelpText(
+    "after",
+    "\nOperations:\n  prepare --intent <intent> --output <output> [--output <output> ...]\n  decide --offer-fingerprint <sha256> --kind <adopt|override|no-match> --intent <intent> --output <output> [--tile <ref>]\n  replay --snapshot-fingerprint <sha256>\n\nAgent offers include only compiler-checked candidates; a decision does not activate Tiles or authorize a Kernel Run.\n",
+  )
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[arguments...]")
+  .action(() => {
+    process.exitCode = runTileSelectionCli(process.argv.slice(3));
+  });
+
+program
+  .command("session")
+  .description("Record a Pactile journal session with the Node runtime")
+  .addHelpText(
+    "after",
+    "\nOperations:\n  add --title <title> [--summary <text>] [--content-file <path>]\n  search --query <query> [--json]\n",
+  )
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[operation]")
+  .argument("[arguments...]")
+  .action(() => {
+    process.exitCode = runSessionCli(process.argv.slice(3));
+  });
+
+program
+  .command("capability")
   .description(
-    "Validate Cursor .cursor/rules against the expected manifest (templates and/or installed rules)",
+    "Run a bounded workspace capability request with the Node adapter",
   )
-  .option(
-    "--dir <rulesDir>",
-    "Validate rules in a specific directory instead of project .cursor/rules",
+  .addHelpText(
+    "after",
+    "\nUsage: pactile capability <request.json> [--allow-command <command-id>]\n",
   )
-  .option(
-    "--templates-only",
-    "Validate template rules from getAllRules() only (skip installed rules check)",
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[request-file]")
+  .argument("[options...]")
+  .action(async () => {
+    process.exitCode = await runCapabilityCli(process.argv.slice(3));
+  });
+
+program
+  .command("codex")
+  .description("Bridge Pactile tasks to native Codex desktop tasks")
+  .addHelpText(
+    "after",
+    "\n  prepare <task> --tool create|message|wait|read [options]\n  receipt <task> <request-id> --result-file <file>\n  status <task>\n",
   )
-  .action(async (options: Record<string, unknown>) => {
-    try {
-      await runValidateRules(process.cwd(), {
-        dir: options.dir as string | undefined,
-        templatesOnly: options.templatesOnly as boolean | undefined,
-      });
-    } catch (error) {
-      console.error(
-        chalk.red("Error:"),
-        error instanceof Error ? error.message : error,
-      );
-      process.exit(1);
-    }
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[operation]")
+  .argument("[arguments...]")
+  .action(() => {
+    process.exitCode = runCodexCli(process.argv.slice(3));
+  });
+
+program
+  .command("pi")
+  .description("Run an approved Pactile task through Pi native RPC")
+  .addHelpText(
+    "after",
+    "\n  run <task> --role implement|check|research --prompt-file <file> [--prompt-file <file> ...] [--timeout-ms <ms>] [--resume]\n  status <task> | cancel <task>\n",
+  )
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[operation]")
+  .argument("[arguments...]")
+  .action(async () => {
+    process.exitCode = await runPiCli(process.argv.slice(3));
+  });
+
+program
+  .command("parallel")
+  .description("Run approved Parent Child tasks with bounded Pi concurrency")
+  .addHelpText(
+    "after",
+    "\n  run <parent> --manifest <file> | status <parent>\n",
+  )
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[operation]")
+  .argument("[arguments...]")
+  .action(async () => {
+    process.exitCode = await runParallelCli(process.argv.slice(3));
+  });
+
+program
+  .command("legacy-task")
+  .description(
+    "Read archived legacy Task history or explicitly reconcile one held Task",
+  )
+  .addHelpText(
+    "after",
+    "\n  history <archive-relative-path> [--json]\n  reconcile <task-path> --idempotency-key <key> --activation-at <ISO-time> [definition fields] [--resolve-dependency <raw-ref>=<task-id>] [--approved|--check]\n",
+  )
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[operation]")
+  .argument("[arguments...]")
+  .action(async () => {
+    process.exitCode = await runLegacyTaskCli(process.argv.slice(3));
+  });
+
+program
+  .command("task")
+  .description("Manage Pactile tasks with the Node runtime")
+  .addHelpText(
+    "after",
+    "\nCore operations:\n  create <title> --slug <slug> --deliverable <text> --delivery-level <level> --accept <criterion> [--depends-on <task-id>]\n  legacy-create <title> --slug <slug> [--rigor lite|full] [--parent <task>]\n  show <task> [--json] | dashboard | list | list-archive [YYYY-MM] | select <task> | selected [--json] | exit\n  schedule list [--json] | schedule plan <task-id> [task-id ...] [--conflict-authorizations-file <project-relative-json>] | schedule show <fingerprint>\n    Overlapping write sets stay serial unless the plan file gives an explicit authorization and integration plan; dispatch rechecks the bound receipt.\n  schedule dispatch <fingerprint> [--timeout-ms <milliseconds>]\n    Starts eligible Pi V2 Task Runs from the persisted fresh receipt; it records Host stop evidence but does not settle or integrate Kernel Runs.\n  artifacts <task> [--agent] [--stage prd|design|implement|review|verify]\n    Default is human-readable Markdown; --agent returns a compact JSON index without document bodies.\n  artifacts <task> --fact <id|artifact://tasks/<task>/kernel#/selector> [--stage <stage>] [--agent]\n    Expands facts through the active Kernel reader, including imported migration overlays.\n  artifacts <task> --document <document-id>@<fingerprint> [--stage <stage>] [--agent]\n    Reads authored Markdown. Copy sha256:<64 lowercase hex> from the current index, or use @absent to confirm a missing file; re-read the index after edits because stale fingerprints fail.\n  artifacts <task> --section <section-id>@<fingerprint> [--stage <stage>] [--agent]\n    Reads a selected PRD Scope/Risk or Design Decision/Rationale/Risk block after rechecking its section fingerprint.\n  run-start <task> --input-summary <text> --approved-by <actor> --authorization-scope <text> --authorization-evidence <ref> [--wait]\n  run-resume <task> <run-id> | run-result <task> <run-id> --outcome <completed|failed|blocked>\n  review <task> --run <run-id> --candidate-id <id> --candidate-fingerprint <sha256> --reviewer <actor> --decision <verdict> --evidence <ref> --criterion <id>=<ref>\n  close <task> --run <run-id> --review <review-id> --candidate-id <id> --candidate-fingerprint <sha256> --candidate-observed-by <actor> --candidate-observation-source <source> --candidate-observation-ref <ref> --delivery-level <level> --delivery-ref <ref> --delivery-summary <text> [--delivery-path <repo-path>] [--target-branch <branch>] [--check]\n  start-execution <legacy-task> --check|--approved [--ignore-deps]\n  archive <legacy-task> [--check] [--archive-integrated-children]\n  prepare-archive-evidence <legacy-task> [--dry-run] | prepare-learning-scaffold <legacy-task> [--trigger <text>]\n  set-deps <legacy-task> [required-task-id...]\n  add-subtask <parent> <child> | remove-subtask <parent> <child>\n  prepare-child-worktree <parent> <child> --branch <branch> [--check]\n  set-child-state <parent> <child> <state> --evidence <ref>\n  integrate-child <parent> <child> <state> --evidence <ref> --ref <git-ref> [--execute-merge]\n  record-ac-evidence | record-independent-check | record-gate\n  add-context | list-context | validate | artifact-locale\n",
+  )
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[operation]")
+  .argument("[arguments...]")
+  .action(async () => {
+    process.exitCode = await runTaskCliWithWorkspaceReclaim(
+      process.argv.slice(3),
+    );
+  })
+  .addHelpText(
+    "after",
+    "\n  verify-plan <task-id> --manifest <project-relative-json> (--adopt|--override) [--no-jev]\n    Plans the latest completed candidate and records planning evidence only; no checks, Runs, Reviews, or Close are executed.\n",
+  );
+
+program
+  .command("worktree")
+  .description("Manage the current Pactile Run's Git worktree")
+  .addHelpText(
+    "after",
+    "\n  create <task> <run-id> [--branch <branch>] [--base-ref <ref>]\n  adopt <task> <run-id> --path <registered-checkout> --branch <branch> --base-sha <sha> --approved-by <name> --approval-evidence <ref>\n  inspect <task> <run-id> | integrate <task> <run-id> --target <local-branch> | reclaim <task> <run-id>\n",
+  )
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[operation]")
+  .argument("[arguments...]")
+  .action(async () => {
+    process.exitCode = await runWorktreeCommand(process.argv.slice(3));
   });
 
 program
@@ -520,4 +661,4 @@ program
     }
   });
 
-program.parse();
+await program.parseAsync();

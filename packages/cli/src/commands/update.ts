@@ -39,10 +39,19 @@ import {
   removeHash,
   renameHash,
   computeHash,
+  shouldExcludeFromHash,
 } from "../utils/template-hash.js";
 import { compareVersions } from "../utils/compare-versions.js";
+import {
+  applyDeferredLiveWrites,
+  captureDeferredLiveWrite,
+  clearDeferredLivePlan,
+  commitDeferredLivePlan,
+  prepareDeferredLivePlan,
+  resumeDeferredLivePlan,
+  type DeferredLiveWrite,
+} from "../pactile/lifecycle/deferred-live.js";
 import { toPosix } from "../utils/posix.js";
-import { setupProxy } from "../utils/proxy.js";
 import {
   reportUpdateReadiness,
   snapshotReadinessForRollout,
@@ -58,7 +67,7 @@ import {
   planWaveC,
   scanContractMigration,
   writeWaveCConfirmed,
-} from "@blxzer/pactile-core/task";
+} from "../core/task/index.js";
 import { emptyTaskJson } from "../utils/task-json.js";
 import {
   applyOfficialRetire,
@@ -73,8 +82,6 @@ import {
 
 // Import templates for comparison
 import {
-  getAllScripts,
-  getAllPoolSkeleton,
   // Configuration
   configYamlTemplate,
   gitignoreTemplate,
@@ -91,10 +98,16 @@ import {
   isManagedRootDir,
 } from "../configurators/index.js";
 import { getWorkflowRootTemplateFiles } from "../configurators/workflow.js";
-import { replacePythonCommandLiterals } from "../configurators/shared.js";
-import { pruneOrphanManifestKeys } from "../utils/manifest-prune.js";
+import {
+  isHostProjectionPath,
+  pruneOrphanManifestKeys,
+} from "../utils/manifest-prune.js";
 import { runPostUpdateSmoke } from "../utils/post-update-smoke.js";
-import { cleanupRetiredAlternateClientResidue } from "../pactile/compat/retired-alternate-client.js";
+import { listLegacyPythonScripts } from "../pactile/compat/node-entry-migration.js";
+import {
+  applyLegacyTaskUpdate,
+  inspectLegacyTaskUpdate,
+} from "../pactile/migration/legacy-task-update.js";
 import {
   buildFilePlanFromChanges,
   createBaseRolloutReport,
@@ -119,10 +132,6 @@ import {
 } from "../pactile/lifecycle/index.js";
 import { InstallStateStore } from "../pactile/runtime/stores.js";
 import { filterReadOnlyLegacyMigrationItems } from "../pactile/compat/legacy-migrations.js";
-import {
-  printLegacyCursorSkillResidueNotice,
-  printRetiredAlternateClientNotice,
-} from "../pactile/compat/update-residue.js";
 import { LEGACY_UPDATE_BLOCK_MESSAGE } from "../pactile/compat/cli-options.js";
 
 export interface UpdateOptions {
@@ -135,7 +144,7 @@ export interface UpdateOptions {
   skipReadiness?: boolean;
   /** Emit a single-line JSON rollout evidence object (dry-run or apply). */
   json?: boolean;
-  /** Skip post-apply Python script smoke checks (apply mode only). */
+  /** Skip post-apply Node runtime smoke checks (apply mode only). */
   skipPostUpdateSmoke?: boolean;
   /**
    * Maintainer / harness: after one confirm, write artifact B projections.
@@ -163,6 +172,34 @@ interface ChangeAnalysis {
 }
 
 type ConflictAction = "overwrite" | "skip" | "create-new";
+
+function inspectSafeDeleteTarget(
+  cwd: string,
+  relativePath: string,
+): "file" | "missing" | "unsafe" {
+  const parts = relativePath.split("/");
+  if (
+    parts.some((part) => !part || part === "." || part === "..") ||
+    relativePath.includes("\\") ||
+    relativePath.includes(":") ||
+    path.posix.isAbsolute(relativePath)
+  ) {
+    return "unsafe";
+  }
+  let cursor = path.resolve(cwd);
+  for (let index = 0; index < parts.length; index++) {
+    cursor = path.join(cursor, parts[index]);
+    const stat = fs.lstatSync(cursor, { throwIfNoEntry: false });
+    if (!stat) return "missing";
+    if (stat.isSymbolicLink()) return "unsafe";
+    if (index < parts.length - 1) {
+      if (!stat.isDirectory()) return "unsafe";
+    } else if (!stat.isFile() || stat.nlink !== 1) {
+      return "unsafe";
+    }
+  }
+  return "file";
+}
 
 // Paths that should never be touched (true user data)
 // spec/ is user-customized content created during init; update should never modify it
@@ -192,8 +229,28 @@ interface SafeFileDeleteClassified {
     | "delete"
     | "skip-missing"
     | "skip-modified"
+    | "skip-unsafe"
     | "skip-protected"
     | "skip-update-skip";
+}
+
+/** Retire only Python scripts that still match the hash recorded at install. */
+export function retiredPythonScriptMigrations(
+  hashes: TemplateHashes,
+): MigrationItem[] {
+  return Object.entries(hashes)
+    .filter(
+      ([file, hash]) =>
+        /^\.pactile\/scripts\/(?:[^/]+\/)*[^/]+\.py$/.test(file) &&
+        file.split("/").every((part) => part !== "." && part !== "..") &&
+        /^[a-f0-9]{64}$/i.test(hash),
+    )
+    .map(([file, hash]) => ({
+      type: "safe-file-delete" as const,
+      from: file,
+      allowed_hashes: [hash],
+      description: "Node-only runtime replaces this installed Python script",
+    }));
 }
 
 /**
@@ -223,9 +280,14 @@ function collectSafeFileDeletes(
   for (const item of safeDeletes) {
     const fullPath = path.join(cwd, item.from);
 
-    // Check: file exists?
-    if (!fs.existsSync(fullPath)) {
-      results.push({ item, action: "skip-missing" });
+    // A link in any path component, or a multiply linked leaf, is never
+    // proof of Pactile ownership even if its bytes match a template hash.
+    const target = inspectSafeDeleteTarget(cwd, item.from);
+    if (target !== "file") {
+      results.push({
+        item,
+        action: target === "missing" ? "skip-missing" : "skip-unsafe",
+      });
       continue;
     }
 
@@ -279,11 +341,13 @@ function printSafeFileDeleteSummary(
 ): void {
   const toDelete = classified.filter((c) => c.action === "delete");
   const modified = classified.filter((c) => c.action === "skip-modified");
+  const unsafe = classified.filter((c) => c.action === "skip-unsafe");
   const updateSkip = classified.filter((c) => c.action === "skip-update-skip");
 
   if (
     toDelete.length === 0 &&
     modified.length === 0 &&
+    unsafe.length === 0 &&
     updateSkip.length === 0
   ) {
     return;
@@ -305,6 +369,12 @@ function printSafeFileDeleteSummary(
     for (const c of modified) {
       console.log(chalk.yellow(`    ? ${c.item.from} (modified, skipped)`));
     }
+  }
+
+  for (const c of unsafe) {
+    console.log(
+      chalk.yellow(`    ? ${c.item.from} (unsafe file or link, skipped)`),
+    );
   }
 
   if (updateSkip.length > 0) {
@@ -332,6 +402,7 @@ function executeSafeFileDeletes(
       // Re-check after staging. Adapter reconciliation may have touched the
       // same host path since classification; never delete bytes whose current
       // hash no longer matches the manifest allow-list.
+      if (inspectSafeDeleteTarget(cwd, c.item.from) !== "file") continue;
       const current = fs.readFileSync(fullPath, "utf-8");
       if (!c.item.allowed_hashes?.includes(computeHash(current))) continue;
       fs.unlinkSync(fullPath);
@@ -693,23 +764,13 @@ export function collectTemplateFiles(
    * Bypass `update.skip` when collecting templates. Enable this for breaking
    * releases so new files (e.g. `continue.md` added in 0.5.0) and template
    * updates can land even under skip-protected paths. Without this, users with
-   * `.cursor/commands/` in their skip list would silently miss new commands.
+   * a retired host command directory in their skip list would silently miss new commands.
    * Existing user customizations are still guarded at WRITE time via the
    * "Modified by you" conflict prompt — they can skip per-file there.
    */
   bypassUpdateSkip = false,
 ): Map<string, string> {
   const files = new Map<string, string>();
-  // Python scripts (single source of truth: getAllScripts())
-  for (const [scriptPath, content] of getAllScripts()) {
-    files.set(`${PATHS.SCRIPTS}/${scriptPath}`, content);
-  }
-
-  // Review-pool skeleton (mechanism only — never overwrite user items/)
-  for (const [poolPath, content] of getAllPoolSkeleton()) {
-    files.set(`${PATHS.POOL}/${poolPath}`, content);
-  }
-
   // P29 short contracts (index.json + <id>/contract.md). Not scripts.
   for (const [modulePath, content] of collectUserModuleTemplates()) {
     files.set(`${PATHS.MODULES}/${modulePath}`, content);
@@ -724,13 +785,12 @@ export function collectTemplateFiles(
   files.set(`${DIR_NAMES.WORKFLOW}/.gitignore`, gitignoreTemplate);
   // Retired alternate-client files are handled only by the explicit
   // compatibility residue cleaner and are never refreshed or injected.
-  // workflow.md is included here because it is runtime-parsed by
-  // get_context.py and shared hooks. Keep it on the normal template update
+  // workflow.md is included here because the Node context command reads it.
+  // Keep it on the normal template update
   // path: if the installed file still matches the tracked hash, update the
   // whole file. If the user edited it, the standard modified-file prompt /
   // --force behavior applies. Partial tag-block merging is unsafe because
-  // platform routing markers outside [workflow-state:*] blocks are also
-  // script-consumed.
+  // platform routing markers outside [workflow-state:*] blocks also matter.
   files.set(`${DIR_NAMES.WORKFLOW}/workflow.md`, workflowMdTemplate);
   // Framework docs are framework-owned and refreshed by update.
   // New files flow through the standard new/auto-update/hash-conflict
@@ -743,7 +803,7 @@ export function collectTemplateFiles(
   for (const [relativePath, content] of getWorkflowRootTemplateFiles()) {
     files.set(relativePath, content);
   }
-  // workspace/index.md stays excluded — it's runtime-appended by add_session.py
+  // workspace/index.md stays excluded — it is appended by the Node session command
   // (journal index) and has no script-parsed structure.
   for (const [filePath, content] of collectProjectCapabilityTemplates(
     cwd,
@@ -768,11 +828,6 @@ export function collectTemplateFiles(
         }
       }
     }
-  }
-
-  // Apply python3→python replacement for Windows consistency with init-time writes
-  for (const [filePath, content] of files) {
-    files.set(filePath, replacePythonCommandLiterals(content));
   }
 
   // User overlay is never a template — strip even if a future collector
@@ -871,7 +926,10 @@ export function collectMissingTemplateHashes(
   const files = new Map<string, string>();
 
   for (const file of changes.unchangedFiles) {
-    if (isUserMiddlewareOverlayPath(file.relativePath)) {
+    if (
+      shouldExcludeFromHash(file.relativePath) ||
+      isHostProjectionPath(file.relativePath)
+    ) {
       continue;
     }
     if (!hashes[file.relativePath]) {
@@ -1059,11 +1117,8 @@ const BACKUP_EXCLUDE_PATTERNS = [
   "/middleware/", // User middleware overlay (never managed)
   "/backlog/", // Backlog data (user data)
   "/agent-traces/", // Agent traces (user data, legacy name)
-  // Platform-native worktree dirs — these are full sub-repos the CLI
-  // spawns for parallel sessions. Backing them up on every update would
-  // snapshot the entire nested working tree. Confirmed convention:
-  //   Cursor CLI:  .cursor/worktrees/
-  // Matches any platform using the same convention (future-proof).
+  // Platform-native worktree dirs may contain complete nested checkouts.
+  // Backing them up on every update would snapshot the full working tree.
   "/worktrees/",
   "/worktree/",
 ];
@@ -1075,7 +1130,7 @@ const BACKUP_EXCLUDE_PATTERNS = [
 export function shouldExcludeFromBackup(relativePath: string): boolean {
   // Normalize Windows backslashes to forward slashes so patterns like
   // "/worktrees/" / "/tasks/" match regardless of host OS. Without this,
-  // Windows `path.relative` returns `.cursor\worktrees\...` and none of
+  // Windows `path.relative` returns backslash-separated worktree paths and none of
   // the slash-prefixed exclude patterns trigger — which causes
   // `collectAllFiles` to descend into platform worktrees (full nested
   // project copies) and explode the scan. Same normalization pattern
@@ -1866,28 +1921,6 @@ function candidatePath(
   return path.join(root, ...relativePath.replace(/\\/g, "/").split("/"));
 }
 
-interface DeferredLiveWrite {
-  readonly content: string;
-  readonly executable: boolean;
-}
-
-/**
- * Apply template writes that are outside the canonical generation only after
- * lifecycle commit. Canonical paths are staged in the OS temporary root; live
- * paths are kept as bytes in memory until ProjectionStore/lifecycle succeeds.
- */
-function applyDeferredLiveWrites(
-  cwd: string,
-  writes: ReadonlyMap<string, DeferredLiveWrite>,
-): void {
-  for (const [relativePath, write] of writes) {
-    const target = path.join(cwd, ...relativePath.replace(/\\/g, "/").split("/"));
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, write.content);
-    if (write.executable) fs.chmodSync(target, 0o755);
-  }
-}
-
 function migrationRoot(item: MigrationItem): "canonical" | "live" {
   const paths = [item.from, item.to].filter(
     (value): value is string => typeof value === "string" && value.length > 0,
@@ -1993,6 +2026,11 @@ async function runUpdateLifecycle(
  */
 export async function update(options: UpdateOptions): Promise<void> {
   const cwd = process.cwd();
+  if (!options.dryRun) {
+    const active =
+      new InstallStateStore(cwd).read()?.state.generationId ?? null;
+    resumeDeferredLivePlan(cwd, active);
+  }
   const rolloutOpts = rolloutOptionsFromUpdate(options);
   let readinessSnapshot: UpdateReadinessSnapshot | null = null;
   let projectVersion = "unknown";
@@ -2075,9 +2113,6 @@ export async function update(options: UpdateOptions): Promise<void> {
   console.log(chalk.cyan("\nPactile Update"));
   console.log(chalk.cyan("══════════════\n"));
 
-  // Set up proxy before any network calls (npm version check)
-  setupProxy();
-
   readinessSnapshot = snapshotReadinessForRollout({
     cwd,
     selected: loadProjectCapabilities(cwd),
@@ -2146,6 +2181,7 @@ export async function update(options: UpdateOptions): Promise<void> {
 
   // Load template hashes for modification detection
   let hashes = loadHashes(cwd);
+  const retiredPythonMigrations = retiredPythonScriptMigrations(hashes);
   const isFirstHashTracking = Object.keys(hashes).length === 0;
 
   // Handle unknown version - skip regular migrations but safe-file-delete still runs
@@ -2184,6 +2220,27 @@ export async function update(options: UpdateOptions): Promise<void> {
       prunedManifest = true;
     }
   }
+  // The old hash manifest is migration evidence for this run, not continuing
+  // ownership of retired scripts. Capture it above, then remove those claims
+  // from the candidate generation even when a modified file stays on disk.
+  const retiredHashPaths = new Set(
+    retiredPythonMigrations.map((item) => item.from),
+  );
+  const releasedHashPaths = Object.keys(hashes).filter((relativePath) =>
+    retiredHashPaths.has(relativePath),
+  );
+  const retainedHashes = Object.entries(hashes).filter(
+    ([relativePath]) => !retiredHashPaths.has(relativePath),
+  );
+  if (releasedHashPaths.length > 0) {
+    hashes = Object.fromEntries(retainedHashes);
+    prunedManifest = true;
+    console.log(
+      chalk.gray(
+        `   Released ${releasedHashPaths.length} retired Python hash claim(s)`,
+      ),
+    );
+  }
 
   // For breaking releases with recommendMigrate + --migrate, bypass update.skip
   // across the board (safe-file-delete, new file writes, template updates).
@@ -2207,7 +2264,6 @@ export async function update(options: UpdateOptions): Promise<void> {
   // match the shipped template (dogfood pin absorbed by this release).
   const officialTemplates = collectTemplateFiles(cwd, true);
   const templates = collectTemplateFiles(cwd, breakingBypass);
-  printLegacyCursorSkillResidueNotice(cwd);
 
   // Load update.skip paths (used for both safe-file-delete and template collection)
   const skipPaths = loadUpdateSkipPaths(cwd);
@@ -2221,11 +2277,36 @@ export async function update(options: UpdateOptions): Promise<void> {
   // This runs regardless of version — unknown version still gets safe cleanup
   const allMigrations = getAllMigrations();
   const safeFileDeletes = collectSafeFileDeletes(
-    allMigrations,
+    [
+      ...allMigrations,
+      ...retiredPythonMigrations.filter(
+        (item) =>
+          !allMigrations.some(
+            (existing) =>
+              existing.type === "safe-file-delete" &&
+              existing.from === item.from,
+          ),
+      ),
+    ],
     cwd,
     skipPaths,
     breakingBypass,
   );
+  const legacyPythonPaths = listLegacyPythonScripts(cwd);
+  const retiredPythonPlanned = new Set(
+    safeFileDeletes
+      .filter((item) => item.action === "delete")
+      .map((item) => item.item.from),
+  );
+  const legacyPythonModified = new Set(
+    safeFileDeletes
+      .filter((item) => item.action === "skip-modified")
+      .map((item) => item.item.from),
+  );
+  const legacyPathPresent = (relativePath: string): boolean =>
+    fs.lstatSync(path.join(cwd, relativePath), {
+      throwIfNoEntry: false,
+    }) !== undefined;
   const hasSafeDeletes =
     safeFileDeletes.filter((c) => c.action === "delete").length > 0;
 
@@ -2366,27 +2447,6 @@ export async function update(options: UpdateOptions): Promise<void> {
     printSafeFileDeleteSummary(safeFileDeletes);
   }
 
-  // Preview retired alternate-client cleanup (hash-safe; always considered).
-  const alternateClientResiduePreview = cleanupRetiredAlternateClientResidue(
-    cwd,
-    {
-      dryRun: true,
-    },
-  );
-  if (alternateClientResiduePreview.deleted.length > 0) {
-    console.log(chalk.cyan("\nRetired alternate-client cleanup (hash-safe):"));
-    for (const rel of alternateClientResiduePreview.deleted) {
-      console.log(chalk.gray(`  would delete: ${rel}`));
-    }
-  }
-  if (alternateClientResiduePreview.preservedModified.length > 0) {
-    console.log(
-      chalk.yellow(
-        `  preserve (user-modified): ${alternateClientResiduePreview.preservedModified.join(", ")}`,
-      ),
-    );
-  }
-
   // Analyze changes (pass hashes for modification detection)
   const changes = analyzeChanges(cwd, hashes, templates);
   const missingTemplateHashes = collectMissingTemplateHashes(changes, hashes);
@@ -2402,17 +2462,30 @@ export async function update(options: UpdateOptions): Promise<void> {
     .filter((c) => c.action === "delete")
     .map((c) => c.item.from);
   const conflictsPending = changes.changedFiles.map((f) => f.relativePath);
-  const buildRolloutFilePlan = (): ReturnType<
-    typeof buildFilePlanFromChanges
-  > =>
-    buildFilePlanFromChanges({
+  const buildRolloutFilePlan = (
+    applied = false,
+  ): ReturnType<typeof buildFilePlanFromChanges> => {
+    const remaining = applied
+      ? legacyPythonPaths.filter(legacyPathPresent)
+      : legacyPythonPaths;
+    return buildFilePlanFromChanges({
       newFiles: changes.newFiles,
       unchangedFiles: changes.unchangedFiles,
       autoUpdateFiles: changes.autoUpdateFiles,
       changedFiles: changes.changedFiles,
       userDeletedFiles: changes.userDeletedFiles,
       safeDeletePaths,
+      legacyPythonPreserved: remaining.filter((file) =>
+        legacyPythonModified.has(file),
+      ),
+      legacyPythonUnprocessed: remaining.filter(
+        (file) =>
+          !legacyPythonModified.has(file) &&
+          (applied || !retiredPythonPlanned.has(file)),
+      ),
+      legacyPythonHashClaimsReleased: releasedHashPaths,
     });
+  };
 
   const p36State: { report?: UpdateRolloutReport["p36"] } = {};
   let lifecycleResult: LifecycleResult | null = null;
@@ -2498,6 +2571,48 @@ export async function update(options: UpdateOptions): Promise<void> {
   p36State.report = p36SummaryForRollout(p36Plan);
   printP36Vernacular(p36Plan);
 
+  const legacyTaskInspection = inspectLegacyTaskUpdate(cwd);
+  if (legacyTaskInspection.status !== "none") {
+    console.log(chalk.cyan("\nLegacy Task import preflight:"));
+    if (legacyTaskInspection.status === "ready") {
+      console.log(
+        `  Ready: ${legacyTaskInspection.import.imported} Task(s), ${legacyTaskInspection.import.needsDefinition} need definition, ${legacyTaskInspection.import.needsCoordination} need dependency coordination, ${legacyTaskInspection.import.archived} archived read-only.`,
+      );
+    } else if (legacyTaskInspection.status === "blocked") {
+      console.log(
+        chalk.yellow(
+          `  Blocked: ${legacyTaskInspection.reason ?? "legacy-task-preflight-blocked"}`,
+        ),
+      );
+      for (const finding of legacyTaskInspection.plan.findings.filter(
+        (item) => item.severity === "blocker",
+      )) {
+        console.log(
+          chalk.gray(
+            `  ${finding.sourcePath}: ${finding.code} — ${finding.detail}`,
+          ),
+        );
+      }
+    } else if (legacyTaskInspection.status === "active-source-drift") {
+      console.log(
+        chalk.yellow(
+          "  Existing V2 import remains active; later legacy source edits stay untouched and will not be re-imported automatically.",
+        ),
+      );
+    } else {
+      console.log(
+        chalk.gray(
+          `  ${legacyTaskInspection.status}: batch ${legacyTaskInspection.activeBatchId ?? "none"}`,
+        ),
+      );
+    }
+  }
+  if (!options.dryRun && legacyTaskInspection.status === "blocked") {
+    throw new Error(
+      `Legacy Task migration preflight blocked the update: ${legacyTaskInspection.reason ?? "unknown"}`,
+    );
+  }
+
   // First-time hash tracking hint
   if (isFirstHashTracking && changes.changedFiles.length > 0) {
     console.log(chalk.cyan("ℹ️  First update with hash tracking enabled."));
@@ -2529,6 +2644,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   const hasMaintainerArtifactWrites =
     Boolean(options.writeArtifacts) && artifactPlan.writable.length > 0;
   const hasWaveCPending = waveCWorkPending(p36Plan);
+  const hasLegacyTaskUpgrade = legacyTaskInspection.status === "ready";
 
   if (
     changes.newFiles.length === 0 &&
@@ -2538,9 +2654,14 @@ export async function update(options: UpdateOptions): Promise<void> {
     !hasSafeDeletes &&
     !hasOfficialP36 &&
     !hasMaintainerArtifactWrites &&
-    !hasWaveCPending
+    !hasWaveCPending &&
+    !hasLegacyTaskUpgrade
   ) {
+    const metadataChanged =
+      prunedManifest || missingTemplateHashes.size > 0 || !isSameVersion;
+    let noChangeBackup: string | null = null;
     if (!options.dryRun) {
+      if (metadataChanged) noChangeBackup = createFullBackup(cwd);
       const canonicalBuildRoot = fs.mkdtempSync(
         path.join(os.tmpdir(), "pactile-update-"),
       );
@@ -2571,7 +2692,15 @@ export async function update(options: UpdateOptions): Promise<void> {
     }
 
     if (isSameVersion) {
-      console.log(chalk.green("✓ Already up to date!"));
+      console.log(
+        chalk.green(
+          metadataChanged
+            ? options.dryRun
+              ? "✓ Metadata reconciliation ready"
+              : "✓ Metadata reconciled"
+            : "✓ Already up to date!",
+        ),
+      );
     } else {
       if (isUpgrade) {
         console.log(
@@ -2589,12 +2718,19 @@ export async function update(options: UpdateOptions): Promise<void> {
     }
     const afterVersion = getInstalledVersion(cwd);
     emitRollout(
-      lifecycleResult?.status === "degraded"
-        ? "applied_degraded"
-        : "no_changes",
+      options.dryRun
+        ? metadataChanged
+          ? "would_apply"
+          : "no_changes"
+        : lifecycleResult?.status === "degraded"
+          ? "applied_degraded"
+          : metadataChanged
+            ? "applied"
+            : "no_changes",
       {
         projectVersionAfter: afterVersion,
         files: buildRolloutFilePlan(),
+        backupPath: noChangeBackup ? path.relative(cwd, noChangeBackup) : null,
       },
     );
     return;
@@ -2706,6 +2842,42 @@ export async function update(options: UpdateOptions): Promise<void> {
     waveCInteractivelyConfirmed = true;
   }
 
+  if (legacyTaskInspection.status === "ready") {
+    const taskUpgrade = await applyLegacyTaskUpdate(cwd);
+    if (
+      taskUpgrade.status === "blocked" ||
+      taskUpgrade.status === "interrupted"
+    ) {
+      const retryGuidance = taskUpgrade.reason?.includes(
+        "authority-missing-with-residual-state",
+      )
+        ? "Reconcile the missing authority against the preserved migration evidence before retrying."
+        : "Re-run 'pactile update' to recover the journal.";
+      throw new Error(
+        `Legacy Task migration did not commit; update stopped before template writes (${taskUpgrade.reason ?? taskUpgrade.status}). ${retryGuidance}`,
+      );
+    }
+    if (taskUpgrade.status === "completed") {
+      console.log(
+        chalk.green(
+          `\n✓ Imported ${taskUpgrade.import.imported} legacy Task(s) into V2; ${taskUpgrade.import.needsDefinition} need definition, ${taskUpgrade.import.needsCoordination} need dependency coordination, ${taskUpgrade.import.archived} remain archived read-only.`,
+        ),
+      );
+    } else if (taskUpgrade.status === "active-source-drift") {
+      console.log(
+        chalk.yellow(
+          "\nLegacy source changed after the active V2 import; preserved it without re-import.",
+        ),
+      );
+    } else if (taskUpgrade.status === "already-active") {
+      console.log(
+        chalk.gray(
+          "\nLegacy Task migration is already active; no Task state was rewritten.",
+        ),
+      );
+    }
+  }
+
   // Create complete backup of all managed platform/workflow directories
   const canonicalBuildRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "pactile-update-"),
@@ -2731,14 +2903,14 @@ export async function update(options: UpdateOptions): Promise<void> {
   const skippedConflictPaths: string[] = [];
   const createdNewPaths: string[] = [];
   const deferredLiveWrites = new Map<string, DeferredLiveWrite>();
-  const stageTemplateWrite = (
-    relativePath: string,
-    content: string,
-  ): void => {
+  const stageTemplateWrite = (relativePath: string, content: string): void => {
     const executable =
       relativePath.endsWith(".sh") || relativePath.endsWith(".py");
     if (!isCanonicalGenerationPath(relativePath)) {
-      deferredLiveWrites.set(relativePath, { content, executable });
+      deferredLiveWrites.set(
+        relativePath,
+        captureDeferredLiveWrite(cwd, relativePath, content, executable),
+      );
       return;
     }
     const target = candidatePath(cwd, canonicalBuildRoot, relativePath);
@@ -2890,7 +3062,7 @@ export async function update(options: UpdateOptions): Promise<void> {
               ? fs.readFileSync(fullPath, "utf-8")
               : null;
           })()
-        : deferredLiveWrites.get(file.relativePath)?.content ?? null;
+        : (deferredLiveWrites.get(file.relativePath)?.content ?? null);
       if (staged === file.newContent)
         filesToHash.set(file.relativePath, file.newContent);
     }
@@ -2907,11 +3079,31 @@ export async function update(options: UpdateOptions): Promise<void> {
       activePlatforms,
       VERSION,
     );
-    lifecycleResult = await runUpdateLifecycle(
-      cwd,
-      "update",
-      canonicalCandidate,
-    );
+    const sourceGenerationId = new InstallStateStore(cwd).read()?.state
+      .generationId;
+    if (!sourceGenerationId)
+      throw new Error("Missing active generation before deferred live update");
+    prepareDeferredLivePlan(cwd, sourceGenerationId, deferredLiveWrites);
+    try {
+      lifecycleResult = await runUpdateLifecycle(
+        cwd,
+        "update",
+        canonicalCandidate,
+      );
+      if (lifecycleResult.installState) {
+        commitDeferredLivePlan(
+          cwd,
+          lifecycleResult.installState.state.generationId,
+        );
+      }
+    } catch (error) {
+      if (
+        new InstallStateStore(cwd).read()?.state.generationId ===
+        sourceGenerationId
+      )
+        clearDeferredLivePlan(cwd);
+      throw error;
+    }
   } finally {
     fs.rmSync(canonicalBuildRoot, { recursive: true, force: true });
   }
@@ -2972,24 +3164,8 @@ export async function update(options: UpdateOptions): Promise<void> {
     safeDeleted += deleted;
   }
 
-  const alternateClientCleanup = cleanupRetiredAlternateClientResidue(cwd);
-  if (alternateClientCleanup.deleted.length > 0) {
-    safeDeleted += alternateClientCleanup.deleted.length;
-    console.log(
-      chalk.cyan(
-        `\nCleaned up ${alternateClientCleanup.deleted.length} retired alternate-client file(s)`,
-      ),
-    );
-  }
-  if (alternateClientCleanup.preservedModified.length > 0) {
-    console.log(
-      chalk.yellow(
-        `Preserved user-modified alternate-client residue: ${alternateClientCleanup.preservedModified.join(", ")}`,
-      ),
-    );
-  }
-
   applyDeferredLiveWrites(cwd, deferredLiveWrites);
+  clearDeferredLivePlan(cwd);
   if (deferredLiveConfigSections.length > 0) {
     configSectionsAppended += applyConfigSectionsAdded(
       deferredLiveConfigSections,
@@ -3013,7 +3189,8 @@ export async function update(options: UpdateOptions): Promise<void> {
       console.log(
         chalk.yellow("产物写入失败，已回到双读。项目仍可用，可再跑 update。"),
       );
-      if (artifactApply.error) console.log(chalk.gray(`  ${artifactApply.error}`));
+      if (artifactApply.error)
+        console.log(chalk.gray(`  ${artifactApply.error}`));
     }
   }
 
@@ -3111,7 +3288,6 @@ export async function update(options: UpdateOptions): Promise<void> {
       `\n✅ ${actionWord} complete! (${projectVersion} → ${cliVersion})`,
     ),
   );
-  printRetiredAlternateClientNotice(cwd);
 
   if (createdNew > 0) {
     console.log(
@@ -3139,7 +3315,7 @@ export async function update(options: UpdateOptions): Promise<void> {
         fs.mkdirSync(taskDir, { recursive: true });
 
         // Get current developer for assignee.
-        // `.developer` is a key=value file (written by init_developer.py):
+        // `.developer` is a key=value file written during init:
         //   name=<developer-name>
         //   initialized_at=<iso8601>
         // Reading it raw and .trim()-ing embeds the entire file contents
@@ -3225,7 +3401,7 @@ export async function update(options: UpdateOptions): Promise<void> {
         console.log("");
         console.log(
           chalk.gray(
-            "Use AI to help: Ask Claude/Cursor to read the task and fix your custom files.",
+            "Use your agent to read the task and fix your custom files.",
           ),
         );
       }
@@ -3271,7 +3447,7 @@ export async function update(options: UpdateOptions): Promise<void> {
     }
   }
 
-  const appliedFilePlan = buildRolloutFilePlan();
+  const appliedFilePlan = buildRolloutFilePlan(true);
   appliedFilePlan.added = changes.newFiles.map((f) => f.relativePath);
   appliedFilePlan.autoUpdated = changes.autoUpdateFiles.map(
     (f) => f.relativePath,
@@ -3279,11 +3455,9 @@ export async function update(options: UpdateOptions): Promise<void> {
   appliedFilePlan.overwritten = overwrittenPaths;
   appliedFilePlan.skipped = skippedConflictPaths;
   appliedFilePlan.createdNew = createdNewPaths;
-  if (safeDeleted > 0) {
-    appliedFilePlan.safeDeleted = safeFileDeletes
-      .filter((c) => c.action === "delete")
-      .map((c) => c.item.from);
-  }
+  appliedFilePlan.safeDeleted = safeFileDeletes
+    .filter((c) => c.action === "delete" && !legacyPathPresent(c.item.from))
+    .map((c) => c.item.from);
 
   const postSmoke = options.skipPostUpdateSmoke ? [] : runPostUpdateSmoke(cwd);
 

@@ -69,7 +69,48 @@ function commandLines(content: string): string[] {
   return content
     .split(/\r?\n/u)
     .map((line) => line.trim())
-    .filter((line) => /^(?:pactile|pnpm|npm|node|git)\b/u.test(line));
+    .filter((line) => /^(?:pactile|pnpm|npm|node|git)(?:\s|$)/u.test(line));
+}
+
+function sectionAfterAnchor(content: string, id: string): string {
+  const anchor = `<a id="${id}"></a>`;
+  const anchorIndex = content.indexOf(anchor);
+  if (anchorIndex < 0) throw new Error(`missing documentation anchor: ${id}`);
+  const section = content.slice(anchorIndex + anchor.length);
+  const headings = [...section.matchAll(/^##\s+.+$/gmu)];
+  const nextHeading = headings[1]?.index;
+  return nextHeading === undefined ? section : section.slice(0, nextHeading);
+}
+
+function fencedCodeBlocks(content: string, language: string): string[] {
+  const blocks: string[] = [];
+  let fence: string | null = null;
+  let capturesBlock = false;
+  let lines: string[] = [];
+  for (const line of content.split(/\r?\n/u)) {
+    const delimiter = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/u);
+    if (fence === null) {
+      if (!delimiter) continue;
+      fence = delimiter[1] ?? null;
+      capturesBlock = delimiter[2]?.trim().split(/\s+/u)[0] === language;
+      lines = [];
+      continue;
+    }
+    if (
+      delimiter &&
+      delimiter[1]?.[0] === fence[0] &&
+      (delimiter[1]?.length ?? 0) >= fence.length &&
+      delimiter[2]?.trim() === ""
+    ) {
+      if (capturesBlock) blocks.push(lines.join("\n"));
+      fence = null;
+      capturesBlock = false;
+      lines = [];
+      continue;
+    }
+    if (capturesBlock) lines.push(line);
+  }
+  return blocks;
 }
 
 function normalizedLinkDestinations(sourcePath: string): string[] {
@@ -90,8 +131,14 @@ describe("Batch 4 documentation links and locale parity", () => {
     const failures: string[] = [];
     for (const mapping of documentationMap.sourceMappings) {
       if (!mapping.path.endsWith(".md")) continue;
+      const linkBasePath =
+        mapping.path === "packages/cli/README.md"
+          ? "README.md"
+          : mapping.path === "packages/cli/README.zh-CN.md"
+            ? "README.zh-CN.md"
+            : mapping.path;
       for (const link of markdownLinks(readUtf8(mapping.path))) {
-        const resolved = resolveRelative(mapping.path, link);
+        const resolved = resolveRelative(linkBasePath, link);
         if (
           resolved === null ||
           !fs.existsSync(path.join(repoRoot, ...resolved.split("/")))
@@ -101,6 +148,13 @@ describe("Batch 4 documentation links and locale parity", () => {
       }
     }
     expect(failures).toEqual([]);
+  });
+
+  it("keeps package release readmes synchronized with the root readmes", () => {
+    expect(readUtf8("packages/cli/README.md")).toBe(readUtf8("README.md"));
+    expect(readUtf8("packages/cli/README.zh-CN.md")).toBe(
+      readUtf8("README.zh-CN.md"),
+    );
   });
 
   it("keeps parity-required target pages aligned on outline, commands, and destinations", () => {
@@ -137,6 +191,26 @@ describe("Batch 4 documentation links and locale parity", () => {
     expect(failures).toEqual([]);
   });
 
+  it("keeps all P36 reconciliation command continuations identical", () => {
+    const english = fencedCodeBlocks(
+      sectionAfterAnchor(
+        readUtf8("docs/lifecycle/upgrade-and-migrate.md"),
+        "p36-held-task-reconciliation",
+      ),
+      "bash",
+    );
+    const chinese = fencedCodeBlocks(
+      sectionAfterAnchor(
+        readUtf8("docs/lifecycle/upgrade-and-migrate.zh-CN.md"),
+        "p36-held-task-reconciliation",
+      ),
+      "bash",
+    );
+    // AC-number prefixes here are literal --accept description text, not Kernel criterion IDs.
+    expect(english).toHaveLength(3);
+    expect(english).toEqual(chinese);
+  });
+
   it("requires redirect stubs to expose both first-class locale targets", () => {
     const failures: string[] = [];
     for (const mapping of documentationMap.sourceMappings) {
@@ -164,5 +238,35 @@ describe("Batch 4 documentation links and locale parity", () => {
       }
     }
     expect(failures).toEqual([]);
+  });
+
+  it("documents V2 Close observations and provider proof in both locales", () => {
+    const english = readUtf8("docs/concepts/task-system.md").split(
+      /^## 0\.5\.x Kernel v1/mu,
+    )[0];
+    const chinese = readUtf8("docs/concepts/task-system.zh-CN.md").split(
+      /^## 0\.5\.x Kernel v1/mu,
+    )[0];
+    if (!english || !chinese) throw new Error("V2 task-system section is missing");
+
+    expect(english).toContain("`closeTaskKernel`, the same Core API used by the CLI");
+    expect(english).toContain("Core re-observes current candidate state");
+    expect(english).toContain("read-only GitHub `gh api` observer");
+    expect(english).toContain("`--exclude-standard`");
+    expect(english).toContain("Review and acceptance evidence is also reopened and fingerprinted at Close");
+    expect(english).toContain("does not authenticate identities");
+    expect(english).not.toContain("does not recompute current Git HEAD, staged/unstaged state, or file bytes");
+    expect(english).not.toContain("does not query a PR/merge service");
+    expect(english).not.toContain("does not authenticate those identities, open referenced files");
+
+    expect(chinese).toContain("同一个 Core API");
+    expect(chinese).toContain("Core 会重新观察当前候选");
+    expect(chinese).toContain("只读 GitHub `gh api` observer");
+    expect(chinese).toContain("`--exclude-standard`");
+    expect(chinese).toContain("Close 还会重新打开 Review 与验收证据文件");
+    expect(chinese).toContain("不会认证身份");
+    expect(chinese).not.toContain("不会重新计算当前 Git HEAD");
+    expect(chinese).not.toContain("它不会认证这些身份、打开被引用文件");
+    expect(chinese).not.toContain("也不会查询 PR 或合并服务");
   });
 });

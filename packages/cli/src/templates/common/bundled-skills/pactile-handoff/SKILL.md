@@ -37,7 +37,7 @@ At stage boundaries first ask: **does the work still continue in this session?**
 
 | Situation | Why a file is needed |
 | --- | --- |
-| Switch harness (e.g. Cursor → Codex) | The new harness cannot see the old context |
+| Switch tasks or hosts | The destination may not see the previous context |
 | Switch directory / repo | Common for prototype directories and new repos |
 | Hand to a colleague | They need something they can read independently |
 | Fork a side branch (main line continues) | You stay in this session; a second agent takes a copy in parallel |
@@ -92,7 +92,7 @@ $env:TEMP\pactile-handoff-{yyyyMMdd-HHmmss}-{slug}.md
 ## Pointers (reference paths only, never copy bodies)
 - Task: `.pactile/tasks/<task>/` (prd.md / design.md / implement.md / verify.md)
 - Context: `CONTEXT.md` · Research: `<task>/research/`
-- Prototype evidence (if a prototype was involved): `<task>/research/prototype-<slug>.py` (see `.pactile/spec/guides/prototype-guide.md` §9)
+- Prototype evidence (if a prototype was involved): `<task>/research/prototype-<slug>.mjs` (see `.pactile/spec/guides/prototype-guide.md` §9)
 - Other: ADR / issue / commit / diff paths or URLs
 
 ## Suggested skills (for the continuing agent)

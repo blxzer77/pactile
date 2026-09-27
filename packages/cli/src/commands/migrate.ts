@@ -4,7 +4,7 @@ import {
   planArtifactMigration,
   planWaveC,
   scanContractMigration,
-} from "@blxzer/pactile-core/task";
+} from "../core/task/index.js";
 import { loadHashes } from "../utils/template-hash.js";
 import { isWorkflowInitialized } from "../utils/workflow-dir.js";
 import {

@@ -1,11 +1,115 @@
 # Changelog
 
-All notable changes to **@blxzer/cursor-trellis** are documented in this file.
+All notable changes to **@blxzer/pactile** are documented in this file. Older
+entries retain the package names used when they were published.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
 SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
-> This is a **new npm product line**. Prior internal releases shipped as `@blxzer/trellis` (1.x). They remain on npm for history; use `@blxzer/cursor-trellis` for new installs.
+> Prior internal releases shipped as `@blxzer/trellis` (1.x) and later as
+> `@blxzer/cursor-trellis`. They remain on npm for history. New installs use
+> `@blxzer/pactile`.
+
+---
+
+## [0.6.0] - 2026-09-28
+
+### Changed
+
+- Node.js 20 or newer is the only required runtime. Active product and
+  maintenance paths use TypeScript; generated Python entrypoints are retired.
+  Update previews modified and unclaimed files before safe removal.
+- New work uses Task Kernel V2: one independently acceptable Task with a
+  declared delivery level, explicit hard dependencies, isolated Runs, bound
+  independent Reviews, and Kernel-gated Close. Lite/Full and Parent/Child remain
+  in the legacy task model, not as presets for new V2 Tasks. Updating a 0.5.x
+  project imports eligible legacy records into a held state; incomplete
+  definitions require explicit
+  reconciliation, and historical status does not fabricate a V2 Run or PASS.
+- V2 scheduling uses hard dependencies and critical-path estimates to choose
+  ready work. The admission and worktree managers guard Pi execution, writer
+  leases, conflicting write sets, process-stop evidence, and worktree recovery.
+  Codex desktop tasks coordinate planning and independent review through native
+  request/receipt calls; Pi executes approved V2 Runs through RPC.
+- An independent Pi Review checks a frozen Run candidate. Mandatory escalation
+  rules can request a separate Codex Review. Verification planning proposes
+  checks by risk without removing repository-required CI or claiming that a
+  planned check has run.
+- Jev can advise applicable Tile, retrieval, scheduling, verification, and
+  optional Review-routing decisions. It remains optional, obeys project egress
+  policy, and falls back locally when unavailable. Its advice cannot grant
+  approval, override hard dependencies or validation, record Review PASS, or
+  Close a Task. V2 execution dispatch currently has one eligible executor, Pi,
+  so there is no multi-executor Jev choice.
+- A versioned workspace capability request runs discovery, reading, literal
+  search, and explicitly allowlisted commands through the built-in Node adapter.
+  Each operation has bounded time, output, and scan budgets, structured outcomes,
+  cancellation, and a content-free audit receipt. It requires no Python or
+  external search provider.
+- The unpublished `0.5.1-beta.0` pool cleanup is folded into the
+  `0.6.0-beta.1` migration manifest, retained for stable `0.6.0`. It deletes
+  only hash-matched pool skeleton files and preserves user-authored items.
+
+### Packaging and acceptance
+
+- One npm package, `@blxzer/pactile`, includes CLI and Core. The local release
+  gate checks the sealed tarball, a Python-free Node path, installed task
+  lifecycle, and simulated Pi/Codex paths. Live providers, desktop-host behavior,
+  migration samples, and end-to-end acceptance are separate evidence gates.
+
+The beta.6 tag Publish workflow succeeded, and its npm package installed in a
+fresh local project with Codex and FastCtx capability smoke passing. Release PR
+policy integration defects were corrected and accepted in beta.5 and beta.6.
+Stable publication follows the
+[upgrade guide](../../docs/lifecycle/upgrade-and-migrate.md) and
+[release procedure](../../docs/governance/releasing.md).
+
+---
+
+## [0.6.0-beta.6] - 2026-09-28
+
+The release PR checker now validates GitHub's actual tag-run fields: the
+workflow file path, tag name in `head_branch`, and tagged commit SHA. Product
+runtime and project migrations are unchanged from beta.5.
+
+---
+
+## [0.6.0-beta.5] - 2026-09-28
+
+The release PR checker now resolves the package manifest and Git working
+directory from its own module path, so CI can run it from the CLI package
+directory. Product runtime and project migrations are unchanged from beta.4.
+
+---
+
+## [0.6.0-beta.4] - 2026-09-28
+
+The beta.3 tag passed build, type checking, lint, tests, and package-content
+checks, but its release preparation stopped before npm publish: the Node-only
+conformance script was invoked from the workspace root, where `tsx` is not
+installed. This beta runs that check from the CLI package directory. Runtime
+behavior and project migration rules are unchanged.
+
+---
+
+## [0.6.0-beta.2] - 2026-09-25
+
+The Node-only, single-package beta now publishes through npm Trusted Publisher.
+The sealed release artifact is prepared without publish credentials and verified
+in a separate OIDC-enabled job. The beta.1 tag passed validation but did not
+publish to npm because the token path required an OTP. Runtime behavior and
+migration rules are unchanged from beta.1.
+
+---
+
+## [0.6.0-beta.1] - 2026-09-25
+
+First beta of the Node-only Pactile workflow and single-package release path.
+It includes the Codex desktop request/receipt bridge, the Pi RPC bridge,
+bounded parallel dispatch, and the migration from generated Python task
+entrypoints. The review-pool cleanup runs only for hash-matched skeleton files.
+The simulated Pi and Codex checks in the release gate do not attest to a live
+model provider or desktop-host run.
 
 ---
 

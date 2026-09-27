@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 1,
+  "identity": {
+    "taskId": "p36-parent"
+  },
+  "revision": 2,
+  "phase": "define",
+  "condition": "ready",
+  "outcome": null,
+  "audit": [
+    {
+      "id": "e4822240-5fa6-471c-8a16-4198176e183d",
+      "at": "2026-09-26T13:44:07.056Z",
+      "actor": "p36-fixture",
+      "idempotencyKey": "p36-parent-create-v1",
+      "evidence": "Synthetic isolated migration fixture",
+      "from": {
+        "phase": "open",
+        "condition": "ready",
+        "outcome": null,
+        "revision": 0
+      },
+      "to": {
+        "phase": "define",
+        "condition": "ready",
+        "outcome": null,
+        "revision": 1
+      }
+    },
+    {
+      "id": "83fa226f-898f-48e3-b8b8-7dc77d3b3181",
+      "at": "2026-09-26T13:44:17.621Z",
+      "actor": "task.py add-subtask",
+      "idempotencyKey": "patch:add-subtask:p36-parent:r1",
+      "evidence": "children[]",
+      "from": {
+        "phase": "define",
+        "condition": "ready",
+        "outcome": null,
+        "revision": 1
+      },
+      "to": {
+        "phase": "define",
+        "condition": "ready",
+        "outcome": null,
+        "revision": 2
+      }
+    }
+  ],
+  "gates": {
+    "schemaVersion": 1,
+    "transitions": {}
+  },
+  "projection": {
+    "status": "planning",
+    "record": {
+      "id": "p36-parent",
+      "name": "p36-parent",
+      "title": "Synthetic P36 Parent fixture",
+      "description": "Synthetic P36 fixture; no private data.",
+      "status": "planning",
+      "dev_type": null,
+      "scope": null,
+      "package": null,
+      "priority": "P2",
+      "creator": "p36-fixture",
+      "assignee": "p36-fixture",
+      "createdAt": "2026-09-26T00:00:00.000Z",
+      "completedAt": null,
+      "branch": null,
+      "base_branch": null,
+      "worktree_path": null,
+      "commit": null,
+      "pr_url": null,
+      "subtasks": [],
+      "children": [
+        "p36-child"
+      ],
+      "parent": null,
+      "relatedFiles": [],
+      "notes": "Synthetic fixture",
+      "meta": {}
+    },
+    "extras": {
+      "topology": {
+        "schema_version": 1,
+        "kind": "parent-child",
+        "parent_id": null,
+        "children": [
+          "p36-child"
+        ]
+      },
+      "required_controls": {
+        "schema_version": 1,
+        "source": "full-quality-contract",
+        "rigor": "full",
+        "controls": [
+          "definition",
+          "execution-contract",
+          "verification-plan",
+          "evidence",
+          "independent-check"
+        ],
+        "surfaces": {
+          "definition": "prd.md",
+          "execution-contract": "implement.md",
+          "verification-plan": "implement.md",
+          "evidence": "verify.md",
+          "design": "design.md"
+        },
+        "resolved_from": {
+          "verification_profile": null,
+          "risk_signals": [],
+          "policy_requires_design": false
+        }
+      },
+      "dependency_graph": {
+        "schema_version": 1,
+        "edges": []
+      },
+      "ondemand_modules": {
+        "schema_version": 1,
+        "source": "stage5-ondemand-topology",
+        "registered": [
+          "candidate-pool",
+          "define-extended",
+          "independent-check",
+          "worker-orchestration",
+          "parent-child",
+          "debug-recovery",
+          "session-transfer",
+          "spec-learning",
+          "vcs-integration",
+          "personal-memory",
+          "retention-storage",
+          "retrieval-extended"
+        ],
+        "active": [
+          "parent-child"
+        ],
+        "triggers": [
+          {
+            "module": "parent-child",
+            "at": "2026-09-26T13:44:17.620Z",
+            "reason": "topology:parent-child"
+          }
+        ],
+        "owners": {
+          "integration-handoff": "parent-child",
+          "session-transfer": "session-transfer"
+        },
+        "degraded": []
+      },
+      "baseline_modules": {
+        "schema_version": 1,
+        "source": "profile-runtime",
+        "active": [
+          "intake-basic",
+          "define-basic",
+          "approval-personal",
+          "execute-agent",
+          "verify-basic",
+          "close-basic",
+          "context-progressive",
+          "observability-local"
+        ]
+      },
+      "event_bridge": {
+        "schema_version": 1,
+        "source": "stage6-adapter-middleware",
+        "subscriptions": []
+      },
+      "capability_router": {
+        "schema_version": 1,
+        "source": "stage6-adapter-middleware",
+        "exact": true,
+        "semantic": true,
+        "structural": true,
+        "external": true
+      },
+      "middleware_providers": {
+        "schema_version": 1,
+        "source": "stage6-adapter-middleware",
+        "registered": [],
+        "required": [],
+        "active": [],
+        "degraded": [],
+        "readiness": {}
+      }
+    }
+  }
+}

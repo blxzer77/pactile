@@ -2,8 +2,6 @@ import path from "node:path";
 
 import { DIR_NAMES, PATHS } from "../constants/paths.js";
 import {
-  getAllScripts,
-  getAllPoolSkeleton,
   workflowMdTemplate,
   configYamlTemplate,
   gitignoreTemplate,
@@ -45,7 +43,6 @@ import {
 
 import { collectUserModuleTemplates } from "../templates/extract.js";
 import { writeFile, ensureDir } from "../utils/file-writer.js";
-import { replacePythonCommandLiterals } from "./shared.js";
 import {
   sanitizePkgName,
   type ProjectType,
@@ -96,12 +93,11 @@ export interface WorkflowOptions {
  * Create workflow structure based on project type
  *
  * This function creates the .pactile/ directory structure by:
- * 1. Writing scripts/ from getAllScripts() (user-shipped subset only)
- * 2. Copying workflow.md and .gitignore (dogfooding)
- * 3. Writing modules/ (index.json + <id>/contract.md; never catalog.ts)
- * 4. Creating workspace/ with index.md
- * 5. Creating tasks/ directory
- * 6. Creating spec/ with templates (not dogfooded - generic templates)
+ * 1. Copying workflow.md and .gitignore
+ * 2. Writing modules/ (index.json + <id>/contract.md; never catalog.ts)
+ * 3. Creating workspace/ with index.md
+ * 4. Creating tasks/ directory
+ * 5. Creating spec/ with generic templates
  *
  * @param cwd - Current working directory
  * @param options - Workflow options including project type
@@ -119,14 +115,8 @@ export async function createWorkflowStructure(
   // Create the canonical Pactile directory.
   ensureDir(path.join(cwd, DIR_NAMES.WORKFLOW));
 
-  // Write user-shipped Python scripts (same source of truth as pactile update).
-  await writeScriptTemplates(path.join(cwd, PATHS.SCRIPTS));
-
-  // Review-pool skeleton (mechanism docs only; no sample items)
-  await writePoolSkeleton(path.join(cwd, PATHS.POOL));
-
   // P29 short contracts — Session compiler reads these from the user tree.
-  // Walk skips catalog.ts / any .ts; not registered in getAllScripts().
+  // The writer skips catalog.ts and all other TypeScript source files.
   await writeUserModuleContracts(path.join(cwd, PATHS.MODULES));
 
   // Do not create or write `.pactile/middleware/`. Users drop Manifests there;
@@ -135,7 +125,7 @@ export async function createWorkflowStructure(
   // Copy workflow.md (native bundled template or selected marketplace variant)
   await writeFile(
     path.join(cwd, PATHS.WORKFLOW_GUIDE_FILE),
-    replacePythonCommandLiterals(workflowMd),
+    workflowMd,
   );
 
   // Copy .gitignore from templates
@@ -170,7 +160,7 @@ export async function createWorkflowStructure(
   ensureDir(path.join(cwd, PATHS.WORKSPACE));
   await writeFile(
     path.join(cwd, PATHS.WORKSPACE, "index.md"),
-    replacePythonCommandLiterals(agentProgressIndexContent),
+    agentProgressIndexContent,
   );
 
   // Create tasks/ directory
@@ -187,36 +177,12 @@ export async function createWorkflowStructure(
   }
 }
 
-async function writeScriptTemplates(scriptsRoot: string): Promise<void> {
-  ensureDir(scriptsRoot);
-  for (const [scriptPath, content] of getAllScripts()) {
-    const destPath = path.join(scriptsRoot, scriptPath);
-    ensureDir(path.dirname(destPath));
-    const isExecutable = scriptPath.endsWith(".py");
-    await writeFile(destPath, replacePythonCommandLiterals(content), {
-      executable: isExecutable,
-    });
-  }
-}
-
-async function writePoolSkeleton(poolRoot: string): Promise<void> {
-  ensureDir(poolRoot);
-  for (const [relativePath, content] of getAllPoolSkeleton()) {
-    const destPath = path.join(poolRoot, relativePath);
-    ensureDir(path.dirname(destPath));
-    // Apply the same platform command rewrite as update.ts collectTemplateFiles
-    // so init-written content matches the hash update expects (no-op on
-    // same-version update instead of a spurious pool README rewrite).
-    await writeFile(destPath, replacePythonCommandLiterals(content));
-  }
-}
-
 async function writeUserModuleContracts(modulesRoot: string): Promise<void> {
   ensureDir(modulesRoot);
   for (const [relativePath, content] of collectUserModuleTemplates()) {
     const destPath = path.join(modulesRoot, relativePath);
     ensureDir(path.dirname(destPath));
-    await writeFile(destPath, replacePythonCommandLiterals(content));
+    await writeFile(destPath, content);
   }
 }
 
@@ -349,7 +315,7 @@ async function createSpecTemplates(
   for (const doc of frameworkDocs) {
     await writeFile(
       path.join(frameworkDir, doc.name),
-      replacePythonCommandLiterals(doc.content),
+      doc.content,
     );
   }
 

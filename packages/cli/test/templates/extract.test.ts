@@ -5,7 +5,6 @@ import {
   getPactileSourcePath,
   readPactileFile,
   readTemplate,
-  readScript,
   readMarkdown,
   collectUserModuleTemplates,
   isUserShippedModuleFile,
@@ -46,8 +45,8 @@ describe("readPactileFile", () => {
     expect(content).toContain("#");
   });
 
-  it("reads a script file", () => {
-    const content = readPactileFile("scripts/task.py");
+  it("reads a Node runtime configuration file", () => {
+    const content = readPactileFile("config/execution-strategy-rules.json");
     expect(typeof content).toBe("string");
     expect(content.length).toBeGreaterThan(0);
   });
@@ -63,21 +62,13 @@ describe("readPactileFile", () => {
 
 describe("readTemplate", () => {
   it("throws for nonexistent category/file", () => {
-    expect(() => readTemplate("scripts", "nonexistent.txt")).toThrow();
+    expect(() => readTemplate("commands", "nonexistent.txt")).toThrow();
   });
 });
 
 // =============================================================================
-// readScript / readMarkdown helpers
+// readMarkdown helper
 // =============================================================================
-
-describe("readScript", () => {
-  it("reads a Python script from scripts/", () => {
-    const content = readScript("task.py");
-    expect(typeof content).toBe("string");
-    expect(content.length).toBeGreaterThan(0);
-  });
-});
 
 describe("readMarkdown", () => {
   it("reads workflow.md", () => {
@@ -106,7 +97,7 @@ describe("user-shipped module templates", () => {
     expect(keys).not.toContain("catalog.ts");
 
     const catalog = listModuleCatalog();
-    expect(catalog).toHaveLength(20);
+    expect(catalog).toHaveLength(19);
     for (const entry of catalog) {
       expect(keys).toContain(entry.contract);
       expect(files.get(entry.contract)?.trim().length).toBeGreaterThan(0);

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "legacy-v050-full-task-source",
+  "provenance": {
+    "kind": "release-writer-generated",
+    "ref": "pactile-v0.5.0",
+    "commit": "ad98139610b71822c23293894aabb3e99d149bdd",
+    "kernelCliPath": "pactile kernel --json",
+    "invocation": "op=create with extras.required_controls.rigor=full",
+    "derivation": "A disposable project under the P36 Temp experiment was populated by the tagged v0.5.0 low-level Kernel JSON create writer. Only the generated Task and Kernel JSON files needed by the migration test are retained here byte-for-byte.",
+    "isolation": "The original Temp experiment, tagged source checkout, MyHarness dogfood, Git configuration, and remote state are outside this fixture and were not changed.",
+    "limitations": "This is a synthetic Full single-Task writer probe, not a production user's Task and not a Parent/Child topology fixture. It preserves legacy rigor as source metadata; rigor is not mapped to a new V2 model level."
+  },
+  "files": [
+    {
+      "path": ".pactile/tasks/full-probe/kernel.json",
+      "sha256": "19ed7ab4014356d15edb37de686f1e0d4b6f1595386725ee883285fd9f13569d"
+    },
+    {
+      "path": ".pactile/tasks/full-probe/task.json",
+      "sha256": "7e4644a64a17b0e00df26ab995a097477a0ffd7be60c8d94883a26c8cc0b951d"
+    }
+  ]
+}

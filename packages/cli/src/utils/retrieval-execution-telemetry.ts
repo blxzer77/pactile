@@ -1,7 +1,7 @@
 import type {
   AssuranceLevelV1,
   PactileIntentV1,
-} from "@blxzer/pactile-core";
+} from "../core/index.js";
 
 import type { CodebaseRetrievalPlanEnvelope } from "./codebase-retrieval-router.js";
 import {

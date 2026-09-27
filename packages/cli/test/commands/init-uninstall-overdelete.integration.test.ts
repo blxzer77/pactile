@@ -55,7 +55,7 @@ describe("init + uninstall: ownership and homedir safety", () => {
     fs.mkdirSync(path.dirname(userFile), { recursive: true });
     fs.writeFileSync(userFile, "user-data\n");
 
-    await init({ yes: true, cursor: true, force: true });
+    await init({ yes: true, codex: true, force: true });
 
     const hashes = loadHashes(tmpDir);
     expect(Object.keys(hashes).some((key) => key.startsWith(".cursor/"))).toBe(
@@ -65,7 +65,7 @@ describe("init + uninstall: ownership and homedir safety", () => {
       new ProjectionStore(tmpDir)
         .readLedger()
         ?.ledger.entries.map(({ targetPath }) => targetPath) ?? [];
-    expect(ledgerTargets).toContain(".cursor/commands/pactile.md");
+    expect(ledgerTargets).toContain(".agents/skills/intake-basic/SKILL.md");
     expect(ledgerTargets).not.toContain(".cursor/user-data/notes.txt");
     expect(fs.readFileSync(userFile, "utf8")).toBe("user-data\n");
   });
@@ -75,7 +75,7 @@ describe("init + uninstall: ownership and homedir safety", () => {
     fs.mkdirSync(path.dirname(history), { recursive: true });
     fs.writeFileSync(history, '{"role":"user"}\n');
 
-    await init({ yes: true, cursor: true, force: true });
+    await init({ yes: true, codex: true, force: true });
     await uninstall({ yes: true });
 
     expect(fs.readFileSync(history, "utf8")).toBe('{"role":"user"}\n');
@@ -123,7 +123,7 @@ describe("init + uninstall: ownership and homedir safety", () => {
   });
 
   it("refuses uninstall at the exact home directory and leaves state unchanged", async () => {
-    await init({ yes: true, cursor: true, force: true });
+    await init({ yes: true, codex: true, force: true });
     const statePath = path.join(
       tmpDir,
       ".pactile",
@@ -148,7 +148,7 @@ describe("init + uninstall: ownership and homedir safety", () => {
       process.env.PACTILE_ALLOW_HOMEDIR = "1";
 
       await withFakeHome(fakeHome, async () => {
-        await init({ yes: true, cursor: true, force: true });
+        await init({ yes: true, codex: true, force: true });
       });
 
       expect(fs.existsSync(path.join(fakeHome, ".pactile"))).toBe(true);
@@ -165,7 +165,7 @@ describe("init + uninstall: ownership and homedir safety", () => {
       vi.spyOn(process, "cwd").mockReturnValue(project);
 
       await withFakeHome(fakeHome, async () => {
-        await init({ yes: true, cursor: true, force: true });
+        await init({ yes: true, codex: true, force: true });
       });
 
       expect(fs.existsSync(path.join(project, ".pactile"))).toBe(true);

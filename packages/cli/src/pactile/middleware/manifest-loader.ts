@@ -4,7 +4,7 @@ import path from "node:path";
 import {
   parseProviderManifestV1,
   type ProviderManifestV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 
 export const PROVIDER_MANIFEST_LOAD_DIAGNOSTIC_CODES_V1 = [
   "provider-root-unavailable",

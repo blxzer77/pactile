@@ -46,7 +46,7 @@ The Pactile task system is stored entirely under `.pactile/tasks/` in the user p
 
 ## Parent / Child Task Trees
 
-Parent/child task relationships are for work structure. A parent task groups related deliverables under one source requirement set; it is not a dependency scheduler and does not replace the child task's own planning artifacts.
+Parent/child task relationships describe work structure. A parent groups related deliverables under one requirement set and does not replace each child's planning artifacts. Ordering is declared separately with Kernel `requires` dependencies.
 
 Use a parent task when a request has multiple independently verifiable deliverables. The parent owns:
 
@@ -54,19 +54,19 @@ Use a parent task when a request has multiple independently verifiable deliverab
 - The map of child tasks and their responsibility boundaries.
 - Cross-child acceptance criteria and final integration review.
 
-Use child tasks for deliverables that can move through planning, implementation, check, and archive independently. If one child depends on another, write that dependency in the child `prd.md` / `implement.md`; do not rely on tree position to imply ordering.
+Use child tasks for deliverables that can move through planning, implementation, check, and archive independently. If one child depends on another, declare it with `pactile task set-deps <child> <dependency>` and explain it in the child plan. Tree position does not imply ordering. `depends_on` becomes a Kernel hard `requires` edge and blocks execution by default until satisfied. `--ignore-deps` on `start-execution --approved` records an explicit user-approved override; it does not mark the dependency satisfied.
 
 Create new children with:
 
 ```bash
-python3 ./.pactile/scripts/task.py create "<child title>" --slug <child-slug> --parent <parent-dir>
+pactile task create "<child title>" --slug <child-slug> --parent <parent-dir>
 ```
 
 Link or unlink existing tasks with:
 
 ```bash
-python3 ./.pactile/scripts/task.py add-subtask <parent-dir> <child-dir>
-python3 ./.pactile/scripts/task.py remove-subtask <parent-dir> <child-dir>
+pactile task add-subtask <parent-dir> <child-dir>
+pactile task remove-subtask <parent-dir> <child-dir>
 ```
 
 `children` on the parent is a historical list. When a child is archived, Pactile keeps that child name in the parent so progress like `[2/3 done]` remains meaningful after completed children move to `archive/`.
@@ -81,13 +81,13 @@ The user sees a "selected task," and Pactile stores that selection per live sess
 .pactile/.runtime/sessions/<context-key>.json
 ```
 
-`task.py select <task>` writes the task path into the runtime session file for the current session. `task.py selected --source` shows the selected task and where it came from. Different AI windows can point to different tasks without overwriting each other.
+`pactile task select <task>` writes the task path into the runtime session file for the current session. `pactile task selected --source` shows the selected task and where it came from. Different AI windows can point to different tasks without overwriting each other.
 
-If the platform or shell environment has no stable session identity, `task.py select` may be unable to set the selected task. The AI should read the error, inspect the platform hook/session environment, and not fall back to a shared global pointer.
+If the platform or shell environment has no stable session identity, `pactile task select` may be unable to set the selected task. The AI should read the error, inspect the platform hook/session environment, and not fall back to a shared global pointer.
 
 ## JSONL Context
 
-`implement.jsonl` and `check.jsonl` are context manifests for sub-agents to read first. They do not replace `implement.md`; `implement.md` is the human-readable execution plan.
+`implement.jsonl` and `check.jsonl` are context manifests for the executing and checking agent to read first. They do not replace `implement.md`; `implement.md` is the human-readable execution plan.
 
 Format:
 
@@ -101,33 +101,38 @@ Rules:
 - Include spec and research files.
 - Do not include code files that are about to be modified.
 - Do not treat temporary conclusions in chat as the only context.
-- Seed rows have no `file` field; they only prompt the AI to fill in real entries.
+- Default seed rows point to existing guides; curate them for the task.
 
 ## Common Commands
 
 ```bash
-python3 ./.pactile/scripts/task.py create "<title>" --slug <slug>
-python3 ./.pactile/scripts/task.py dashboard
-python3 ./.pactile/scripts/task.py select <task>
-python3 ./.pactile/scripts/task.py selected --source
-python3 ./.pactile/scripts/task.py start-execution <task> --check
-python3 ./.pactile/scripts/task.py start-execution <task> --approved
-python3 ./.pactile/scripts/task.py add-context <task> implement <file> <reason>
-python3 ./.pactile/scripts/task.py validate <task>
-python3 ./.pactile/scripts/task.py exit
-python3 ./.pactile/scripts/task.py archive <task>
+pactile task create "<title>" --slug <slug>
+pactile task dashboard
+pactile task select <task>
+pactile task selected --source
+pactile task start-execution <task> --check
+pactile task start-execution <task> --approved
+pactile task set-deps <task> <required-task-id>
+pactile task create "<full title>" --slug <slug> --rigor full
+pactile task record-ac-evidence <task> --map AC-1=verify.md#evidence --code-ref <tested-code-ref>
+pactile task record-independent-check <task> --mode self-review --result PASS --evidence verify.md#check --code-ref <tested-code-ref>
+pactile task record-gate <task> --transition full-task-complete --gate code-review --result PASS --reviewer <id> --evidence verify.md#review
+pactile task add-context <task> implement <file> <reason>
+pactile task validate <task>
+pactile task exit
+pactile task archive <task>
 ```
 
-When modifying the task system, the AI should prefer script commands to maintain structure. Edit JSON/Markdown directly only when scripts do not cover the need.
+When modifying the task system, use Pactile CLI commands to maintain structure. Edit JSON/Markdown directly only when the CLI does not cover the need.
 
 ## Local Customization Points
 
 | Need | Edit location |
 | --- | --- |
-| Change the default task template | `.pactile/scripts/common/task_store.py` and task creation instructions. |
+| Change the default task template | `.pactile/tasks/locale/` templates and Pactile CLI Node implementation. |
 | Change status semantics | `.pactile/workflow.md`, workflow-state hook logic, and task usage conventions. |
 | Add task lifecycle actions | `hooks.after_*` in `.pactile/config.yaml`. |
 | Change context rules | Planning artifact guidance in `.pactile/workflow.md` and related platform agent/hook instructions. |
-| Change archive policy | `.pactile/scripts/common/task_store.py` / `task_utils.py`. |
+| Change archive policy | Pactile CLI Node implementation. |
 
 These are local files in the user project. Do not default to editing Pactile CLI source code unless the user wants to contribute upstream.

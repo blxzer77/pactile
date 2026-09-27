@@ -5,7 +5,7 @@ import {
   type CapabilityBindingV1,
   type ProjectionOperationV1,
   type ProviderResolutionResultV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 import {
   reduceExternalBindingClaims,
   type ExternalBindingClaim,

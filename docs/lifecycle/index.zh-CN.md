@@ -6,7 +6,7 @@ Pactile 生命周期命令先操作 canonical `.pactile/` generation，再协调
 
 | 状态                | 入口                                        | 首个动作                                         |
 | ------------------- | ------------------------------------------- | ------------------------------------------------ |
-| 新项目              | [安装](install.zh-CN.md)                    | `pactile init --cursor`、`--codex` 或二者。      |
+| 新项目              | [安装](install.zh-CN.md)                    | `pactile init --codex`。                       |
 | 已有 legacy 项目    | [升级与迁移](upgrade-and-migrate.zh-CN.md)  | 先 preview；只允许显式 legacy import。           |
 | 混合或部分配置项目  | [排障](../troubleshooting/index.zh-CN.md)   | 更新前检查 ownership 与 readiness。              |
 | 日常工作            | [Workflow](workflow.zh-CN.md)               | 遵循 canonical Task 与 Evidence gate。           |

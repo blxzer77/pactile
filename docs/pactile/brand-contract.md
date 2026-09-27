@@ -1,6 +1,6 @@
 # Pactile brand contract
 
-Status: Batch 0 frozen input for the 0.5.0 rebrand. This document is a control-plane contract, not the rebrand itself.
+Status: Historical Batch 0 frozen input for the 0.5.0 rebrand. It records the former 0.5-era host and compatibility assumptions. The Cursor adapter ended with the 0.5.x line; consult [current host support](../hosts/index.md). This control-plane record is retained for provenance, not as current support guidance.
 
 ## Canonical identity
 

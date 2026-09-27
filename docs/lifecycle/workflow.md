@@ -3,9 +3,8 @@
 English | [简体中文](workflow.zh-CN.md)
 
 The workflow is a host-neutral sequence of intent, definition, approval,
-execution, verification, integration, and close. Cursor slash commands and
-Codex task conversations are projections of this sequence; neither host is the
-authority.
+execution, verification, integration, and close. Codex task conversations
+consume this sequence; the canonical task record remains the authority.
 
 ```text
 triage -> define -> approve -> execute -> verify -> integrate -> close
@@ -19,8 +18,8 @@ the required facts and fingerprints are current.
 ## Host-neutral checks
 
 ```bash
-python ./.pactile/scripts/task.py start-execution <task-dir> --check
-python ./.pactile/scripts/task.py record-gate <task-dir> --transition full-task-complete --gate code-review --result PASS --evidence verify.md
+pactile task start-execution <task-dir> --check
+pactile task record-gate <task-dir> --transition full-task-complete --gate code-review --result PASS --reviewer <reviewer-id> --evidence verify.md
 ```
 
 The exact gate options depend on the generated Task contract. Keep host hooks

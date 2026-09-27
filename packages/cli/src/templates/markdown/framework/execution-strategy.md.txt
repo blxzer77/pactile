@@ -1,45 +1,14 @@
 # Execution strategy (execution_mode / isolation)
 
-> **Purpose**: Suggest a Development Strategy Contract before you freeze `implement.md`, and align Phase 2 dispatch with the approved contract.
+Choose who implements and checks, and where edits happen, before freezing `implement.md`. The approved task contract is authoritative.
 
-This file answers **who** implements/checks and **where** files are edited. It is **not** a parallel scheduler. Parallel-first (default native parallel, serial needs `serial_reason`) lives in `workflow.md` and `cursor-native-modes-guide.md`; declaration fields in `parallel-first-execution.md`.
-
----
-
-## Two orthogonal dimensions
-
-| Field | Question |
+| Field | Meaning |
 | --- | --- |
-| `execution_mode` | **Who** implements and checks? (`inline` main session, `worker` pactile-implement/check agents, `child-task` Child worker) |
-| `isolation` | **Where** are files edited? (`main-worktree` vs `git-worktree` for Child) |
+| `execution_mode` | `inline` for the current task, `worker` for an independent task, or `child-task` for a task with a parent |
+| `isolation` | `main-worktree` or `git-worktree` |
 
-Non-git repo roots do **not** force `inline` for code Full tasks; they only affect whether `git-worktree` / `prepare-child-worktree` is recommended.
+Codex desktop planning, Execute, and review tasks use native cross-task messaging with `pactile codex` request/receipt records. Execute requires recorded approval and a project worktree. The desktop task must invoke its native tool; the Node CLI cannot invoke App tools by itself. Pi implementation workers use `pactile pi run` after execution approval. Parent batches can use `pactile parallel run <parent> --manifest <file>`; the scheduler chooses waves from hard dependencies, expected completion-time savings, and write-set conflicts, without a fixed task-count limit. Overlapping writes run serially unless the exact Task pair has recorded authorization and an integration plan. Parent integration remains serial. Pactile does not dispatch Codex subagents. See `codex-worker-dispatch.md`.
 
-## Suggest (planning)
+The execution strategy is documented in `implement.md`. Review it against the task scope before running `pactile task start-execution <task> --check`; the Node CLI checks the transition without changing approval state.
 
-```bash
-python3 ./.pactile/scripts/task.py suggest-execution-strategy <task-dir>
-python3 ./.pactile/scripts/task.py suggest-execution-strategy <task-dir> --json
-```
-
-Run during brainstorm / before finalizing the YAML block in `implement.md`. Reconcile suggestion with product intent; the contract in `implement.md` is authoritative after approval.
-
-## Default policy (v1)
-
-| Profile / signal | Suggested `execution_mode` | Suggested `isolation` |
-| --- | --- | --- |
-| Lite | (no contract) | — |
-| Full + touches code | `worker` | `main-worktree` |
-| Full + doc-only capabilities | `inline` | `main-worktree` |
-| Parent / has children | `inline` | `main-worktree` |
-| Child (`task.json` parent set) | `child-task` | `git-worktree` when git package root resolves; else `main-worktree` + WARN |
-
-`touches_code` is deterministic: code `optional_capabilities`, `package`/`scope` path segments (`src`, `packages`, `scripts`, …), or Full with `design.md` and non-doc-only capabilities. Rules live in `.pactile/config/execution-strategy-rules.json`.
-
-## Drift warning (preflight)
-
-`task.py start-execution <task> --check` prints `[execution-strategy] WARN` when the approved contract differs from a fresh suggestion. **Advisory only** — does not fail the gate.
-
-## Phase 2 alignment
-
-See `workflow.md` Phase 2.1 / 2.2 tables: spawn `pactile-implement` / `pactile-check` only when `execution_mode: worker`.
+A non-Git project may still use a worker; it changes the isolation choices, not the execution mode. Parallel work must have independent write sets and a recorded integration owner.

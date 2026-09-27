@@ -17,22 +17,13 @@ import {
   formatWaveCVernacular,
   type ArtifactMigratePlan,
   type WaveCPlan,
-} from "@blxzer/pactile-core/task";
+} from "../core/task/index.js";
 import type { TemplateHashes } from "../types/migration.js";
 import { computeHash, removeHash } from "./template-hash.js";
 import { toPosix } from "./posix.js";
 
-export const RETIRED_ALWAYS_ON_RULES = [
-  ".cursor/rules/cstl-triage.mdc",
-  ".cursor/rules/trellis-triage.mdc",
-  ".cursor/rules/cstl-subagent-dispatch.mdc",
-  ".cursor/rules/trellis-subagent-dispatch.mdc",
-  ".cursor/rules/retrieval-routing.mdc",
-  ".cursor/rules/cstl-retrieval-routing.mdc",
-  ".cursor/rules/trellis-retrieval-routing.mdc",
-] as const;
-
-export const KEEP_ALWAYS_ON_RULES = [".cursor/rules/pactile-bootstrap.mdc"] as const;
+/** No retired host rules are touched by the current update path. */
+export const RETIRED_ALWAYS_ON_RULES: readonly string[] = [];
 
 export type OfficialRetireAction = "retire" | "preserve";
 

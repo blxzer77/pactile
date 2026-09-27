@@ -11,7 +11,6 @@ import {
   parseProjectCapabilities,
   renderCapabilitiesJson,
   renderCapabilitiesMarkdown,
-  renderMcpJson,
   updateCapabilityReadinessStatus,
 } from "../../src/utils/project-capabilities.js";
 
@@ -27,23 +26,28 @@ describe("project capabilities", () => {
 
     expect(parseProjectCapabilities(["all"])).toEqual([
       "codebase-retrieval",
-      "github-mcp",
-      "playwright-mcp",
+      "fastctx",
     ]);
 
-    expect(parseProjectCapabilities(["github", "playwright"])).toEqual([
-      "github-mcp",
-      "playwright-mcp",
-    ]);
+    expect(parseProjectCapabilities(["fast-ctx"])).toEqual(["fastctx"]);
   });
 
   it("rejects unknown capability ids", () => {
-    expect(() => parseProjectCapabilities(["gitnexus"])).toThrow(
+    expect(() => parseProjectCapabilities(["nope-missing"])).toThrow(
       /Unknown project capability/,
+    );
+
+    // Capabilities that were retired must fail loudly for explicit input
+    // rather than silently selecting nothing.
+    expect(() => parseProjectCapabilities(["github"])).toThrow(
+      /Unknown project capability "github"/,
+    );
+    expect(() => parseProjectCapabilities(["playwright-mcp"])).toThrow(
+      /Unknown project capability "playwright-mcp"/,
     );
   });
 
-  it("loads stored legacy aliases while ignoring removed unknown selections", () => {
+  it("loads stored aliases and silently drops selections this build no longer knows", () => {
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "pactile-capabilities-"),
     );
@@ -61,103 +65,25 @@ describe("project capabilities", () => {
         }),
       );
 
-      expect(loadProjectCapabilities(tmpDir)).toEqual([
-        "codebase-retrieval",
-        "playwright-mcp",
-      ]);
+      // Stored files are read tolerantly: a project that still lists a retired
+      // capability keeps loading instead of erroring, and the retired entry
+      // simply converges away on the next render.
+      expect(loadProjectCapabilities(tmpDir)).toEqual(["codebase-retrieval"]);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  it("renders Claude/Cursor MCP JSON without credentials", () => {
-    const parsed = JSON.parse(
-      renderMcpJson(["codebase-retrieval", "github-mcp", "playwright-mcp"]),
-    ) as {
-      mcpServers: Record<string, { command: string; args: string[] }>;
-    };
-
-    expect(parsed.mcpServers["fast-context"]).toEqual({
-      command: "npx",
-      args: ["-y", "fast-context-mcp"],
-    });
-    expect(parsed.mcpServers.codegraph).toEqual({
-      command: "npx",
-      args: ["-y", "@colbymchenry/codegraph", "serve", "--mcp"],
-    });
-    expect(parsed.mcpServers.github).toEqual({
-      command: "npx",
-      args: ["-y", "@modelcontextprotocol/server-github"],
-    });
-    expect(parsed.mcpServers.playwright).toEqual({
-      command: "npx",
-      args: ["-y", "@playwright/mcp@latest"],
-    });
-    expect(JSON.stringify(parsed)).not.toMatch(
-      /gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|test-token/i,
-    );
-  });
-
-  it("merges mcp.json preserving foreign servers and removing deselected managed servers", () => {
-    const merged = JSON.parse(
-      renderMcpJson(["playwright-mcp"], {
-        "user-custom": {
-          command: "node",
-          args: ["custom-server.js"],
-        },
-        github: {
-          command: "npx",
-          args: ["-y", "@modelcontextprotocol/server-github"],
-        },
-      }),
-    ) as {
-      mcpServers: Record<string, { command: string; args: string[] }>;
-    };
-
-    expect(merged.mcpServers["user-custom"]).toEqual({
-      command: "node",
-      args: ["custom-server.js"],
-    });
-    expect(merged.mcpServers.playwright).toEqual({
-      command: "npx",
-      args: ["-y", "@playwright/mcp@latest"],
-    });
-    // managed github deselected → removed
-    expect(merged.mcpServers.github).toBeUndefined();
-  });
-
-  it("loads existing mcp.json when building cursor templates", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-mcp-merge-"));
+  it("preserves an existing Cursor MCP file while building Codex capability templates", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-legacy-mcp-"));
     try {
-      fs.mkdirSync(path.join(tmpDir, ".cursor"), { recursive: true });
-      fs.writeFileSync(
-        path.join(tmpDir, ".cursor", "mcp.json"),
-        JSON.stringify({
-          mcpServers: {
-            keepme: { command: "echo", args: ["ok"] },
-          },
-        }),
-      );
-
-      const files = buildProjectCapabilityTemplates(
-        ["playwright-mcp"],
-        ["cursor"],
-        undefined,
-        { cwd: tmpDir },
-      );
-      const cursorMcpJson = files.get(".cursor/mcp.json");
-      expect(cursorMcpJson).toBeDefined();
-      if (cursorMcpJson === undefined) {
-        throw new Error("expected Cursor MCP template to be generated");
-      }
-      const parsed = JSON.parse(cursorMcpJson) as {
-        mcpServers: Record<string, { command: string; args: string[] }>;
-      };
-      expect(parsed.mcpServers.keepme).toEqual({
-        command: "echo",
-        args: ["ok"],
-      });
-      expect(parsed.mcpServers.playwright.command).toBe("npx");
+      const legacyFile = path.join(tmpDir, ".cursor", "mcp.json");
+      fs.mkdirSync(path.dirname(legacyFile), { recursive: true });
+      fs.writeFileSync(legacyFile, '{"mcpServers":{"keepme":{"command":"node"}}}');
+      const before = fs.readFileSync(legacyFile);
+      const files = buildProjectCapabilityTemplates(["codebase-retrieval"], ["codex"]);
+      expect([...files.keys()].some((key) => key.startsWith(".cursor/"))).toBe(false);
+      expect(fs.readFileSync(legacyFile)).toEqual(before);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -213,8 +139,6 @@ describe("project capabilities", () => {
     expect(retrieval?.fallback).toContain(
       "Record exploratory retrieval chains in task `research/*.md`; record final source/Git/test proof and unresolved adapter gaps in `verify.md`.",
     );
-    expect(JSON.stringify(parsed)).toContain("GITHUB_TOKEN");
-    expect(JSON.stringify(parsed)).toContain("GITHUB_PERSONAL_ACCESS_TOKEN");
     expect(JSON.stringify(parsed)).not.toMatch(
       /gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|test-token/i,
     );
@@ -293,40 +217,29 @@ describe("project capabilities", () => {
   it("renders Codex MCP server blocks inside a replaceable managed section", () => {
     const first = applyCodexCapabilityConfig("project_doc = []\n", [
       "codebase-retrieval",
-      "github-mcp",
     ]);
     expect(first).toContain("# PACTILE:PROJECT-CAPABILITIES:START");
     expect(first).toContain("[mcp_servers.fast-context]");
     expect(first).toContain("[mcp_servers.codegraph]");
-    expect(first).toContain("[mcp_servers.github]");
     expect(first).not.toContain("[mcp_servers.graphify]");
 
-    const second = applyCodexCapabilityConfig(first, ["playwright-mcp"]);
+    // fastctx owns no MCP server, so switching to it must clear the block
+    // rather than leave stale adapter entries behind.
+    const second = applyCodexCapabilityConfig(first, ["fastctx"]);
     expect(second).not.toContain("[mcp_servers.fast-context]");
     expect(second).not.toContain("[mcp_servers.codegraph]");
-    expect(second).not.toContain("[mcp_servers.github]");
-    expect(second).toContain("[mcp_servers.playwright]");
+    expect(second).not.toContain("[mcp_servers.");
     expect(second.match(/PACTILE:PROJECT-CAPABILITIES:START/g)).toHaveLength(1);
   });
 
-  it("builds project capability templates only for selected platforms", () => {
+  it("builds capability metadata without writing host MCP files", () => {
     const files = buildProjectCapabilityTemplates(
-      ["codebase-retrieval", "playwright-mcp"],
-      ["cursor"],
+      ["codebase-retrieval", "fastctx"],
+      ["codex"],
     );
-
-    expect(files.get(".pactile/capabilities.json")).toContain(
-      '"codebase-retrieval"',
-    );
-    expect(files.get(".pactile/capabilities.md")).toContain(
-      "## Fallback Guidance",
-    );
-    expect(files.get(".cursor/mcp.json")).toContain('"playwright"');
-    expect(files.get(".cursor/mcp.json")).toContain('"fast-context"');
-    expect(files.get(".cursor/mcp.json")).toContain('"codegraph"');
-    expect(files.get(".cursor/mcp.json")).not.toContain('"graphify"');
-    expect(files.has(".mcp.json")).toBe(false);
-    expect(files.has(".codex/config.toml")).toBe(false);
+    expect(files.get(".pactile/capabilities.json")).toContain('"codebase-retrieval"');
+    expect(files.get(".pactile/capabilities.md")).toContain("## Fallback Guidance");
+    expect([...files.keys()].every((key) => key.startsWith(".pactile/"))).toBe(true);
   });
 
   it("renders selected retrieval workflow and CLI routing", () => {
@@ -430,12 +343,12 @@ describe("project capabilities", () => {
       fs.mkdirSync(path.join(tmpDir, ".pactile"), { recursive: true });
       fs.writeFileSync(
         path.join(tmpDir, ".pactile", "capabilities.json"),
-        renderCapabilitiesJson(["codebase-retrieval", "github-mcp"]),
+        renderCapabilitiesJson(["codebase-retrieval", "fastctx"]),
         "utf-8",
       );
       fs.writeFileSync(
         path.join(tmpDir, ".pactile", "capabilities.md"),
-        renderCapabilitiesMarkdown(["codebase-retrieval", "github-mcp"]),
+        renderCapabilitiesMarkdown(["codebase-retrieval", "fastctx"]),
         "utf-8",
       );
 

@@ -39,25 +39,10 @@ describe("createWorkflowStructure — retired alternate-client bundle is never w
     ).toBe(false);
   });
 
-  it("does NOT write maintainer-only scripts (probe, eval tools)", async () => {
+  it("does not install a Python script tree", async () => {
     await createWorkflowStructure(tmpDir, { projectType: "fullstack" });
     const scriptsDir = path.join(tmpDir, ".pactile", "scripts");
-    expect(
-      fs.existsSync(path.join(scriptsDir, "cursor_retrieval_probe.py")),
-    ).toBe(false);
-    expect(
-      fs.existsSync(path.join(scriptsDir, "cursor_retrieval_probe_prompt.md")),
-    ).toBe(false);
-    expect(
-      fs.existsSync(path.join(scriptsDir, "aggregate_retrieval_telemetry.py")),
-    ).toBe(false);
-    expect(
-      fs.existsSync(path.join(scriptsDir, "batch_plan_envelope.py")),
-    ).toBe(false);
-    expect(
-      fs.existsSync(path.join(scriptsDir, "common", "test_retrieval_arbitration.py")),
-    ).toBe(false);
-    expect(fs.existsSync(path.join(scriptsDir, "task.py"))).toBe(true);
+    expect(fs.existsSync(scriptsDir)).toBe(false);
   });
 
   it("creates the canonical .pactile base structure", async () => {
@@ -65,9 +50,7 @@ describe("createWorkflowStructure — retired alternate-client bundle is never w
       projectType: "fullstack",
     });
     expect(fs.existsSync(path.join(tmpDir, ".pactile"))).toBe(true);
-    expect(
-      fs.existsSync(path.join(tmpDir, ".pactile", "scripts")),
-    ).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, ".pactile", "scripts"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, ".pactile", "tasks"))).toBe(true);
     expect(
       fs.existsSync(path.join(tmpDir, ".pactile", "workflow.md")),
@@ -88,7 +71,7 @@ describe("createWorkflowStructure — P29 modules ship", () => {
     setWriteMode("ask");
   });
 
-  it("writes index.json and all twenty contract.md files, never catalog.ts", async () => {
+  it("writes index.json and all nineteen contract.md files, never catalog.ts", async () => {
     await createWorkflowStructure(tmpDir, { projectType: "fullstack" });
 
     const modulesDir = path.join(tmpDir, PATHS.MODULES);
@@ -100,7 +83,7 @@ describe("createWorkflowStructure — P29 modules ship", () => {
     const baseline = catalog.filter((entry) => entry.layer === "baseline");
     const onDemand = catalog.filter((entry) => entry.layer === "on-demand");
     expect(baseline).toHaveLength(8);
-    expect(onDemand).toHaveLength(12);
+    expect(onDemand).toHaveLength(11);
 
     for (const entry of catalog) {
       const contractPath = path.join(modulesDir, entry.contract);

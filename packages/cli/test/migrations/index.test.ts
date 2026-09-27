@@ -24,6 +24,24 @@ afterEach(() => {
 // =============================================================================
 
 describe("getAllMigrationVersions", () => {
+  it("applies the pool cleanup in beta and exactly once through stable", () => {
+    const versions = getAllMigrationVersions();
+    expect(versions).toContain("0.6.0-beta.1");
+    expect(versions).toContain("0.6.0");
+    expect(versions).not.toContain("0.5.1-beta.0");
+    const poolPaths = (from: string, to: string) => getMigrationsForVersion(from, to).filter((item) =>
+      item.type === "safe-file-delete" && item.from.startsWith(".pactile/pool/"),
+    ).map((item) => item.from);
+    const expected = [
+      ".pactile/pool/README.md",
+      ".pactile/pool/plan.md",
+      ".pactile/pool/items/.gitkeep",
+    ];
+    expect(poolPaths("0.5.0", "0.6.0-beta.1")).toEqual(expected);
+    expect(poolPaths("0.5.0", "0.6.0")).toEqual(expected);
+    expect(poolPaths("0.6.0-beta.1", "0.6.0")).toEqual([]);
+  });
+
   it("returns an array of version strings", () => {
     const versions = getAllMigrationVersions();
     expect(Array.isArray(versions)).toBe(true);
@@ -39,9 +57,10 @@ describe("getAllMigrationVersions", () => {
     }
   });
 
-  it("includes known versions from manifests", () => {
+  it("loads only the current migration line", () => {
     const versions = getAllMigrationVersions();
-    expect(versions).toContain("0.1.0");
+    expect(versions).toContain("0.6.0-beta.1");
+    expect(versions).not.toContain("0.5.0");
   });
 
   it("returns consistent results across calls (cache works)", () => {
@@ -59,6 +78,7 @@ describe("getAllMigrations", () => {
   it("returns an array of migration items", () => {
     const migrations = getAllMigrations();
     expect(Array.isArray(migrations)).toBe(true);
+    expect(migrations.some((item) => JSON.stringify(item).includes(".cursor"))).toBe(false);
   });
 
   it("each migration has required type and from fields", () => {
@@ -119,18 +139,9 @@ describe("getMigrationsForVersion", () => {
     expect(migrations).toEqual([]);
   });
 
-  it("returns 0.3.0 rename migrations for 0.2.x→0.3.0 upgrade (current line)", () => {
-    // Current @blxzer/cursor-trellis line: 0.3.0 renames trellis-* → cstl-*
+  it("does not replay retired host migrations from 0.2.x", () => {
     const migrations = getMigrationsForVersion("0.2.10", "0.3.0");
-    expect(migrations.length).toBeGreaterThan(0);
-    const renames = migrations.filter(
-      (m) => m.type === "rename" || m.type === "rename-dir",
-    );
-    expect(renames.length).toBeGreaterThan(0);
-    // Every rename should target cstl-* destinations
-    for (const m of renames) {
-      expect(m.to).toMatch(/cstl-/);
-    }
+    expect(migrations).toEqual([]);
   });
 
   it("returns beta.0 migrations for 0.2.x→0.3.0 stable upgrade (legacy line)", () => {

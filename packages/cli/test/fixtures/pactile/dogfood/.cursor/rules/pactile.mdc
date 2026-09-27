@@ -1,6 +1,0 @@
----
-description: Pactile composition policy
-alwaysApply: true
----
-
-The active Pactile composition is approval-personal, close-basic, context-progressive, define-basic, execute-agent, intake-basic, observability-local, verify-basic. Use only selected capabilities, preserve user-owned files, and stop on an unsupported or degraded requirement.

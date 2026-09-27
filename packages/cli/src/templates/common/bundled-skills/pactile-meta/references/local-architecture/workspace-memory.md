@@ -25,7 +25,7 @@
 Run this the first time:
 
 ```bash
-python3 ./.pactile/scripts/init_developer.py <name>
+pactile init --user <name>
 ```
 
 This creates `.pactile/.developer` and the corresponding workspace directory. The AI should not change developer identity casually; if the identity is wrong, first confirm who is using the current project.
@@ -37,7 +37,7 @@ This creates `.pactile/.developer` and the corresponding workspace directory. Th
 Common command for recording a session:
 
 ```bash
-python3 ./.pactile/scripts/add_session.py \
+pactile session add \
   --title "Session title" \
   --summary "What changed" \
   --commit "abc1234"
@@ -63,8 +63,8 @@ If information should be followed every time code is written in the future, put 
 | --- | --- |
 | Change maximum journal lines | `max_journal_lines` in `.pactile/config.yaml`. |
 | Change session auto-commit message | `session_commit_message` in `.pactile/config.yaml`. |
-| Change session content format | `.pactile/scripts/add_session.py`. |
-| Change how workspace is displayed in context | `.pactile/scripts/common/session_context.py`. |
+| Change session content format | Pactile CLI `pactile session add` implementation. |
+| Change how workspace is displayed in context | Pactile CLI `pactile context` implementation. |
 
 ## AI Usage Rules
 

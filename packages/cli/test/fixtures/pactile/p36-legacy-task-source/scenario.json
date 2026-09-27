@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "id": "p36-legacy-task-source",
+  "provenance": {
+    "kind": "representative",
+    "ref": "pactile-v0.5.0",
+    "commit": "ad98139610b71822c23293894aabb3e99d149bdd",
+    "sourcePath": "packages/cli/src/templates/pactile/scripts/common/task_store.py",
+    "derivation": "Synthetic source records follow the tagged v0.5.0 Task writer and Kernel audit/gate shapes; no real user task data was copied. The fixture is representative input, not byte-identical release data.",
+    "reason": "No byte-identical release Task tree was available as an owned fixture, so this uses synthetic source records with explicit provenance."
+  },
+  "traits": [
+    "p36:legacy-task-source",
+    "release-shape:pactile-v0.5.0",
+    "active",
+    "closed-byte-preserved",
+    "interrupted",
+    "legacy-read-only"
+  ],
+  "expectations": {
+    "legacyInputs": "read-only",
+    "allowedWriteRoots": [],
+    "requiresExplicitImport": false,
+    "migrationWrites": false
+  },
+  "files": [
+    {
+      "path": ".pactile/tasks/08-21-parent/design.md",
+      "sha256": "bd6819a1da3482f2fc70ed71c6cf88833fc72a9bf13cc08ec3240bc3507a2fbf",
+      "policy": "active-transform"
+    },
+    {
+      "path": ".pactile/tasks/08-21-parent/implement.md",
+      "sha256": "7e615584fbc3eaec955121a41f69b2bc2eb3fcb61e4751465e161cf62e479214",
+      "policy": "active-transform"
+    },
+    {
+      "path": ".pactile/tasks/08-21-parent/kernel.json",
+      "sha256": "b49e17d860e7a32b1861aa09aaae5e9c3d62a17c02f838935a16e4281cc6ab5f",
+      "policy": "active-transform"
+    },
+    {
+      "path": ".pactile/tasks/08-21-parent/prd.md",
+      "sha256": "2a98e3fbde3360359820b61c687459c0d303649940d4ecfd2431d23fc126c5de",
+      "policy": "active-transform"
+    },
+    {
+      "path": ".pactile/tasks/08-21-parent/task-map.md",
+      "sha256": "2427b3e467e0e1617079fd7e013880aa99abb08a3bd5eda2307e6009fddb2010",
+      "policy": "active-transform"
+    },
+    {
+      "path": ".pactile/tasks/08-21-parent/task.json",
+      "sha256": "8e78581499df59d0ed8d04dd669cf311b84f6bd4ce177f5aba6e29e6acd801ce",
+      "policy": "active-transform"
+    },
+    {
+      "path": ".pactile/tasks/08-21-parent/verify.md",
+      "sha256": "7ffc70713b83e1706fea8964c6a587856015f00598cfdb14769222335d52a94e",
+      "policy": "active-transform"
+    },
+    {
+      "path": ".pactile/tasks/08-22-child/handoff.md",
+      "sha256": "23954e8b263e74dad1f0fd5b6407d108d1cd75934d396fec0eb2ac1c841ff721",
+      "policy": "active-transform"
+    },
+    {
+      "path": ".pactile/tasks/08-22-child/implement.md",
+      "sha256": "77e53b18a56813aa562a314769d9846e279cd53c5e8ddd242a22232e27a5806f",
+      "policy": "active-transform"
+    },
+    {
+      "path": ".pactile/tasks/08-22-child/kernel.json",
+      "sha256": "38ef1a7338d14338026ca8b70c6f167d8af3e32139426a645fce7491d932021c",
+      "policy": "active-transform"
+    },
+    {
+      "path": ".pactile/tasks/08-22-child/prd.md",
+      "sha256": "85dcec2316ed5e1c2925b67aaec5b35b7c2a9c504cece2f8093c548faea410fc",
+      "policy": "active-transform"
+    },
+    {
+      "path": ".pactile/tasks/08-22-child/task.json",
+      "sha256": "26138aa43eefbb9ef17e6e24960844451a354e6a4b1fb0fbc7b70635086f54ef",
+      "policy": "active-transform"
+    },
+    {
+      "path": ".pactile/tasks/08-22-child/verify.md",
+      "sha256": "ab85f6f1822d062c21747e5f2ab4bb56042c692a452ec0ebbb9a13870eb39963",
+      "policy": "active-transform"
+    },
+    {
+      "path": ".pactile/tasks/08-23-interrupted/kernel.json",
+      "sha256": "e4e0cb379780a1ff6e9c6202d85420f2015f9851ce4f45410690671622b2bddd",
+      "policy": "active-transform"
+    },
+    {
+      "path": ".pactile/tasks/08-23-interrupted/prd.md",
+      "sha256": "be49d8103d8ad5054c29436364602c9babf64713bc3e1c4da811b94fd533bd52",
+      "policy": "active-transform"
+    },
+    {
+      "path": ".pactile/tasks/08-23-interrupted/task.json",
+      "sha256": "51db4821bdf14ab462987f3e31a66f85cab573687088bffdfd3954636ff0ffc2",
+      "policy": "active-transform"
+    },
+    {
+      "path": ".pactile/tasks/archive/2026-08/08-20-closed-lite/kernel.json",
+      "sha256": "699e4c7ae741d99460909f437ab15d6812faf1c15f0a40fffd9ff8aef01c3d73",
+      "policy": "byte-preserved"
+    },
+    {
+      "path": ".pactile/tasks/archive/2026-08/08-20-closed-lite/task.json",
+      "sha256": "86970e8f134b5cff28fa08dde8e44598f9bc56e34293156fdbd82a778bf96402",
+      "policy": "byte-preserved"
+    },
+    {
+      "path": ".pactile/tasks/archive/2026-08/08-20-closed-lite/verify.md",
+      "sha256": "a9d644d8ba073b6064b79bfce6dc00ff0d8035701fbef4f7a00c8604e3dffbd8",
+      "policy": "byte-preserved"
+    }
+  ]
+}

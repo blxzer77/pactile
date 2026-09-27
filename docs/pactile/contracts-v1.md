@@ -2,7 +2,7 @@
 
 Pactile v1 defines the host-neutral JSON boundary shared by Runtime, Tiles,
 Kernel, Middleware, Adapters, migration, and exit operations. The contracts in
-`packages/core/src/pactile/` contain data validation only: they do not read or
+`packages/cli/src/core/pactile/` contain data validation only: they do not read or
 write files, select Providers, compile Tiles, reconcile projections, or perform
 migrations.
 
@@ -13,9 +13,9 @@ The v1 authority model is:
 1. `.pactile/` is the only writable canonical runtime root.
 2. The two roots in the [compatibility input contract](compatibility-inputs.md#contract-inputs)
    may be declared only as `read-only` legacy sources.
-3. `.agents/skills/`, `.cursor/`, optional `.codex/`, and managed instruction
-   blocks are rebuildable projections, not a second source of truth. Codex
-   project leaves are emitted only when the host reports native support.
+3. `.agents/skills/`, optional `.codex/`, and managed instruction blocks are
+   rebuildable projections, not a second source of truth. Codex project leaves
+   are emitted only when the host reports native support.
 4. An Adapter emits a `ProjectionPlanV1`; it does not write canonical state or
    host files. A later Reconciler is the sole projection writer.
 5. The model selects, orders, and composes Tiles. Kernel validates composition
@@ -35,7 +35,7 @@ import {
   parseTileManifestV1,
   type PactileContractParseResultV1,
   type TileManifestV1,
-} from "@blxzer/pactile-core";
+} from "@blxzer/pactile/core";
 
 const result: PactileContractParseResultV1<TileManifestV1> =
   parseTileManifestV1(input);
@@ -131,8 +131,8 @@ permissions, destination allowlist, egress, credentials, telemetry, and cost
 must remain within the Tile's primary ceiling, and its assurance must still meet
 the Tile minimum. Disabled fallback uses explicit null policy and assurance.
 
-There are no `steps`, planner, DAG, tool name, Cursor path, Codex path, prompt,
-or arbitrary extension fields in this schema.
+There are no `steps`, planner, DAG, tool name, host-specific path, prompt, or
+arbitrary extension fields in this schema.
 
 ## Intent, assurance, and Provider contracts
 
@@ -271,7 +271,7 @@ claim content.
 
 The ledger is one-to-one: a resource id identifies exactly one physical target,
 and a physical target has exactly one resource id. Target identity is NFC
-normalized and case-folded for portable Cursor/Codex behavior, while the
+normalized and case-folded for portable behavior, while the
 original target spelling remains in the record. A Projection Plan likewise
 cannot schedule two resource ids against one physical target.
 
@@ -316,8 +316,8 @@ commit events. The canonical commit action id must match its event.
 
 Adapter reconciliation may start only after canonical commit. Each Adapter has
 its own `pending`, `in-progress`, `succeeded`, or `failed` status, attempt count,
-time, and error, so a failed Codex projection can be retried without undoing a
-successful canonical commit or Cursor projection. An `in-progress` Adapter is
+time, and error, so a failed host projection can be retried without undoing a
+successful canonical commit. An `in-progress` Adapter is
 paired with overall `reconciling` state and a latest `adapter-reconcile-started`
 event. Every attempt is a strict `adapter-reconcile-started` followed by exactly
 one matching `adapter-reconcile-succeeded` or `adapter-reconcile-failed` event

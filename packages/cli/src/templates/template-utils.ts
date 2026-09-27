@@ -1,6 +1,6 @@
 /**
  * Shared utilities for platform template modules.
- * Eliminates boilerplate across qoder/, codebuddy/, droid/, cursor/, gemini/, kiro/ index.ts files.
+ * Eliminates boilerplate across the supported template modules.
  */
 
 import { readdirSync, readFileSync } from "node:fs";
@@ -23,7 +23,6 @@ export interface TemplateReader {
   listMdAgents: (dir?: string) => AgentTemplate[];
   listMdCommands: (dir?: string) => AgentTemplate[];
   listJsonAgents: (dir?: string) => AgentTemplate[];
-  listMdcRules: (dir?: string) => AgentTemplate[];
   getSettings: (filename?: string) => HookTemplate;
   getConfig: (filename: string) => string;
 }
@@ -57,7 +56,7 @@ export function createTemplateReader(importMetaUrl: string): TemplateReader {
       }));
   }
 
-  /** Read all .md command files from a subdirectory (e.g. cursor/commands).
+  /** Read all .md command files from a subdirectory.
    * Unlike listMdAgents, the name keeps no prefix transformation — callers
    * decide the output filename (e.g. `pactile-${name}.md`). */
   function listMdCommands(dir = "commands"): AgentTemplate[] {
@@ -79,17 +78,6 @@ export function createTemplateReader(importMetaUrl: string): TemplateReader {
       }));
   }
 
-  /** Read all .mdc rule files from a subdirectory (Cursor .cursor/rules) */
-  function listMdcRules(dir = "rules"): AgentTemplate[] {
-    return listFiles(dir)
-      .filter((f) => f.endsWith(".mdc"))
-      .map((f) => ({
-        // Keep the .mdc extension in the name — Cursor requires it.
-        name: f,
-        content: readTemplate(`${dir}/${f}`),
-      }));
-  }
-
   /** Read settings.json and return as HookTemplate */
   function getSettings(filename = "settings.json"): HookTemplate {
     return { targetPath: filename, content: readTemplate(filename) };
@@ -106,7 +94,6 @@ export function createTemplateReader(importMetaUrl: string): TemplateReader {
     listMdAgents,
     listMdCommands,
     listJsonAgents,
-    listMdcRules,
     getSettings,
     getConfig,
   };

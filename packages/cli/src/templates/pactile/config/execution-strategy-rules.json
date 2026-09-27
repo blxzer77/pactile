@@ -5,7 +5,6 @@
   ],
   "code_capabilities": [
     "cli-templates",
-    "python-task-scripts",
     "vitest-integration",
     "typescript",
     "python"

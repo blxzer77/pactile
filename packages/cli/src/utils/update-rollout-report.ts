@@ -29,6 +29,12 @@ export interface UpdateFileActions {
   unchanged: string[];
   userDeleted: string[];
   safeDeleted: string[];
+  /** Retired Python entries kept because their installed bytes were edited. */
+  legacyPythonPreserved?: string[];
+  /** Unclaimed, skipped, or changed during apply; never activated in Node generations. */
+  legacyPythonUnprocessed?: string[];
+  /** Template-hash ownership released for retired script paths. */
+  legacyPythonHashClaimsReleased?: string[];
 }
 
 export interface UpdateMigrationPlanSummary {
@@ -139,12 +145,15 @@ export interface BuildFilePlanInput {
   changedFiles: { relativePath: string }[];
   userDeletedFiles: { relativePath: string }[];
   safeDeletePaths?: string[];
+  legacyPythonPreserved?: string[];
+  legacyPythonUnprocessed?: string[];
+  legacyPythonHashClaimsReleased?: string[];
 }
 
 export function buildFilePlanFromChanges(
   input: BuildFilePlanInput,
 ): UpdateFileActions {
-  return {
+  const files: UpdateFileActions = {
     added: input.newFiles.map((f) => f.relativePath),
     autoUpdated: input.autoUpdateFiles.map((f) => f.relativePath),
     overwritten: [],
@@ -154,6 +163,13 @@ export function buildFilePlanFromChanges(
     userDeleted: input.userDeletedFiles.map((f) => f.relativePath),
     safeDeleted: input.safeDeletePaths ?? [],
   };
+  if (input.legacyPythonPreserved?.length)
+    files.legacyPythonPreserved = input.legacyPythonPreserved;
+  if (input.legacyPythonUnprocessed?.length)
+    files.legacyPythonUnprocessed = input.legacyPythonUnprocessed;
+  if (input.legacyPythonHashClaimsReleased?.length)
+    files.legacyPythonHashClaimsReleased = input.legacyPythonHashClaimsReleased;
+  return files;
 }
 
 export function summarizeMigrationPlan(
@@ -298,6 +314,12 @@ export function emitRolloutReport(
       `  files: +${f.added.length} auto↑${f.autoUpdated.length} conflicts=${report.plan.conflictsPending.length} skip=${f.skipped.length} overwrite=${f.overwritten.length}`,
     );
   }
+  for (const file of f.legacyPythonPreserved ?? [])
+    console.log(`  preserved modified legacy script: ${file}`);
+  for (const file of f.legacyPythonUnprocessed ?? [])
+    console.log(`  unprocessed legacy script: ${file}`);
+  for (const file of f.legacyPythonHashClaimsReleased ?? [])
+    console.log(`  released legacy script hash claim: ${file}`);
   if (report.postUpdateSmoke.length > 0) {
     const failed = report.postUpdateSmoke.filter((s) => !s.ok);
     console.log(

@@ -1,5 +1,5 @@
 /** Generated Unicode 15.0.0 canonical normalization data.
- * Reproduce: py -3.12 test/pactile/runtime/unicode_reference.py --tables
+ * Unicode normalization tables are generated from the corresponding standard data.
  * Composition exclusions are applied by the Unicode 15 reference normalizer.
  * Hangul is algorithmic and is intentionally not expanded in the table.
  */

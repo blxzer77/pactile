@@ -37,7 +37,6 @@ import { runWorkflowCommand, WorkflowCommandError } from "../../src/commands/wor
 import { PATHS } from "../../src/constants/paths.js";
 import { loadHashes } from "../../src/utils/template-hash.js";
 import { workflowMdTemplate } from "../../src/templates/pactile/index.js";
-import { replacePythonCommandLiterals } from "../../src/configurators/shared.js";
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 const noop = () => {};
@@ -106,7 +105,7 @@ describe("pactile workflow integration", () => {
     const wfPath = path.join(tmpDir, PATHS.WORKFLOW_GUIDE_FILE);
     expect(fs.existsSync(wfPath)).toBe(true);
     expect(fs.readFileSync(wfPath, "utf-8")).toBe(
-      replacePythonCommandLiterals(workflowMdTemplate),
+      workflowMdTemplate,
     );
     const hashes = loadHashes(tmpDir);
     expect(hashes[PATHS.WORKFLOW_GUIDE_FILE]).toBeTruthy();
@@ -118,7 +117,7 @@ describe("pactile workflow integration", () => {
 
     const wfPath = path.join(tmpDir, PATHS.WORKFLOW_GUIDE_FILE);
     const written = fs.readFileSync(wfPath, "utf-8");
-    expect(written).toBe(replacePythonCommandLiterals(TDD_CONTENT));
+    expect(written).toBe(TDD_CONTENT);
 
     const hashes = loadHashes(tmpDir);
     expect(hashes[PATHS.WORKFLOW_GUIDE_FILE]).toBeUndefined();
@@ -159,7 +158,7 @@ describe("pactile workflow integration", () => {
 
     const wfPath = path.join(tmpDir, PATHS.WORKFLOW_GUIDE_FILE);
     expect(fs.readFileSync(wfPath, "utf-8")).toBe(
-      replacePythonCommandLiterals(customContent),
+      customContent,
     );
     expect(loadHashes(tmpDir)[PATHS.WORKFLOW_GUIDE_FILE]).toBeUndefined();
   });
@@ -186,7 +185,7 @@ describe("pactile workflow integration", () => {
 
     const wfPath = path.join(tmpDir, PATHS.WORKFLOW_GUIDE_FILE);
     expect(fs.readFileSync(wfPath, "utf-8")).toBe(
-      replacePythonCommandLiterals(workflowMdTemplate),
+      workflowMdTemplate,
     );
     // Switching back to native re-tracks the hash so update() can manage it.
     expect(loadHashes(tmpDir)[PATHS.WORKFLOW_GUIDE_FILE]).toBeTruthy();
@@ -201,7 +200,7 @@ describe("pactile workflow integration", () => {
 
     const wfPath = path.join(tmpDir, PATHS.WORKFLOW_GUIDE_FILE);
     expect(fs.readFileSync(wfPath, "utf-8")).toBe(
-      replacePythonCommandLiterals(TDD_CONTENT),
+      TDD_CONTENT,
     );
     expect(loadHashes(tmpDir)[PATHS.WORKFLOW_GUIDE_FILE]).toBeUndefined();
   });
@@ -274,7 +273,7 @@ describe("pactile workflow integration", () => {
     const newPath = `${wfPath}.new`;
     expect(fs.existsSync(newPath)).toBe(true);
     expect(fs.readFileSync(newPath, "utf-8")).toBe(
-      replacePythonCommandLiterals(TDD_CONTENT),
+      TDD_CONTENT,
     );
     // Active workflow file and hash must both be untouched.
     expect(fs.readFileSync(wfPath, "utf-8")).toBe(originalContent);
@@ -296,7 +295,7 @@ describe("pactile workflow integration", () => {
     const afterUpdate = fs.readFileSync(wfPath, "utf-8");
     expect(afterUpdate).toBe(beforeUpdate);
     expect(afterUpdate).not.toBe(
-      replacePythonCommandLiterals(workflowMdTemplate),
+      workflowMdTemplate,
     );
   }, 120_000);
 });

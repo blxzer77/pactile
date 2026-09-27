@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { parseInstallHintV1 } from "@blxzer/pactile-core";
+import { parseInstallHintV1 } from "../../core/index.js";
 
 /** Deliberately no prose, exception text, caller keys, paths, or raw values. */
 export interface AdoptionDiagnostic {

@@ -1,0 +1,165 @@
+import path from "node:path";
+import {
+  blockCodexTask,
+  codexBridgeStatus,
+  prepareCodexRequest,
+  recordCodexReceipt,
+  unblockCodexTask,
+  type CodexBridgeRole,
+  type CodexBridgeTool,
+} from "../pactile/codex/bridge.js";
+import { recordCodexEscalationReviewV1 } from "../pactile/review/escalation.js";
+
+function option(args: string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  return index < 0 ? undefined : args[index + 1];
+}
+
+function required(value: string | undefined, label: string): string {
+  if (!value || value.startsWith("--")) throw new Error(`${label} is required`);
+  return value;
+}
+
+const tools: Record<string, CodexBridgeTool> = {
+  create: "create_thread",
+  message: "send_message_to_thread",
+  wait: "wait_threads",
+  read: "read_thread",
+};
+
+/** The desktop host invokes the native tool; Node owns request and receipt evidence. */
+export function runCodexCli(argv: string[], root = process.cwd()): number {
+  const [operation, reference, ...args] = argv;
+  try {
+    const task = required(reference, "task");
+    if (operation === "status") {
+      console.log(JSON.stringify(codexBridgeStatus(root, task), null, 2));
+      return 0;
+    }
+    if (operation === "review-escalation") {
+      console.log(
+        JSON.stringify(
+          recordCodexEscalationReviewV1({
+            root,
+            sourceTask: task,
+            escalationId: required(
+              option(args, "--escalation-id"),
+              "--escalation-id",
+            ),
+            sendRequestId: required(
+              option(args, "--send-request-id"),
+              "--send-request-id",
+            ),
+            readRequestId: required(
+              option(args, "--read-request-id"),
+              "--read-request-id",
+            ),
+          }),
+          null,
+          2,
+        ),
+      );
+      return 0;
+    }
+    if (operation === "receipt") {
+      const requestId = required(args[0], "request id");
+      const resultFile = path.resolve(
+        root,
+        required(option(args, "--result-file"), "--result-file"),
+      );
+      const evidenceLevel = option(args, "--evidence-level");
+      console.log(
+        JSON.stringify(
+          recordCodexReceipt(
+            root,
+            task,
+            requestId,
+            resultFile,
+            evidenceLevel as "simulated" | "desktop-native" | undefined,
+          ),
+          null,
+          2,
+        ),
+      );
+      return 0;
+    }
+    if (operation === "block") {
+      console.log(
+        JSON.stringify(
+          blockCodexTask(root, task, {
+            messageId: option(args, "--message-id"),
+            blockedByTaskId: option(args, "--blocked-by-task"),
+            reason: required(option(args, "--reason"), "--reason"),
+            actorId: option(args, "--actor"),
+          }),
+          null,
+          2,
+        ),
+      );
+      return 0;
+    }
+    if (operation === "unblock") {
+      const blockId = required(args[0], "block id");
+      console.log(
+        JSON.stringify(
+          unblockCodexTask(root, task, {
+            blockId,
+            unblockedByTaskId: option(args, "--unblocked-by-task"),
+            resolutionMessageId: option(args, "--resolution-message-id"),
+            reason: required(option(args, "--reason"), "--reason"),
+            actorId: option(args, "--actor"),
+          }),
+          null,
+          2,
+        ),
+      );
+      return 0;
+    }
+    if (operation !== "prepare")
+      throw new Error(
+        "Usage: pactile codex <prepare|receipt|review-escalation|status|block|unblock> <task> ...",
+      );
+    const toolName = required(
+      option(args, "--tool"),
+      "--tool create|message|wait|read",
+    );
+    const tool = tools[toolName];
+    if (!tool) throw new Error("--tool must be create, message, wait or read");
+    const promptFile = option(args, "--prompt-file");
+    const timeout = option(args, "--timeout-ms");
+    const request = prepareCodexRequest({
+      root,
+      task,
+      tool,
+      role: option(args, "--role") as CodexBridgeRole | undefined,
+      threadId: option(args, "--thread-id"),
+      runId: option(args, "--run-id"),
+      toTask: option(args, "--to-task"),
+      toRunId: option(args, "--to-run-id"),
+      resumeExecute: args.includes("--resume-execute"),
+      escalationId: option(args, "--escalation-id"),
+      replyToEscalationId: option(args, "--reply-to-escalation-id"),
+      sourceTask: option(args, "--source-task"),
+      sendRequestId: option(args, "--send-request-id"),
+      promptFile: promptFile ? path.resolve(root, promptFile) : undefined,
+      projectId: option(args, "--project-id"),
+      targetType: option(args, "--target") as
+        | "project"
+        | "projectless"
+        | undefined,
+      environment: option(args, "--environment") as
+        | "local"
+        | "worktree"
+        | undefined,
+      title: option(args, "--title"),
+      timeoutMs: timeout === undefined ? undefined : Number(timeout),
+    });
+    console.log(JSON.stringify(request, null, 2));
+    return 0;
+  } catch (error) {
+    console.error(
+      `Codex bridge: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return 1;
+  }
+}

@@ -10,10 +10,10 @@ This skill is for local Pactile users who have already run `pactile init` in a p
 The default operating scope is local files in the user project:
 
 - `.pactile/`: workflow, config, tasks, spec, workspace, scripts, and runtime state.
-- Platform directory: `.cursor/` — skills, agents, hooks, commands, rules.
-- Shared skill layer: `.agents/skills/` (industry skill-sharing path, kept when present but not extended by new Pactile behavior).
+- Codex project entry: managed `AGENTS.md` content and `.agents/skills/`.
+- Optional native Codex configuration only when a reviewed projection declares it and readiness succeeds.
 
-Pactile previously supported many AI-platform adapter directories (`.claude/`, `.codex/`, `.opencode/`, `.kiro/`, `.gemini/`, `.qoder/`, `.codebuddy/`, `.github/`, `.factory/`, `.pi/`, `.kilocode/`, `.agent/`, `.windsurf/`). The project has converged on **Cursor-only**. Legacy adapter directories in upgraded projects are preserved by `pactile update` but new Pactile behavior ships to `.cursor/` only.
+Codex is the current installation target. Legacy host directories in upgraded projects remain user-reviewable and are not refreshed as active adapters.
 
 Do not assume the user has the Pactile source repository. Do not default to modifying the global npm install directory or `node_modules`.
 

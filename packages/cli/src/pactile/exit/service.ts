@@ -7,7 +7,7 @@ import {
   type InstallStateV1,
   type OwnershipLedgerEntryV1,
   type ProjectionOperationV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 import {
   fingerprintBytes,
   MAX_PROJECTION_BYTES,
@@ -291,7 +291,6 @@ function mapApplyFailure(result: ProjectionApplyResult): ExitFailure {
 }
 
 function platformForAdapter(adapterId: string): PactilePlatform | null {
-  if (adapterId === "adapter.cursor") return "cursor";
   if (adapterId === "adapter.codex") return "codex";
   return null;
 }

@@ -1,116 +1,28 @@
-# Parallel-first execution contract
+# Task/Run critical-path scheduling and safe concurrency
 
-> **Purpose**: Make “parallel by default, serial by written reason” a **product** principle and an executable planning contract. After a Task is Open, first judge isolatable units; if they exist, prefer **host-native** parallel. Pactile owns declaration + integration only.
->
-> **Not a scheduler.** No queue, no new CLI, no host-parallel replacement, no cross-platform dispatch.
->
-> **Scope:** review-pool accepted items, development-plan batches, Parent/Full fan-out, and independent middleware / protocol / release tracks. **Not:** Lite / single-file (spawn not required); unisolatable write-sets; HITL / `start-execution --approved` / reviewer / `integrate-child`.
->
-> **Strength:** convention + Independent Check / planning review. Missing declaration on Full/Parent is **Check FAIL**. Not a `start-execution --check` hard gate. Attention order (`priority`) is not a serial lock.
+> **Compatibility filename:** this document remains at `parallel-first-execution.md` so existing installations can receive template updates. The filename does not require parallel dispatch or a particular execution mode.
 
-Full Prefer/Adapt/Own and serial-exception list: `.pactile/workflow.md` (Parallel-first). Host binding lives in the Adapter guide, not this contract. Who/where dispatch: `.pactile/framework/execution-strategy.md` (orthogonal).
+This contract describes current Task Kernel V2 planning and Run execution. The scheduler is host-neutral; an available host integration is optional. A schedule is a plan and receipt, not permission to start a Run.
 
----
+## Decide from the critical path
 
-## Open, then judge isolation
+1. Validate the complete dependency graph before planning. A missing dependency or any cycle fails the whole planning call; no schedule plan or receipt is produced.
+2. Before dispatch, each dependency must have a successful Task Close: its lifecycle is `closed` and its outcome is `completed`. A completed Run alone does not satisfy a dependency. An open dependency keeps its dependent Task undispatchable, even if a later advisory schedule wave lists it. A failed or blocked dependency blocks downstream Tasks; unaffected eligible Tasks may still be scheduled.
+3. Apply local readiness and authorization rules before considering concurrency. A scheduler suggestion cannot make an unapproved, blocked, stale, or otherwise ineligible Run dispatchable.
+4. Compare known Run write sets. Overlapping writers run sequentially by default. Concurrent overlap requires exact Task-pair authorization, approval evidence, a named integration owner, and an integration plan. Unknown write scope conflicts with every writer.
+5. Require real isolation for concurrent writers. Separate agents, sessions, or host names do not prove isolation. A managed Run worktree must match the Kernel write-set snapshot and pass the manager's current workspace checks.
+6. Estimate end-to-end completion time, including waiting, execution, rework, integration, and Review. Schedule compatible work together only when the modeled completion time improves over the serial plan. Missing estimates remain explicitly unmeasured in the receipt.
 
-1. After Open, name isolatable **write-sets / deliverables** (different `touches`, different Child, independent slices). Role chains stay serial: implement → Check. Independent research slices in Define may run in parallel; research must not share an Execute write-set.
-2. Point to **≥2** isolatable units → default parallel. Cannot point to more than one (true single write-set) → main session inline and write `serial_reason` (or one equivalent line). Full / Parent should normally be able to name units. Lite does not forbid fan-out; it usually has one write-set.
-3. The main session is dispatcher + HITL + integration, not the default sole implementer.
-4. Prefer a **host-visible parallel surface** when the Adapter can open one. If it cannot bind, record assurance and degrade to inline / sequential — do not claim work already ran in parallel. Same-session silent workers are a degrade and need one plain sentence.
+Pactile imposes no fixed numeric concurrency cap. The plan is limited by dependency readiness, authorization, write-set compatibility, isolation, current leases, and the completion-time comparison. A plan may therefore contain one task even when several tasks were requested.
 
----
+## Optional host dispatch
 
-## Declaration XOR (task-map / implement.md)
+The scheduler does not choose an execution authority, create a Run, acquire a writer lease, or start a host. A caller may dispatch an eligible Run through a supported host integration after the required Kernel admission checks. If no suitable host or safe workspace is available, keep the Run unstarted and report that state; do not treat a plan as execution evidence.
 
-Planning must pick **exactly one side** (aliases allowed):
+Immediately before dispatch, re-read the Kernel, dependency state, authorization, schedule receipt, worktree, and active leases. If any bound fact has changed, discard the stale plan and recompute. Host completion alone does not prove that the writer stopped or that the Run succeeded; retain the required host-stop and Run-result evidence.
 
-- `parallel_groups` (or existing alias `stages`) lists isolatable units, and unit `touches` do not overlap (or isolation such as `git-worktree` is declared); **or**
-- `serial_reason` is one of: shared write-set / HITL or reviewer gate / `depends_on` unmet / user asked serial / conflict surface cannot isolate.
+## Review and Close remain separate
 
-Declare these in Parent `task-map.md` (frontmatter and/or Orchestration notes). For a Full task with explicit worker fan-out and no Parent, put the same block in `implement.md`.
+A completed Run is not a Review or a Close. Review the exact candidate recorded for the latest completed Run, and record an independent Review with its evidence. Close requires the latest Review for that candidate to pass, with no unresolved blockers and evidence for every acceptance criterion. Review cost contributes to the completion-time estimate; it does not impose a project-wide concurrency rule.
 
-| Need | Field | Where it already lives | Notes |
-| --- | --- | --- | --- |
-| Topology | `execution_topology` | task-map frontmatter | `parallel` (default when ≥2 independent units) or `serial` (requires `serial_reason`) |
-| 可并行组 | `parallel_groups` *or* `stages[].units` | `stages:` already groups units | List child / slice ids that may run concurrently (empty `depends_on`) |
-| 合并点 | `merge_points` *or* `merge_limit` | `merge_limit: 1` + `integrate-child` | HITL, `start-execution --approved`, reviewer gates, and Parent integrate stay **serial** |
-| 冲突面 | `conflict_surface` *or* `children[].touches` | per-child `touches` | Write-sets that can collide; isolate with worktrees or serialize |
-| 串行理由 | `serial_reason` | required when there are no isolatable groups | Exactly one of the exception list above |
-
-`serial_reason` (one of):
-
-- shared write-set
-- HITL or reviewer gate
-- `depends_on` unmet
-- user asked serial
-- conflict surface cannot isolate
-
-Lite true single write-set: one line is enough (`serial_reason: single write-set`, or omit the parallel block and state inline in `implement.md`).
-
-Optional YAML (Parent frontmatter or Full `implement.md`):
-
-```yaml
-execution_topology: parallel
-parallel_groups: [child-a, child-b]
-merge_points: [integrate-child, reviewer-gates]
-conflict_surface: [path/that/collides]
-# serial_reason:  # omit when parallel groups are declared
-```
-
-These fields are **planning declarations**. CLI may round-trip them on `task-map.md` writes; nothing in Pactile auto-dispatches workers from them.
-
----
-
-## Check FAIL (Full / Parent)
-
-Independent Check / typed Check worker (helper: `common.parallel_declaration.evaluate_parallel_declaration`) is **unqualified** when any of:
-
-1. Neither `parallel_groups` / `stages` nor `serial_reason` is declared.
-2. Isolatable groups are declared, all write-set work stayed inline, and there is no `serial_reason`.
-3. Two workers share a write-set and isolation was not declared (fake parallel).
-
-Lite missing the block is not FAIL. Archives are not backfilled.
-
-This is **not** a `task.py start-execution --check` hard fail.
-
----
-
-## Worker binding window
-
-Activate `worker-orchestration` when — and only when — isolatable groups are already declared **and** a dispatch window is open (Execute-approved implement workers; independent research slices under Define). Parent may not silently finish children in sequence without a written `serial_reason`.
-
-HITL, `start-execution --approved`, reviewer, and `integrate-child` (`merge_limit: 1`) stay serial. Human attention: batch questions on one frontier; do not multiply confirms by N.
-
----
-
-## Archived Parent 对照 (do not edit the archive)
-
-Source (read-only): `.pactile/tasks/archive/2026-08/08-05-pactile-optimization/task-map.md`
-
-That campaign already behaved parallel-first; this table shows which **named** fields the contract would ask for vs what the archive already has. The archive body is **not** rewritten.
-
-| Contract field | Archive evidence | Gap |
-| --- | --- | --- |
-| Default parallel (≥2 children, `depends_on: []`) | Five children, all `depends_on: []`; notes say 可并行尽量并行 | Met |
-| `execution_topology` | `parallel_work_serial_merge` | Met in spirit (parallel work, serial merge). Today’s spelling is `parallel` + serial merge_points — do not rename the archive |
-| 可并行组 | `stages:` `stage-p0` / `stage-p1` / `stage-p1-lsp` with “可并行” titles | Met via `stages:` (alias of `parallel_groups`) |
-| 合并点 | `merge_limit: 1`; Event Log integrates one Child at a time; Suggested integration order: 合入仍串行 | Met via `merge_limit` + notes. Missing the literal key `merge_points:` |
-| 冲突面 | Per-child `touches` (hooks/rules/templates overlap called out) | Met via `touches`. Missing top-level `conflict_surface:` |
-| `serial_reason` | Topology is not `serial`, so none required. HITL/gates stayed serial through `merge_limit` | No gap for this map. A **serial** topology would need one exception line |
-| Prefer host-native | Parent routed workers to the host parallel surface / worktrees; Pactile did not schedule | Met (capability). Contract now makes that the **default**, not “when useful” |
-| Worker prompt path | Child prompts under `child-prompts/` with explicit task dirs | Met |
-
-**Would-write `serial_reason` only if** this Parent had set `execution_topology: serial` despite empty `depends_on` — e.g. shared write-set on `pactile/packages/cli/src/templates/`. It did not; it kept topology parallel and serialized **merge** only.
-
-Contrast (not edited): `.pactile/tasks/archive/2026-08/08-20-08-20-byok-headless-backend/task-map.md` has `execution_topology: serial` with every `depends_on: []` and **no** `serial_reason`. Under this contract that map would add one line (likely shared write-set / same branch `feat/byok-headless`).
-
----
-
-## Non-goals
-
-- Auto parallel dispatch, queues, or new CLI
-- Forcing Lite tasks into parallel agents
-- Replacing the host-native parallel surface
-- Relaxing HITL / `start-execution --approved` / reviewer-gate serial semantics
-- Cross-platform parallel (P16)
+Keep estimated costs, measured dispatch time, and lifecycle-observed costs distinct and attach their evidence references. Do not infer missing time or cost values from task count, provider confidence, or a successful outcome.

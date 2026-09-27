@@ -1,0 +1,85 @@
+#!/usr/bin/env node
+
+/**
+ * Cross-platform script to copy template files to dist/
+ *
+ * This script copies src/templates/ to dist/templates/ (excluding .ts files).
+ *
+ * The templates are product templates for user projects:
+ * - src/templates/pactile/ - workflow scripts and config
+ * - src/templates/common/ - shared Codex Skills and commands
+ * - src/templates/markdown/ - Markdown templates (spec, guides)
+ *
+ * The source is the package template tree, never a maintainer checkout's
+ * project-local configuration.
+ */
+
+import { cpSync, readdirSync, statSync, mkdirSync } from "node:fs";
+import { join, extname } from "node:path";
+
+const EXCLUDED_TEMPLATE_ENTRIES = new Set(["__pycache__", ".DS_Store"]);
+const EXCLUDED_TEMPLATE_EXTENSIONS = new Set([".py", ".pyc", ".pyo", ".ts"]);
+
+function shouldSkipTemplateEntry(entry) {
+  return (
+    EXCLUDED_TEMPLATE_ENTRIES.has(entry) ||
+    EXCLUDED_TEMPLATE_EXTENSIONS.has(extname(entry))
+  );
+}
+
+/**
+ * Recursively copy directory, excluding source and runtime cache artifacts.
+ * Python hooks are executed during local tests, so ignored `__pycache__`
+ * directories can exist in src/templates; they must not be copied into the npm
+ * tarball.
+ *
+ * @param {string} src - Source directory
+ * @param {string} dest - Destination directory
+ */
+function copyDir(src, dest) {
+  mkdirSync(dest, { recursive: true });
+
+  for (const entry of readdirSync(src)) {
+    if (shouldSkipTemplateEntry(entry)) {
+      continue;
+    }
+
+    const srcPath = join(src, entry);
+    const destPath = join(dest, entry);
+    const stat = statSync(srcPath);
+
+    if (stat.isDirectory()) {
+      copyDir(srcPath, destPath);
+    } else {
+      cpSync(srcPath, destPath);
+    }
+  }
+}
+
+// Copy src/templates to dist/templates
+copyDir("src/templates", "dist/templates");
+console.log("Copied src/templates/ to dist/templates/");
+
+// Preserve old manifests in source history; ship only current migrations.
+const manifestSource = "src/migrations/manifests";
+const manifestTarget = "dist/migrations/manifests";
+mkdirSync(manifestTarget, { recursive: true });
+for (const entry of readdirSync(manifestSource)) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?\.json$/u.exec(entry);
+  if (!match) continue;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  const stage = match[4];
+  const stageNumber = Number(match[5] ?? 0);
+  const current =
+    major > 0 ||
+    minor > 6 ||
+    (minor === 6 && patch > 0) ||
+    (minor === 6 && patch === 0 &&
+      (stage === undefined || stage === "rc" || (stage === "beta" && stageNumber >= 1)));
+  if (current) cpSync(join(manifestSource, entry), join(manifestTarget, entry));
+}
+console.log("Copied current migration manifests to dist/migrations/manifests/");
+
+console.log("Template copy complete.");

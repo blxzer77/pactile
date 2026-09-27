@@ -715,6 +715,24 @@
       "reason": "The root support entry is a live user-help and redaction boundary."
     },
     {
+      "path": "docs/capabilities/bounded-workspace-requests.md",
+      "classification": "live",
+      "language": "en",
+      "action": "rewrite",
+      "targetPage": "capabilities.index",
+      "ownerLane": "batch-4-docs-hosts-capabilities",
+      "reason": "Canonical English guide for bounded Node workspace requests, linked from the capability index."
+    },
+    {
+      "path": "docs/capabilities/bounded-workspace-requests.zh-CN.md",
+      "classification": "live",
+      "language": "zh-CN",
+      "action": "rewrite",
+      "targetPage": "capabilities.index",
+      "ownerLane": "batch-4-docs-hosts-capabilities",
+      "reason": "Canonical Chinese guide for bounded Node workspace requests, linked from the capability index."
+    },
+    {
       "path": "docs/capabilities/index.md",
       "classification": "live",
       "language": "en",
@@ -767,6 +785,15 @@
       "targetPage": "capabilities.native-adoption",
       "ownerLane": "batch-4-docs-hosts-capabilities",
       "reason": "Canonical Chinese native adoption and ownership guide."
+    },
+    {
+      "path": "docs/capabilities/pi-v2-dispatch.md",
+      "classification": "live",
+      "language": "en",
+      "action": "merge",
+      "targetPage": "capabilities.subagents",
+      "ownerLane": "batch-4-docs-hosts-capabilities",
+      "reason": "Fold the Task Kernel V2 Pi writer-lease and stop-proof dispatch contract into the bilingual subagents guide."
     },
     {
       "path": "docs/capabilities/privacy-and-permissions.md",
@@ -859,6 +886,15 @@
       "reason": "Canonical Chinese subagent capability boundary guide."
     },
     {
+      "path": "docs/capabilities/structured-task-artifacts.zh-CN.md",
+      "classification": "live",
+      "language": "zh-CN",
+      "action": "rewrite",
+      "targetPage": "capabilities.index",
+      "ownerLane": "batch-4-docs-hosts-capabilities",
+      "reason": "Canonical Chinese guide for Kernel-derived task artifacts, linked from both capability indexes."
+    },
+    {
       "path": "docs/concepts/architecture.md",
       "classification": "live",
       "language": "en",
@@ -875,6 +911,15 @@
       "targetPage": "concepts.architecture",
       "ownerLane": "batch-4-docs-entry-concepts",
       "reason": "Canonical Chinese architecture concept page."
+    },
+    {
+      "path": "docs/concepts/critical-path-scheduler.md",
+      "classification": "live",
+      "language": "en",
+      "action": "merge",
+      "targetPage": "concepts.task-system",
+      "ownerLane": "batch-4-docs-entry-concepts",
+      "reason": "Fold the English critical-path scheduler design into the bilingual, host-neutral Task-system concept."
     },
     {
       "path": "docs/concepts/index.md",
@@ -1606,6 +1651,15 @@
       "reason": "Rewrite retrieval around four intents, minimum host assurance, and Middleware Provider origin/readiness."
     },
     {
+      "path": "docs/run-worktree-lifecycle.md",
+      "classification": "live",
+      "language": "en",
+      "action": "merge",
+      "targetPage": "lifecycle.workflow",
+      "ownerLane": "batch-4-docs-lifecycle-support",
+      "reason": "Fold local Run worktree creation, integration, and recovery boundaries into the bilingual workflow lifecycle guide."
+    },
+    {
       "path": "docs/skills.md",
       "classification": "live",
       "language": "en",
@@ -1658,6 +1712,15 @@
       "targetPage": "capabilities.subagents",
       "ownerLane": "batch-4-docs-hosts-capabilities",
       "reason": "Separate shared orchestration from Cursor- and Codex-native dispatch details."
+    },
+    {
+      "path": "docs/task-coordination.zh-CN.md",
+      "classification": "live",
+      "language": "zh-CN",
+      "action": "merge",
+      "targetPage": "concepts.task-system",
+      "ownerLane": "batch-4-docs-entry-concepts",
+      "reason": "Fold the Chinese Task/Run coordination contract into the bilingual, host-neutral Task-system concept."
     },
     {
       "path": "docs/task-system.md",
@@ -1842,11 +1905,6 @@
       "surfaces": ["windows", "posix"]
     },
     {
-      "command": "pactile init --cursor",
-      "availableAfter": "cursor-adapter",
-      "surfaces": ["windows", "posix"]
-    },
-    {
       "command": "pactile init --codex",
       "availableAfter": "codex-adapter",
       "surfaces": ["windows", "posix"]
@@ -1854,22 +1912,17 @@
     {
       "command": "pactile update",
       "availableAfter": "batch-3-brand-runtime",
-      "surfaces": ["clean", "legacy", "coexistence"]
+      "surfaces": ["clean", "legacy", "codex"]
     },
     {
       "command": "pactile capability-smoke --json",
       "availableAfter": "batch-2-vertical-capabilities",
-      "surfaces": ["cursor", "codex", "coexistence"]
-    },
-    {
-      "command": "pactile detach cursor",
-      "availableAfter": "projection-lifecycle",
-      "surfaces": ["coexistence"]
+      "surfaces": ["codex"]
     },
     {
       "command": "pactile detach codex",
       "availableAfter": "projection-lifecycle",
-      "surfaces": ["coexistence"]
+      "surfaces": ["codex"]
     },
     {
       "command": "pactile uninstall",

@@ -25,7 +25,6 @@ import inquirer from "inquirer";
 
 import { PATHS } from "../constants/paths.js";
 import { isWorkflowInitialized } from "../utils/workflow-dir.js";
-import { replacePythonCommandLiterals } from "../configurators/shared.js";
 import {
   computeHash,
   loadHashes,
@@ -167,7 +166,7 @@ async function writeWorkflow(
   if (!fs.existsSync(dest)) {
     fs.mkdirSync(dest, { recursive: true });
   }
-  const finalContent = replacePythonCommandLiterals(template.content);
+  const finalContent = template.content;
 
   // `--create-new` always writes the `.new` sibling, regardless of disk state.
   if (options.createNew) {

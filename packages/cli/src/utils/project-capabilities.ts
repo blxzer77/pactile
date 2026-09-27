@@ -16,8 +16,7 @@ export {
 
 export const PROJECT_CAPABILITY_IDS = [
   "codebase-retrieval",
-  "github-mcp",
-  "playwright-mcp",
+  "fastctx",
 ] as const;
 
 export type ProjectCapabilityId = (typeof PROJECT_CAPABILITY_IDS)[number];
@@ -142,7 +141,7 @@ export const PROJECT_CAPABILITIES: readonly ProjectCapability[] = [
         provider: "codegraph",
         required: false,
         purpose:
-          "Definition/reference navigation on Cursor Agent via codegraph_node and codegraph_search (GO_TO_DEFINITION not exposed in Agent tool table).",
+          "Definition/reference navigation through codegraph_node and codegraph_search when CodeGraph is available.",
         readiness:
           "CodeGraph MCP/index available; corroborate with Read on returned line ranges.",
         evidenceStatus:
@@ -246,50 +245,20 @@ export const PROJECT_CAPABILITIES: readonly ProjectCapability[] = [
     ],
   },
   {
-    id: "github-mcp",
-    aliases: ["github"],
-    title: "GitHub MCP",
+    id: "fastctx",
+    aliases: ["fast-ctx"],
+    title: "FastCtx tool runtime",
     description:
-      "GitHub repository, issue, pull request, and review operations.",
+      "Local tool runtime that serves file reads, search, replace, and command execution through one MCP surface, so the model spends attention on the repository instead of on shell quoting, path encoding, and output truncation.",
     routing:
-      "Use for explicit GitHub remote work; distinguish read-only inspection from write-capable issue, PR, branch, review, or merge actions.",
+      "Use for tool-level file, search, replace, and command work once the stable binary is present. This is a tool runtime, not a retrieval strategy: `codebase-retrieval` owns what evidence counts and how retrieval is routed, while FastCtx only performs the read/grep/glob/replace/run operations. Use its output tiers deliberately — compact for narrow lookups, standard by default, high only when a broad sweep is genuinely needed. Do not claim FastCtx output as proof on its own; source, Git, and tests remain the proof layer.",
     readiness:
-      "Configured GitHub API MCP package is visible and `GITHUB_TOKEN` or `GITHUB_PERSONAL_ACCESS_TOKEN` is present in the agent host environment before remote actions are claimed.",
+      "The official stable binary exists at `~/.fastctx/bin/fastctx.exe` (created by the upstream `fastctx apply` flow). Pactile never resolves npm, nvm, or version-manager paths to find it: a missing stable binary means the capability is simply not adopted yet, which is a normal state, not a broken install.",
     fallback: [
-      "Expose `GITHUB_TOKEN` or `GITHUB_PERSONAL_ACCESS_TOKEN` to the MCP server environment or configure the agent host explicitly.",
-      "Ensure `npx -y @modelcontextprotocol/server-github` can launch before selecting this capability.",
-      "Without a verified credential posture, use local Git only and do not claim GitHub remote actions.",
+      "Without FastCtx, use the host's native file tools, `rg`, and the shell directly; this costs more attention but loses no capability.",
+      "FastCtx configures Codex through its own `fastctx apply`; that writes a stable binary, a Codex profile, and a managed block in `~/.codex/AGENTS.md`. This is an upstream action performed by the user, never by `pactile init` or `pactile update`.",
     ],
-    mcpServers: [
-      {
-        name: "github",
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-github"],
-      },
-    ],
-  },
-  {
-    id: "playwright-mcp",
-    aliases: ["playwright"],
-    title: "Playwright MCP",
-    description:
-      "Browser automation, frontend behavior checks, screenshots, and UI smoke verification.",
-    routing:
-      "Use for browser/UI verification when the task requires rendered behavior evidence; keep browser/session startup explicit.",
-    readiness:
-      "Configured server and browser runtime are available without silently starting unrelated browsing sessions.",
-    fallback: [
-      "Verify the Playwright MCP package and browser runtime in the selected host before claiming rendered UI evidence.",
-      "If browser automation is unavailable, record the missing runtime and fall back to static checks or manual user verification.",
-    ],
-    mcpServers: [
-      {
-        name: "playwright",
-        command: "npx",
-        args: ["-y", "@playwright/mcp@latest"],
-        startupTimeoutSec: 120,
-      },
-    ],
+    mcpServers: [],
   },
 ];
 
@@ -693,8 +662,7 @@ export function renderCapabilitiesMarkdown(
     "- Semantic output is recall-only and must be converted into exact source checks before final claims.",
     "- Host identity or user-global routing state must not select a Provider or prove readiness.",
     "- Per-query tool order lives in on-demand retrieval docs, not an always-on rule.",
-    "- GitHub MCP uses the GitHub API server package; remote writes require explicit user intent and the host's credential/tool posture must be clear.",
-    "- Playwright MCP should be used for rendered UI evidence only when browser verification is part of the task.",
+    "- FastCtx is a tool runtime, not a retrieval strategy: it performs read/search/replace/run operations, while `codebase-retrieval` owns what counts as evidence.",
     "",
   );
 
@@ -840,99 +808,13 @@ export function managedMcpServerNames(): string[] {
   return [...names];
 }
 
-export interface McpServerEntry {
-  command: string;
-  args: string[];
-  [key: string]: unknown;
-}
-
-export function loadExistingMcpServers(
-  cwd: string,
-): Record<string, McpServerEntry> {
-  const filePath = path.join(cwd, ".cursor", "mcp.json");
-  if (!fs.existsSync(filePath)) {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8")) as {
-      mcpServers?: unknown;
-    };
-    if (
-      !parsed.mcpServers ||
-      typeof parsed.mcpServers !== "object" ||
-      Array.isArray(parsed.mcpServers)
-    ) {
-      return {};
-    }
-    const result: Record<string, McpServerEntry> = {};
-    for (const [name, value] of Object.entries(
-      parsed.mcpServers as Record<string, unknown>,
-    )) {
-      if (!value || typeof value !== "object" || Array.isArray(value)) {
-        continue;
-      }
-      const entry = value as Record<string, unknown>;
-      if (typeof entry.command !== "string") {
-        continue;
-      }
-      const args = Array.isArray(entry.args)
-        ? entry.args.filter((item): item is string => typeof item === "string")
-        : [];
-      result[name] = { ...entry, command: entry.command, args };
-    }
-    return result;
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Render `.cursor/mcp.json`.
- * When `existing` is provided, upsert Pactile-managed servers from
- * selection, remove managed names not in selection, and preserve foreign keys.
- */
-export function renderMcpJson(
-  selected: readonly ProjectCapabilityId[],
-  existing?: Record<string, McpServerEntry> | null,
-): string {
-  const desired = Object.fromEntries(
-    uniqueMcpServers(selected).map((server) => [
-      server.name,
-      {
-        command: server.command,
-        args: server.args,
-      } satisfies McpServerEntry,
-    ]),
-  );
-
-  const merged: Record<string, McpServerEntry> = {
-    ...(existing ?? {}),
-  };
-  const managed = new Set(managedMcpServerNames());
-  for (const name of managed) {
-    if (!(name in desired)) {
-      Reflect.deleteProperty(merged, name);
-    }
-  }
-  for (const [name, server] of Object.entries(desired)) {
-    merged[name] = server;
-  }
-
-  return `${JSON.stringify({ mcpServers: merged }, null, 2)}\n`;
-}
-
 export function buildProjectCapabilityTemplates(
   selected: readonly ProjectCapabilityId[],
-  platforms: Iterable<AITool>,
+  _platforms: Iterable<AITool>,
   states?: Partial<Record<ProjectCapabilityId, StoredCapabilityState>>,
-  options?: {
-    cwd?: string;
-    existingMcpServers?: Record<string, McpServerEntry> | null;
-  },
 ): Map<string, string> {
   const selectedIds = uniqueInRegistryOrder(selected);
   const files = new Map<string, string>();
-  const platformSet = new Set(platforms);
 
   if (selectedIds.length > 0) {
     files.set(
@@ -943,26 +825,6 @@ export function buildProjectCapabilityTemplates(
       CAPABILITIES_MD_PATH,
       renderCapabilitiesMarkdown(selectedIds, states),
     );
-  }
-
-  if (platformSet.has("cursor")) {
-    const existing =
-      options?.existingMcpServers !== undefined
-        ? options.existingMcpServers
-        : options?.cwd
-          ? loadExistingMcpServers(options.cwd)
-          : null;
-    const desiredServers = uniqueMcpServers(selectedIds);
-    const existingKeys = Object.keys(existing ?? {});
-    const mcpPathExists =
-      typeof options?.cwd === "string" &&
-      fs.existsSync(path.join(options.cwd, ".cursor", "mcp.json"));
-    // Do not create an empty `.cursor/mcp.json` on fresh Cursor init with no
-    // MCP capabilities selected — that leaves a useless file and breaks
-    // uninstall "project is clean" expectations.
-    if (desiredServers.length > 0 || existingKeys.length > 0 || mcpPathExists) {
-      files.set(".cursor/mcp.json", renderMcpJson(selectedIds, existing));
-    }
   }
 
   return files;
@@ -977,7 +839,6 @@ export async function writeProjectCapabilityFiles(
     selected,
     platforms,
     loadStoredCapabilityStates(cwd),
-    { cwd },
   );
   if (files.size === 0) {
     return;

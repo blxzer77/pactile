@@ -67,8 +67,8 @@ After writing it, update the corresponding `index.md` so AI can find the new rul
 After writing a spec, add it to the selected task context:
 
 ```bash
-python3 ./.pactile/scripts/task.py add-context <task> implement ".pactile/spec/backend/error-handling.md" "Error handling conventions"
-python3 ./.pactile/scripts/task.py add-context <task> check ".pactile/spec/backend/error-handling.md" "Review error handling"
+pactile task add-context <task> implement ".pactile/spec/backend/error-handling.md" "Error handling conventions"
+pactile task add-context <task> check ".pactile/spec/backend/error-handling.md" "Review error handling"
 ```
 
 ## Do Not Store Project-Private Rules In `pactile-meta`

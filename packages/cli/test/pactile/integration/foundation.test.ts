@@ -16,7 +16,7 @@ import {
   type ProjectionOperationV1,
   type ProviderResolutionInputV1,
   type ResolvedProviderV1,
-} from "@blxzer/pactile-core";
+} from "../../../src/core/index.js";
 import {
   buildTileCatalog,
   compileTileComposition,

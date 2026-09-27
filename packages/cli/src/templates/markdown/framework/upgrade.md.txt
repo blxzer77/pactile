@@ -10,6 +10,6 @@
 
 官方面（PACTILE 装进项目的指令与规则）能随这次 `update` 开迁。任务产物先双读，以后再写。确认后才会停读旧形状。从更老的版本一次升上来，也走同一条 `update`。
 
-你改过的官方文件会单独列出并保留。项目里的 **`.pactile/middleware/`** 是中间件 overlay：`pactile init` / `pactile update` **永不写入、不删除、不纳入 hash**。`init` / `update` 会把模块短契约装进 **`.pactile/modules/`**（仅 `index.json` 与各模块 `contract.md`，不含 `catalog.ts`）。默认只把 **smart-search** 标为 required；其余 shipped Provider 为 optional，`init` 不强制安装 MCP。只在 Cursor 里配了 MCP、没写成中间件的，PACTILE 不管。失败则回滚或维持双读，项目仍可用。
+你改过的官方文件会单独列出并保留。项目里的 **`.pactile/middleware/`** 是中间件 overlay：`pactile init` / `pactile update` **永不写入、不删除、不纳入 hash**。`init` / `update` 会把模块短契约装进 **`.pactile/modules/`**（仅 `index.json` 与各模块 `contract.md`，不含 `catalog.ts`）。默认只把 **smart-search** 标为 required；其余 shipped Provider 为 optional，`init` 不强制安装 MCP。宿主私有 MCP 配置若没有声明为中间件，不进入 Pactile 健康表。失败则回滚或维持双读，项目仍可用。
 
 团队其他人：拉代码即可。若这次只改了本地未提交文件，发布说明会写清谁跑 `update`、谁只要 pull。

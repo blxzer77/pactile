@@ -5,12 +5,10 @@ Context loading determines when AI reads workflow, task, spec, research, workspa
 ## Read These Files First
 
 1. `.pactile/workflow.md`
-2. `.pactile/scripts/get_context.py`
-3. `.pactile/scripts/common/session_context.py`
-4. `.pactile/scripts/common/task_context.py`
-5. `.pactile/scripts/common/active_task.py`
-6. Current platform hooks or agent files
-7. The selected task's `implement.jsonl` / `check.jsonl`
+2. `pactile context --mode session --json`
+3. `pactile task selected --source`
+4. Current platform hooks or agent files
+5. The selected task's `implement.jsonl` / `check.jsonl`
 
 ## Context Sources
 
@@ -30,11 +28,11 @@ Context loading determines when AI reads workflow, task, spec, research, workspa
 
 | Need | Edit point |
 | --- | --- |
-| Inject more/less information in new sessions | `session_context.py` or the platform `session-start` hook. |
+| Inject more/less information in new sessions | Project context manifests or the platform session entry. |
 | Change hints on each user input | `[workflow-state:STATUS]` block in `.pactile/workflow.md`. The `inject-workflow-state` hook is parser-only and reads the block verbatim. |
 | Agent did not read specs | Task JSONL, agent prelude, `inject-subagent-context` hook. |
-| Selected task is lost | `active_task.py` and platform session identity propagation. |
-| Change JSONL validation rules | `task_context.py`. |
+| Selected task is lost | `pactile task selected --source` and platform session identity propagation. |
+| Change JSONL validation rules | Pactile CLI Node implementation (product change). |
 
 ## JSONL Rules
 
@@ -49,16 +47,13 @@ Include only spec/research files. Do not put code files that will be modified in
 
 ## Change Session Context
 
-If the user wants every new session to see more project state, edit:
-
-- `.pactile/scripts/common/session_context.py`
-- the corresponding platform `session-start` hook
+If the user wants every new session to see more project state, curate the project context manifests and the platform session entry. Changes to the compiler itself belong in the Pactile product source.
 
 Context cannot grow without bound. Prefer injecting indexes and paths so the AI can read detailed files on demand.
 
 ## Change Sub-Agent Context
 
-First determine which mode the platform uses:
+For Pi Agent workers, determine which context loading mode the integration uses:
 
 - hook push: edit the `inject-subagent-context` hook.
 - agent pull: edit the read steps in the corresponding `pactile-implement` / `pactile-check` agent file.
@@ -75,10 +70,10 @@ In both modes, make sure the agent ultimately reads:
 ## Troubleshooting Order
 
 ```bash
-python3 ./.pactile/scripts/task.py selected --source
-python3 ./.pactile/scripts/task.py list-context <task>
-python3 ./.pactile/scripts/task.py validate <task>
-python3 ./.pactile/scripts/get_context.py --mode packages
+pactile task selected --source
+pactile task list-context <task>
+pactile task validate <task>
+pactile context --mode packages
 ```
 
 Confirm the task and JSONL are correct before editing hooks/agents.

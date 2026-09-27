@@ -1,14 +1,13 @@
 {
   "name": "@blxzer/pactile",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Pactile composes portable AI development capabilities across supported agent platforms",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "pactile": "./bin/pactile.js",
-    "cstl": "./bin/cstl.js",
-    "smart-search": "./bin/smart-search.js"
+    "pactile": "./dist/bin/pactile.js",
+    "cstl": "./dist/bin/cstl.js"
   },
   "exports": {
     "./package.json": "./package.json",
@@ -18,52 +17,77 @@
       "default": "./dist/index.js"
     },
     "./cli": "./dist/cli/index.js",
-    "./compat": "./bin/compat-warning.js"
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js",
+      "default": "./dist/core/index.js"
+    },
+    "./core/task": {
+      "types": "./dist/core/task/index.d.ts",
+      "import": "./dist/core/task/index.js",
+      "default": "./dist/core/task/index.js"
+    },
+    "./scheduler": {
+      "types": "./dist/pactile/scheduler/index.d.ts",
+      "import": "./dist/pactile/scheduler/index.js",
+      "default": "./dist/pactile/scheduler/index.js"
+    },
+    "./worktree": {
+      "types": "./dist/pactile/worktree/index.d.ts",
+      "import": "./dist/pactile/worktree/index.js",
+      "default": "./dist/pactile/worktree/index.js"
+    },
+    "./core/compat": {
+      "types": "./dist/core/compat/index.d.ts",
+      "import": "./dist/core/compat/index.js",
+      "default": "./dist/core/compat/index.js"
+    },
+    "./core/testing": {
+      "types": "./dist/core/testing/index.d.ts",
+      "import": "./dist/core/testing/index.js",
+      "default": "./dist/core/testing/index.js"
+    },
+    "./compat": "./dist/bin/compat-warning.js"
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "pnpm run clean && tsc && pnpm run copy-templates",
-    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "copy-templates": "node scripts/copy-templates.js",
-    "postinstall": "node scripts/postinstall.js",
-    "check:pack-files": "node scripts/check-cli-pack-files.js",
-    "check:release-pack": "node scripts/check-release-pack-contents.js",
-    "check:router-copy-sync": "node scripts/check-router-copy-sync.js",
-    "check:router-copy-sync:hash": "node scripts/check-router-copy-sync.js --hash-only",
-    "docs:smoke": "node scripts/docs-smoke.js",
-    "mirror-check": "node scripts/mirror-check.js",
-    "copy:release-assets": "node scripts/copy-release-assets.js",
-    "sync:pack-files": "node scripts/sync-cli-pack-files.js",
+    "build": "pnpm run clean && tsc && pnpm run build:script-artifacts && node .tmp/p31-script-build/copy-templates.js",
+    "build:script-artifacts": "tsc -p tsconfig.scripts.build.json",
+    "clean": "pnpm run build:script-artifacts && node .tmp/p31-script-build/clean.js",
+    "copy-templates": "tsx scripts/copy-templates.ts",
+    "check:pack-files": "tsx scripts/check-cli-pack-files.ts",
+    "check:release-pack": "pnpm run build:script-artifacts && node .tmp/p31-script-build/check-release-pack-contents.js",
+    "docs:smoke": "pnpm run build:script-artifacts && tsx scripts/docs-smoke.ts",
+    "copy:release-assets": "tsx scripts/copy-release-assets.ts",
+    "sync:pack-files": "tsx scripts/sync-cli-pack-files.ts",
     "dev": "tsc --watch",
     "start": "node ./dist/cli/index.js",
-    "test": "vitest run --maxWorkers=4",
+    "test": "pnpm run build:script-artifacts && vitest run --maxWorkers=4",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint src/ test/",
-    "lint:fix": "eslint src/ test/ --fix",
-    "format": "prettier --write src/",
-    "format:check": "prettier --check src/",
-    "typecheck": "tsc --noEmit",
-    "lint:py": "basedpyright",
-    "lint:all": "pnpm lint && pnpm lint:py",
+    "lint": "eslint src/ test/ scripts/",
+    "lint:fix": "eslint src/ test/ scripts/ --fix",
+    "format": "prettier --write src/ scripts/",
+    "format:check": "prettier --check src/ scripts/",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json",
     "prepublishOnly": "pnpm run build && pnpm test && pnpm run copy:release-assets",
-    "release": "node scripts/release.js patch",
-    "release:minor": "node scripts/release.js minor",
-    "release:major": "node scripts/release.js major",
-    "release:beta": "node scripts/release.js beta",
-    "release:rc": "node scripts/release.js rc",
-    "release:promote": "node scripts/release.js promote",
-    "release:prepare": "node scripts/publish-packages.js --prepare-only",
-    "release:publish": "node scripts/publish-packages.js --publish-only",
-    "release:publish:dry": "node scripts/publish-packages.js --dry-run",
-    "manifest": "node scripts/create-manifest.js"
+    "release": "tsx scripts/release.ts patch",
+    "release:minor": "tsx scripts/release.ts minor",
+    "release:major": "tsx scripts/release.ts major",
+    "release:beta": "tsx scripts/release.ts beta",
+    "release:promote": "tsx scripts/release.ts promote",
+    "release:check": "tsx scripts/release-preflight.ts check-versions",
+    "release:plan": "tsx scripts/release-preflight.ts publish-plan",
+    "release:prepare": "pnpm run build:script-artifacts && tsx scripts/publish-packages.ts --prepare-only",
+    "release:publish": "tsx scripts/publish-packages.ts --publish-only",
+    "release:publish:dry": "tsx scripts/publish-packages.ts --dry-run",
+    "manifest": "tsx scripts/create-manifest.ts"
   },
   "keywords": [
     "ai",
     "workflow",
-    "cursor",
     "claude",
     "iflow",
     "cli",
@@ -75,17 +99,12 @@
   "author": "Mindfold LLC",
   "license": "AGPL-3.0-only",
   "dependencies": {
-    "@blxzer/pactile-core": "workspace:*",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "figlet": "^1.9.4",
     "giget": "^3.1.1",
     "inquirer": "^9.3.7",
-    "undici": "^6.21.0",
     "zod": "^4.4.2"
-  },
-  "optionalDependencies": {
-    "@blxzer/smart-search": "^0.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
@@ -93,22 +112,19 @@
     "@types/inquirer": "^9.0.7",
     "@types/node": "^20.17.10",
     "@vitest/coverage-v8": "^4.0.18",
-    "basedpyright": "^1.37.2",
     "eslint": "^9.18.0",
     "prettier": "^3.4.2",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.21.0",
+    "tsx": "^4.20.6",
     "vitest": "^4.0.18"
   },
   "engines": {
-    "node": ">=18.17.0"
+    "node": ">=20.0.0"
   },
   "files": [
     "dist",
-    "bin",
-    "scripts/postinstall.js",
     "README.md",
-    "CHANGELOG.md",
     "LICENSE"
   ],
   "repository": {

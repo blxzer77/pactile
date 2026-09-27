@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseCapabilityBindingV1,
   parseInstallHintV1,
-} from "@blxzer/pactile-core";
+} from "../../../src/core/index.js";
 import { discoverSnapshot } from "../../../src/pactile/adoption/inventory.js";
 import {
   createInstallHint,

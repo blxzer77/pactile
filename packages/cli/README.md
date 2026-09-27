@@ -1,115 +1,127 @@
-# `@blxzer/pactile`
+# Pactile
+
+<p>
+  <a href="https://github.com/blxzer77/pactile/actions/workflows/ci.yml">
+    <img src="https://github.com/blxzer77/pactile/actions/workflows/ci.yml/badge.svg" alt="CI">
+  </a>
+  <a href="https://www.npmjs.com/package/@blxzer/pactile">
+    <img src="https://img.shields.io/npm/v/@blxzer/pactile?label=npm" alt="npm version">
+  </a>
+</p>
 
 English | [简体中文](README.zh-CN.md)
 
-The Pactile CLI creates and maintains an evidence-backed capability workspace for Cursor, Codex, or both. Canonical state lives in `.pactile/`; host files are rebuildable projections governed by explicit ownership.
+Pactile turns governed capability tiles into an evidence-backed workspace for Codex.
 
-## Install
+It gives an AI coding project one source of truth for instructions, tasks, ownership, and lifecycle state. The Codex integration receives a projection from that canonical state.
+
+## Five-minute path
+
+Prerequisites: Node.js 20 or newer. Pactile task, context, and session commands run on Node.js; Python is not required.
 
 ```bash
 npm install -g @blxzer/pactile
 pactile --version
-```
 
-Node.js 18.17 or newer is required. Generated Python scripts and host hooks require Python 3.9 or newer. Smart Search and other middleware providers are optional, independently probed capabilities; Pactile does not silently install host-native assets or copy credentials.
-
-## First project
-
-```bash
 mkdir my-pactile-project
 cd my-pactile-project
-pactile init --cursor --codex -y
+pactile init --codex -y
 pactile capability-smoke --json
 ```
 
-Choose `--cursor`, `--codex`, or both. Existing user files and native assets are inspected before projection. A compatible external asset may be adopted as borrowed; a conflict or malformed host file remains untouched and produces a recovery action.
+`init` creates canonical state under `.pactile/`, then reconciles the Codex adapter. The final command reports actual capability readiness; a degraded provider remains visible instead of being presented as native support.
 
-## Command reference
+After initialization, ask the agent to work normally. For durable work it will use the generated workflow and task tools; you do not need to memorize an extra prompt language.
 
-| Command                                              | Contract                                                                          |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `pactile init --cursor [--codex]`                    | Create canonical state and reconcile the selected adapters.                       |
-| `pactile capability-smoke [--json] [--write-status]` | Probe selected capabilities and optionally persist readiness.                     |
-| `pactile update --dry-run`                           | Preview official-file, migration, and projection changes.                         |
-| `pactile update`                                     | Apply one confirmed transaction, then reconcile adapters independently.           |
-| `pactile migrate`                                    | Produce the optional migration preview; actual writes remain in `update`.         |
-| `pactile rollout`                                    | Run `update` across explicit project paths and aggregate evidence.                |
-| `pactile upgrade`                                    | Upgrade the globally installed canonical CLI package.                             |
-| `pactile detach cursor`                              | Remove one adapter's bindings and claims; preserve shared and borrowed resources. |
-| `pactile detach codex`                               | Apply the same single-adapter contract to Codex.                                  |
-| `pactile uninstall --dry-run`                        | Preview detaching all adapters while retaining `.pactile/`.                       |
-| `pactile rollback <generation> --dry-run`            | Verify and preview a sealed generation switch.                                    |
-| `pactile purge --dry-run`                            | Produce the exact inactive-root target fingerprint; does not delete.              |
-| `pactile workflow`                                   | List or select a canonical workflow template.                                     |
-| `pactile validate-rules`                             | Validate supported Cursor rule projections.                                       |
-| `pactile kernel --json`                              | Run the machine JSON lifecycle boundary used by generated project scripts.        |
+## What appears in your project
 
-Run `pactile <command> --help` for current flags. `detach` takes the adapter as a positional argument. `purge` is intentionally two-step: a destructive run requires `--yes` plus the exact fingerprint returned by the preview.
+```text
+my-pactile-project/
+  .pactile/        canonical workflow, tasks, Tiles, runtime state, and Evidence
+  .agents/         projected Skills for Codex
+  .codex/          Optional Codex project configuration when native support is ready
+  AGENTS.md        shared managed instructions plus preserved user content
+```
 
-## Init options that affect ownership
+Pactile owns only the managed content recorded in its ownership ledger. Existing host-native Skills, MCP configuration, plugins, and user-authored files remain external or borrowed unless a reviewed plan says otherwise.
 
-- [Explicit legacy import](../../docs/pactile/compatibility-inputs.md#explicit-import) declares an existing tree as a read-only migration source. It never becomes a write target.
-- `--capability <id>` enables an optional project capability; use the flag repeatedly or pass `all`.
-- `--with-optional <name>` installs a packaged optional Skill into the project Skill directory. It does not install host-native plugins or services.
-- `--skip-readiness` records framework readiness as unverified instead of inventing a provider result.
-- `--force` and `--skip-existing` control file conflicts, but do not transfer ownership of user assets.
+Pactile changes only managed content recorded in its ownership ledger. Borrowed,
+modified, and user-authored files remain available for review.
 
-## Update, recovery, and exit
+## Mental model
 
-Always preview uncertain changes:
+| Concept        | What it does                                                                                  | What it does not do                                                     |
+| -------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **Tile**       | Declares a small capability, its inputs, policy ceiling, Evidence needs, and stop conditions. | It is not a prompt dump, host script, or central workflow.              |
+| **Kernel**     | Validates lifecycle transitions and durable contracts against canonical state.                | It does not plan the model's work or write host projections.            |
+| **Trace**      | Records observable composition events and Evidence references in order.                       | It never stores private reasoning or credentials.                       |
+| **Projection** | Turns one canonical generation into host-specific files and bindings.                         | It is rebuildable, not a second source of truth.                        |
+| **Ownership**  | Tracks who owns and still claims each projected or borrowed resource.                         | A claim does not grant deletion rights over user or third-party assets. |
+
+Start with [Core concepts](docs/concepts/index.md), then read the focused pages on [Tiles](docs/concepts/tiles.md), [Kernel, Evidence, and Trace](docs/concepts/kernel-evidence-trace.md), and [Projection and Ownership](docs/concepts/projection-and-ownership.md).
+
+## Hosts and capabilities
+
+| Host  | Project surface                                                  | Pactile behavior                                                    |
+| ----- | ---------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Codex | Managed `AGENTS.md` and `.agents/skills/`; optional project config | Reconciled from canonical state; unavailable native bindings degrade. |
+
+Pactile reports capability origin (`native`, `provider`, `heuristic`, or `unsupported`) separately from assurance. An optional provider can improve a capability, but its presence never makes a claim verified without Evidence and a passing freshness-bounded probe.
+
+See [Hosts](docs/hosts/index.md) and [Capabilities](docs/capabilities/index.md) for the detailed support boundaries.
+
+## Lifecycle and safety
+
+- `pactile update --dry-run` previews official-file and projection changes before applying them.
+- `pactile detach codex` removes the active adapter's claims while preserving borrowed resources.
+- `pactile uninstall --dry-run` previews detaching every adapter while retaining canonical `.pactile/` state.
+- `pactile rollback <generation> --dry-run` verifies a sealed generation before switching.
+- `pactile purge --dry-run` only produces a target fingerprint. Destructive cleanup requires a second, explicit confirmation using that exact fingerprint.
+
+Migration inputs are read-only. Modified, foreign, unknown, or borrowed resources fail safe and remain available for review. See [Lifecycle](docs/lifecycle/index.md) and [Troubleshooting](docs/troubleshooting/index.md).
+
+`pactile capability <request.json>` executes a versioned, bounded workspace request. See [bounded workspace requests](docs/capabilities/bounded-workspace-requests.md) for budgets, cancellation, outcomes, and receipts.
+
+## Packages
+
+`@blxzer/pactile` is the single release package. It includes the CLI, templates,
+adapters, lifecycle, and host-neutral Core contracts. Import those contracts
+from `@blxzer/pactile/core` or `@blxzer/pactile/core/task`. The separate Core
+and legacy bridge packages remain only as previously published 0.5.x history;
+v0.6.0 does not publish them. Historical release facts remain in the changelog.
+
+## Documentation
+
+| Area                                       | Start here                                                                   |
+| ------------------------------------------ | ---------------------------------------------------------------------------- |
+| Concepts and architecture                  | [docs/concepts/index.md](docs/concepts/index.md)                             |
+| Host adapters                              | [docs/hosts/index.md](docs/hosts/index.md)                                   |
+| Skills, MCP, retrieval, providers, privacy | [docs/capabilities/index.md](docs/capabilities/index.md)                     |
+| Install, update, migration, exit, recovery | [docs/lifecycle/index.md](docs/lifecycle/index.md)                           |
+| Troubleshooting                            | [docs/troubleshooting/index.md](docs/troubleshooting/index.md)               |
+| CLI reference                              | [packages/cli/README.md](packages/cli/README.md)                             |
+| Minimal example                            | [examples/minimal-agent-app/README.md](examples/minimal-agent-app/README.md) |
+| Contributing and security                  | [docs/governance/index.md](docs/governance/index.md)                         |
+
+## Developing Pactile
 
 ```bash
-pactile update --dry-run --json
-pactile detach cursor --dry-run
-pactile uninstall --dry-run
-pactile rollback <generation> --dry-run
-pactile purge --dry-run
+pnpm install --frozen-lockfile
+pnpm build
+pnpm typecheck
+pnpm lint
 ```
 
-Canonical generation commit happens before host reconciliation. If one adapter fails, canonical state and successful sibling adapters remain intact; the failed adapter keeps a retryable receipt. Update and exit decisions consult the ownership ledger, so modified, foreign, unknown, shared, and borrowed resources fail safe.
+The complete Core and CLI test suite is the final release gate. Focused changes should also run the closest package and conformance tests. Contributor workflow, security reporting, and compatibility policy live under [Governance](docs/governance/index.md).
 
-See the repository guides for [Lifecycle](../../docs/lifecycle/index.md), [Recovery](../../docs/troubleshooting/recovery.md), and [Projection and Ownership](../../docs/concepts/projection-and-ownership.md).
+## Scope
 
-## Package graph
+Pactile is local project tooling. It does not promise cloud orchestration, a plugin marketplace, automatic installation of host-native assets, or ownership of credentials and OAuth state. Optional middleware providers remain independently installed and explicitly probed. Smart Search is a separate optional package; install and configure it independently if you need external-knowledge searches. Its prerequisites are separate from Pactile's Node-only runtime.
 
-| Package                | Role                                                                    |
-| ---------------------- | ----------------------------------------------------------------------- |
-| `@blxzer/pactile`      | Canonical CLI, adapters, templates, lifecycle, and project integration. |
-| `@blxzer/pactile-core` | Canonical strict contracts and host-neutral primitives.                 |
-| Legacy CLI bridge      | Deprecated 0.5.x compatibility package delegating to this CLI.          |
-| Legacy core bridge     | Deprecated 0.5.x compatibility package re-exporting canonical Core.     |
-
-Packed internal dependencies are exact release versions and never retain a workspace protocol. The published CLI exposes `pactile`; compatibility executables are not the preferred interface.
-
-## Programmatic exports
-
-```js
-import { VERSION, listPactilePlatforms } from "@blxzer/pactile";
-
-console.log(VERSION, listPactilePlatforms());
-```
-
-The root export contains the supported library surface. `./cli` is the executable entry used by the package bridge, `./compat` is reserved for that temporary bridge, and `./package.json` is exported for tooling. For host-neutral contracts, import from `@blxzer/pactile-core` and its documented subpaths.
-
-## Security boundary
-
-Pactile stores logical provider references and Evidence links, not secret values, OAuth state, private model reasoning, or copied external asset bodies. Adapters cannot write canonical `.pactile/` state; the reconciler is the only projection writer. Borrowed assets retain `preserve` deletion policy.
-
-## More documentation
-
-- [Repository overview](../../README.md)
-- [Five-minute example](../../examples/minimal-agent-app/README.md)
-- [Core concepts](../../docs/concepts/index.md)
-- [Hosts](../../docs/hosts/index.md)
-- [Capabilities and providers](../../docs/capabilities/index.md)
-- [Lifecycle](../../docs/lifecycle/index.md)
-- [Troubleshooting](../../docs/troubleshooting/index.md)
-
-Release and registry mutation procedures are intentionally absent from this public package README.
+Lineage, copyright, and license notices are preserved in [COPYRIGHT](COPYRIGHT) and [LICENSE](LICENSE).
 
 ## License
 
 Pactile is distributed under the GNU Affero General Public License v3.0-only
-(`AGPL-3.0-only`). The complete license text is included in this package as
-[`LICENSE`](LICENSE); project and upstream attribution is documented in the
-repository's [`COPYRIGHT`](https://github.com/blxzer77/pactile/blob/main/COPYRIGHT).
+(`AGPL-3.0-only`). See [LICENSE](LICENSE) for the complete license text and
+[COPYRIGHT](COPYRIGHT) for Pactile's project and upstream attribution.

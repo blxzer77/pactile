@@ -6,7 +6,7 @@ import type {
   OwnershipLedgerV1,
   ProjectionOperationV1,
   ProjectionPlanV1,
-} from "@blxzer/pactile-core";
+} from "../../../src/core/index.js";
 import {
   runLifecycleTransaction,
   type LifecycleAdapter,

@@ -30,7 +30,6 @@ const EXPECTED_BASELINE = [
 ] as const;
 
 const EXPECTED_ON_DEMAND = [
-  "candidate-pool",
   "define-extended",
   "independent-check",
   "worker-orchestration",
@@ -45,7 +44,7 @@ const EXPECTED_ON_DEMAND = [
 ] as const;
 
 describe("P29 module short-contract catalog", () => {
-  it("lists all twenty modules from index.json without parsing the human overview", () => {
+  it("lists all nineteen modules from index.json without parsing the human overview", () => {
     const catalogSource = readFileSync(
       join(getModulesRoot(), "catalog.ts"),
       "utf-8",
@@ -62,7 +61,7 @@ describe("P29 module short-contract catalog", () => {
     expect(catalog.source).toBe("p29-module-table");
     expect(catalog.baseline_intents).toEqual([...BASELINE_RETRIEVAL_INTENTS]);
     expect(catalog.baseline_intents).toHaveLength(4);
-    expect(listed).toHaveLength(20);
+    expect(listed).toHaveLength(19);
     expect(listed.map((entry) => entry.id)).toEqual([
       ...EXPECTED_BASELINE,
       ...EXPECTED_ON_DEMAND,
@@ -104,10 +103,12 @@ describe("P29 module short-contract catalog", () => {
 
   it("spot-checks locked short-contract semantics", () => {
     const closeBasic = readModuleContract("close-basic");
-    expect(closeBasic).toContain("缺 Git");
-    expect(closeBasic).toContain("不得挡 Close");
-    expect(closeBasic).toContain("缺 `task-map.md`");
-    expect(closeBasic).toContain("缺 `children[]`");
+    expect(closeBasic).toContain("最新记录的 Run");
+    expect(closeBasic).toContain("最新通过的独立 Review");
+    expect(closeBasic).toContain("所有硬依赖必须已成功 Close");
+    expect(closeBasic).toContain("`local-result`");
+    expect(closeBasic).toContain("`documentation`");
+    expect(closeBasic).toContain("V1 Task 目录归档");
 
     const observability = readModuleContract("observability-local");
     expect(observability).toContain("零 Prompt");

@@ -13,7 +13,7 @@ export type RuntimePathResult =
   | { ok: true; result: unknown }
   | { ok: false; error: { code: string } };
 
-/** Small host-neutral JSON ABI mirrored in template common/paths.py.
+/** Small host-neutral JSON ABI for task and session consumers.
  * No lifecycle orchestration, private inputs, credentials or absolute diagnostics.
  */
 export function handleRuntimePathRequest(

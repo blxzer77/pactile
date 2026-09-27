@@ -31,3 +31,50 @@ External intent may send only the user-approved query and permitted context to
 the selected Provider. Never send credentials, private logs, hidden reasoning,
 or an entire repository by default. See [Providers](providers.md) and
 [privacy and permissions](privacy-and-permissions.md).
+
+## Optional Jev planning advice
+
+The asynchronous `pactile context --mode session --json` path may ask Jev
+whether to add semantic or structural routes when the V2 Session has a fact
+gap and no caller-specified intents. It always keeps `exact`. Jev cannot add
+`external`, authorize a Provider, or change Kernel policy. The current request
+contains only a locally generated summary of the V2 phase and fact-gap state;
+it never sends the user-controlled Task title, deliverable, or source snippets.
+The bounded Task text is checked locally for known credentials, assignments,
+JSON fields, cookie/session/authorization fields, URL user-info, and sensitive
+markers. A match falls back before HTTP. This is intentionally conservative for
+structured text; arbitrary unmarked secret values cannot be identified
+reliably, so raw Task text stays local in all cases.
+
+Project configuration can explicitly allow or deny this planning egress:
+
+```yaml
+jev:
+  egress: deny
+```
+
+When `jev.egress` is omitted, a valid or absent `.pactile/config.yaml` defaults
+to allowing this bounded advice if `PACTILE_JEV_API_KEY` is configured.
+`PACTILE_JEV_ENABLED=false` disables it. `egress: allow` records the default
+explicitly; `egress: deny` blocks the request. Unknown values, ambiguous Jev
+entries, or config read and parse uncertainty fail closed to the deterministic
+exact plan. The key stays in the process environment and is never written to
+the Session receipt.
+
+The Session pack keeps the deterministic `retrievalPlanning` fields and adds a
+redacted `retrievalPlanning.audit` receipt. It records the retrieval-planning
+node, a fingerprint of the bounded input summary, the semantic and structural
+candidate intents, Jev suggestions, deterministic intents, adopted or
+overridden intents, model, transport latency, attempts, usage, and estimated
+input cost. The receipt contains no summary text, source snippets, API key, or
+provider response body. A project deny, sensitive-content match, missing key,
+or transport failure records a fallback audit and keeps the exact plan.
+The audit also records the provider-reported confidence for each requested
+route; missing or invalid values are marked unavailable. It does not infer
+confidence from a route choice or fallback outcome.
+
+This project switch governs Jev retrieval planning and selected-Task Tile
+Session advice. For Tile advice, project denial or invalid configuration blocks
+Jev before HTTP even when a historical active Run grant allowed egress. Project
+allow is only an additional gate: the current active Run grant must still
+independently permit the destination and other Jev policy requirements.

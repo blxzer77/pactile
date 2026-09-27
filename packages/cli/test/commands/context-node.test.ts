@@ -1,0 +1,130 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { runContextCli } from "../../src/commands/context.js";
+import { runTaskCli } from "../../src/commands/task.js";
+import { emptyTaskRecord } from "../../src/core/task/schema.js";
+import { compileSessionPack } from "../../src/pactile/task/session-pack.js";
+
+const roots: string[] = [];
+afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
+
+describe("Node context CLI", () => {
+  it("reports package indexes and a session-scoped selected task without Python", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-context-node-"));
+    roots.push(root);
+    fs.mkdirSync(path.join(root, ".pactile", "tasks", "09-24-example"), { recursive: true });
+    fs.mkdirSync(path.join(root, ".pactile", "spec", "app", "backend"), { recursive: true });
+    fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), "packages:\n  app:\n    path: packages/app\n    git: true\ndefault_package: app\nartifact_locale: en\n");
+    fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=alice\n");
+    fs.writeFileSync(path.join(root, ".pactile", "tasks", "09-24-example", "task.json"), JSON.stringify({ name: "example", title: "Example", status: "planning", assignee: "alice", priority: "P2" }));
+    const spy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      expect(runContextCli(["--mode", "packages", "--json"], root)).toBe(0);
+      const packages = JSON.parse(String(spy.mock.lastCall?.[0]));
+      expect(packages).toMatchObject({ mode: "monorepo", defaultPackage: "app", packages: [{ name: "app", path: "packages/app", isGitRepo: true, specLayers: ["backend"] }] });
+      expect(runContextCli(["--mode", "record", "--json"], root)).toBe(0);
+      const record = JSON.parse(String(spy.mock.lastCall?.[0]));
+      expect(record.myTasks).toHaveLength(1);
+      expect(record.selectedTask).toBeNull();
+      expect(runContextCli(["--mode", "lite", "--json"], root)).toBe(0);
+      const lite = JSON.parse(String(spy.mock.lastCall?.[0]));
+      expect(lite).toMatchObject({ phase: "open", modules: { activatedOnDemand: [] } });
+      expect(runContextCli([], root)).toBe(0);
+      expect(String(spy.mock.lastCall?.[0])).toContain("## TASK DASHBOARD");
+    } finally { spy.mockRestore(); }
+  });
+
+  it("activates only phase-needed contracts in the five-layer session pack", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-session-node-"));
+    roots.push(root);
+    fs.mkdirSync(path.join(root, ".pactile", "tasks", "locale", "zh"), { recursive: true });
+    fs.mkdirSync(path.join(root, ".pactile", "modules", "define-basic"), { recursive: true });
+    fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), "artifact_locale: zh\n");
+    fs.writeFileSync(path.join(root, ".pactile", ".developer"), "name=alice\n");
+    fs.writeFileSync(path.join(root, ".pactile", "tasks", "locale", "zh", "default-prd.md"), "# {title}\n{goal}\n");
+    fs.writeFileSync(path.join(root, ".pactile", "modules", "index.json"), JSON.stringify({ modules: [{ id: "define-basic", contract: "define-basic/contract.md" }] }));
+    fs.writeFileSync(path.join(root, ".pactile", "modules", "define-basic", "contract.md"), "Define the Acceptance Criteria.");
+    fs.writeFileSync(path.join(root, ".pactile", "workflow.md"), "SECRET WORKFLOW DUMP");
+    expect(runTaskCli(["legacy-create", "Example", "--slug", "example"], root)).toBe(0);
+    vi.stubEnv("PACTILE_CONTEXT_ID", "codex_context_test");
+    try {
+      expect(runTaskCli(["select", "example"], root)).toBe(0);
+      const pack = compileSessionPack(root);
+      const layers = pack.layers as Record<string, unknown>[];
+      expect(pack.kernel).toMatchObject({ phase: "define", selected: true });
+      expect(pack).toMatchObject({ rigor: "lite", topologyKind: "single" });
+      expect(layers[1].moduleIds).toEqual(["define-basic"]);
+      expect(layers[2].items).toHaveLength(1);
+      const selection = pack.tileSelection as { status: string; offer?: { candidates: { ref: string }[] } };
+      expect(selection.status).toBe("offered");
+      expect(selection.offer?.candidates.some((candidate) => candidate.ref === "define-extended@1.0.0")).toBe(true);
+      expect(JSON.stringify(selection)).not.toContain("audit");
+      expect(JSON.stringify(selection)).toContain("does not activate a Tile");
+      expect(JSON.stringify(pack)).not.toContain("SECRET WORKFLOW DUMP");
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("fails closed instead of projecting malformed or unknown selected Tasks as V1", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-session-unresolved-"));
+    roots.push(root);
+    const tasksDir = path.join(root, ".pactile", "tasks");
+    const sessionsDir = path.join(root, ".pactile", ".runtime", "sessions");
+    const modulesDir = path.join(root, ".pactile", "modules");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.mkdirSync(path.join(modulesDir, "define-basic"), { recursive: true });
+    fs.writeFileSync(path.join(modulesDir, "index.json"), JSON.stringify({ modules: [{ id: "define-basic", contract: "define-basic/contract.md" }] }));
+    fs.writeFileSync(path.join(modulesDir, "define-basic", "contract.md"), "V1 phase contract that must not be exposed for an unresolved Task.");
+    const output = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      for (const taskId of ["malformed-json", "malformed-kernel", "orphan-task-json", "unknown-task"]) {
+        const taskDir = path.join(tasksDir, taskId);
+        fs.mkdirSync(taskDir, { recursive: true });
+        if (taskId === "malformed-json") fs.writeFileSync(path.join(taskDir, "task.json"), "{ invalid json\n");
+        if (taskId === "malformed-kernel") {
+          fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(emptyTaskRecord({ id: taskId, name: taskId, title: taskId })));
+          fs.writeFileSync(path.join(taskDir, "kernel.json"), "{ invalid kernel json\n");
+        }
+        if (taskId === "orphan-task-json") fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(emptyTaskRecord({ id: taskId, name: taskId, title: taskId })));
+        fs.writeFileSync(path.join(sessionsDir, "unresolved_selection.json"), JSON.stringify({ selected_task: `.pactile/tasks/${taskId}` }));
+        vi.stubEnv("PACTILE_CONTEXT_ID", "unresolved_selection");
+
+        const pack = compileSessionPack(root);
+        expect(pack.kernel).toMatchObject({ taskId: null, schemaVersion: null, phase: null, condition: null, selected: true });
+        expect(pack).not.toHaveProperty("rigor");
+        expect(pack).not.toHaveProperty("topologyKind");
+        const layers = pack.layers as { moduleIds?: string[]; text: string }[];
+        expect(layers[0].text).toContain("Phase: Unknown (selected Task format needs inspection)");
+        expect(layers[0].text).toContain("selected Task format is not identified");
+        expect(layers[1].moduleIds).toEqual([]);
+        expect(JSON.stringify(pack)).not.toContain("V1 phase contract that must not be exposed");
+        expect(JSON.stringify(pack)).not.toMatch(/Rigor=lite|topology=single|Open Proposal|Open approval/);
+        expect(runContextCli(["--mode", "session", "--json"], root)).toBe(0);
+        const emittedPack = JSON.parse(String(output.mock.calls.at(-1)?.[0]));
+        expect(emittedPack.layers[0].text).toContain("Phase: Unknown (selected Task format needs inspection)");
+        expect(emittedPack.layers[0].text).toContain("selected Task format is not identified");
+      }
+    } finally { output.mockRestore(); vi.unstubAllEnvs(); }
+  });
+
+  it("extracts the human Phase Index and a platform-filtered step without treating it as Kernel state", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-phase-node-"));
+    roots.push(root);
+    fs.mkdirSync(path.join(root, ".pactile"), { recursive: true });
+    fs.writeFileSync(path.join(root, ".pactile", "workflow.md"), [
+      "# Workflow", "## Phase Index", "Index body", "[workflow-state:planning]", "internal status", "[/workflow-state:planning]",
+      "## Phase 1: Plan", "#### 1.1 Define", "Common guidance", "[Codex]", "Codex guidance", "[/Codex]", "[Cursor]", "Legacy guidance", "[/Cursor]", "#### 1.2 Approve", "Approval guidance", "",
+    ].join("\n"));
+    const spy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      expect(runContextCli(["--mode", "phase"], root)).toBe(0);
+      expect(String(spy.mock.lastCall?.[0])).toContain("Index body");
+      expect(String(spy.mock.lastCall?.[0])).not.toContain("internal status");
+      expect(runContextCli(["--mode", "phase", "--step", "1.1", "--platform", "codex"], root)).toBe(0);
+      expect(String(spy.mock.lastCall?.[0])).toContain("Codex guidance");
+      expect(String(spy.mock.lastCall?.[0])).not.toContain("Legacy guidance");
+      expect(runContextCli(["--mode", "phase", "--step", "9.9"], root)).toBe(1);
+    } finally { spy.mockRestore(); }
+  });
+});

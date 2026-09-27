@@ -14,7 +14,7 @@ Closed Task 的**物理**处置：目录搬家（如 `archive/`）、压缩、�
 2. 维护者明确要压缩/清理；或
 3. Policy 的保留期限到期。
 
-**不是**触发：把 `task.py archive` 当成 Close；Execute 当天；用搬家证明做完了。
+**不是**触发：把 `pactile task archive` 当成 Close；Execute 当天；用搬家证明做完了。
 
 永远不进默认 Prompt 第 2 层（可与 `observability-local` 类似：零教战成功）。
 

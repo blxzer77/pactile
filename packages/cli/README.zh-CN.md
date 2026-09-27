@@ -1,115 +1,124 @@
-# `@blxzer/pactile`
+# Pactile
+
+<p>
+  <a href="https://github.com/blxzer77/pactile/actions/workflows/ci.yml">
+    <img src="https://github.com/blxzer77/pactile/actions/workflows/ci.yml/badge.svg" alt="CI">
+  </a>
+  <a href="https://www.npmjs.com/package/@blxzer/pactile">
+    <img src="https://img.shields.io/npm/v/@blxzer/pactile?label=npm" alt="npm version">
+  </a>
+</p>
 
 [English](README.md) | 简体中文
 
-Pactile CLI 为 Cursor、Codex 或双宿主建立并维护可追溯证据的能力工作空间。Canonical 状态位于 `.pactile/`；宿主文件是可重建投影，并受显式 ownership 约束。
+Pactile 把受契约约束的能力积木，按需拼成 Codex 可用、且有证据可追溯的工作空间。
 
-## 安装
+它为 AI 编程项目建立一份指令、任务、所有权与生命周期真相，并向 Codex 投影所需的项目内容。
+
+## 五分钟上手
+
+前置条件：Node.js 20 或更高版本。Pactile 的任务、上下文和会话命令使用 Node.js，不要求 Python。
 
 ```bash
 npm install -g @blxzer/pactile
 pactile --version
-```
 
-需要 Node.js 18.17 或更高版本。生成的 Python 脚本与宿主 hooks 需要 Python 3.9 或更高版本。Smart Search 等 Middleware Provider 是可选、独立探测的能力；Pactile 不会静默安装宿主原生资产，也不会复制凭据。
-
-## 第一个项目
-
-```bash
 mkdir my-pactile-project
 cd my-pactile-project
-pactile init --cursor --codex -y
+pactile init --codex -y
 pactile capability-smoke --json
 ```
 
-选择 `--cursor`、`--codex`，或同时使用两者。生成投影前会检查既有用户文件和原生资产。兼容的外部资产可以 borrowed 方式 adopt；冲突或 malformed 宿主文件保持原样，并返回恢复动作。
+`init` 先在 `.pactile/` 建立 canonical 状态，再协调 Codex Adapter。最后一个命令报告实际能力就绪度；Provider 降级会明确展示，不会冒充宿主原生能力。
 
-## 命令参考
+初始化后，直接让 Agent 正常工作即可。遇到需要持久化的工作，Agent 会使用生成的 workflow 和 task 工具；用户不需要记忆额外的提示词语言。
 
-| 命令                                                 | 契约                                                           |
-| ---------------------------------------------------- | -------------------------------------------------------------- |
-| `pactile init --cursor [--codex]`                    | 创建 canonical 状态并协调所选 Adapter。                        |
-| `pactile capability-smoke [--json] [--write-status]` | 探测所选能力，并可写入 readiness。                             |
-| `pactile update --dry-run`                           | 预览官方文件、迁移与投影变化。                                 |
-| `pactile update`                                     | 应用一次确认过的事务，再独立协调各 Adapter。                   |
-| `pactile migrate`                                    | 生成可选迁移预览；实际写入仍由 `update` 完成。                 |
-| `pactile rollout`                                    | 对显式项目路径运行 `update` 并汇总证据。                       |
-| `pactile upgrade`                                    | 升级全局安装的 canonical CLI 包。                              |
-| `pactile detach cursor`                              | 移除一个 Adapter 的绑定与 claimant；保留共享和 borrowed 资源。 |
-| `pactile detach codex`                               | 对 Codex 应用相同的单 Adapter 契约。                           |
-| `pactile uninstall --dry-run`                        | 预览分离全部 Adapter，同时保留 `.pactile/`。                   |
-| `pactile rollback <generation> --dry-run`            | 验证并预览 sealed generation 切换。                            |
-| `pactile purge --dry-run`                            | 生成 inactive canonical root 的精确目标指纹，不删除。          |
-| `pactile workflow`                                   | 列出或选择 canonical workflow 模板。                           |
-| `pactile validate-rules`                             | 验证受支持的 Cursor rule 投影。                                |
-| `pactile kernel --json`                              | 运行生成项目脚本使用的机器 JSON 生命周期边界。                 |
+## 项目里会出现什么
 
-用 `pactile <command> --help` 查看当前参数。`detach` 使用位置参数指定 Adapter。`purge` 固定为两步：破坏性执行必须同时提供 `--yes` 和 preview 返回的精确指纹。
+```text
+my-pactile-project/
+  .pactile/        canonical workflow、任务、Tiles、运行状态与 Evidence
+  .agents/         为 Codex 投影的 Skills
+  .codex/          原生支持就绪时才生成的可选 Codex 项目投影
+  AGENTS.md        共享托管指令，同时保留用户内容
+```
 
-## 影响 ownership 的 init 参数
+Pactile 只拥有 ownership ledger 中记录的托管内容。既有宿主原生 Skills、MCP 配置、插件和用户文件仍属于外部或 borrowed 资产，除非经过审阅的计划明确另行处理。
 
-- [显式旧树导入](../../docs/pactile/compatibility-inputs.zh-CN.md#显式导入)声明一个既有旧树作为只读迁移源；它永远不会变成写入目标。
-- `--capability <id>` 启用可选项目能力；可重复使用或传入 `all`。
-- `--with-optional <name>` 把包内可选 Skill 安装到项目 Skill 目录；不会安装宿主原生插件或服务。
-- `--skip-readiness` 将 framework readiness 记录为 unverified，而不是虚构 Provider 结果。
-- `--force` 与 `--skip-existing` 控制文件冲突，但不会转移用户资产所有权。
 
-## 更新、恢复与退出
+## 心智模型
 
-对不确定的操作先做 preview：
+| 概念           | 负责什么                                                  | 不负责什么                                        |
+| -------------- | --------------------------------------------------------- | ------------------------------------------------- |
+| **Tile**       | 声明一个小能力的输入、策略上限、Evidence 要求与停止条件。 | 不是提示词堆、宿主脚本或中央工作流。              |
+| **Kernel**     | 根据 canonical 状态校验生命周期转换和持久化契约。         | 不替模型规划，也不写宿主投影。                    |
+| **Trace**      | 按顺序记录可观察的组合事件与 Evidence 引用。              | 不保存私有推理或凭据。                            |
+| **Projection** | 把一个 canonical generation 转换成宿主特定文件与绑定。    | 可重建，不是第二份真相。                          |
+| **Ownership**  | 记录每个投影或借用资源由谁拥有、还有谁在声明使用。        | claimant 不会因此获得删除用户或第三方资产的权限。 |
+
+先看[核心概念](docs/concepts/index.zh-CN.md)，再按需阅读 [Tiles](docs/concepts/tiles.zh-CN.md)、[Kernel、Evidence 与 Trace](docs/concepts/kernel-evidence-trace.zh-CN.md)、[Projection 与 Ownership](docs/concepts/projection-and-ownership.zh-CN.md)。
+
+## 宿主与能力
+
+| 宿主  | 项目集成面                                          | Pactile 行为                                          |
+| ----- | --------------------------------------------------- | ----------------------------------------------------- |
+| Codex | 受管 `AGENTS.md`、`.agents/skills/` 与可选项目配置 | 从 canonical 状态协调生成；原生绑定不可用时报告 degraded。 |
+
+Pactile 将能力来源（`native`、`provider`、`heuristic`、`unsupported`）与 assurance 分开报告。可选 Provider 可以提升能力，但没有 Evidence 和通过时效探测的结果绝不会被标记为 verified。
+
+详细边界见[宿主](docs/hosts/index.zh-CN.md)与[能力](docs/capabilities/index.zh-CN.md)。
+
+## 生命周期与安全
+
+- `pactile update --dry-run` 在应用前预览官方文件与投影变化。
+- `pactile detach codex` 移除当前 Adapter 的声明并保留 borrowed 资源。
+- `pactile uninstall --dry-run` 预览分离全部 Adapter，同时保留 canonical `.pactile/` 状态。
+- `pactile rollback <generation> --dry-run` 在切换前验证 sealed generation。
+- `pactile purge --dry-run` 只生成目标指纹；破坏性清理需要带同一指纹的第二次显式确认。
+
+迁移输入保持只读。modified、foreign、unknown 或 borrowed 资源会安全保留并进入审阅。详见[生命周期](docs/lifecycle/index.zh-CN.md)与[故障排查](docs/troubleshooting/index.zh-CN.md)。
+
+`pactile capability <request.json>` 执行版本化、有界的工作区请求。请求/结果契约、预算、取消、outcome 与回执见[有界工作区请求](docs/capabilities/bounded-workspace-requests.zh-CN.md)。
+
+## 包
+
+`@blxzer/pactile` 是唯一发布包，包含 CLI、模板、Adapters、生命周期和宿主无关的
+Core 契约。程序可从 `@blxzer/pactile/core` 或 `@blxzer/pactile/core/task`
+导入这些契约。独立 Core 与旧名称桥接包只属于已经发布的 0.5.x 历史；v0.6.0
+不再发布它们。历史发布事实保留在 changelog 中。
+
+## 文档导航
+
+| 主题                              | 入口                                                                                     |
+| --------------------------------- | ---------------------------------------------------------------------------------------- |
+| 概念与架构                        | [docs/concepts/index.zh-CN.md](docs/concepts/index.zh-CN.md)                             |
+| 宿主 Adapter                      | [docs/hosts/index.zh-CN.md](docs/hosts/index.zh-CN.md)                                   |
+| Skills、MCP、检索、Provider、隐私 | [docs/capabilities/index.zh-CN.md](docs/capabilities/index.zh-CN.md)                     |
+| 安装、更新、迁移、退出、恢复      | [docs/lifecycle/index.zh-CN.md](docs/lifecycle/index.zh-CN.md)                           |
+| 故障排查                          | [docs/troubleshooting/index.zh-CN.md](docs/troubleshooting/index.zh-CN.md)               |
+| CLI 参考                          | [packages/cli/README.zh-CN.md](packages/cli/README.zh-CN.md)                             |
+| 最小示例                          | [examples/minimal-agent-app/README.zh-CN.md](examples/minimal-agent-app/README.zh-CN.md) |
+| 贡献与安全                        | [docs/governance/index.zh-CN.md](docs/governance/index.zh-CN.md)                         |
+
+## 开发 Pactile
 
 ```bash
-pactile update --dry-run --json
-pactile detach cursor --dry-run
-pactile uninstall --dry-run
-pactile rollback <generation> --dry-run
-pactile purge --dry-run
+pnpm install --frozen-lockfile
+pnpm build
+pnpm typecheck
+pnpm lint
 ```
 
-Canonical generation 在宿主协调前提交。如果一个 Adapter 失败，canonical 状态和已成功的 sibling Adapter 保持有效；失败 Adapter 保留可重试 receipt。更新与退出决策会查询 ownership ledger，因此 modified、foreign、unknown、shared 与 borrowed 资源都会安全保留。
+完整 Core 与 CLI 测试套件是最终发布门。日常改动还应运行最接近的 package 与 conformance 测试。贡献流程、安全报告与兼容策略见[治理](docs/governance/index.zh-CN.md)。
 
-详细说明见[生命周期](../../docs/lifecycle/index.zh-CN.md)、[恢复](../../docs/troubleshooting/recovery.zh-CN.md)和 [Projection 与 Ownership](../../docs/concepts/projection-and-ownership.zh-CN.md)。
+## 范围边界
 
-## 包关系
+Pactile 是本地项目工具。它不承诺云端编排、插件市场、自动安装宿主原生资产，也不取得凭据或 OAuth 状态的所有权。可选 Middleware Provider 仍需独立安装并显式探测。Smart Search 是单独的可选 package；需要外部知识检索时，请自行安装并配置。它的前置条件与 Pactile 的 Node-only 运行时要求分开管理。
 
-| 包                     | 角色                                                |
-| ---------------------- | --------------------------------------------------- |
-| `@blxzer/pactile`      | Canonical CLI、Adapters、模板、生命周期与项目集成。 |
-| `@blxzer/pactile-core` | Canonical 严格契约与宿主无关原语。                  |
-| 旧 CLI bridge          | 0.5.x 临时兼容包，委托给本 CLI。                    |
-| 旧 Core bridge         | 0.5.x 临时兼容包，重新导出 canonical Core。         |
-
-打包后的内部依赖必须是精确发布版本，不能残留 workspace protocol。发布 CLI 暴露 `pactile`；兼容 executable 不是推荐入口。
-
-## 程序化导出
-
-```js
-import { VERSION, listPactilePlatforms } from "@blxzer/pactile";
-
-console.log(VERSION, listPactilePlatforms());
-```
-
-根导出提供受支持的库接口。`./cli` 是 package bridge 使用的 executable 入口，`./compat` 仅供这一临时 bridge，`./package.json` 供工具读取。宿主无关契约应从 `@blxzer/pactile-core` 及其已记录的 subpath 导入。
-
-## 安全边界
-
-Pactile 存储逻辑 Provider 引用与 Evidence 链接，不保存 secret value、OAuth 状态、模型私有推理或复制的外部资产正文。Adapter 不能写 canonical `.pactile/` 状态；只有 Reconciler 能写投影。Borrowed 资产始终使用 `preserve` 删除策略。
-
-## 更多文档
-
-- [仓库概览](../../README.zh-CN.md)
-- [五分钟示例](../../examples/minimal-agent-app/README.zh-CN.md)
-- [核心概念](../../docs/concepts/index.zh-CN.md)
-- [宿主](../../docs/hosts/index.zh-CN.md)
-- [能力与 Provider](../../docs/capabilities/index.zh-CN.md)
-- [生命周期](../../docs/lifecycle/index.zh-CN.md)
-- [故障排查](../../docs/troubleshooting/index.zh-CN.md)
-
-公开 package README 刻意不包含 release 或 registry 写操作说明。
+项目沿革、版权与许可证通知保留在 [COPYRIGHT](COPYRIGHT) 和 [LICENSE](LICENSE) 中。
 
 ## 许可证
 
 Pactile 采用 GNU Affero General Public License v3.0-only
-（`AGPL-3.0-only`）发布。完整许可证正文随 package 一并提供于
-[`LICENSE`](LICENSE)；项目归属和上游归属记录在仓库的
-[`COPYRIGHT`](https://github.com/blxzer77/pactile/blob/main/COPYRIGHT)。
+（`AGPL-3.0-only`）发布。完整许可证正文见 [LICENSE](LICENSE)；Pactile
+项目归属和上游归属见 [COPYRIGHT](COPYRIGHT)。

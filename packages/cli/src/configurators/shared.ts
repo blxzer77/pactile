@@ -8,75 +8,9 @@
 import type { TemplateContext } from "../types/ai-tools.js";
 
 /**
- * Module-level resolved Python command, set by the init flow after probing.
- *
- * Windows commonly has Python under one of: `python`, `python3`, `py -3` —
- * which one works varies by installer (python.org / Microsoft Store / py
- * launcher). `init.ts` detects which is available, then calls
- * `setResolvedPythonCommand` so all subsequent template / configurator writes
- * use the resolved value instead of the platform default.
- *
- * If unset (e.g. unit tests bypass init), `getPythonCommandForPlatform` falls
- * back to the static platform default (`python` on Windows, `python3`
- * elsewhere) — preserving legacy behavior.
- */
-let resolvedPythonCommand: string | null = null;
-
-export function setResolvedPythonCommand(cmd: string): void {
-  const trimmed = cmd.trim();
-  resolvedPythonCommand = trimmed || null;
-}
-
-/** Test helper — clear the resolved cache between unit tests. */
-export function resetResolvedPythonCommand(): void {
-  resolvedPythonCommand = null;
-}
-
-/**
- * Get the Python command for the host platform.
- *
- * Returns the resolved command if `setResolvedPythonCommand` has been called;
- * otherwise the static platform default — Windows: `python`, others:
- * `python3`. Pass an explicit `platform` arg only for unit tests (it bypasses
- * the resolved cache).
- */
-export function getPythonCommandForPlatform(
-  platform?: NodeJS.Platform,
-): string {
-  if (platform === undefined && resolvedPythonCommand) {
-    return resolvedPythonCommand;
-  }
-  const target = platform ?? process.platform;
-  return target === "win32" ? "python" : "python3";
-}
-
-/**
- * Replace literal `python3` with the resolved Python command, excluding
- * shebang lines.
- *
- * Applied at init/update write time so that all file types (including .py,
- * .md, .toml, .json) get the correct command for the host platform without
- * template-level changes.
- *
- * No-op when the resolved command is `python3` (the template default).
- * Idempotent: running it twice produces the same result.
- */
-export function replacePythonCommandLiterals(content: string): string {
-  const target = getPythonCommandForPlatform();
-  if (target === "python3") return content;
-  return content
-    .split("\n")
-    .map((line) =>
-      line.startsWith("#!") ? line : line.replaceAll("python3", target),
-    )
-    .join("\n");
-}
-
-/**
  * Resolve platform-specific placeholders in template content.
  *
- * When called without a context, only resolves {{PYTHON_CMD}} (legacy behavior
- * for settings.json, hooks.json, etc.).
+ * When called without a context, returns the content unchanged.
  *
  * When called with a TemplateContext, additionally resolves:
  * - {{CMD_REF:name}}         → platform-specific command reference
@@ -89,7 +23,6 @@ export function replacePythonCommandLiterals(content: string): string {
  * Supported conditional flags: AGENT_CAPABLE, HAS_HOOKS
  */
 // Pre-compiled regexes for placeholder resolution
-const RE_PYTHON_CMD = /\{\{PYTHON_CMD\}\}/g;
 const RE_CMD_REF = /\{\{CMD_REF:([\w][\w-]*)\}\}/g;
 const RE_EXECUTOR_AI = /\{\{EXECUTOR_AI\}\}/g;
 const RE_USER_ACTION_LABEL = /\{\{USER_ACTION_LABEL\}\}/g;
@@ -117,9 +50,7 @@ export function resolvePlaceholders(
   content: string,
   context?: TemplateContext,
 ): string {
-  let result = replacePythonCommandLiterals(
-    content.replace(RE_PYTHON_CMD, getPythonCommandForPlatform()),
-  );
+  let result = content;
 
   if (!context) return result;
 
@@ -169,21 +100,19 @@ export function resolvePlaceholders(
  * "last-writer-wins" collision when both Codex and Gemini target
  * `.agents/skills/`.
  *
- * `{{CLI_FLAG}}`, `{{EXECUTOR_AI}}`, `{{USER_ACTION_LABEL}}`, conditionals,
- * and `{{PYTHON_CMD}}` are still resolved from the platform context. The 5
+ * `{{CLI_FLAG}}`, `{{EXECUTOR_AI}}`, `{{USER_ACTION_LABEL}}`, and conditionals
+ * are still resolved from the platform context. The 5
  * shared skills do not use those placeholders, so they remain platform-
  * neutral. Host-specific skill files (e.g. `pactile-continue/SKILL.md`,
  * `pactile-finish-work/SKILL.md` written via `resolveAllAsSkillsNeutral`) do
- * use `{{CLI_FLAG}}` / `{{PYTHON_CMD}}` and resolve to Codex-correct values
+ * use `{{CLI_FLAG}}` and resolve to Codex-correct values
  * — no other platform writes those files, so byte-identity is not required.
  */
 export function resolvePlaceholdersNeutral(
   content: string,
   context?: TemplateContext,
 ): string {
-  let result = replacePythonCommandLiterals(
-    content.replace(RE_PYTHON_CMD, getPythonCommandForPlatform()),
-  );
+  let result = content;
 
   if (!context) return result;
 
@@ -226,13 +155,13 @@ const SKILL_DESCRIPTIONS: Record<string, string> = {
   start:
     "Initializes an AI development session by reading Kernel/Dashboard, developer identity, git status, active tasks, and project guidelines from .pactile/. Dashboard entry only — does not select or resume a task. Use when beginning a new coding session or re-establishing project context.",
   continue:
-    "Resume work on the selected task. Loads Kernel/Dashboard (and a compiled session pack if present). Do not treat get_context.py --mode phase as runtime SSOT. Use when coming back to an in-progress task and you need to know what to do next.",
+    "Resume work on the selected task. Loads Kernel/Dashboard (and a compiled session pack if present). Do not treat pactile context --mode phase as runtime SSOT. Use when coming back to an in-progress task and you need to know what to do next.",
   "finish-work":
     "Wrap up the current session using Close: confirm Verify evidence, remind user to Finalize commits, archive completed tasks, and record session progress to the developer journal. Use when done coding and ready to end the session.",
   "before-dev":
     "Discovers and injects project-specific coding guidelines from .pactile/spec/ before implementation begins. Reads spec indexes, pre-development checklists, and shared thinking guides for the target package. Use when starting a new coding task, before writing any code, switching to a different package, or needing to refresh project conventions and standards.",
   brainstorm:
-    "Guides collaborative requirements discovery before implementation. Two-phase Cursor planning: Discovery Before Questions, PRD draft, then PRD Grill (document pass + micro-grill for blocking business questions). Use when requirements are unclear, multiple valid approaches exist, or the user describes a new feature or complex task.",
+    "Guides collaborative requirements discovery before implementation: Discovery Before Questions and PRD draft, with optional PRD Grill when useful. Resolve blocking business questions with `pactile-micro-grill` whether or not the Grill pass runs. Use when requirements are unclear, multiple valid approaches exist, or the user describes a new feature or complex task.",
   check:
     "Comprehensive quality verification on two axes — Standards (spec compliance, lint, type-check, tests, code smells, cross-layer data flow) and Spec (prd fidelity, scope, learning/spec-sync). Use when code is written and needs quality verification, before committing changes, or to catch context drift during long sessions.",
   "break-loop":
@@ -265,7 +194,7 @@ export function wrapWithSkillFrontmatter(
  * SKILL_DESCRIPTIONS, which is long prose aimed at the skill matcher.
  */
 const COMMAND_DESCRIPTIONS: Record<string, string> = {
-  start: "Initialize a Pactile development session (dashboard; not a Cursor slash).",
+  start: "Initialize a Pactile development session from the dashboard.",
   continue: "Resume the selected task using Kernel/Dashboard.",
   "finish-work":
     "Wrap up: Verify evidence, Close/archive, journal.",
@@ -298,7 +227,6 @@ import {
   type CommonTemplate,
   getBundledSkillTemplates,
   getCommandTemplates,
-  getOptionalSkillTemplates,
   getSkillTemplates,
 } from "../templates/common/index.js";
 
@@ -385,7 +313,7 @@ export function resolveSkills(ctx: TemplateContext): ResolvedTemplate[] {
 }
 
 /**
- * Emit selected command templates as skills (e.g. `finish-work` for Cursor auto-trigger).
+ * Emit selected command templates as skills.
  * Body comes from `common/commands/`; slash commands stay separate via {@link resolveCommands}.
  */
 export function resolveCommandAsSkills(
@@ -429,7 +357,7 @@ export function resolveSkillsNeutral(ctx: TemplateContext): ResolvedTemplate[] {
  * Same as {@link resolveAllAsSkills} but uses
  * {@link resolvePlaceholdersNeutral} for the 5 shared skills. The 2 command
  * templates (continue, finish-work) folded into the skill set still resolve
- * `{{CLI_FLAG}}` / `{{PYTHON_CMD}}` per platform — only Codex writes those
+ * `{{CLI_FLAG}}` per platform — only Codex writes those
  * files into `.agents/skills/`, so byte-identity isn't required there.
  */
 export function resolveAllAsSkillsNeutral(
@@ -450,10 +378,8 @@ export function resolveAllAsSkillsNeutral(
 
 /**
  * Codex needs a `pactile-start` skill in `.agents/skills/` so the
- * `<pactile-bootstrap>` notice from `inject-workflow-state.py` resolves
- * to an actual skill file (the bootstrap notice tells the AI to invoke
- * `$pactile-start` once on the first `no_task` turn.
- * after the Codex SessionStart hook was removed for de-recursion).
+ * native Pactile task entry resolves to an actual skill file. The skill
+ * handles the first task-orientation turn without a Python hook.
  *
  * Built from `common/commands/start.md` + skill frontmatter; renders
  * neutrally so init and update produce byte-identical output. Returns
@@ -498,41 +424,6 @@ export function resolveBundledSkills(
   );
 }
 
-/**
- * Resolve selected optional/experimental skills (e.g. `chrome-cdp`).
- *
- * Only the explicitly requested names are resolved — the optional-skills
- * directory is never installed by default. Unknown names throw, so a typo in
- * `--with-optional` fails loudly instead of silently installing nothing.
- */
-export function resolveOptionalSkills(
-  names: readonly string[],
-  ctx: TemplateContext,
-): ResolvedSkillFile[] {
-  if (names.length === 0) return [];
-  const byName = new Map(
-    getOptionalSkillTemplates().map((skill) => [skill.name, skill]),
-  );
-  const unknown = names.filter((name) => !byName.has(name));
-  if (unknown.length > 0) {
-    throw new Error(
-      `Unknown optional skill(s): ${unknown.join(", ")}. Available: ${[...byName.keys()].join(", ") || "(none)"}.`,
-    );
-  }
-  return names.flatMap((name) => {
-    const skill = byName.get(name);
-    if (!skill) {
-      throw new Error(
-        `Unknown optional skill: ${name}. Available: ${[...byName.keys()].join(", ") || "(none)"}.`,
-      );
-    }
-    return skill.files.map((file) => ({
-      relativePath: `${skill.name}/${file.relativePath}`,
-      content: resolvePlaceholders(file.content, ctx),
-    }));
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Shared configurator write helpers
 // ---------------------------------------------------------------------------
@@ -565,7 +456,7 @@ export async function writeSkills(
     ensureDir(skillDir);
     await writeFile(
       path.join(skillDir, "SKILL.md"),
-      replacePythonCommandLiterals(skill.content),
+      skill.content,
     );
   }
   for (const skillFile of bundledSkills) {
@@ -573,7 +464,7 @@ export async function writeSkills(
     ensureDir(path.dirname(targetPath));
     await writeFile(
       targetPath,
-      replacePythonCommandLiterals(skillFile.content),
+      skillFile.content,
     );
   }
 }
@@ -588,233 +479,9 @@ export async function writeAgents(
   for (const agent of agents) {
     await writeFile(
       path.join(agentsDir, `${agent.name}${ext}`),
-      replacePythonCommandLiterals(agent.content),
+      agent.content,
     );
   }
-}
-
-/** Write the shared hook scripts that `platform` actually registers. */
-export async function writeSharedHooks(
-  hooksDir: string,
-  platform: import("../templates/shared-hooks/index.js").SharedHookPlatform,
-): Promise<void> {
-  const { getSharedHookScriptsForPlatform } =
-    await import("../templates/shared-hooks/index.js");
-  ensureDir(hooksDir);
-  for (const hook of getSharedHookScriptsForPlatform(platform)) {
-    await writeFile(
-      path.join(hooksDir, hook.name),
-      replacePythonCommandLiterals(hook.content),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Pull-based sub-agent prelude (for class-2 platforms whose hook can't
-// inject sub-agent prompts: gemini, qoder, codex, copilot)
-//
-// Only implement & check need task-level context (task artifacts + jsonl specs).
-// research is orthogonal: it searches the spec tree and doesn't depend on a
-// selected task. Hook-based platforms mirror this (their `get_research_context`
-// injects a spec-tree overview, not prd/jsonl). We leave research untouched.
-// ---------------------------------------------------------------------------
-
-export type SubAgentType = "implement" | "check";
-
-/** Build the standard "load Pactile context first" prelude block. */
-export function buildPullBasedPrelude(agentType: SubAgentType): string {
-  // JSONL filenames stay as implement.jsonl / check.jsonl — they are internal
-  // context buckets keyed by role (not by platform-visible agent name).
-  const jsonl = agentType === "check" ? "check.jsonl" : "implement.jsonl";
-
-  return replacePythonCommandLiterals(`## Required: Load Pactile Context First
-
-This platform does NOT auto-inject task context via hook. Before doing anything else, you MUST load context yourself.
-
-### Step 1: Find the selected task path
-
-Try in order — stop at the first one that yields a task path:
-
-1. **Look at the dispatch prompt** you received from the main agent. If its first line is \`Selected task: <path>\` (e.g. \`Selected task: .pactile/tasks/04-17-foo\`), use that path. The main agent is required to include this line on class-2 platforms.
-2. **Run** \`python3 ./.pactile/scripts/task.py selected --source\` and read the \`Selected task:\` line.
-3. **If both fail** (no \`Selected task:\` line in the prompt and \`task.py selected\` returns no task), ask the user which task to work on; do NOT guess.
-
-### Step 2: Load task context from the resolved path
-
-1. Read \`<task-path>/${jsonl}\` — JSONL list of spec/research files relevant to this agent.
-2. For each entry in the JSONL, Read its \`file\` path — these are the specs and research notes you must follow.
-   **Skip rows without a \`"file"\` field** (e.g. \`{"_example": "..."}\` seed rows left over from \`task.py create\` before the curator ran).
-3. Read the task's \`prd.md\` (requirements), then \`design.md\` if present (technical design), then \`implement.md\` if present (execution plan).
-
-If \`${jsonl}\` has no curated entries (only a seed row, or the file is missing), fall back to: read the task artifacts, list available specs with \`python3 ./.pactile/scripts/get_context.py --mode packages\`, and pick the specs that match the task domain yourself. Do NOT block on the missing jsonl — lightweight tasks may be PRD-only, while complex tasks may also include \`design.md\` and \`implement.md\`.
-
-If the resolved task path has no \`prd.md\`, ask the user what to work on; do NOT proceed without context.
-
----
-
-`);
-}
-
-/** Insert prelude into a markdown agent definition (after YAML frontmatter). */
-export function injectPullBasedPreludeMarkdown(
-  content: string,
-  agentType: SubAgentType,
-): string {
-  const prelude = buildPullBasedPrelude(agentType);
-  const sections = splitMarkdownFrontmatter(content);
-
-  if (!sections) {
-    return prelude + content;
-  }
-
-  const head = `---\n${sections.frontmatter}\n---`;
-  const tailTrimmed = sections.body.replace(/^(\r?\n)+/, "");
-  return `${head}\n\n${prelude}${tailTrimmed}`;
-}
-
-/** Insert prelude into a TOML agent (codex `developer_instructions`). */
-export function injectPullBasedPreludeToml(
-  content: string,
-  agentType: SubAgentType,
-): string {
-  const prelude = buildPullBasedPrelude(agentType);
-  // Match: developer_instructions = """  followed by newline
-  const re = /(developer_instructions\s*=\s*""")(\r?\n)/;
-  if (!re.test(content)) {
-    return content;
-  }
-  return content.replace(re, `$1$2${prelude}`);
-}
-
-/** Best-effort detect agent type from filename ("pactile-implement.md" → "implement").
- *  Returns null for research and unknown names — they skip the prelude.
- */
-export function detectSubAgentType(name: string): SubAgentType | null {
-  const base = name.replace(/\.(md|toml|prompt\.md)$/, "");
-  if (base === "pactile-implement" || base === "pactile-check") {
-    return base === "pactile-implement" ? "implement" : "check";
-  }
-  return null;
-}
-
-/** Shared transform: given a list of agents, prepend pull-based prelude to
- *  implement/check definitions. Used by both configurator (init-time write)
- *  and collectPlatformTemplates (update-time hash comparison) so the two
- *  code paths always agree on what's on disk.
- */
-export interface AgentContent {
-  name: string;
-  content: string;
-}
-
-interface MarkdownFrontmatterSections {
-  body: string;
-  frontmatter: string;
-}
-
-function splitMarkdownFrontmatter(
-  content: string,
-): MarkdownFrontmatterSections | null {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
-  if (!match) {
-    return null;
-  }
-
-  return {
-    frontmatter: match[1],
-    body: content.slice(match[0].length),
-  };
-}
-
-export function applyPullBasedPreludeMarkdown(
-  agents: readonly AgentContent[],
-): AgentContent[] {
-  return agents.map((a) => {
-    const t = detectSubAgentType(a.name);
-    if (!t) return { ...a };
-    return {
-      ...a,
-      content: injectPullBasedPreludeMarkdown(a.content, t),
-    };
-  });
-}
-
-function mapLegacyToolToCopilot(tool: string): string[] {
-  switch (tool) {
-    case "Read":
-      return ["read"];
-    case "Write":
-    case "Edit":
-      return ["edit"];
-    case "Glob":
-    case "Grep":
-      return ["search"];
-    case "Bash":
-      return ["execute"];
-    case "mcp__exa__web_search_exa":
-    case "mcp__exa__get_code_context_exa":
-      return ["web", "exa/*"];
-    case "mcp__chrome-devtools__*":
-      return ["chrome-devtools/*"];
-    case "Skill":
-      return [];
-    default:
-      return [];
-  }
-}
-
-function normalizeCopilotMarkdownAgentFrontmatter(content: string): string {
-  const sections = splitMarkdownFrontmatter(content);
-  if (!sections) {
-    return content;
-  }
-
-  const frontmatter = sections.frontmatter.split(/\r?\n/);
-  const body = sections.body;
-  const normalized: string[] = [];
-
-  for (const line of frontmatter) {
-    if (!line.startsWith("tools:")) {
-      normalized.push(line);
-      continue;
-    }
-
-    const legacyTools = line
-      .slice("tools:".length)
-      .split(",")
-      .map((token) => token.trim())
-      .filter((token) => token.length > 0);
-    const tools = [...new Set(legacyTools.flatMap(mapLegacyToolToCopilot))];
-
-    normalized.push("tools:");
-    for (const tool of tools) {
-      normalized.push(`  - ${tool}`);
-    }
-  }
-
-  return `---\n${normalized.join("\n")}\n---\n${body}`;
-}
-
-export function normalizeCopilotMarkdownAgents(
-  agents: readonly AgentContent[],
-): AgentContent[] {
-  return agents.map((agent) => ({
-    ...agent,
-    content: normalizeCopilotMarkdownAgentFrontmatter(agent.content),
-  }));
-}
-
-export function applyPullBasedPreludeToml(
-  agents: readonly AgentContent[],
-): AgentContent[] {
-  return agents.map((a) => {
-    const t = detectSubAgentType(a.name);
-    if (!t) return { ...a };
-    return {
-      ...a,
-      content: injectPullBasedPreludeToml(a.content, t),
-    };
-  });
 }
 
 /**

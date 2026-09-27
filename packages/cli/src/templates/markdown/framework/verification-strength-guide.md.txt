@@ -17,7 +17,7 @@
 
 ### Axis A — Task Ladder closeout profile
 
-Inferred by `task.py` from artifact presence and `task.json` meta. Determines **minimum evidence** before archive or child integration.
+Inferred by `pactile task` from artifact presence and `task.json` meta. Determines **minimum evidence** before archive or child integration.
 
 | Closeout profile | Trigger (existing logic) | Minimum verification depth |
 | --- | --- | --- |
@@ -37,7 +37,7 @@ Declared in `implement.md` Development Strategy Contract. Guide narrative: **验
 | **strict** | same as standard (reserved for stricter archive signals) | High-risk Full default this wave |
 | **architecture** | + architecture-review | Cross-layer / contract / template / runtime changes |
 
-Details: `task_gates.py` → `PROFILE_DEFAULT_GATES`.
+Details: Pactile CLI task guards and the Kernel's persisted controls.
 
 ---
 
@@ -46,14 +46,14 @@ Details: `task_gates.py` → `PROFILE_DEFAULT_GATES`.
 ### Lite
 
 - [ ] Focused validation on **touched behavior** (command + result in `verify.md`)
-- [ ] `python ./.pactile/scripts/task.py validate <task>`
+- [ ] `pactile task validate <task>`
 - [ ] Final acceptance mapped to PRD AC
 - [ ] Durable-learning decision line (see [Durable Learning Decision Guide](.pactile/spec/guides/durable-learning-decision-guide.md))
 
 **Example `verify.md` lines:**
 
 ```markdown
-Validation: `python -m py_compile src/foo.py` — exit 0
+Validation: `node --check src/foo.mjs` — exit 0
 Acceptance: prd AC 1–3 satisfied; typo fix verified in editor
 Durable learning decision: no durable learning — one-off content fix
 ```
@@ -65,7 +65,7 @@ All Lite items, plus:
 - [ ] Validation commands from `implement.md` executed; results recorded
 - [ ] `Check evidence:` or `pactile-check evidence:` — inline skill or agent review completed
 - [ ] `Reviewed change-set:` or `Git diff ref:` — identity of reviewed diff
-- [ ] Required gates recorded via `task.py record-gate` when contract enables them
+- [ ] Required gates recorded via `pactile task record-gate` when contract enables them
 
 **Example:**
 
@@ -121,7 +121,7 @@ The CLI uses regex to detect **substantive** evidence. Placeholder values (`TBD`
 
 **Not sufficient alone:**
 
-- `python ./.pactile/scripts/task.py validate` passing JSONL schema — **does not** prove task acceptance
+- `pactile task validate` passing JSONL schema — **does not** prove task acceptance
 - Long log dumps without structured signal lines
 - Checkbox ticks in PRD without `verify.md` validation mapping
 
@@ -133,20 +133,20 @@ The CLI uses regex to detect **substantive** evidence. Placeholder values (`TBD`
 
 | Failure mode | Mechanism |
 | --- | --- |
-| Placeholder validation | `PLACEHOLDER_VALUES_RE` in `task_gates.py` |
-| Missing archive signals | `verify_evidence_status()` at archive / `record-gate` |
-| PRD AC all placeholder | `_prd_requirements_review_errors` at start-execution |
-| Gate PASS without evidence | `record-gate` rejects substantive-missing verify |
+| Placeholder validation | Pactile CLI task guards |
+| Missing archive signals | `pactile task archive --check` |
+| PRD AC all placeholder | `pactile task start-execution --check` |
+| Gate PASS without evidence | Reviewer gate validation |
 
 ### Repeatable probe
 
 Run fixture matrix against shared logic (no second rule set):
 
 ```powershell
-python ./.pactile/scripts/verify_evidence_probe.py --fixture <path> --profile lite|full|parent --expect pass|fail
+pactile task archive <task> --check
 ```
 
-Fixtures: `.pactile/tasks/08-06-pactile-p0-verify-capability/research/verification-probes/`
+For fixtures, create isolated task directories and assert the CLI's reported result and the unchanged task state after `--check`.
 
 | Fixture | Intent | lite | full |
 | --- | --- | --- | --- |

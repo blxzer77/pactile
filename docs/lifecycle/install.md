@@ -10,11 +10,11 @@ host surfaces.
 npm install -g @blxzer/pactile
 mkdir my-pactile-project
 cd my-pactile-project
-pactile init --cursor --codex -y
+pactile init --codex -y
 pactile capability-smoke --json
 ```
 
-Use `--cursor`, `--codex`, or both. `-y` accepts safe defaults; `--skip-existing`
+Use `--codex` to select the current host. `-y` accepts safe defaults; `--skip-existing`
 preserves existing files and `--force` is for an explicitly reviewed overwrite.
 Optional capabilities are selected with repeatable `--capability <id>` and do
 not install their external Providers silently.

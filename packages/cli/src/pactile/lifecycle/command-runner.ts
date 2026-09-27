@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import {
   canonicalizePactileJsonV1,
   type InstallStateV1,
-} from "@blxzer/pactile-core";
+} from "../../core/index.js";
 import { fingerprintBytes } from "../projection/planner.js";
 import { GenerationStore, InstallStateStore } from "../runtime/stores.js";
 import type { PactilePlatform } from "../registry.js";
@@ -181,7 +181,6 @@ export function installedPactilePlatforms(
   const platforms: PactilePlatform[] = [];
   for (const adapter of state.installedAdapters) {
     if (adapter.status !== "active") continue;
-    if (adapter.id === "adapter.cursor") platforms.push("cursor");
     if (adapter.id === "adapter.codex") platforms.push("codex");
   }
   return selectedPlatforms(platforms);

@@ -12,7 +12,7 @@ A Projection is a host-specific view of one canonical generation. An Adapter obs
 
 ### Responsibilities
 
-- translate canonical capabilities and instructions into Cursor- or Codex-supported surfaces;
+- translate canonical capabilities and instructions into Codex-supported surfaces;
 - use stable operations such as `ensure`, `merge`, `remove`, `bind`, and `detach`;
 - name desired content and fingerprints without writing files directly;
 - give each Adapter an independent result, receipt, and retry boundary;
@@ -54,14 +54,9 @@ Ownership is not inferred from a filename, directory, package, or the fact that 
 
 ```text
 shared Skill target
-  claimants: Cursor Adapter, Codex Adapter
+  claimant: Codex Adapter
 
-detach Cursor
-  -> remove Cursor claimant
-  -> Codex claimant remains
-  -> preserve the Skill
-
-detach Codex later
+detach Codex
   -> zero claimants
   -> remove only if Pactile-owned and current == generated
   -> otherwise preserve or restore under the ledger rules
@@ -81,7 +76,7 @@ If current still matches generated, Pactile can apply the next reviewed operatio
 
 ## User scenario
 
-A Codex-first project already has a user-installed shared Skill. When Cursor is attached, Pactile discovers and binds the same external asset instead of copying it. The ledger keeps the user or host as owner, records borrowed control, and adds both Adapter claimants. Later `pactile uninstall --dry-run` can describe the bindings it would detach, but it cannot claim or delete the installed Skill.
+A Codex project already has a user-installed Skill. Pactile discovers and binds that external asset instead of copying it. The ledger keeps the user or host as owner and records borrowed control. Later `pactile uninstall --dry-run` can describe the binding it would detach, but it cannot claim or delete the installed Skill.
 
 ## What to inspect
 
