@@ -27,7 +27,7 @@ release documentation/changelog, then open a `develop` → `main` release PR.
 Its body must contain these exact fields:
 
 ```text
-Beta tag: pactile-v0.6.0-beta.2
+Beta tag: pactile-v0.6.0-beta.<accepted-N>
 Beta validation: https://github.com/blxzer77/pactile/actions/runs/<successful-publish-run-id>
 Beta acceptance: <actual beta install and behavior results>
 Post-beta changes: packages/cli/package.json, packages/cli/CHANGELOG.md

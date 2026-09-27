@@ -41,6 +41,11 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
   approval, override hard dependencies or validation, record Review PASS, or
   Close a Task. V2 execution dispatch currently has one eligible executor, Pi,
   so there is no multi-executor Jev choice.
+- A versioned workspace capability request runs discovery, reading, literal
+  search, and explicitly allowlisted commands through the built-in Node adapter.
+  Each operation has bounded time, output, and scan budgets, structured outcomes,
+  cancellation, and a content-free audit receipt. It requires no Python or
+  external search provider.
 - The unpublished `0.5.1-beta.0` pool cleanup is folded into the
   `0.6.0-beta.1` migration manifest, retained for stable `0.6.0`. It deletes
   only hash-matched pool skeleton files and preserves user-authored items.
