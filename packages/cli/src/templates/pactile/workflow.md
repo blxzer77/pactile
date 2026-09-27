@@ -2,6 +2,9 @@
 
 > Human overview only, not runtime SSOT. The unified Task Kernel reader determines the stored schema. For a V2 Task, `kernel.json` is the source of lifecycle state, definition, Runs, candidate snapshots, Reviews, dependencies, and Close history.
 
+The installed guide index is `.pactile/framework/index.md`. Load only the guide
+needed for the current decision; reading a guide does not change Kernel state.
+
 ## V2 Task contract
 
 A V2 Task is one reviewable deliverable. Its Kernel definition records:

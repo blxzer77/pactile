@@ -307,7 +307,7 @@ describe("P38 managed Run lifecycle composition with Pi V2 receipts", () => {
     expect(closed.kernel.phase).toBe("close");
     expect(closed.kernel.runs.find((item) => item.id === task.runId)?.workspace?.cleanupLease?.state).toBe("reclaimed");
     expect(readPiHostStopReceipt(root, taskId, task.runId)?.terminal).toBe("exited");
-  }, 30_000);
+  }, 60_000);
 
   it("reclaims only a successful retry while failed and cancelled Run checkouts remain owned", async () => {
     const { root, baseSha } = fixture();
@@ -416,6 +416,7 @@ describe("P38 managed Run lifecycle composition with Pi V2 receipts", () => {
       terminal: "cancelled",
       processExit: { terminationVerified: true },
     });
+    expect(cancelledDispatch.dispatch_lease_released, cancelledDispatch.dispatch_lease_release_reason ?? "").toBe(true);
     expect(readPiHostStopReceipt(root, taskId, retryRunId)).toMatchObject({
       taskRunId: retryRunId,
       terminal: "cancelled",

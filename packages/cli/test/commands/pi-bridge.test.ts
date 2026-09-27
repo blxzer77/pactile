@@ -87,8 +87,9 @@ describe("Pi native RPC task bridge", () => {
     expect((await review.run({ root, task, role: "implement", prompt: "TOOL_ERROR", timeoutMs: 5000 })).outcome).toBe("needs_review");
     await review.close();
     const provider = new PiTaskBridge(root, launch);
-    expect(await provider.run({ root, task, role: "implement", prompt: "MODEL_ERROR", timeoutMs: 5000 }))
-      .toMatchObject({ outcome: "needs_review", reason: "Pi stopReason=error; 402 Insufficient Balance" });
+    const providerFailure = await provider.run({ root, task, role: "implement", prompt: "MODEL_ERROR", timeoutMs: 5000 });
+    expect(providerFailure).toMatchObject({ outcome: "needs_review", reason: "Pi stopReason=error; provider-reported-error" });
+    expect(JSON.stringify(providerFailure)).not.toContain("402 Insufficient Balance");
     await provider.close();
     const crash = new PiTaskBridge(root, launch);
     expect((await crash.run({ root, task, role: "implement", prompt: "CRASH", timeoutMs: 5000 })).outcome).toBe("interrupted");

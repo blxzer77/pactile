@@ -1962,6 +1962,10 @@ export class PiTaskBridge {
           );
         }
         if (processExit) record.process_exit_receipt = processExit;
+        if (record.result_sha256 === null) {
+          // A cancelled prompt may never produce a result file.
+          record.result_file = null;
+        }
         if (
           processExit?.terminationVerified &&
           processExit.exitObservedAt &&

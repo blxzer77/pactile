@@ -903,7 +903,7 @@ describe("update() integration", () => {
     expect(readProjectFile(PATHS.WORKFLOW_GUIDE_FILE)).toBe(expectedWorkflow);
     expect(readProjectFile(MANAGED_FILE)).toBe(expectedGetContext);
     expect(readProjectFile(PATHS.WORKFLOW_GUIDE_FILE)).toContain(
-      "## Interfaces",
+      "## V2 Task contract",
     );
     expect(readProjectFile(PATHS.WORKFLOW_GUIDE_FILE)).toContain(
       "[workflow-state:in_progress]",
@@ -1376,7 +1376,7 @@ describe("update() integration", () => {
     ).toBe(false);
   });
 
-  it("#workflow-md-r4 updates workflow.md as one interface-card template when hash-tracked", async () => {
+  it("#workflow-md-r4 updates workflow.md as one V2 Task overview when hash-tracked", async () => {
     await setupProject();
 
     const workflowPath = path.join(tmpDir, PATHS.WORKFLOW_GUIDE_FILE);
@@ -1409,7 +1409,7 @@ describe("update() integration", () => {
     const updated = fs.readFileSync(workflowPath, "utf-8");
     expect(updated).toBe(workflowMdTemplate);
     expect(updated).toMatch(/Human overview[^\n]*not runtime SSOT/i);
-    expect(updated).toContain("## Interfaces");
+    expect(updated).toContain("## V2 Task contract");
     expect(updated).toContain("[workflow-state:in_progress]");
     expect(updated).not.toContain("Request Triage");
     expect(updated).not.toContain("[Triage:");
