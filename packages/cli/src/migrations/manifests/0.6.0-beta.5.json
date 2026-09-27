@@ -1,0 +1,9 @@
+{
+  "version": "0.6.0-beta.5",
+  "description": "Release PR policy path correction after the Node-only single-package beta.",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "Corrects release PR validation when invoked from the CLI package directory. Product runtime and project migration rules are unchanged from beta.4.",
+  "migrations": [],
+  "notes": "Earlier beta manifests remain available for direct upgrades; this beta adds no one-time project migration."
+}
