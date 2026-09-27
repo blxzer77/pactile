@@ -5,6 +5,13 @@ import { pathToFileURL } from "node:url";
 import path from "node:path";
 
 import { isRecord } from "./types.js";
+import {
+  resolveCliPackageRoot,
+  resolveRepositoryRoot,
+} from "./script-paths.js";
+
+const CLI_PACKAGE_ROOT = resolveCliPackageRoot(import.meta.url);
+const REPOSITORY_ROOT = resolveRepositoryRoot(import.meta.url);
 
 interface PullRequestEvent {
   pull_request?: {
@@ -53,9 +60,9 @@ function parseWorkflowRun(value: unknown): WorkflowRun {
   };
 }
 
-function readStablePackage(): StablePackage {
+export function readStablePackage(): StablePackage {
   const value: unknown = JSON.parse(
-    fs.readFileSync(path.resolve("packages/cli/package.json"), "utf8"),
+    fs.readFileSync(path.join(CLI_PACKAGE_ROOT, "package.json"), "utf8"),
   );
   if (!isRecord(value) || typeof value.version !== "string") {
     throw new Error("Stable CLI package manifest has no version string.");
@@ -64,7 +71,10 @@ function readStablePackage(): StablePackage {
 }
 
 function git(args) {
-  return execFileSync("git", args, { encoding: "utf8" }).trim();
+  return execFileSync("git", args, {
+    cwd: REPOSITORY_ROOT,
+    encoding: "utf8",
+  }).trim();
 }
 
 function field(body, label) {

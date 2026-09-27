@@ -12,7 +12,7 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [0.6.0] - 2026-09-28
+## [Unreleased] - v0.6.0
 
 ### Changed
 
@@ -57,12 +57,20 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
   lifecycle, and simulated Pi/Codex paths. Live providers, desktop-host behavior,
   migration samples, and end-to-end acceptance are separate evidence gates.
 
-The accepted beta was `0.6.0-beta.4`: its tag Publish workflow succeeded,
-the npm package installed in a fresh local project, and `develop` CI passed on
-Ubuntu and Windows. Follow the
+The beta.4 tag Publish workflow succeeded, its npm package installed in a
+fresh local project, and `develop` CI passed on Ubuntu and Windows. The release
+PR policy check exposed a maintenance-script path defect, corrected in beta.5.
+Stable publication still follows the
 [upgrade guide](../../docs/lifecycle/upgrade-and-migrate.md) and
-[release procedure](../../docs/governance/releasing.md) for adoption and
-promotion.
+[release procedure](../../docs/governance/releasing.md).
+
+---
+
+## [0.6.0-beta.5] - 2026-09-28
+
+The release PR checker now resolves the package manifest and Git working
+directory from its own module path, so CI can run it from the CLI package
+directory. Product runtime and project migrations are unchanged from beta.4.
 
 ---
 

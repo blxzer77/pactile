@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkPullRequest } from "../scripts/release-pr-check.js";
+import { checkPullRequest, readStablePackage } from "../scripts/release-pr-check.js";
 
 const stablePackage = { name: "@blxzer/pactile", version: "0.6.0", dependencies: { chalk: "^5.3.0" } };
 const betaPackage = { ...stablePackage, version: "0.6.0-beta.1" };
@@ -44,6 +44,10 @@ const run = {
 };
 
 describe("PR source and release evidence", () => {
+  it("reads the package manifest when invoked from the CLI package", () => {
+    expect(readStablePackage()).toMatchObject({ name: "@blxzer/pactile" });
+  });
+
   it("routes feature PRs only into develop", async () => {
     await expect(checkPullRequest({ event: event("develop", "feat/one"), stablePackage }))
       .resolves.toMatchObject({ kind: "development" });
