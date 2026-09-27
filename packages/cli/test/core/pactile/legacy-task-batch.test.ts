@@ -5,6 +5,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { buildLegacyTaskV2Import } from "../../../src/core/task/legacy-task-v2-import.js";
+import { readLegacyTaskMigrationView } from "../../../src/core/task/legacy-task-migration-reader.js";
 import { scanLegacyTaskMigration } from "../../../src/core/task/legacy-task-migration.js";
 import {
   readPreparedLegacyTaskBatch,
@@ -12,6 +14,10 @@ import {
   type LegacyTaskBatchRequest,
   type LegacyTaskBatchTargetFile,
 } from "../../../src/pactile/migration/legacy-task-batch.js";
+import {
+  applyLegacyTaskUpdate,
+  inspectLegacyTaskUpdate,
+} from "../../../src/pactile/migration/legacy-task-update.js";
 
 const temporaryRoots: string[] = [];
 
@@ -66,6 +72,15 @@ function storePath(projectRoot: string, ...parts: string[]): string {
     "legacy-task-migrations",
     ...parts,
   );
+}
+
+function rewriteTaskJsonWithUserNote(taskPath: string, note: string): void {
+  const value = JSON.parse(fs.readFileSync(taskPath, "utf8")) as {
+    user_extension?: Record<string, unknown>;
+  };
+  value.user_extension ??= {};
+  value.user_extension.recovery_note = note;
+  fs.writeFileSync(taskPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
 function sha256(bytes: Buffer): string {
@@ -396,6 +411,490 @@ describe("legacy Task batch staging transaction", () => {
       wrote: true,
     });
     expect(readPreparedLegacyTaskBatch(root)).toBeNull();
+  });
+
+  it("reconciles a user source rewrite after validation without losing the old snapshot", async () => {
+    const root = tempProject();
+    const sourceTaskPath = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      "09-26-legacy",
+      "task.json",
+    );
+    const originalSource = fs.readFileSync(sourceTaskPath);
+    const firstPlan = scanLegacyTaskMigration({ projectRoot: root });
+    const firstTargets = buildLegacyTaskV2Import(firstPlan).targets;
+    const firstRequest = {
+      projectRoot: root,
+      plan: firstPlan,
+      targets: firstTargets,
+    };
+    const first = await runLegacyTaskBatch(firstRequest, {
+      approved: true,
+      onPhase(phase) {
+        if (phase === "targets-validated")
+          fs.appendFileSync(sourceTaskPath, "\n ", "utf8");
+      },
+    });
+    expect(first).toMatchObject({
+      status: "blocked",
+      reason: "migration-source-changed",
+      journal: { state: "validated" },
+    });
+    if (!first.batchId || !first.generationId || !first.sourceFingerprint)
+      throw new Error("expected a preserved pre-commit batch");
+    const changedSource = fs.readFileSync(sourceTaskPath);
+    expect(changedSource.equals(originalSource)).toBe(false);
+    expect(readPreparedLegacyTaskBatch(root)).toBeNull();
+    expect(() => readLegacyTaskMigrationView(root)).toThrow(
+      /authority-missing-with-residual-state/,
+    );
+
+    const journalPath = storePath(root, "journals", `${first.batchId}.json`);
+    const oldJournal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as {
+      events: readonly unknown[];
+    };
+    const oldBackup = storePath(
+      root,
+      "sources",
+      first.sourceFingerprint.slice("sha256:".length),
+      "files",
+      ".pactile",
+      "tasks",
+      "09-26-legacy",
+      "task.json",
+    );
+    const firstTarget = firstTargets[0];
+    if (!firstTarget) throw new Error("expected a staged target");
+    const oldGeneration = storePath(
+      root,
+      "generations",
+      first.generationId,
+      "files",
+      ...firstTarget.path.split("/"),
+    );
+    const oldGenerationBytes = fs.readFileSync(oldGeneration);
+
+    const inspection = inspectLegacyTaskUpdate(root);
+    expect(inspection.status).toBe("ready");
+    const recovered = await applyLegacyTaskUpdate(root);
+    expect(recovered.status).toBe("completed");
+    expect(fs.readFileSync(sourceTaskPath)).toEqual(changedSource);
+    expect(fs.readFileSync(oldBackup)).toEqual(originalSource);
+    expect(fs.readFileSync(oldGeneration)).toEqual(oldGenerationBytes);
+
+    const reconciledJournal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as {
+      state: string;
+      events: readonly { event: string; relatedSourceFingerprint?: string }[];
+    };
+    expect(reconciledJournal.state).toBe("validated");
+    expect(reconciledJournal.events.slice(0, oldJournal.events.length)).toEqual(
+      oldJournal.events,
+    );
+    expect(reconciledJournal.events.at(-1)).toMatchObject({
+      event: "source-change-reconciled",
+    });
+    expect(reconciledJournal.events.at(-1)?.relatedSourceFingerprint).toBe(
+      scanLegacyTaskMigration({ projectRoot: root }).sourceFingerprint,
+    );
+    expect(readPreparedLegacyTaskBatch(root)?.sourceFingerprint).toBe(
+      scanLegacyTaskMigration({ projectRoot: root }).sourceFingerprint,
+    );
+    expect(readLegacyTaskMigrationView(root)).not.toBeNull();
+  });
+
+  it("retries an interrupted replacement and reconciles a second source rewrite", async () => {
+    const root = tempProject();
+    const sourceTaskPath = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      "09-26-legacy",
+      "task.json",
+    );
+    const firstRequest: LegacyTaskBatchRequest = {
+      projectRoot: root,
+      plan: scanLegacyTaskMigration({ projectRoot: root }),
+      targets: buildLegacyTaskV2Import(
+        scanLegacyTaskMigration({ projectRoot: root }),
+      ).targets,
+    };
+    const first = await runLegacyTaskBatch(firstRequest, {
+      approved: true,
+      onPhase(phase) {
+        if (phase === "targets-validated")
+          rewriteTaskJsonWithUserNote(sourceTaskPath, "first user edit");
+      },
+    });
+    expect(first.status).toBe("blocked");
+
+    const replacementPlan = scanLegacyTaskMigration({ projectRoot: root });
+    const replacementRequest: LegacyTaskBatchRequest = {
+      projectRoot: root,
+      plan: replacementPlan,
+      targets: buildLegacyTaskV2Import(replacementPlan).targets,
+    };
+    const interrupted = await runLegacyTaskBatch(replacementRequest, {
+      approved: true,
+      onPhase(phase) {
+        if (phase === "targets-staged")
+          throw new Error("simulated-recovery-interruption");
+      },
+    });
+    expect(interrupted).toMatchObject({
+      status: "interrupted",
+      journal: { state: "staged" },
+    });
+    if (!first.batchId) throw new Error("expected the first journal to remain");
+    const firstJournalPath = storePath(root, "journals", `${first.batchId}.json`);
+    const firstJournalAfterReconcile = fs.readFileSync(firstJournalPath);
+    expect(readPreparedLegacyTaskBatch(root)).toBeNull();
+    expect(() => readLegacyTaskMigrationView(root)).toThrow(
+      /authority-missing-with-residual-state/,
+    );
+
+    const recoveredPlan = scanLegacyTaskMigration({ projectRoot: root });
+    const recoveredRequest: LegacyTaskBatchRequest = {
+      projectRoot: root,
+      plan: recoveredPlan,
+      targets: buildLegacyTaskV2Import(recoveredPlan).targets,
+    };
+    const secondRewrite = await runLegacyTaskBatch(recoveredRequest, {
+      approved: true,
+      onPhase(phase) {
+        if (phase === "targets-validated")
+          rewriteTaskJsonWithUserNote(sourceTaskPath, "second user edit");
+      },
+    });
+    expect(secondRewrite).toMatchObject({
+      status: "blocked",
+      reason: "migration-source-changed",
+      journal: { state: "validated" },
+    });
+    expect(fs.readFileSync(firstJournalPath)).toEqual(firstJournalAfterReconcile);
+
+    const finalInspection = inspectLegacyTaskUpdate(root);
+    expect(finalInspection.status).toBe("ready");
+    const finalRecovery = await applyLegacyTaskUpdate(root);
+    expect(finalRecovery.status).toBe("completed");
+    const finalSource = fs.readFileSync(sourceTaskPath);
+    expect(finalSource.toString("utf8")).toContain("second user edit");
+    expect(readPreparedLegacyTaskBatch(root)?.sourceFingerprint).toBe(
+      scanLegacyTaskMigration({ projectRoot: root }).sourceFingerprint,
+    );
+    expect(readLegacyTaskMigrationView(root)).not.toBeNull();
+  });
+
+  it("does not reconcile changed-source residue without approval", async () => {
+    const root = tempProject();
+    const sourceTaskPath = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      "09-26-legacy",
+      "task.json",
+    );
+    const firstPlan = scanLegacyTaskMigration({ projectRoot: root });
+    const first = await runLegacyTaskBatch(
+      {
+        projectRoot: root,
+        plan: firstPlan,
+        targets: buildLegacyTaskV2Import(firstPlan).targets,
+      },
+      {
+        approved: true,
+        onPhase(phase) {
+          if (phase === "targets-validated")
+            rewriteTaskJsonWithUserNote(sourceTaskPath, "unapproved user edit");
+        },
+      },
+    );
+    expect(first.status).toBe("blocked");
+    if (!first.batchId) throw new Error("expected a journal to remain");
+    const oldJournalPath = storePath(root, "journals", `${first.batchId}.json`);
+    const journalBefore = fs.readFileSync(oldJournalPath);
+    const sourceBefore = fs.readFileSync(sourceTaskPath);
+
+    const newPlan = scanLegacyTaskMigration({ projectRoot: root });
+    const refused = await runLegacyTaskBatch(
+      {
+        projectRoot: root,
+        plan: newPlan,
+        targets: buildLegacyTaskV2Import(newPlan).targets,
+      },
+      { approved: false },
+    );
+    expect(refused).toMatchObject({ status: "cancelled", wrote: false });
+    expect(fs.readFileSync(oldJournalPath)).toEqual(journalBefore);
+    expect(fs.readFileSync(sourceTaskPath)).toEqual(sourceBefore);
+    expect(readPreparedLegacyTaskBatch(root)).toBeNull();
+    expect(() => readLegacyTaskMigrationView(root)).toThrow(
+      /authority-missing-with-residual-state/,
+    );
+  });
+
+  it("rejects a duplicate-shaped journal alias before writing any reconciliation marker", async () => {
+    const root = tempProject();
+    const sourceTaskPath = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      "09-26-legacy",
+      "task.json",
+    );
+    const firstPlan = scanLegacyTaskMigration({ projectRoot: root });
+    const first = await runLegacyTaskBatch(
+      {
+        projectRoot: root,
+        plan: firstPlan,
+        targets: buildLegacyTaskV2Import(firstPlan).targets,
+      },
+      {
+        approved: true,
+        onPhase(phase) {
+          if (phase === "targets-validated")
+            fs.appendFileSync(sourceTaskPath, "\n ", "utf8");
+        },
+      },
+    );
+    expect(first.status).toBe("blocked");
+    if (!first.batchId) throw new Error("expected a preserved pre-commit journal");
+    const originalJournalPath = storePath(root, "journals", `${first.batchId}.json`);
+    const originalJournalBytes = fs.readFileSync(originalJournalPath);
+    const aliasBatchId = `legacy-${"a".repeat(64)}`;
+    if (aliasBatchId === first.batchId)
+      throw new Error("synthetic alias must differ from the real batch id");
+    const aliasPath = storePath(root, "journals", `${aliasBatchId}.json`);
+    fs.writeFileSync(aliasPath, originalJournalBytes);
+    const aliasJournalBytes = fs.readFileSync(aliasPath);
+    const sourceBefore = fs.readFileSync(sourceTaskPath);
+
+    const inspection = inspectLegacyTaskUpdate(root);
+    expect(inspection).toMatchObject({
+      status: "blocked",
+      reason: "legacy-task-migration-authority-missing-with-residual-state",
+    });
+    const applied = await applyLegacyTaskUpdate(root);
+    expect(applied).toMatchObject({ status: "blocked", batchResult: null });
+    const currentPlan = scanLegacyTaskMigration({ projectRoot: root });
+    const directRetry = await runLegacyTaskBatch(
+      {
+        projectRoot: root,
+        plan: currentPlan,
+        targets: buildLegacyTaskV2Import(currentPlan).targets,
+      },
+      { approved: true },
+    );
+
+    expect(directRetry).toMatchObject({
+      status: "review",
+      reason: "legacy-task-migration-authority-missing-with-residual-state",
+      wrote: false,
+    });
+    expect(fs.readFileSync(originalJournalPath)).toEqual(originalJournalBytes);
+    expect(fs.readFileSync(aliasPath)).toEqual(aliasJournalBytes);
+    expect(fs.readFileSync(sourceTaskPath)).toEqual(sourceBefore);
+    expect(readPreparedLegacyTaskBatch(root)).toBeNull();
+    expect(fs.existsSync(storePath(root, "authority.json"))).toBe(false);
+  });
+
+  it("rejects an incomplete lifecycle event chain before recovering a changed source", async () => {
+    const root = tempProject();
+    const sourceTaskPath = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      "09-26-legacy",
+      "task.json",
+    );
+    const firstPlan = scanLegacyTaskMigration({ projectRoot: root });
+    const first = await runLegacyTaskBatch(
+      {
+        projectRoot: root,
+        plan: firstPlan,
+        targets: buildLegacyTaskV2Import(firstPlan).targets,
+      },
+      {
+        approved: true,
+        onPhase(phase) {
+          if (phase === "targets-validated")
+            fs.appendFileSync(sourceTaskPath, "\n ", "utf8");
+        },
+      },
+    );
+    expect(first.status).toBe("blocked");
+    if (!first.batchId) throw new Error("expected a preserved pre-commit journal");
+    const journalPath = storePath(root, "journals", `${first.batchId}.json`);
+    const malformed = JSON.parse(fs.readFileSync(journalPath, "utf8")) as {
+      events: Record<string, unknown>[];
+    };
+    const validatedEvent = malformed.events.at(-1);
+    if (!validatedEvent)
+      throw new Error("expected a persisted targets-validated event");
+    malformed.events = [{ ...validatedEvent, sequence: 1 }];
+    fs.writeFileSync(journalPath, `${JSON.stringify(malformed, null, 2)}\n`, "utf8");
+    const malformedJournalBytes = fs.readFileSync(journalPath);
+    const sourceBefore = fs.readFileSync(sourceTaskPath);
+
+    const inspection = inspectLegacyTaskUpdate(root);
+    expect(inspection).toMatchObject({
+      status: "blocked",
+      reason: "legacy-task-migration-authority-missing-with-residual-state",
+    });
+    const applied = await applyLegacyTaskUpdate(root);
+    expect(applied).toMatchObject({ status: "blocked", batchResult: null });
+    const currentPlan = scanLegacyTaskMigration({ projectRoot: root });
+    const directRetry = await runLegacyTaskBatch(
+      {
+        projectRoot: root,
+        plan: currentPlan,
+        targets: buildLegacyTaskV2Import(currentPlan).targets,
+      },
+      { approved: true },
+    );
+
+    expect(directRetry).toMatchObject({
+      status: "review",
+      reason: "legacy-task-migration-authority-missing-with-residual-state",
+      wrote: false,
+    });
+    expect(fs.readFileSync(journalPath)).toEqual(malformedJournalBytes);
+    expect(fs.readFileSync(sourceTaskPath)).toEqual(sourceBefore);
+    expect(readPreparedLegacyTaskBatch(root)).toBeNull();
+    expect(fs.existsSync(storePath(root, "authority.json"))).toBe(false);
+  });
+
+  it("recovers a backed-up journal when staging finished before its state transition", async () => {
+    const root = tempProject();
+    const sourceTaskPath = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      "09-26-legacy",
+      "task.json",
+    );
+    const firstPlan = scanLegacyTaskMigration({ projectRoot: root });
+    const first = await runLegacyTaskBatch(
+      {
+        projectRoot: root,
+        plan: firstPlan,
+        targets: buildLegacyTaskV2Import(firstPlan).targets,
+      },
+      {
+        approved: true,
+        onPhase(phase) {
+          if (phase === "targets-validated")
+            rewriteTaskJsonWithUserNote(sourceTaskPath, "source changed after stage");
+        },
+      },
+    );
+    expect(first).toMatchObject({
+      status: "blocked",
+      journal: { state: "validated" },
+    });
+    if (!first.batchId) throw new Error("expected a preserved pre-commit journal");
+    const journalPath = storePath(root, "journals", `${first.batchId}.json`);
+    const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as {
+      state: string;
+      updatedAt: string;
+      events: Record<string, unknown>[];
+    };
+    journal.state = "backed-up";
+    journal.events = journal.events.slice(0, 2);
+    journal.updatedAt = String(journal.events.at(-1)?.at);
+    fs.writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`, "utf8");
+
+    const inspection = inspectLegacyTaskUpdate(root);
+    expect(inspection.status).toBe("ready");
+    const recovery = await applyLegacyTaskUpdate(root);
+    expect(recovery.status).toBe("completed");
+    expect(readPreparedLegacyTaskBatch(root)?.sourceFingerprint).toBe(
+      scanLegacyTaskMigration({ projectRoot: root }).sourceFingerprint,
+    );
+    expect(readLegacyTaskMigrationView(root)).not.toBeNull();
+  });
+
+  it("reports partial reconciliation writes when a later journal write fails", async () => {
+    const root = tempProject();
+    const sourceTaskPath = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      "09-26-legacy",
+      "task.json",
+    );
+    const firstPlan = scanLegacyTaskMigration({ projectRoot: root });
+    const first = await runLegacyTaskBatch(
+      {
+        projectRoot: root,
+        plan: firstPlan,
+        targets: buildLegacyTaskV2Import(firstPlan).targets,
+      },
+      {
+        approved: true,
+        onPhase(phase) {
+          if (phase === "targets-validated")
+            rewriteTaskJsonWithUserNote(sourceTaskPath, "first rewrite");
+        },
+      },
+    );
+    expect(first.status).toBe("blocked");
+
+    const secondPlan = scanLegacyTaskMigration({ projectRoot: root });
+    const second = await runLegacyTaskBatch(
+      {
+        projectRoot: root,
+        plan: secondPlan,
+        targets: buildLegacyTaskV2Import(secondPlan).targets,
+      },
+      {
+        approved: true,
+        onPhase(phase) {
+          if (phase === "targets-validated")
+            rewriteTaskJsonWithUserNote(sourceTaskPath, "second rewrite");
+        },
+      },
+    );
+    expect(second).toMatchObject({
+      status: "blocked",
+      reason: "migration-source-changed",
+    });
+
+    const firstJournalPath = storePath(root, "journals", `${first.batchId}.json`);
+    const secondJournalPath = storePath(root, "journals", `${second.batchId}.json`);
+    const firstJournalBeforeRecovery = fs.readFileSync(firstJournalPath);
+    const secondJournalBeforeRecovery = fs.readFileSync(secondJournalPath);
+    const recoveryPlan = scanLegacyTaskMigration({ projectRoot: root });
+    const recoveryRequest = {
+      projectRoot: root,
+      plan: recoveryPlan,
+      targets: buildLegacyTaskV2Import(recoveryPlan).targets,
+    };
+    const originalRename = fs.renameSync.bind(fs);
+    let renameCount = 0;
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((...args) => {
+      renameCount += 1;
+      if (renameCount === 2)
+        throw new Error("simulated-second-journal-write-failure");
+      return originalRename(...args);
+    });
+    let recovery: Awaited<ReturnType<typeof runLegacyTaskBatch>>;
+    try {
+      recovery = await runLegacyTaskBatch(recoveryRequest, { approved: true });
+    } finally {
+      renameSpy.mockRestore();
+    }
+
+    expect(recovery).toMatchObject({
+      status: "interrupted",
+      reason: "simulated-second-journal-write-failure",
+      wrote: true,
+    });
+    expect(fs.readFileSync(firstJournalPath)).not.toEqual(firstJournalBeforeRecovery);
+    expect(fs.readFileSync(secondJournalPath)).toEqual(secondJournalBeforeRecovery);
+    expect(readPreparedLegacyTaskBatch(root)).toBeNull();
+    expect(fs.existsSync(storePath(root, "authority.json"))).toBe(false);
   });
 
   it("keeps a committed V2 pointer active and refuses re-import after later source edits", async () => {

@@ -147,6 +147,53 @@ export function withLock<T>(
   }
 }
 
+export async function withAsyncLock<T>(
+  projectRoot: string,
+  lockPath: string,
+  action: () => T | Promise<T>,
+): Promise<T> {
+  const safe = assertCanonicalWriteTarget(projectRoot, lockPath);
+  const token = JSON.stringify({ pid: process.pid, token: randomUUID() });
+  let descriptor: number | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      descriptor = fs.openSync(
+        safe,
+        fs.constants.O_WRONLY |
+          fs.constants.O_CREAT |
+          fs.constants.O_EXCL |
+          (fs.constants.O_NOFOLLOW ?? 0),
+        0o600,
+      );
+      break;
+    } catch (error) {
+      if (
+        !(error instanceof Error && "code" in error && error.code === "EEXIST")
+      )
+        throw error;
+      if (attempt === 0 && reclaimDeadProcessLock(projectRoot, safe)) continue;
+      throw new Error("migration-lock-unavailable");
+    }
+  }
+  if (descriptor === null) throw new Error("migration-lock-unavailable");
+  try {
+    fs.writeFileSync(descriptor, token, "utf8");
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  try {
+    return await action();
+  } finally {
+    try {
+      assertCanonicalWriteTarget(projectRoot, safe);
+      if (fs.readFileSync(safe, "utf8") === token) fs.unlinkSync(safe);
+    } catch {
+      /* Do not remove a lock whose ownership can no longer be proven. */
+    }
+  }
+}
+
 function processIsAlive(pid: number): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 0) return true;
   try {

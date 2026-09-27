@@ -1,4 +1,5 @@
 export {
+  canReconcileLegacyTaskBatchSourceChangeWithoutAuthority,
   canResumeLegacyTaskBatchWithoutAuthority,
   legacyTaskBatchTaskIdConflict,
   readPreparedLegacyTaskBatch,
