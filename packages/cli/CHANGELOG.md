@@ -58,11 +58,19 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
   migration samples, and end-to-end acceptance are separate evidence gates.
 
 The beta.4 tag Publish workflow succeeded, its npm package installed in a
-fresh local project, and `develop` CI passed on Ubuntu and Windows. The release
-PR policy check exposed a maintenance-script path defect, corrected in beta.5.
+fresh local project, and `develop` CI passed on Ubuntu and Windows. Release PR
+policy integration defects are corrected in beta.5 and beta.6.
 Stable publication still follows the
 [upgrade guide](../../docs/lifecycle/upgrade-and-migrate.md) and
 [release procedure](../../docs/governance/releasing.md).
+
+---
+
+## [0.6.0-beta.6] - 2026-09-28
+
+The release PR checker now validates GitHub's actual tag-run fields: the
+workflow file path, tag name in `head_branch`, and tagged commit SHA. Product
+runtime and project migrations are unchanged from beta.5.
 
 ---
 
