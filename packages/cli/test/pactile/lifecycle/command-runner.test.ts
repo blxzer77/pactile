@@ -70,6 +70,32 @@ describe("lifecycle command facade", () => {
     ]);
   });
 
+  it("does not traverse legacy worktrees, scratch or personal templates", () => {
+    const projectRoot = root();
+    const worktree = path.join(projectRoot, ".pactile/worktrees/legacy-run");
+    const archive = path.join(projectRoot, ".pactile/worktree-archives/old");
+    const templates = path.join(projectRoot, ".pactile/templates/tasks");
+    const scratch = path.join(projectRoot, ".pactile/tmp/build/node_modules");
+    const scratchNamed = path.join(projectRoot, ".pactile/tmp-commit-msgs");
+    fs.mkdirSync(worktree, { recursive: true });
+    fs.mkdirSync(archive, { recursive: true });
+    fs.mkdirSync(templates, { recursive: true });
+    fs.mkdirSync(scratch, { recursive: true });
+    fs.mkdirSync(scratchNamed, { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, ".pactile/workflow.md"), "ok\n");
+    const shared = path.join(worktree, "shared.txt");
+    fs.writeFileSync(shared, "legacy worktree\n");
+    fs.linkSync(shared, path.join(worktree, "hard-linked.txt"));
+    fs.linkSync(shared, path.join(archive, "hard-linked.txt"));
+    fs.linkSync(shared, path.join(scratch, "hard-linked.txt"));
+    fs.linkSync(shared, path.join(scratchNamed, "hard-linked.txt"));
+    fs.writeFileSync(path.join(templates, "custom.md"), "personal\n");
+
+    expect(discoverCanonicalGenerationPaths(projectRoot)).toEqual([
+      ".pactile/workflow.md",
+    ]);
+  });
+
   it("publishes an exact managed live view without touching Runtime or user data", () => {
     const projectRoot = root();
     fs.mkdirSync(path.join(projectRoot, ".pactile/runtime"), {

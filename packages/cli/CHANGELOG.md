@@ -12,6 +12,21 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.1-beta.0] - 2026-09-28
+
+### Fixed
+
+- Existing Pactile project worktrees, worktree archives, scratch directories,
+  and personal task templates are excluded from sealed framework generations.
+  Updating a 0.5.x project no longer scans dependency junctions or hard links
+  there as framework files. These user files remain untouched.
+
+This beta corrects a migration failure found while updating large existing
+projects from the 0.6.0 package. The 0.6.0 candidate remains available for
+inspection; it has not been promoted to npm `latest`.
+
+---
+
 ## [0.6.0] - 2026-09-28
 
 ### Changed
