@@ -33,6 +33,7 @@ fs.writeFileSync(sessionFile, "session\n");
 const reviewResult: unknown = JSON.parse(fs.readFileSync(resultFile, "utf8"));
 let sessionId = option("--session-id", "pi-checker");
 const malformedMode = option("--malformed", "none");
+const firstPromptMarker = option("--first-prompt-marker");
 const switchSessionOnSecond = process.argv.includes("--switch-session-on-second");
 const delayCorrectionGetStateMs = Number(
   option("--delay-correction-get-state-ms", "0"),
@@ -113,11 +114,16 @@ function handleLine(line: string): void {
 
   const message = typeof request.message === "string" ? request.message : "";
   promptCount += 1;
+  if (promptCount === 1 && firstPromptMarker)
+    fs.writeFileSync(firstPromptMarker, "started\n", { mode: 0o600 });
   if (switchSessionOnSecond && promptCount === 2) sessionId = "switched-session";
   fs.appendFileSync(sessionFile, `${message}\n`);
   reply();
   isStreaming = true;
-  if (malformedMode === "hang-after-first" && promptCount >= 2) return;
+  if (
+    (malformedMode === "hang-first" && promptCount === 1) ||
+    (malformedMode === "hang-after-first" && promptCount >= 2)
+  ) return;
   writeMessage({ type: "agent_start" });
   if (maliciousMetadata) {
     writeMessage({
