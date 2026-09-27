@@ -77,21 +77,35 @@ export function writeSourceBackup(request: NormalizedRequest): void {
     request.sourceFingerprint.slice("sha256:".length),
   );
   ensureDirectory(request.projectRoot, root);
+  const manifestPath = path.join(root, "manifest.json");
+  const existingManifest = readRegularFile(request.projectRoot, manifestPath);
+  if (existingManifest) {
+    // A crash may leave the complete immutable snapshot before the journal
+    // advances. Verify it once; replaying every exclusive write adds no proof.
+    if (!existingManifest.equals(backupManifest(request.plan)))
+      throw new Error("migration-immutable-collision");
+    verifySourceBackup(request.projectRoot, request.sourceFingerprint);
+    return;
+  }
+  const preparedDirectories = new Set<string>();
   for (const file of request.plan.tasks.flatMap((task) => task.files)) {
     const bytes = bytesForSource(file);
     if (digest(bytes) !== file.sha256 || bytes.byteLength !== file.byteLength)
       throw new Error("migration-source-plan-invalid");
-    const target = assertCanonicalWriteTarget(
-      request.projectRoot,
-      path.join(root, "files", file.path),
-    );
-    ensureDirectory(request.projectRoot, path.dirname(target));
+    const target = path.join(root, "files", file.path);
+    const parent = path.dirname(target);
+    if (!preparedDirectories.has(parent)) {
+      ensureDirectory(request.projectRoot, parent);
+      preparedDirectories.add(parent);
+    }
+    // writeExclusive rechecks the full path for every file, including parents
+    // already prepared above, so an external directory replacement fails closed.
     writeExclusive(request.projectRoot, target, bytes);
   }
   const manifest = backupManifest(request.plan);
   writeExclusive(
     request.projectRoot,
-    path.join(root, "manifest.json"),
+    manifestPath,
     manifest,
   );
   verifySourceBackup(request.projectRoot, request.sourceFingerprint);
@@ -127,10 +141,7 @@ export function verifySourceBackup(
   const files = (manifest as { files?: unknown }).files;
   if (!Array.isArray(files)) throw new Error("migration-source-backup-invalid");
   const found = new Set<string>();
-  const recompute = new Map<
-    string,
-    { byteLength: number; fingerprint: string; bytes: Buffer }
-  >();
+  const ordered: { path: string; byteLength: number; fingerprint: string }[] = [];
   for (const item of files) {
     if (!item || typeof item !== "object" || Array.isArray(item))
       throw new Error("migration-source-backup-invalid");
@@ -148,12 +159,23 @@ export function verifySourceBackup(
     )
       throw new Error("migration-source-backup-invalid");
     const relative = normalizeRuntimeRelativePath(entry.path);
-    if (relative !== entry.path)
+    if (relative !== entry.path || found.has(relative))
       throw new Error("migration-source-backup-invalid");
-    const filePath = assertCanonicalWriteTarget(
-      projectRoot,
-      path.join(directory, "files", relative),
-    );
+    found.add(relative);
+    ordered.push({
+      path: relative,
+      byteLength: entry.byteLength,
+      fingerprint: entry.fingerprint as string,
+    });
+  }
+  ordered.sort((left, right) =>
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+  );
+  const sourceHash = createHash("sha256");
+  for (const entry of ordered) {
+    const filePath = path.join(directory, "files", entry.path);
+    // readRegularFile performs the path/link checks. Keep only the current
+    // file's bytes instead of retaining a second full source tree in memory.
     const fileBytes = readRegularFile(projectRoot, filePath);
     if (!fileBytes) throw new Error("migration-source-backup-invalid");
     if (
@@ -161,35 +183,11 @@ export function verifySourceBackup(
       digest(fileBytes) !== entry.fingerprint
     )
       throw new Error("migration-source-backup-invalid");
-    found.add(relative);
-    recompute.set(relative, {
-      byteLength: fileBytes.byteLength,
-      fingerprint: digest(fileBytes),
-      bytes: fileBytes,
-    });
-  }
-  const manifestEntries = (
-    manifest as {
-      files: { path: string; byteLength: number; fingerprint: string }[];
-    }
-  ).files;
-  const ordered = [...manifestEntries].sort((left, right) =>
-    left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
-  );
-  const sourceHash = createHash("sha256");
-  for (const entry of ordered) {
-    const file = recompute.get(entry.path);
-    if (!file) throw new Error("migration-source-backup-invalid");
-    if (
-      entry.byteLength !== file.byteLength ||
-      entry.fingerprint !== file.fingerprint
-    )
-      throw new Error("migration-source-backup-invalid");
     sourceHash.update(entry.path, "utf8");
     sourceHash.update("\0", "utf8");
-    sourceHash.update(String(file.byteLength), "utf8");
+    sourceHash.update(String(fileBytes.byteLength), "utf8");
     sourceHash.update("\0", "utf8");
-    sourceHash.update(file.bytes);
+    sourceHash.update(fileBytes);
   }
   const actualFiles = listFiles(projectRoot, path.join(directory, "files"))
     .map((target) =>
@@ -201,7 +199,6 @@ export function verifySourceBackup(
     .sort();
   const expectedFiles = ordered.map((entry) => entry.path);
   if (
-    new Set(manifestEntries.map((item) => item.path)).size !== found.size ||
     `sha256:${sourceHash.digest("hex")}` !== sourceFingerprint ||
     actualFiles.length !== expectedFiles.length ||
     actualFiles.some((file, index) => file !== expectedFiles[index])

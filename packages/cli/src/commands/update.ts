@@ -106,7 +106,7 @@ import { runPostUpdateSmoke } from "../utils/post-update-smoke.js";
 import { listLegacyPythonScripts } from "../pactile/compat/node-entry-migration.js";
 import {
   applyLegacyTaskUpdate,
-  inspectLegacyTaskUpdate,
+  inspectLegacyTaskUpdateSummary,
 } from "../pactile/migration/legacy-task-update.js";
 import {
   buildFilePlanFromChanges,
@@ -2571,7 +2571,7 @@ export async function update(options: UpdateOptions): Promise<void> {
   p36State.report = p36SummaryForRollout(p36Plan);
   printP36Vernacular(p36Plan);
 
-  const legacyTaskInspection = inspectLegacyTaskUpdate(cwd);
+  const legacyTaskInspection = inspectLegacyTaskUpdateSummary(cwd);
   if (legacyTaskInspection.status !== "none") {
     console.log(chalk.cyan("\nLegacy Task import preflight:"));
     if (legacyTaskInspection.status === "ready") {
@@ -2584,7 +2584,7 @@ export async function update(options: UpdateOptions): Promise<void> {
           `  Blocked: ${legacyTaskInspection.reason ?? "legacy-task-preflight-blocked"}`,
         ),
       );
-      for (const finding of legacyTaskInspection.plan.findings.filter(
+      for (const finding of legacyTaskInspection.findings.filter(
         (item) => item.severity === "blocker",
       )) {
         console.log(
