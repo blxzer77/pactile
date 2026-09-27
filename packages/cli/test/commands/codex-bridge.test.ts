@@ -1032,7 +1032,7 @@ describe("Codex desktop request and receipt bridge", () => {
     },
   );
 
-  it("writes paired Pi escalation send and native read receipts through Codex CLI", () => {
+  it("writes paired cross-task send and native read receipts through Codex CLI", () => {
     const { root, task: replyTask, prompt } = fixture();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -1193,7 +1193,6 @@ describe("Codex desktop request and receipt bridge", () => {
       }),
     );
 
-    const escalationId = "pi-escalation:12345678-1234-1234-1234-123456789abc";
     expect(
       runCodexCli(
         [
@@ -1207,8 +1206,6 @@ describe("Codex desktop request and receipt bridge", () => {
           replyTask,
           "--run-id",
           sourceRunId,
-          "--escalation-id",
-          escalationId,
           "--prompt-file",
           prompt,
         ],
@@ -1216,7 +1213,7 @@ describe("Codex desktop request and receipt bridge", () => {
       ),
     ).toBe(0);
     const sendPending = codexBridgeStatus(root, sourceTask).pending.at(-1);
-    if (!sendPending) throw new Error("Escalation send request missing");
+    if (!sendPending) throw new Error("Cross-task send request missing");
     const sourceDir = path.join(root, ".pactile", "tasks", sourceTask);
     const sendRequest = JSON.parse(
       fs.readFileSync(
@@ -1231,7 +1228,6 @@ describe("Codex desktop request and receipt bridge", () => {
     ) as CodexBridgeRequest;
     expect(sendRequest).toMatchObject({
       request_id: sendPending.request_id,
-      escalation_id: escalationId,
       task_id: codexBridgeStatus(root, sourceTask).task_id,
       run_id: sourceRunId,
       candidate_snapshot_id: candidate.id,
@@ -1250,6 +1246,13 @@ describe("Codex desktop request and receipt bridge", () => {
       thread_id: "p40-escalation-thread",
       host_id: "local",
     });
+    const invalidSendResult = result(root, {
+      request_id: "00000000-0000-4000-8000-000000000000",
+      tool: "send_message_to_thread",
+      outcome: "ok",
+      thread_id: "p40-escalation-thread",
+      host_id: "local",
+    });
     expect(
       runCodexCli(
         [
@@ -1257,7 +1260,9 @@ describe("Codex desktop request and receipt bridge", () => {
           sourceTask,
           sendRequest.request_id,
           "--result-file",
-          path.relative(root, sendResult),
+          path.relative(root, invalidSendResult),
+          "--evidence-level",
+          "desktop-native",
         ],
         root,
       ),
@@ -1289,7 +1294,6 @@ describe("Codex desktop request and receipt bridge", () => {
     expect(sendReceipt).toMatchObject({
       request_id: sendRequest.request_id,
       request_fingerprint: sendRequest.request_fingerprint,
-      escalation_id: escalationId,
       task_id: sendRequest.task_id,
       run_id: sourceRunId,
       candidate_snapshot_id: candidate.id,
@@ -1313,14 +1317,12 @@ describe("Codex desktop request and receipt bridge", () => {
           "read",
           "--thread-id",
           "p40-escalation-thread",
-          "--reply-to-escalation-id",
-          escalationId,
         ],
         root,
       ),
     ).toBe(0);
     const readPending = codexBridgeStatus(root, replyTask).pending.at(-1);
-    if (!readPending) throw new Error("Escalation read request missing");
+    if (!readPending) throw new Error("Cross-task read request missing");
     const replyDir = path.join(root, ".pactile", "tasks", replyTask);
     const readRequest = JSON.parse(
       fs.readFileSync(
@@ -1336,7 +1338,6 @@ describe("Codex desktop request and receipt bridge", () => {
     expect(readRequest).toMatchObject({
       request_id: readPending.request_id,
       tool: "read_thread",
-      reply_to_escalation_id: escalationId,
       task_id: codexBridgeStatus(root, replyTask).task_id,
       run_id: null,
       candidate_snapshot_id: null,
@@ -1344,8 +1345,6 @@ describe("Codex desktop request and receipt bridge", () => {
       thread_id: "p40-escalation-thread",
       host_id: "local",
     });
-    const replyBody =
-      "Codex reply: the review finding is supported by the linked test result.";
     const readResult = result(root, {
       request_id: readRequest.request_id,
       tool: "read_thread",
@@ -1353,49 +1352,14 @@ describe("Codex desktop request and receipt bridge", () => {
       status: "completed",
       thread_id: "p40-escalation-thread",
       host_id: "local",
-      reply_to_escalation_id: escalationId,
-      reply_evidence: {
-        reply_to_escalation_id: escalationId,
-        response_turn_id: "turn:codex-reply-1",
-        body: replyBody,
-        body_sha256: createHash("sha256")
-          .update(replyBody, "utf8")
-          .digest("hex"),
-      },
     });
-    expect(
-      runCodexCli(
-        [
-          "receipt",
-          replyTask,
-          readRequest.request_id,
-          "--result-file",
-          path.relative(root, readResult),
-        ],
-        root,
-      ),
-    ).toBe(1);
-    const readReceiptFile = path.join(
-      replyDir,
-      "codex-bridge",
-      "receipts",
-      `${readRequest.request_id}.json`,
-    );
-    expect(fs.existsSync(readReceiptFile)).toBe(false);
     const invalidReadResult = result(root, {
-      request_id: readRequest.request_id,
+      request_id: "00000000-0000-4000-8000-000000000001",
       tool: "read_thread",
       outcome: "ok",
       status: "completed",
       thread_id: "p40-escalation-thread",
       host_id: "local",
-      reply_to_escalation_id: escalationId,
-      reply_evidence: {
-        reply_to_escalation_id: escalationId,
-        response_turn_id: "turn:codex-reply-1",
-        body: "A tampered reply hash must be rejected.",
-        body_sha256: "0".repeat(64),
-      },
     });
     expect(
       runCodexCli(
@@ -1411,6 +1375,12 @@ describe("Codex desktop request and receipt bridge", () => {
         root,
       ),
     ).toBe(1);
+    const readReceiptFile = path.join(
+      replyDir,
+      "codex-bridge",
+      "receipts",
+      `${readRequest.request_id}.json`,
+    );
     expect(fs.existsSync(readReceiptFile)).toBe(false);
     expect(
       runCodexCli(
@@ -1432,7 +1402,6 @@ describe("Codex desktop request and receipt bridge", () => {
     expect(readReceipt).toMatchObject({
       request_id: readRequest.request_id,
       request_fingerprint: readRequest.request_fingerprint,
-      reply_to_escalation_id: escalationId,
       task_id: readRequest.task_id,
       run_id: null,
       candidate_snapshot_id: null,
@@ -1442,14 +1411,6 @@ describe("Codex desktop request and receipt bridge", () => {
       evidence_level: "desktop-native",
       status: "completed",
       contract_stale: false,
-      reply_evidence: {
-        reply_to_escalation_id: escalationId,
-        response_turn_id: "turn:codex-reply-1",
-        body: replyBody,
-        body_sha256: createHash("sha256")
-          .update(replyBody, "utf8")
-          .digest("hex"),
-      },
     });
     expect(path.relative(root, sendReceiptFile).replaceAll("\\", "/")).toBe(
       `.pactile/tasks/${sourceTask}/codex-bridge/receipts/${sendRequest.request_id}.json`,
