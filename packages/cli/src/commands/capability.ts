@@ -38,9 +38,10 @@ async function readRequestFile(
   root: string,
   requestFile: string,
 ): Promise<{ readonly bytes: Buffer; readonly relativePath: string }> {
+  const suppliedRoot = path.resolve(root);
   const rootReal = await fs.realpath(root);
-  const file = path.resolve(rootReal, requestFile);
-  const lexicalRelative = path.relative(rootReal, file);
+  const file = path.resolve(suppliedRoot, requestFile);
+  const lexicalRelative = path.relative(suppliedRoot, file);
   if (
     path.isAbsolute(lexicalRelative) ||
     lexicalRelative === ".." ||

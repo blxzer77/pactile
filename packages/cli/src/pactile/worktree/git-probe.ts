@@ -299,5 +299,6 @@ export function isAncestor(cwd: string, ancestor: string, descendant: string): b
 }
 
 export function ownerConflict(canonicalPath: string, ownerRunId: string, knownOwners: readonly WorkspaceOwnerRef[]): boolean {
-  return knownOwners.some((owner) => pathKey(owner.canonicalPath) === pathKey(canonicalPath) && owner.ownerRunId !== ownerRunId);
+  return knownOwners.some((owner) => owner.ownerRunId !== ownerRunId
+    && (pathKey(owner.canonicalPath) === pathKey(canonicalPath) || sameGitRoot(owner.canonicalPath, canonicalPath)));
 }
