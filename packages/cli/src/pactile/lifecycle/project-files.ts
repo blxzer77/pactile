@@ -15,6 +15,13 @@ const EXCLUDED_PREFIXES = [
   ".pactile/.runtime/",
   ".pactile/tasks/",
   ".pactile/workspace/",
+  // Legacy project worktrees and personal templates are user state. In
+  // particular, worktrees may contain dependency junctions and hard links.
+  ".pactile/worktrees/",
+  ".pactile/worktree-archives/",
+  ".pactile/templates/",
+  ".pactile/tmp/",
+  ".pactile/tmp-",
   ".pactile/spec/",
   ".pactile/middleware/",
   // Pre-Node installations can retain locally edited Python scripts. They are
