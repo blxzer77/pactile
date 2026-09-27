@@ -91,6 +91,9 @@ export function repoIdentity(repoRoot: string): GitIdentity {
   if (!fs.statSync(root).isDirectory()) throw new WorktreeManagerError("invalid-repository", "Repository root is not a directory");
   const topLevel = path.resolve(git(root, ["rev-parse", "--show-toplevel"]));
   if (!sameGitRoot(topLevel, root)) throw new WorktreeManagerError("invalid-repository", "Repository root must be the Git project root");
+  // Git for Windows may expand an 8.3 temp path. Once identity is verified,
+  // use Git's spelling for managed paths and registration comparisons.
+  root = fs.realpathSync(topLevel);
   const commonRaw = git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const commonPath = path.resolve(root, commonRaw);
   let commonDir: string;

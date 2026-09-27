@@ -210,6 +210,31 @@ function waitForReadyClaims(input: { children: ReturnType<typeof spawnOwnershipC
 }
 
 describe("Run worktree manager", () => {
+  it("accepts a Windows short-path root and verifies its Git registration", (context) => {
+    if (process.platform !== "win32") {
+      context.skip("Windows 8.3 paths are unavailable on this platform");
+      return;
+    }
+    const { root, baseSha } = fixture();
+    const shortRoot = execFileSync(
+      "cmd.exe",
+      ["/d", "/c", `for %I in ("${root}") do @echo %~sI`],
+      { encoding: "utf8", windowsHide: true },
+    ).trim();
+    if (!fs.existsSync(shortRoot) || shortRoot === root) {
+      context.skip("This volume does not expose a distinct 8.3 alias");
+      return;
+    }
+    const binding = create({ root: shortRoot, baseSha, runId: "short-path" });
+    const inspection = inspectRunWorktree({
+      repoRoot: shortRoot,
+      runId: "short-path",
+      runState: "running",
+      binding,
+    });
+    expect(inspection.issues).toEqual(["unintegrated"]);
+    expect(inspection.headSha).toBe(baseSha);
+  });
   it("atomically assigns one canonical checkout to one Run across two Node processes", async () => {
     const { root, baseSha } = fixture();
     const canonicalPath = path.join(root, ".pactile", "worktrees", "shared-checkout");
