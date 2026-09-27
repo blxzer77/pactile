@@ -31,6 +31,13 @@ function normalizeWriteSet(value: readonly string[]): string[] {
   return paths.includes("*") ? ["*"] : [...new Set(paths)].sort((a, b) => a.localeCompare(b));
 }
 
+function normalizeManagedRunWriteSet(value: readonly string[]): string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new WorktreeManagerError("invalid-write-set", "Managed Run workspaces require a non-empty write set");
+  }
+  return normalizeWriteSet(value);
+}
+
 function comparable(value: string): string {
   const normalized = value.replaceAll("\\", "/").replace(/\/$/, "");
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
@@ -113,7 +120,7 @@ export function createRunWorktree(input: {
   }
   branchRef(identity.root, input.branch);
   const baseSha = resolveCommit(identity.root, input.baseRef);
-  const writeSet = normalizeWriteSet(input.writeSet);
+  const writeSet = normalizeManagedRunWriteSet(input.writeSet);
   ensureAllowedRoot(identity);
   if (fs.existsSync(canonicalPath)) throw new WorktreeManagerError("path-exists", "Run worktree destination already exists", canonicalPath);
   try {
@@ -174,7 +181,7 @@ export function adoptRunWorktree(input: {
     throw new WorktreeManagerError("owner-conflict", "Worktree is already owned by another Run", canonicalPath);
   }
   const baseSha = validateSha(input.baseSha);
-  const writeSet = normalizeWriteSet(input.writeSet);
+  const writeSet = normalizeManagedRunWriteSet(input.writeSet);
   const binding: RunWorkspaceBinding = {
     ownerRunId: input.runId,
     canonicalPath,
@@ -323,7 +330,7 @@ export function reconcileRunWorktree(input: {
   const identity = repoIdentity(input.repoRoot);
   const baseSha = validateSha(input.baseSha);
   resolveCommit(identity.root, baseSha);
-  const writeSet = normalizeWriteSet(input.writeSet);
+  const writeSet = normalizeManagedRunWriteSet(input.writeSet);
   const owners = readAllManagerProvenance(identity);
   const matches = owners.filter((item) => item.ownerRunId === input.runId);
   const provenance = matches[0];
