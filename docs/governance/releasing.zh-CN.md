@@ -23,7 +23,7 @@ beta 验收后，只修改包版本到 `X.Y.Z` 以及发布文档/changelog，�
 `develop` → `main` 发布 PR。PR 正文须包含以下字段：
 
 ```text
-Beta tag: pactile-v0.6.0-beta.2
+Beta tag: pactile-v0.6.0-beta.<accepted-N>
 Beta validation: https://github.com/blxzer77/pactile/actions/runs/<成功的发布运行 ID>
 Beta acceptance: <beta 实际安装和行为验收结果>
 Post-beta changes: packages/cli/package.json, packages/cli/CHANGELOG.md
