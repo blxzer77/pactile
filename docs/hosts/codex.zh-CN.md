@@ -61,9 +61,10 @@ pactile codex unblock <receiver-task> <block-id> --resolution-message-id <reques
 已准备的 P40 升级可以请求另一个已绑定的 Codex `review` thread 给出独立、只读 Review。Pi Review 产物保持不可变。发送必须从来源 Task 当前 V2 Verify Run 和非通过 Pi Review 发起，并发给具有当前已完成候选的 V2 Verify/Integrate Task 及其已绑定 Review thread：
 
 若 Pi Review 为非 PASS，且未命中强制升级规则，Pactile 可调用 Jev 的
-`review-routing` 节点提出一个有界问题，使用固定的通用摘要。请求不包含
-Task 身份、候选细节、Review 正文、证据引用或源码片段。只有 provider 原样
-报告且不低于 0.65 的 `append-codex-review` 置信度会准备可选 P40 请求；
+`review-routing` 节点提出一个有界问题。摘要只包含经过验证的 Pi Review
+结论、覆盖区域的状态与置信度、发现项风险计数，以及 blocker 和未解决问题的
+数量。请求不包含 Task 身份、候选细节、Review 正文、证据引用或源码片段。只有
+provider 原样报告且不低于 0.65 的 `append-codex-review` 置信度会准备可选 P40 请求；
 `keep-pi-review`、建议不可用、低置信度或项目 egress 被拒绝时，保留当前路由。
 每次调用或跳过都会写入本地安全回执，记录建议、采用依据、provider 置信度、
 项目 egress 状态和传输延迟/成本事实。Pi 对不确定性、高影响和争议发现的规则
@@ -90,7 +91,15 @@ pactile codex review-escalation <source-task> --escalation-id pi-escalation:<pi-
 
 桥接回执标记为 `host-reported`：这是 Node 从调用方提供的原生工具结果中记录的事实，不是产品认证的桌面签名。哈希链和 receipt 不会把模拟结果升级成桌面证据；测试中的模拟回执不能证明真实桌面验收。回执不代替代码审查、Pi 结果检查、AC 证据或 Kernel gate。若收到回执时 Kernel revision 或 Run candidate 已变化，回执标记 `contract_stale`，应重新核对任务契约。规划仅允许在 Open/Define/Approve；审核仅允许在 Verify/Integrate。Pi 实现派发继续由 `pactile pi run` 校验已记录的用户批准和工作契约。不要把 Codex CLI/App Server/ACP 会话当作桌面任务，也不要派发 Codex subagent。此桥接无需后台常驻服务。桌面原生工具不可用时在当前任务串行工作，并记录原因。
 
-独立实现任务在 Execute 批准后可选 `--role execute`；创建必须采用 `--target project --environment worktree`。请求会附带 Pactile Task 的绝对路径，因为 App 工作树不一定包含被忽略的任务状态；若已批准合同有 `base_branch`，从该分支启动。Parent Child 在准备桌面创建请求时占用一个共享并发槽；创建失败或 `wait_threads` 的完成回执释放该槽。桌面任务归用户所有。回执并不证明代码已验收，Parent 仍需单独审核并逐个 `integrate-child`。
+0.5.x 兼容桥接仍允许旧任务在 Execute 批准后使用 `--role execute`。该路径由 App
+创建工作树，不会绑定到 P38 管理的 V2 Run 工作树。新的 Task Kernel V2 工作中，
+Codex 桌面任务负责规划和独立审核；Pi 通过 `pactile pi run` 执行已批准的 Run。
+
+旧版 Execute 创建须使用 `--target project --environment worktree`，并附带 Pactile
+Task 的绝对路径，因为 App 工作树不一定包含被忽略的任务状态；若已批准的旧任务有
+`base_branch`，则从该分支启动。旧版 Parent Child 在准备桌面创建请求时占用一个
+共享并发槽；创建失败或 `wait_threads` 的完成回执释放该槽。桌面任务归用户所有。
+回执不证明代码已验收，旧版 Parent 仍需单独审核并逐个 `integrate-child`。
 
 Pactile 归档任务后，`pactile codex status <task>` 仍可只读查看归档回执；新请求和回执只允许写入活动任务；迟到的 Host 响应会被拒绝，不会追加到归档 Task。
 

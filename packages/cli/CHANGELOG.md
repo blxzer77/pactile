@@ -14,22 +14,43 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] - v0.6.0
 
-- Node.js is the only required runtime. The task lifecycle, context and
-  retrieval path, Codex desktop request/receipt bridge, Pi RPC bridge, and
-  bounded parallel dispatch run in Node. Legacy generated Python entrypoints
-  are retired; the update preview inventories modified and unclaimed files
-  before any safe deletion.
-- Codex is the supported host projection. Pi is the initial worker Agent;
-  Pactile binds its runs to approved tasks and records bounded evidence.
-  Codex desktop calls remain host native and require a recorded receipt.
+### Changed
+
+- Node.js 20 or newer is the only required runtime. Active product and
+  maintenance paths use TypeScript; generated Python entrypoints are retired.
+  Update previews modified and unclaimed files before safe removal.
+- New work uses Task Kernel V2: one independently acceptable Task with a
+  declared delivery level, explicit hard dependencies, isolated Runs, bound
+  independent Reviews, and Kernel-gated Close. Lite/Full and Parent/Child remain
+  in the legacy task model, not as presets for new V2 Tasks. Updating a 0.5.x
+  project imports eligible legacy records into a held state; incomplete
+  definitions require explicit
+  reconciliation, and historical status does not fabricate a V2 Run or PASS.
+- V2 scheduling uses hard dependencies and critical-path estimates to choose
+  ready work. The admission and worktree managers guard Pi execution, writer
+  leases, conflicting write sets, process-stop evidence, and worktree recovery.
+  Codex desktop tasks coordinate planning and independent review through native
+  request/receipt calls; Pi executes approved V2 Runs through RPC.
+- An independent Pi Review checks a frozen Run candidate. Mandatory escalation
+  rules can request a separate Codex Review. Verification planning proposes
+  checks by risk without removing repository-required CI or claiming that a
+  planned check has run.
+- Jev can advise applicable Tile, retrieval, scheduling, verification, and
+  optional Review-routing decisions. It remains optional, obeys project egress
+  policy, and falls back locally when unavailable. Its advice cannot grant
+  approval, override hard dependencies or validation, record Review PASS, or
+  Close a Task. V2 execution dispatch currently has one eligible executor, Pi,
+  so there is no multi-executor Jev choice.
 - The unpublished `0.5.1-beta.0` pool cleanup is folded into the
-  `0.6.0-beta.1` migration manifest, which is retained in stable `0.6.0`.
-  It deletes only hash-matched pool skeleton files and never targets
-  user-authored pool items.
-- One npm package, `@blxzer/pactile`, includes CLI and Core. The release gate
-  checks the sealed tarball, a Python-free Node path, installed task lifecycle,
-  simulated Pi/Codex bridges, and bounded parallel dispatch. Live Pi provider
-  and desktop-host acceptance are recorded separately.
+  `0.6.0-beta.1` migration manifest, retained for stable `0.6.0`. It deletes
+  only hash-matched pool skeleton files and preserves user-authored items.
+
+### Packaging and acceptance
+
+- One npm package, `@blxzer/pactile`, includes CLI and Core. The local release
+  gate checks the sealed tarball, a Python-free Node path, installed task
+  lifecycle, and simulated Pi/Codex paths. Live providers, desktop-host behavior,
+  migration samples, and end-to-end acceptance are separate evidence gates.
 
 This entry describes the development target. No stable v0.6.0 package or tag has
 been published yet. Follow the [upgrade guide](../../docs/lifecycle/upgrade-and-migrate.md)
