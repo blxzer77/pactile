@@ -49,9 +49,10 @@ function withoutRecordKeys(
 function rewriteParentReceiptWithoutIntegrationOwner(
   receiptFile: string,
 ): string {
-  const receipt = JSON.parse(
-    fs.readFileSync(receiptFile, "utf8"),
-  ) as Record<string, unknown>;
+  const receipt = JSON.parse(fs.readFileSync(receiptFile, "utf8")) as Record<
+    string,
+    unknown
+  >;
   const request = receipt.request as {
     conflictParallelizations?: Record<string, unknown>[];
   };
@@ -65,8 +66,7 @@ function rewriteParentReceiptWithoutIntegrationOwner(
   };
   for (const wave of plan.waves)
     wave.conflictAuthorizations = wave.conflictAuthorizations.map(
-      (authorization) =>
-        withoutRecordKeys(authorization, ["integrationOwner"]),
+      (authorization) => withoutRecordKeys(authorization, ["integrationOwner"]),
     );
   const base = withoutRecordKeys(receipt, [
     "schemaVersion",
@@ -87,6 +87,8 @@ function rewriteParentReceiptWithoutIntegrationOwner(
 }
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0))
     fs.rmSync(root, { recursive: true, force: true });
 });
@@ -191,7 +193,303 @@ function fixture(
   return { root, parent, children, manifest, scriptArgs };
 }
 
+function makeChildrenDisjoint(root: string, parent: string): void {
+  const parentDir = path.join(root, ".pactile", "tasks", parent);
+  const { data, body } = readTaskMap(parentDir);
+  if (!data) throw new Error("Missing Parent task map");
+  data.children.forEach((child, index) => {
+    child.touches = [`src/independent-${index}`];
+  });
+  writeTaskMap(parentDir, data, body);
+}
+
+function installJevChoice(onRequest?: () => void): {
+  fetchImpl: ReturnType<typeof vi.fn>;
+  bodies: Record<string, unknown>[];
+} {
+  const bodies: Record<string, unknown>[] = [];
+  const fetchImpl = vi.fn(
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      bodies.push(body);
+      onRequest?.();
+      const questions = body.questions as Record<
+        string,
+        { criteria: Record<string, unknown> }
+      >;
+      const labels = Object.keys(questions.first_task?.criteria ?? {});
+      if (labels.length < 2) throw new Error("Expected a Jev scheduling tie");
+      const selected = labels[1];
+      const probabilities = Object.fromEntries(
+        labels.map((label) => [
+          label,
+          label === selected ? 0.96 : 0.04 / (labels.length - 1),
+        ]),
+      );
+      return new Response(
+        JSON.stringify({
+          model: "jev-test",
+          answers: {
+            first_task: {
+              type: "choice",
+              choice: selected,
+              confidence: 0.96,
+              probabilities,
+            },
+          },
+          usage: { input_tokens: 42, output_tokens: 1 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+  );
+  vi.stubEnv("PACTILE_JEV_ENABLED", "true");
+  vi.stubEnv("PACTILE_JEV_API_KEY", "jev-parallel-test-key");
+  vi.stubGlobal("fetch", fetchImpl);
+  return { fetchImpl, bodies };
+}
+
 describe("scheduler-driven Parent dispatch", () => {
+  it("uses one Jev-aware final receipt for an eligible Parent batch without applying the legacy count limit", async () => {
+    const { root, parent, children, manifest, scriptArgs } = fixture();
+    makeChildrenDisjoint(root, parent);
+    const jev = installJevChoice();
+
+    const result = await runParallelBatch(root, parent, manifest, {
+      command: process.execPath,
+      args: scriptArgs,
+    });
+    const receiptFile = path.resolve(root, result.schedule_receipt_file);
+    const receipt = JSON.parse(fs.readFileSync(receiptFile, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    const audit = receipt.jevAdviceAudit as Record<string, unknown>;
+    expect(jev.fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result.children).toHaveLength(children.length);
+    expect(result.children.map((child) => child.outcome)).toEqual([
+      "settled",
+      "settled",
+      "settled",
+    ]);
+    expect(result.max_active).toBe(3);
+    expect(result.compatibility_limit_ignored).toBe(1);
+    expect(result.schedule_advice_route).toBe("jev-aware");
+    expect(receipt.receiptFingerprint).toBe(
+      result.schedule_receipt_fingerprint,
+    );
+    expect(audit).toMatchObject({
+      status: "answered",
+      suggestedTaskIds: expect.any(Array),
+      adoptedTaskIds: expect.any(Array),
+      transport: { attempts: 1, model: "jev-test" },
+    });
+    expect((audit.adoptedTaskIds as string[])[0]).toBe(
+      (audit.suggestedTaskIds as string[])[0],
+    );
+    expect(
+      fs
+        .readdirSync(path.dirname(receiptFile))
+        .filter((name) => name.endsWith(".json")),
+    ).toHaveLength(1);
+    const sent = JSON.stringify(jev.bodies[0]);
+    expect(sent).not.toContain(root);
+    for (const child of children) expect(sent).not.toContain(child);
+  });
+
+  it("keeps the Parent batch deterministic with zero Jev transport when project egress is denied", async () => {
+    const { root, parent, manifest, scriptArgs } = fixture();
+    makeChildrenDisjoint(root, parent);
+    fs.writeFileSync(
+      path.join(root, ".pactile", "config.yaml"),
+      "jev:\n  egress: deny\n",
+    );
+    const jev = installJevChoice();
+
+    const result = await runParallelBatch(root, parent, manifest, {
+      command: process.execPath,
+      args: scriptArgs,
+    });
+    const receipt = JSON.parse(
+      fs.readFileSync(path.resolve(root, result.schedule_receipt_file), "utf8"),
+    ) as Record<string, unknown>;
+    expect(jev.fetchImpl).not.toHaveBeenCalled();
+    expect(result.schedule_advice_route).toBe("jev-aware");
+    expect(result.children.every((child) => child.outcome === "settled")).toBe(
+      true,
+    );
+    expect(receipt.request).not.toHaveProperty("jevAdvice");
+    expect(receipt.jevAdviceAudit).toMatchObject({
+      status: "fallback",
+      reasonCode: "egress-denied",
+      sentRequestSnapshot: null,
+      transport: { attempts: 0 },
+    });
+  });
+
+  it("discards a Parent batch Jev answer when project policy changes to deny during the request", async () => {
+    const { root, parent, manifest, scriptArgs } = fixture();
+    makeChildrenDisjoint(root, parent);
+    const jev = installJevChoice(() => {
+      fs.writeFileSync(
+        path.join(root, ".pactile", "config.yaml"),
+        "jev:\n  egress: deny\n",
+      );
+    });
+
+    const result = await runParallelBatch(root, parent, manifest, {
+      command: process.execPath,
+      args: scriptArgs,
+    });
+    const receipt = JSON.parse(
+      fs.readFileSync(path.resolve(root, result.schedule_receipt_file), "utf8"),
+    ) as Record<string, unknown>;
+    expect(jev.fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result.children.every((child) => child.outcome === "settled")).toBe(
+      true,
+    );
+    expect(receipt.request).not.toHaveProperty("jevAdvice");
+    expect(receipt.jevAdviceAudit).toMatchObject({
+      status: "superseded",
+      reasonCode: "egress-denied",
+      transport: { attempts: 1 },
+    });
+  });
+
+  it("keeps an explicit manifest advice on the legacy planner without Jev transport", async () => {
+    const { root, parent, children, manifest, scriptArgs } = fixture();
+    makeChildrenDisjoint(root, parent);
+    const data = JSON.parse(fs.readFileSync(manifest, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    data.jev_advice = {
+      task_order: [...children].reverse(),
+      evidence_ref: "parent:manual-schedule-advice",
+    };
+    fs.writeFileSync(manifest, JSON.stringify(data));
+    const jev = installJevChoice();
+
+    const result = await runParallelBatch(root, parent, manifest, {
+      command: process.execPath,
+      args: scriptArgs,
+    });
+    const receipt = JSON.parse(
+      fs.readFileSync(path.resolve(root, result.schedule_receipt_file), "utf8"),
+    ) as Record<string, unknown>;
+    const request = receipt.request as Record<string, unknown>;
+    const events = fs.readFileSync(
+      path.resolve(root, ".pactile", "tasks", parent, result.event_file),
+      "utf8",
+    );
+    expect(jev.fetchImpl).not.toHaveBeenCalled();
+    expect(result.schedule_advice_route).toBe("manifest-explicit");
+    expect(result.children.every((child) => child.outcome === "settled")).toBe(
+      true,
+    );
+    expect(request.jevAdvice).toMatchObject({
+      evidenceRef: "parent:manual-schedule-advice",
+    });
+    expect(receipt).not.toHaveProperty("jevAdviceAudit");
+    expect(events).toContain('"schedule_advice_route":"manifest-explicit"');
+  });
+
+  it("uses an auditable deterministic plan with an invalid project policy and no Jev transport", async () => {
+    const { root, parent, manifest, scriptArgs } = fixture();
+    makeChildrenDisjoint(root, parent);
+    fs.writeFileSync(
+      path.join(root, ".pactile", "config.yaml"),
+      "jev:\n  egress: maybe\n",
+    );
+    const jev = installJevChoice();
+
+    const result = await runParallelBatch(root, parent, manifest, {
+      command: process.execPath,
+      args: scriptArgs,
+    });
+    const receipt = JSON.parse(
+      fs.readFileSync(path.resolve(root, result.schedule_receipt_file), "utf8"),
+    ) as Record<string, unknown>;
+    expect(jev.fetchImpl).not.toHaveBeenCalled();
+    expect(result.children.every((child) => child.outcome === "settled")).toBe(
+      true,
+    );
+    expect(receipt.request).not.toHaveProperty("jevAdvice");
+    expect(receipt.jevAdviceAudit).toMatchObject({
+      status: "fallback",
+      reasonCode: "configuration-invalid",
+      projectEgressPolicy: {
+        atScheduleStart: "configuration-invalid",
+        beforeAdviceRequest: "configuration-invalid",
+        afterAdviceResponse: "configuration-invalid",
+      },
+      transport: { attempts: 0 },
+    });
+  });
+
+  it("records missing Jev configuration while dispatching the deterministic waves", async () => {
+    const { root, parent, manifest, scriptArgs } = fixture();
+    makeChildrenDisjoint(root, parent);
+    vi.stubEnv("PACTILE_JEV_API_KEY", "");
+    vi.stubEnv("PACTILE_JEV_ENABLED", "true");
+    const fetchImpl = vi.fn();
+    vi.stubGlobal("fetch", fetchImpl);
+
+    const result = await runParallelBatch(root, parent, manifest, {
+      command: process.execPath,
+      args: scriptArgs,
+    });
+    const receipt = JSON.parse(
+      fs.readFileSync(path.resolve(root, result.schedule_receipt_file), "utf8"),
+    ) as Record<string, unknown>;
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(result.max_active).toBe(3);
+    expect(result.children.every((child) => child.outcome === "settled")).toBe(
+      true,
+    );
+    expect(receipt.request).not.toHaveProperty("jevAdvice");
+    expect(receipt.jevAdviceAudit).toMatchObject({
+      status: "fallback",
+      reasonCode: "configuration-missing",
+      transport: { attempts: 0 },
+    });
+  });
+
+  it("records a Jev service failure while dispatching the deterministic waves", async () => {
+    const { root, parent, manifest, scriptArgs } = fixture();
+    makeChildrenDisjoint(root, parent);
+    vi.stubEnv("PACTILE_JEV_ENABLED", "true");
+    vi.stubEnv("PACTILE_JEV_API_KEY", "jev-parallel-test-key");
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response("", {
+          status: 503,
+          headers: { "retry-after-ms": "0" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+
+    const result = await runParallelBatch(root, parent, manifest, {
+      command: process.execPath,
+      args: scriptArgs,
+    });
+    const receipt = JSON.parse(
+      fs.readFileSync(path.resolve(root, result.schedule_receipt_file), "utf8"),
+    ) as Record<string, unknown>;
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(result.max_active).toBe(3);
+    expect(result.children.every((child) => child.outcome === "settled")).toBe(
+      true,
+    );
+    expect(receipt.request).not.toHaveProperty("jevAdvice");
+    expect(receipt.jevAdviceAudit).toMatchObject({
+      status: "fallback",
+      reasonCode: "service-unavailable",
+      transport: { attempts: 2 },
+    });
+    expect(JSON.stringify(receipt)).not.toContain("jev-parallel-test-key");
+  });
+
   it("ignores legacy numeric limits, follows schedule waves, and records integration metrics", async () => {
     const { root, parent, children, manifest, scriptArgs } = fixture();
     const result = await runParallelBatch(root, parent, manifest, {
@@ -706,9 +1004,10 @@ describe("scheduler-driven Parent dispatch", () => {
       ],
     });
     expect(scheduled.receipt.plan.waves[0]?.taskIds).toHaveLength(2);
-    const legacyReceiptFingerprint = rewriteParentReceiptWithoutIntegrationOwner(
-      path.resolve(root, scheduled.receiptFile),
-    );
+    const legacyReceiptFingerprint =
+      rewriteParentReceiptWithoutIntegrationOwner(
+        path.resolve(root, scheduled.receiptFile),
+      );
     const firstDir = path.join(root, ".pactile", "tasks", firstTaskDir);
     const secondDir = path.join(root, ".pactile", "tasks", secondTaskDir);
     const releaseFirst = reserveParallelChild(root, firstDir, {

@@ -217,16 +217,30 @@ Direct bridge reservations do not get a count cap; they still require an
 eligible Task and reject active write collisions unless the same verified
 receipt authorizes the pair.
 
+Without `manifest.jev_advice`, active Parent batches use the async Jev-aware
+scheduler. It asks Jev only to break a tie between already eligible critical
+path candidates and dispatches from the single persisted final receipt.
+Project `jev.egress: deny` or invalid policy prevents transport; a policy
+change to deny after a response supersedes the answer before the final plan.
+Missing configuration, transport failure, and unusable advice leave a
+deterministic plan and an explanatory audit. A manifest with explicit
+`jev_advice` and `evidence_ref` keeps the existing synchronous planning path;
+it does not issue a Jev request. The batch result and `schedule_persisted`
+event identify these paths as `jev-aware` or `manifest-explicit` in
+`schedule_advice_route` and point to the same final receipt. Neither route
+sets a numeric concurrency ceiling or bypasses approval, worktree, lease, or
+Parent integration gates.
+
 ### P34 coverage status
 
 | P34 surface | Status in this slice |
 | --- | --- |
-| Parent V1 async API, same-critical-path tie-break, immutable final receipt and audit | Implemented and covered by focused tests. |
+| Parent V1 async API, same-critical-path tie-break, immutable final receipt and audit | Implemented and used by active `parallel run` batches without explicit manifest advice; covered by focused tests. |
 | Parent V1 approval, configured worktree, active lease, and post-response eligibility recheck | Implemented with existing validators and covered by positive/negative tests. |
 | Standalone V2 waiting-Run, authorization, manager-owned worktree, write-set, active lease, and post-response snapshot recheck | Implemented in `scheduleTaskKernelGraphWithJevV1`; covered by focused positive/negative tests. |
-| Project `jev.egress` deny/invalid zero-transport fallback, post-response drift rejection, and bounded fingerprint-bound V2 receipts | Implemented and covered by direct-library and CLI/scheduler tests; no live Jev service call was made. |
+| Project `jev.egress` deny/invalid zero-transport fallback, post-response drift rejection, and bounded fingerprint-bound receipts | Implemented for Parent V1 and standalone V2; covered by focused direct-library and CLI/scheduler tests; no live Jev service call was made. |
 | No-key, timeout, service error, low-confidence, and privacy-safe input fallback | Parent V1 is covered with facade/transport stubs; the shared V2 advice API uses the same transport and bounded summary contract. |
-| `parallel run` / Pi / Codex Host dispatch wiring before P37 admission | Not connected. The current CLI batch path still calls synchronous `scheduleParentTaskGraph`; Host wiring remains a separate P34 node and was intentionally kept outside this slice. |
+| Active `parallel run` Parent batch dispatch | Connected to the Jev-aware async scheduler when no explicit `manifest.jev_advice` exists. Explicit manifest advice retains synchronous scheduling. Separate Pi/Codex Host dispatch changes remain outside this slice. |
 | Jev execution-role recommendation | Not implemented here. This slice only breaks equal critical-path ordering ties. |
 
 ### Standalone V2 dispatch admission and writer leases

@@ -1244,6 +1244,7 @@ export async function scheduleParentTaskGraphWithJevV1(
   jev?: JevScheduleAdviceOptionsV1,
 ): Promise<PersistedTaskScheduleV1> {
   const root = path.resolve(rootValue);
+  const policyAtScheduleStart = resolveJevProjectEgressPolicyV1(root);
   const planningOptions: TaskMapScheduleOptionsV1 = { ...options };
   delete planningOptions.jevAdvice;
 
@@ -1261,36 +1262,30 @@ export async function scheduleParentTaskGraphWithJevV1(
     worktreePassedTaskIds: [],
     activeLeaseCheckAt: null,
   };
-  let requested: Awaited<ReturnType<typeof requestJevTaskScheduleAdviceV1>>;
-
   if (structuralCandidates.length > 0) {
     initialEligibility = verifyJevScheduleCandidates(
       root,
       previewSnapshot,
       structuralCandidates,
     );
-    requested = await requestJevTaskScheduleAdviceV1({
-      candidates: initialEligibility.candidates,
-      filteredCandidates: initialEligibility.filteredCandidates,
-      eligibility: {
-        approvalPassedTaskIds: initialEligibility.approvalPassedTaskIds,
-        worktreePassedTaskIds: initialEligibility.worktreePassedTaskIds,
-        activeLeaseCheckAt: initialEligibility.activeLeaseCheckAt,
-      },
-      options: jev,
-    });
-  } else {
-    requested = await requestJevTaskScheduleAdviceV1({
-      candidates: [],
-      filteredCandidates: [],
-      eligibility: {
-        approvalPassedTaskIds: [],
-        worktreePassedTaskIds: [],
-        activeLeaseCheckAt: null,
-      },
-      options: jev,
-    });
   }
+  const policyBeforeAdviceRequest = resolveJevProjectEgressPolicyV1(root);
+  const projectPolicyFallbackReasonCode = !policyAtScheduleStart.allowed
+    ? policyAtScheduleStart.reasonCode
+    : !policyBeforeAdviceRequest.allowed
+      ? policyBeforeAdviceRequest.reasonCode
+      : undefined;
+  const requested = await requestJevTaskScheduleAdviceV1({
+    candidates: initialEligibility.candidates,
+    filteredCandidates: initialEligibility.filteredCandidates,
+    eligibility: {
+      approvalPassedTaskIds: initialEligibility.approvalPassedTaskIds,
+      worktreePassedTaskIds: initialEligibility.worktreePassedTaskIds,
+      activeLeaseCheckAt: initialEligibility.activeLeaseCheckAt,
+    },
+    options: jev,
+    fallbackReasonCode: projectPolicyFallbackReasonCode,
+  });
 
   const finalSnapshot = buildPlanningSnapshot(root, parentRef, planningOptions);
   const finalStructuralCandidates = firstCriticalPathCandidates(
@@ -1301,6 +1296,7 @@ export async function scheduleParentTaskGraphWithJevV1(
     finalSnapshot,
     finalStructuralCandidates,
   );
+  const policyAfterAdviceResponse = resolveJevProjectEgressPolicyV1(root);
   let finalRequest = finalSnapshot.request;
   const advice = requested.advice;
   const requestStateStable =
@@ -1337,9 +1333,17 @@ export async function scheduleParentTaskGraphWithJevV1(
     },
     eligibilityChanged,
   );
+  audit = {
+    ...audit,
+    projectEgressPolicy: projectEgressAudit(
+      policyAtScheduleStart,
+      policyBeforeAdviceRequest,
+      policyAfterAdviceResponse,
+    ),
+  };
 
   if (advice) {
-    if (!eligibilityChanged) {
+    if (!eligibilityChanged && policyAfterAdviceResponse.allowed) {
       finalRequest = { ...finalSnapshot.request, jevAdvice: advice };
       audit = finalizeJevTaskScheduleAdviceV1(
         audit,
@@ -1348,6 +1352,12 @@ export async function scheduleParentTaskGraphWithJevV1(
     } else {
       audit = supersedeJevTaskScheduleAdviceV1(audit);
     }
+  }
+  if (!policyAfterAdviceResponse.allowed) {
+    audit = applyJevTaskScheduleEgressFallbackV1(
+      audit,
+      policyAfterAdviceResponse.reasonCode,
+    );
   }
 
   const plan = planTaskScheduleV1(finalRequest);
@@ -1362,7 +1372,12 @@ export async function scheduleParentTaskGraphWithJevV1(
     lifecycle: finalSnapshot.lifecycle,
     jevAdviceAudit: audit,
   };
-  const stored = persistReceipt(finalSnapshot.parentDir, receiptBase);
+  // Jev confidence maps have a null prototype. Hash the parsed JSON value
+  // that dispatch will read, so its receipt fingerprint verifies after storage.
+  const stored = persistReceipt(
+    finalSnapshot.parentDir,
+    JSON.parse(JSON.stringify(receiptBase)) as typeof receiptBase,
+  );
   return { ...stored, receiptFile: relativeTaskDir(root, stored.receiptFile) };
 }
 

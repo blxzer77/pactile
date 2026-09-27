@@ -79,7 +79,7 @@ export interface JevScheduleAdviceAuditV1 {
   readonly suggestedTaskIds: readonly string[];
   readonly adoptedTaskIds: readonly string[];
   readonly overriddenTaskIds: readonly string[];
-  /** Project egress policy snapshots recorded by the standalone V2 scheduler. */
+  /** Project egress policy snapshots recorded by Jev-aware schedulers. */
   readonly projectEgressPolicy?: JevScheduleProjectEgressAuditV1;
   readonly transport: {
     readonly latencyMs: number;
