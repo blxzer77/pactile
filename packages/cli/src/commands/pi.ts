@@ -20,6 +20,7 @@ import {
   preparePiReviewEscalationV1,
   writePiReviewArtifact,
 } from "../pactile/review/escalation.js";
+import { createPiReviewRoutingAdviceV1 } from "../pactile/review/jev-escalation-advice.js";
 import { resolveTaskDir } from "../pactile/task/session.js";
 
 function option(args: string[], name: string): string | undefined {
@@ -78,6 +79,8 @@ function updateReviewRunRecord(
     | "codex_escalation"
     | "codex_escalation_request_ref"
     | "codex_escalation_request_status"
+    | "jev_review_advice_ref"
+    | "jev_review_advice_status"
   >,
 ): PiRunRecord {
   const updated = { ...current, ...changes };
@@ -167,6 +170,8 @@ async function recordIndependentPiReview(
   let escalation: PiRunRecord["codex_escalation"] = null;
   let escalationStatus: PiRunRecord["codex_escalation_request_status"] =
     "pending";
+  let jevAdviceRef: string | null = null;
+  let jevAdviceStatus: PiRunRecord["jev_review_advice_status"] = "skipped";
   let recordedReviewId: string | null = null;
   const reject = (reason: string, status = escalationStatus): PiRunRecord =>
     updateReviewRunRecord(taskDir, record, {
@@ -177,6 +182,8 @@ async function recordIndependentPiReview(
       codex_escalation: escalation,
       codex_escalation_request_ref: escalationRequestRef,
       codex_escalation_request_status: status,
+      jev_review_advice_ref: jevAdviceRef,
+      jev_review_advice_status: jevAdviceStatus,
     });
 
   if (record.outcome !== "settled") {
@@ -253,6 +260,31 @@ async function recordIndependentPiReview(
     ];
     escalation = review.escalation;
     escalationStatus = "not-required";
+    const routingAdvice = await createPiReviewRoutingAdviceV1({
+      root,
+      taskDir,
+      binding: {
+        taskId: current.kernel.identity.taskId,
+        reviewId,
+        piRunId: record.run_id,
+        runId: current.run.id,
+        candidateSnapshotId: current.run.candidateSnapshot?.id ?? "",
+        candidateFingerprint:
+          current.run.candidateSnapshot?.fingerprint ?? "",
+        reviewArtifactRef: artifact.ref,
+        reviewArtifactSha256: artifact.sha256,
+        reviewContentFingerprint: artifact.contentFingerprint,
+      },
+      ...(review.escalation.required
+        ? { skipReason: "hard-rule-required" as const }
+        : review.verdict === "pass"
+          ? { skipReason: "passing-review" as const }
+          : {}),
+      isStillCurrent: () =>
+        sameReviewBinding(current, preparePiReviewRoute(root, taskReference)),
+    });
+    jevAdviceRef = routingAdvice.ref;
+    jevAdviceStatus = routingAdvice.receipt.recommendationDisposition;
     if (review.escalation.required) {
       const preparedEscalation = preparePiReviewEscalationV1({
         taskDir,
@@ -262,6 +294,21 @@ async function recordIndependentPiReview(
         reviewArtifactRef: artifact.ref,
         reviewArtifactSha256: artifact.sha256,
         reviewContentFingerprint: artifact.contentFingerprint,
+      });
+      escalationRequestRef = preparedEscalation.ref;
+      escalationStatus = "prepared";
+    } else if (routingAdvice.prepareOptionalEscalation) {
+      const preparedEscalation = preparePiReviewEscalationV1({
+        taskDir,
+        reviewId,
+        taskId: current.kernel.identity.taskId,
+        review,
+        reviewArtifactRef: artifact.ref,
+        reviewArtifactSha256: artifact.sha256,
+        reviewContentFingerprint: artifact.contentFingerprint,
+        basis: "jev-recommended",
+        jevAdviceRef: routingAdvice.ref,
+        jevAdviceSha256: routingAdvice.sha256,
       });
       escalationRequestRef = preparedEscalation.ref;
       escalationStatus = "prepared";
@@ -314,6 +361,8 @@ async function recordIndependentPiReview(
       codex_escalation: escalation,
       codex_escalation_request_ref: escalationRequestRef,
       codex_escalation_request_status: escalationStatus,
+      jev_review_advice_ref: jevAdviceRef,
+      jev_review_advice_status: jevAdviceStatus,
     });
     return {
       record: updated,
@@ -332,6 +381,8 @@ async function recordIndependentPiReview(
           codex_escalation: escalation,
           codex_escalation_request_ref: escalationRequestRef,
           codex_escalation_request_status: escalationStatus,
+          jev_review_advice_ref: jevAdviceRef,
+          jev_review_advice_status: jevAdviceStatus,
         }),
         exitCode: 1,
       };

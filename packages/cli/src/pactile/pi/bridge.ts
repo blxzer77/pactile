@@ -160,6 +160,13 @@ export interface PiRunRecord {
     | "not-required"
     | "prepared"
     | "preparation-failed";
+  jev_review_advice_ref?: string | null;
+  jev_review_advice_status?:
+    | "skipped"
+    | "adopted"
+    | "overridden"
+    | "unavailable"
+    | "superseded";
 }
 
 export interface PiRunInput {

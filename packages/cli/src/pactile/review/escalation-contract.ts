@@ -20,6 +20,9 @@ export interface PreparedPiReviewEscalationV1 {
   reviewArtifactRef: string;
   reviewArtifactSha256: string;
   reviewContentFingerprint: string;
+  basis: "hard-rule" | "jev-recommended";
+  jevAdviceRef: string | null;
+  jevAdviceSha256: string | null;
   reasons: string[];
   summary: string;
   preparedFingerprint: string;
@@ -208,9 +211,16 @@ export function preparedKeys(): string[] {
     "schemaVersion", "source", "status", "requestId", "target", "taskId",
     "reviewId", "piRunId", "escalationId", "runId", "candidateSnapshotId",
     "candidateFingerprint", "reviewArtifactRef", "reviewArtifactSha256",
-    "reviewContentFingerprint", "reasons", "summary", "preparedFingerprint",
+    "reviewContentFingerprint", "basis", "jevAdviceRef", "jevAdviceSha256",
+    "reasons", "summary", "preparedFingerprint",
     "preparedAt", "sentAt", "responseRef",
   ];
+}
+
+export function legacyPreparedKeys(): string[] {
+  return preparedKeys().filter(
+    (key) => key !== "basis" && key !== "jevAdviceRef" && key !== "jevAdviceSha256",
+  );
 }
 
 export function preparedSummaryFromPiReview(

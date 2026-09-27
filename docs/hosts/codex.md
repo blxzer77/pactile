@@ -70,6 +70,24 @@ immutable. Start the send from the source Task's current V2 Verify Run and
 non-passing Pi Review, targeting a V2 Verify/Integrate Task with its current
 completed candidate and a bound Review thread:
 
+For a non-PASS Pi Review that does not trigger a mandatory escalation rule,
+Pactile may ask Jev's `review-routing` node one bounded question using a fixed,
+generic summary. The request contains no Task identity, candidate details,
+Review prose, evidence references, or source snippets. A provider-reported
+confidence of at least 0.65 for `append-codex-review` prepares an optional P40
+request; `keep-pi-review`, unavailable advice, low confidence, or denied
+project egress leaves the current route in place. Each attempt or skip records
+a local, content-safe receipt with the recommendation, decision basis,
+provider confidence, project egress state, and transport latency/cost facts.
+Pi's uncertainty, high-impact, and disputed-finding rules remain mandatory and
+skip Jev. PASS also skips Jev. This advice does not change the Pi verdict or
+Kernel Review, send a Codex message, authorize a Run, or Close the Task; sending
+still follows the explicit P40 commands below.
+
+The Jev `execution-routing` node is reserved and is not called by this V2
+Execute path: current product execution dispatch is Pi-only, with no alternate
+provider candidate set to route.
+
 ```text
 pactile codex prepare <source-task> --tool message --thread-id <review-thread> --to-task <review-task> --run-id <source-run> --to-run-id <review-run> --escalation-id pi-escalation:<pi-run-uuid>
 pactile codex receipt <source-task> <send-request-id> --result-file send-result.json --evidence-level desktop-native

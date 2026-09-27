@@ -60,6 +60,20 @@ pactile codex unblock <receiver-task> <block-id> --resolution-message-id <reques
 
 已准备的 P40 升级可以请求另一个已绑定的 Codex `review` thread 给出独立、只读 Review。Pi Review 产物保持不可变。发送必须从来源 Task 当前 V2 Verify Run 和非通过 Pi Review 发起，并发给具有当前已完成候选的 V2 Verify/Integrate Task 及其已绑定 Review thread：
 
+若 Pi Review 为非 PASS，且未命中强制升级规则，Pactile 可调用 Jev 的
+`review-routing` 节点提出一个有界问题，使用固定的通用摘要。请求不包含
+Task 身份、候选细节、Review 正文、证据引用或源码片段。只有 provider 原样
+报告且不低于 0.65 的 `append-codex-review` 置信度会准备可选 P40 请求；
+`keep-pi-review`、建议不可用、低置信度或项目 egress 被拒绝时，保留当前路由。
+每次调用或跳过都会写入本地安全回执，记录建议、采用依据、provider 置信度、
+项目 egress 状态和传输延迟/成本事实。Pi 对不确定性、高影响和争议发现的规则
+仍然强制执行并跳过 Jev；PASS 也跳过 Jev。该建议不会改变 Pi verdict 或
+Kernel Review，不会发送 Codex 消息、授权 Run 或 Close Task；发送仍须显式走
+下方 P40 命令。
+
+当前 V2 Execute 路径只有 Pi 执行器，没有可路由的替代 provider 候选集，因此
+Jev 的 `execution-routing` 节点仅预留，本路径不会调用。
+
 ```text
 pactile codex prepare <source-task> --tool message --thread-id <review-thread> --to-task <review-task> --run-id <source-run> --to-run-id <review-run> --escalation-id pi-escalation:<pi-run-uuid>
 pactile codex receipt <source-task> <send-request-id> --result-file send-result.json --evidence-level desktop-native
