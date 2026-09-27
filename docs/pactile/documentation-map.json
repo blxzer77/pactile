@@ -715,6 +715,24 @@
       "reason": "The root support entry is a live user-help and redaction boundary."
     },
     {
+      "path": "docs/capabilities/bounded-workspace-requests.md",
+      "classification": "live",
+      "language": "en",
+      "action": "rewrite",
+      "targetPage": "capabilities.index",
+      "ownerLane": "batch-4-docs-hosts-capabilities",
+      "reason": "Canonical English guide for bounded Node workspace requests, linked from the capability index."
+    },
+    {
+      "path": "docs/capabilities/bounded-workspace-requests.zh-CN.md",
+      "classification": "live",
+      "language": "zh-CN",
+      "action": "rewrite",
+      "targetPage": "capabilities.index",
+      "ownerLane": "batch-4-docs-hosts-capabilities",
+      "reason": "Canonical Chinese guide for bounded Node workspace requests, linked from the capability index."
+    },
+    {
       "path": "docs/capabilities/index.md",
       "classification": "live",
       "language": "en",

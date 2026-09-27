@@ -80,6 +80,8 @@ See [Hosts](docs/hosts/index.md) and [Capabilities](docs/capabilities/index.md) 
 
 Migration inputs are read-only. Modified, foreign, unknown, or borrowed resources fail safe and remain available for review. See [Lifecycle](docs/lifecycle/index.md) and [Troubleshooting](docs/troubleshooting/index.md).
 
+`pactile capability <request.json>` executes a versioned, bounded workspace request. See [bounded workspace requests](docs/capabilities/bounded-workspace-requests.md) for budgets, cancellation, outcomes, and receipts.
+
 ## Packages
 
 `@blxzer/pactile` is the single release package. It includes the CLI, templates,

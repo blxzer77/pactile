@@ -78,6 +78,8 @@ Pactile 将能力来源（`native`、`provider`、`heuristic`、`unsupported`）
 
 迁移输入保持只读。modified、foreign、unknown 或 borrowed 资源会安全保留并进入审阅。详见[生命周期](docs/lifecycle/index.zh-CN.md)与[故障排查](docs/troubleshooting/index.zh-CN.md)。
 
+`pactile capability <request.json>` 执行版本化、有界的工作区请求。请求/结果契约、预算、取消、outcome 与回执见[有界工作区请求](docs/capabilities/bounded-workspace-requests.zh-CN.md)。
+
 ## 包
 
 `@blxzer/pactile` 是唯一发布包，包含 CLI、模板、Adapters、生命周期和宿主无关的

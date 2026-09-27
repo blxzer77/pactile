@@ -12,6 +12,7 @@ Pactile 将能力的 origin 与 assurance 分开。能力可能是宿主原生�
 | MCP      | [MCP](mcp.zh-CN.md)                              | `provider` 或 `unsupported`       | 读取选定 manifest 并运行获批 probe。             |
 | 原生资源 | [install、adopt、bind](native-adoption.zh-CN.md) | 宿主所有或 borrowed               | 将当前字节与已记录 preimage 比较。               |
 | 检索     | [检索](retrieval.zh-CN.md)                       | exact search 加可选 Provider      | 先做精确搜索，再在源码中核对候选。               |
+| 工作区工具 | [有界工作区请求](bounded-workspace-requests.zh-CN.md) | 内置 Node Adapter                   | 设置请求预算，并检查 outcome 与错误码。           |
 | Provider | [Provider](providers.zh-CN.md)                   | 显式安装并授权                    | 检查 origin、readiness、freshness 与 assurance。 |
 | 隐私     | [隐私与权限](privacy-and-permissions.zh-CN.md)   | 策略边界                          | 启用前审阅数据流和凭据范围。                     |
 | Subagent | [Subagent](subagents.zh-CN.md)                   | 宿主派发加共享 Task 契约          | 使用 CLI dispatch prompt 与 Task gate。          |

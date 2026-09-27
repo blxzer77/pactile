@@ -30,6 +30,7 @@ import { runCodexCli } from "../commands/codex.js";
 import { runContextCliAsync } from "../commands/context.js";
 import { runTileSelectionCli } from "../commands/tile-selection.js";
 import { runSessionCli } from "../commands/session.js";
+import { runCapabilityCli } from "../commands/capability.js";
 import {
   PACTILE_ENVIRONMENT_KEYS,
   readPactileEnvironment,
@@ -84,11 +85,17 @@ const cwd = process.cwd();
 const argvRest = process.argv.slice(2);
 const isStdioMcp = argvRest.includes("mcp");
 const isKernelJson = argvRest[0] === "kernel";
+const isCapabilityJson = argvRest[0] === "capability";
 const isMachineReadableLegacyTask =
   argvRest[0] === "legacy-task" &&
   (argvRest[1] === "reconcile" ||
     (argvRest[1] === "history" && argvRest.includes("--json")));
-if (isWorkflowInitialized(cwd) && !isStdioMcp && !isKernelJson) {
+if (
+  isWorkflowInitialized(cwd) &&
+  !isStdioMcp &&
+  !isKernelJson &&
+  !isCapabilityJson
+) {
   checkForUpdates(cwd, isMachineReadableLegacyTask);
 }
 
@@ -515,6 +522,23 @@ program
   .argument("[arguments...]")
   .action(() => {
     process.exitCode = runSessionCli(process.argv.slice(3));
+  });
+
+program
+  .command("capability")
+  .description(
+    "Run a bounded workspace capability request with the Node adapter",
+  )
+  .addHelpText(
+    "after",
+    "\nUsage: pactile capability <request.json> [--allow-command <command-id>]\n",
+  )
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .argument("[request-file]")
+  .argument("[options...]")
+  .action(async () => {
+    process.exitCode = await runCapabilityCli(process.argv.slice(3));
   });
 
 program

@@ -56,7 +56,7 @@ const CANONICAL_POLICY_DIGESTS = {
   inventory: "1b80e5487f3409671babfd5bd44f8a53066cbafcb4ccee2f34317e2ced64a6aa",
   renameMap: "e7e3a0eeb7ba5c97b5ed614b13c8ac628e9e3781d57ec763be06f405bb1b91aa",
   documentationMap:
-    "bba85fc1318f9e613f9b42a370fa6ca758e2ee529733026ec75d4f6403d57102",
+    "02b591edaa8dab2bba0f9d5e17a86b217e3928f67f71e7d2981023a5d3230ee1",
 };
 const REQUIRED_TOKEN_IDS = [
   "legacy-product-name",
@@ -115,6 +115,8 @@ const REQUIRED_DOCUMENTATION_SOURCES = [
   "CONTRIBUTING.md",
   "SECURITY.md",
   "SUPPORT.md",
+  "docs/capabilities/bounded-workspace-requests.md",
+  "docs/capabilities/bounded-workspace-requests.zh-CN.md",
   "docs/capabilities/index.md",
   "docs/capabilities/index.zh-CN.md",
   "docs/capabilities/mcp.md",
