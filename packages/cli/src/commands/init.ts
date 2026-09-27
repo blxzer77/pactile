@@ -54,7 +54,6 @@ import {
   type RegistrySource,
   type RegistryBackend,
 } from "../utils/template-fetcher.js";
-import { setupProxy, maskProxyUrl } from "../utils/proxy.js";
 import {
   reportInitReadiness,
   snapshotReadinessForRollout,
@@ -1382,12 +1381,6 @@ export async function init(options: InitOptions): Promise<void> {
       "\n   Governed AI workflow for Codex\n",
     ),
   );
-
-  // Set up proxy before any network calls
-  const proxyUrl = setupProxy();
-  if (proxyUrl) {
-    console.log(chalk.gray(`   Using proxy: ${maskProxyUrl(proxyUrl)}\n`));
-  }
 
   // Set write mode based on options
   let writeMode: WriteMode = "ask";

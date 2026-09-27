@@ -62,7 +62,7 @@ P33 还提供可选 Jev 建议 seam：`prepareBatch2TileSelectionWithJevV1(reque
 
 真实 CLI `pactile context --mode session --json` 在环境变量 `PACTILE_JEV_API_KEY` 存在时可选调用该 seam。key 只从进程环境读取，不写入 Pactile 状态或回执。项目配置省略 `jev.egress` 且配置有效或不存在时默认允许；显式项目 deny 或无效配置会在 HTTP 前阻止 Jev。项目 allow 不会扩大权限：当前选中 Task 的 active Run grant 仍须独立允许 network、credentials、`project-approved-egress`、`https://api.typesafe.ai` 和非 free 的 cost ceiling。仅有 key 不构成外发授权。`PACTILE_JEV_ENABLED` 未设置时不要求额外开关；设置为 `false` 会禁用 Jev。每次 session 最多一个决策，deadline 为 2.5 秒，最多一次有界重试。无 key、显式禁用、外发策略拒绝、识别出的敏感内容、服务失败或无效回答时，保留本地确定性 session 并增加有界解释。
 
-Jev HTTP 对固定的 TypeSafe 目标遵循 `HTTPS_PROXY`/`https_proxy` 与 `NO_PROXY`/`no_proxy`。匹配 `NO_PROXY` 时跳过代理。Pactile 只在外发授权通过后构造代理；代理配置无效时回退，不尝试直连。调用方显式注入的 `fetchImpl` 仍然优先。
+Pactile 不配置网络代理。所需代理或网络通路由宿主在 Pactile 外部提供；嵌入调用方也可传入 `fetchImpl`。Pactile 仍会在发起 Jev 请求前检查项目外发授权。
 
 session 路径只发送 P34 请求：简短的 intent/output 摘要，以及最多 8 个已通过硬过滤的 Tile 候选，字段限于逻辑 ref、摘要、outputs 和依赖闭包；不会发送 Task 工件或任意项目源码文件。返回的 `tileSelection.jevAdvice` 记录 offer/input 指纹、可信 active/approval Run ID、有界候选与建议 refs、模型、延迟、usage/成本估计、Provider 原样提供的 confidence 和回退原因；缺失或无效的 confidence 会显式标记为 unavailable。Tile 的 Noul probability 不会写成 confidence。已回答的建议还会以写后不改的脱敏回执保存在 `.pactile/runtime/receipts/`，不含 key 或请求正文。建议命令带 `--jev-advice-fingerprint`，由决策路径将该建议及两个 Run ID 与当前 Kernel、Offer、Task lifecycle 绑定；过期或被修改的建议会 fail closed，不写入关联快照。旧版 Kernel 或缺少任一可信 Run ID 时会跳过 Jev，保留确定性 offer 并给出回退说明，不会编造 Run ID。若使用不带该指纹的普通 session 决策命令，CLI 会保存独立 V2 显式决定，但不会与 Jev 关联，也不代表采纳 Jev；此时 Jev 建议回执仍只是 pending advice。请求期间若选中 Task、active Run、生命周期 revision 或 offer 指纹发生变化，就丢弃 Jev 答案并返回当前确定性 offer。public facade 本身仍显式接收调用配置，不读取环境变量。
 

@@ -8,7 +8,6 @@ import type {
 } from "./contracts.js";
 import { egressFailure, validateInput } from "./outbound.js";
 import { requestJevHttpV1 } from "./http.js";
-import { createJevEnvironmentFetchV1 } from "./proxy.js";
 import {
   costEstimate,
   decisionConfidence,
@@ -81,31 +80,18 @@ export function createJevTransportV1(config: JevTransportConfigV1 = {}) {
     )
       return failForInput("configuration-invalid");
     if (options.signal?.aborted) return failForInput("cancelled");
-    let environmentFetch: ReturnType<typeof createJevEnvironmentFetchV1> = null;
-    if (config.fetchImpl === undefined) {
-      try {
-        environmentFetch = createJevEnvironmentFetchV1();
-      } catch {
-        return failForInput("configuration-invalid");
-      }
-    }
-    const fetchImpl = config.fetchImpl ?? environmentFetch?.fetchImpl ?? globalThis.fetch;
+    const fetchImpl = config.fetchImpl ?? globalThis.fetch;
     if (typeof fetchImpl !== "function")
       return failForInput("runtime-unsupported");
 
-    let http: Awaited<ReturnType<typeof requestJevHttpV1>>;
-    try {
-      http = await requestJevHttpV1({
-        apiKey: key,
-        body: input.body,
-        deadlineMs,
-        maxRetries,
-        fetchImpl,
-        signal: options.signal,
-      });
-    } finally {
-      await environmentFetch?.close().catch(() => undefined);
-    }
+    const http = await requestJevHttpV1({
+      apiKey: key,
+      body: input.body,
+      deadlineMs,
+      maxRetries,
+      fetchImpl,
+      signal: options.signal,
+    });
     if (!http.ok) return failForInput(http.reasonCode, http.metrics);
     const confidence = readJevConfidenceReceiptV1(
       http.payload,
