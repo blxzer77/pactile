@@ -31,7 +31,24 @@ fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
 fs.writeFileSync(sessionFile, "session\n");
 
 const reviewResult: unknown = JSON.parse(fs.readFileSync(resultFile, "utf8"));
-const sessionId = option("--session-id", "pi-checker");
+let sessionId = option("--session-id", "pi-checker");
+const malformedMode = option("--malformed", "none");
+const switchSessionOnSecond = process.argv.includes("--switch-session-on-second");
+const delayCorrectionGetStateMs = Number(
+  option("--delay-correction-get-state-ms", "0"),
+);
+const maliciousMetadata = process.argv.includes("--malicious-metadata");
+const switchSessionBeforeCorrection = process.argv.includes(
+  "--switch-session-before-correction",
+);
+const cancelCorrectionPreflight = process.argv.includes(
+  "--cancel-correction-preflight",
+);
+const cancelFile = option("--cancel-file");
+const latestFile = option("--latest-file");
+const metadataCanary = "private-metadata-canary-74192";
+let promptCount = 0;
+let stateRequestCount = 0;
 let isStreaming = false;
 
 function writeMessage(message: unknown): void {
@@ -57,7 +74,29 @@ function handleLine(line: string): void {
     });
 
   if (request.type === "get_state") {
-    reply({ data: { isStreaming, sessionId, sessionFile } });
+    stateRequestCount += 1;
+    if (stateRequestCount === 4 && switchSessionBeforeCorrection)
+      sessionId = "switched-before-correction";
+    if (stateRequestCount === 4 && cancelCorrectionPreflight) {
+      const latest: unknown = JSON.parse(fs.readFileSync(latestFile, "utf8"));
+      if (!isRecord(latest) || typeof latest.run_id !== "string") {
+        throw new Error("The fake Pi Review fixture could not identify its run.");
+      }
+      fs.writeFileSync(
+        cancelFile,
+        `${JSON.stringify({ request_id: "cancel-correction-preflight", run_id: latest.run_id })}\n`,
+        { mode: 0o600 },
+      );
+    }
+    const reportedSessionFile = maliciousMetadata
+      ? `${sessionDirectory}/${metadataCanary}`
+      : sessionFile;
+    const data = { isStreaming, sessionId, sessionFile: reportedSessionFile };
+    if (stateRequestCount === 4 && delayCorrectionGetStateMs > 0) {
+      setTimeout(() => reply({ data }), delayCorrectionGetStateMs);
+    } else {
+      reply({ data });
+    }
     return;
   }
   if (request.type === "switch_session" || request.type === "abort") {
@@ -73,16 +112,37 @@ function handleLine(line: string): void {
   }
 
   const message = typeof request.message === "string" ? request.message : "";
+  promptCount += 1;
+  if (switchSessionOnSecond && promptCount === 2) sessionId = "switched-session";
   fs.appendFileSync(sessionFile, `${message}\n`);
   reply();
   isStreaming = true;
+  if (malformedMode === "hang-after-first" && promptCount >= 2) return;
   writeMessage({ type: "agent_start" });
+  if (maliciousMetadata) {
+    writeMessage({
+      type: `provider-event-${metadataCanary}`,
+      toolName: `extension-${metadataCanary}`,
+    });
+    writeMessage({
+      type: "message_end",
+      message: {
+        role: metadataCanary,
+        stopReason: metadataCanary,
+      },
+    });
+  }
 
   if (message.includes("TEST_MUTATE_CANDIDATE")) {
     fs.writeFileSync(
       path.join(process.cwd(), "result.txt"),
       "changed during Pi Check\n",
     );
+  }
+  if (message.includes("TEST_NON_REGULAR_CANDIDATE")) {
+    const candidate = path.join(process.cwd(), "result.txt");
+    fs.rmSync(candidate, { force: true });
+    fs.mkdirSync(candidate);
   }
   if (message.includes("TEST_TOOL_ERROR")) {
     writeMessage({
@@ -92,8 +152,15 @@ function handleLine(line: string): void {
     });
   }
 
-  const text = message.includes("TEST_MALFORMED")
-    ? "not-json"
+  const malformed = malformedMode === "always" ||
+    ((malformedMode === "first" ||
+      malformedMode === "first-sensitive" ||
+      malformedMode === "hang-after-first") &&
+      promptCount === 1);
+  const text = malformed
+    ? malformedMode === "first-sensitive"
+      ? "<|DSML|>analysis <|tool_call|>inspect_candidate() token=private-provider-response-secret-1234567890 ghs_abcdefghijklmnop ghs_abcdefghijk- ghp_abcdefghijk_ Bearer abcdefghijk+ Bearer abcdefghijk/"
+      : "<|DSML|>analysis <|tool_call|>inspect_candidate() <|tool_result|> unavailable"
     : JSON.stringify(reviewResult);
   writeMessage({
     type: "agent_end",
@@ -102,6 +169,7 @@ function handleLine(line: string): void {
         role: "assistant",
         content: [{ type: "text", text }],
         stopReason: "stop",
+        ...(maliciousMetadata ? { errorMessage: metadataCanary } : {}),
       },
     ],
   });

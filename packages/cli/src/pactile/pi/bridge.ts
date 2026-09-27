@@ -25,6 +25,7 @@ import {
   buildIndependentPiReviewPrompt,
   type PiReviewPromptBinding,
 } from "../review/contract.js";
+import { resolvePiReviewEvidenceV1 } from "../review/evidence.js";
 import {
   bindPiV2RunHost,
   persistPiV2StopAndRelease,
@@ -66,6 +67,12 @@ export interface PiCheckStartReceiptV1 {
   recordedAt: string;
 }
 
+export interface PiReviewResponseEvidenceV1 {
+  ref: string;
+  sha256: string;
+  sizeBytes: number;
+}
+
 export interface PiCheckStopReceiptV1 {
   schemaVersion: 1;
   source: "pactile-pi-review";
@@ -88,8 +95,27 @@ export interface PiCheckStopReceiptV1 {
   progressEvidenceSha256: string;
   resultRef: string | null;
   resultSha256: string | null;
+  reviewAttemptsRef: string;
+  reviewAttemptsSha256: string;
+  reviewResponses: PiReviewResponseEvidenceV1[];
   recordedAt: string;
   processExit: PiRpcProcessExitReceipt;
+}
+
+export interface PiReviewAttemptSummaryV1 {
+  attempt: 1 | 2;
+  kind: "initial" | "format-correction";
+  outcome: "settled" | "transport-error";
+  format: "structured-json-object" | "non-structured-json" | "unavailable";
+  responseRef: string | null;
+  responseSha256: string | null;
+  responseBytes: number;
+  redacted: boolean;
+  stopReason: string | null;
+  errorMessage: string | null;
+  firstEventMs: number | null;
+  elapsedMs: number;
+  recordedAt: string;
 }
 
 export interface PiCheckRunEvidenceV1 {
@@ -131,6 +157,19 @@ export interface PiRunRecord {
   process_exit_receipt?: PiProcessExitEvidence | null;
   result_sha256?: string | null;
   result_redacted?: boolean;
+  review_attempts_ref?: string | null;
+  review_attempts_sha256?: string | null;
+  review_format_correction?: {
+    attempted: boolean;
+    outcome:
+      | "not-needed"
+      | "accepted"
+      | "rejected"
+      | "timed-out"
+      | "cancelled"
+      | "failed"
+      | "deadline-exceeded";
+  } | null;
   dispatch_lease_id?: string | null;
   schedule_receipt_fingerprint?: string | null;
   admission_receipt_fingerprint?: string | null;
@@ -252,6 +291,8 @@ export function readPiCheckRunEvidenceV1(
     !record.review_stop_receipt_ref ||
     !record.result_file ||
     !record.result_sha256 ||
+    !record.review_attempts_ref ||
+    !record.review_attempts_sha256 ||
     !record.progress_evidence_ref ||
     !record.kernel_revision_at_dispatch
   ) {
@@ -276,6 +317,10 @@ export function readPiCheckRunEvidenceV1(
     taskDir,
     record.review_stop_receipt_ref,
   );
+  const attemptsPath = safeReviewEvidencePath(
+    taskDir,
+    record.review_attempts_ref ?? "",
+  );
   const eventPath = safeReviewEvidencePath(
     taskDir,
     record.progress_evidence_ref,
@@ -294,10 +339,119 @@ export function readPiCheckRunEvidenceV1(
     .split(/\r?\n/u)
     .filter(Boolean);
   const resultBytes = fs.readFileSync(resultPath);
+  const attemptsBytes = fs.readFileSync(attemptsPath);
   const resultSha256 = createHash("sha256").update(resultBytes).digest("hex");
   const progressSha256 = createHash("sha256")
     .update(fs.readFileSync(eventPath))
     .digest("hex");
+  const attemptsSha256 = createHash("sha256").update(attemptsBytes).digest("hex");
+  if (attemptsBytes.byteLength > MAX_PI_REVIEW_ATTEMPT_MANIFEST_BYTES) {
+    throw new Error("Pi Check Review attempt manifest exceeds its evidence bound");
+  }
+  let attemptSummaries: PiReviewAttemptSummaryV1[];
+  try {
+    attemptSummaries = attemptsBytes
+      .toString("utf8")
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as PiReviewAttemptSummaryV1);
+  } catch {
+    throw new Error("Pi Check Review attempt manifest is not valid JSONL");
+  }
+  if (attemptSummaries.length < 1 || attemptSummaries.length > 2) {
+    throw new Error("Pi Check Review must contain one or two ordered attempts");
+  }
+  const responseEvidence: PiReviewResponseEvidenceV1[] = [];
+  const responseTexts: string[] = [];
+  for (const [index, attempt] of attemptSummaries.entries()) {
+    const number = index + 1;
+    const expectedKind = number === 1 ? "initial" : "format-correction";
+    const expectedRef = `pi-bridge/review-responses/${record.run_id}-attempt-${number}.txt`;
+    if (
+      attempt?.attempt !== number ||
+      attempt.kind !== expectedKind ||
+      attempt.outcome !== "settled" ||
+      attempt.responseRef !== expectedRef ||
+      typeof attempt.responseSha256 !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(attempt.responseSha256) ||
+      !Number.isSafeInteger(attempt.responseBytes) ||
+      attempt.responseBytes < 1 ||
+      attempt.responseBytes > MAX_PI_REVIEW_RESPONSE_BYTES ||
+      typeof attempt.redacted !== "boolean" ||
+      attempt.stopReason !== "stop"
+    ) {
+      throw new Error("Pi Check Review attempt order or response binding is invalid");
+    }
+    const responsePath = safeReviewEvidencePath(taskDir, expectedRef);
+    const responseBytes = fs.readFileSync(responsePath);
+    if (
+      responseBytes.byteLength !== attempt.responseBytes ||
+      createHash("sha256").update(responseBytes).digest("hex") !==
+        attempt.responseSha256
+    ) {
+      throw new Error("Pi Check Review response evidence does not match its attempt");
+    }
+    let responseText: string;
+    try {
+      responseText = new TextDecoder("utf-8", { fatal: true }).decode(responseBytes);
+    } catch {
+      throw new Error("Pi Check Review response evidence is not valid UTF-8");
+    }
+    if (!Buffer.from(responseText, "utf8").equals(responseBytes)) {
+      throw new Error("Pi Check Review response evidence is not canonical UTF-8");
+    }
+    const format = isStructuredJsonObject(responseText)
+      ? "structured-json-object"
+      : "non-structured-json";
+    if (attempt.format !== format) {
+      throw new Error("Pi Check Review response format does not match its evidence");
+    }
+    responseTexts.push(responseText);
+    responseEvidence.push({
+      ref: expectedRef,
+      sha256: attempt.responseSha256,
+      sizeBytes: attempt.responseBytes,
+    });
+  }
+  const correction = record.review_format_correction;
+  const firstFormat = attemptSummaries[0]?.format;
+  const lastFormat = attemptSummaries.at(-1)?.format;
+  if (
+    (attemptSummaries.length === 1 &&
+      (firstFormat !== "structured-json-object" ||
+        correction?.attempted !== false ||
+        correction.outcome !== "not-needed")) ||
+    (attemptSummaries.length === 2 &&
+      (firstFormat !== "non-structured-json" ||
+        lastFormat !== "structured-json-object" ||
+        correction?.attempted !== true ||
+        correction.outcome !== "accepted"))
+  ) {
+    throw new Error("Pi Check Review correction sequence is inconsistent");
+  }
+  const finalResponseText = responseTexts.at(-1);
+  if (
+    finalResponseText === undefined ||
+    !Buffer.from(`${finalResponseText || "(Pi returned no assistant text.)"}\n`, "utf8")
+      .equals(resultBytes)
+  ) {
+    throw new Error("Pi Check result bytes do not match the final settled response");
+  }
+  const receiptResponses = stop.reviewResponses;
+  if (
+    !Array.isArray(receiptResponses) ||
+    receiptResponses.length !== responseEvidence.length ||
+    receiptResponses.some((item, index) => {
+      const expected = responseEvidence[index];
+      return (
+        item?.ref !== expected?.ref ||
+        item?.sha256 !== expected?.sha256 ||
+        item?.sizeBytes !== expected?.sizeBytes
+      );
+    })
+  ) {
+    throw new Error("Pi Check stop receipt does not bind every response artifact");
+  }
   if (
     start.schemaVersion !== 1 ||
     start.source !== "pactile-pi-review" ||
@@ -335,6 +489,11 @@ export function readPiCheckRunEvidenceV1(
     stop.resultRef !== record.result_file ||
     stop.resultSha256 !== record.result_sha256 ||
     resultSha256 !== record.result_sha256 ||
+    record.review_attempts_ref !==
+      `pi-bridge/review-attempts/${record.run_id}.jsonl` ||
+    record.review_attempts_sha256 !== attemptsSha256 ||
+    stop.reviewAttemptsRef !== record.review_attempts_ref ||
+    stop.reviewAttemptsSha256 !== attemptsSha256 ||
     record.event_count < 1 ||
     events.length !== record.event_count ||
     stop.processExit?.terminationVerified !== true ||
@@ -360,9 +519,14 @@ export function readPiCheckRunEvidenceV1(
       record.review_stop_receipt_ref,
       record.progress_evidence_ref,
       record.result_file,
+      record.review_attempts_ref,
+      ...responseEvidence.map((item) => item.ref),
     ],
   };
 }
+
+const MAX_PI_REVIEW_RESPONSE_BYTES = 64 * 1024;
+const MAX_PI_REVIEW_ATTEMPT_MANIFEST_BYTES = 16 * 1024;
 
 export interface PiReviewRouteContext {
   taskDir: string;
@@ -495,17 +659,116 @@ function alive(pid: unknown): boolean {
 function redact(text: string): string {
   return text
     .replace(
-      /\b(?:sk[-_]|ghp_|gho_|glpat-|plane_api_)[A-Za-z0-9_-]{12,}\b/g,
+      /\b(?:sk[-_]|gh[pousr]_|glpat-|plane_api_)[A-Za-z0-9_-]{12,}/gi,
       "[redacted]",
     )
-    .replace(/\bBearer\s+[A-Za-z0-9._~-]{12,}\b/gi, "Bearer [redacted]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]{12,}/gi, "Bearer [redacted]")
     .replace(
       /\b(api[_-]?key|token|password|secret)\s*[:=]\s*\S+/gi,
       "$1=[redacted]",
     );
 }
 
+function safeProviderMessage(text: string): string {
+  return [...redact(text)]
+    .map((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 0x1f || code === 0x7f ? " " : character;
+    })
+    .join("")
+    .slice(0, 500);
+}
+
+function safeErrorSummary(value: string): string {
+  const message = value.toLowerCase();
+  if (message.includes("cancel")) return "Pi operation cancelled";
+  if (message.includes("timed out") || message.includes("timeout"))
+    return "Pi operation timed out";
+  if (message.includes("session changed")) return "Pi Review session changed";
+  if (message.includes("implementation run host session"))
+    return "Pi Check session matches the implementation Run host session";
+  if (
+    message.includes("candidate") ||
+    message.includes("review binding") ||
+    message.includes("evidence")
+  )
+    return "Pi Review preflight failed";
+  if (message.includes("launch failed")) return "Pi RPC launch failed";
+  if (message.includes("exited")) return "Pi RPC process exited";
+  if (message.includes("rejected")) return "Pi RPC request rejected";
+  if (message.includes("streaming") || message.includes("settled without"))
+    return "Pi did not settle a final response";
+  return "Pi operation failed";
+}
+
+function normalizeEventType(value: unknown): string {
+  if (typeof value !== "string") return "other";
+  const allowed = new Set([
+    "agent_start",
+    "agent_end",
+    "agent_settled",
+    "auto_retry_start",
+    "auto_retry_end",
+    "auto_compaction_start",
+    "auto_compaction_end",
+    "extension_error",
+    "message_start",
+    "message_update",
+    "message_end",
+    "session_start",
+    "session_shutdown",
+    "session_before_compact",
+    "session_compact",
+    "tool_execution_start",
+    "tool_execution_update",
+    "tool_execution_end",
+    "turn_start",
+    "turn_end",
+  ]);
+  return allowed.has(value) ? value : "other";
+}
+
+function normalizeToolName(value: string): string {
+  const allowed = new Set([
+    "bash",
+    "edit",
+    "find",
+    "grep",
+    "ls",
+    "read",
+    "write",
+  ]);
+  return allowed.has(value) ? value : "other";
+}
+
+function normalizeMessageRole(value: unknown): string {
+  if (typeof value !== "string") return "other";
+  const allowed = new Set(["assistant", "system", "tool", "user"]);
+  return allowed.has(value) ? value : "other";
+}
+
+function normalizeProviderError(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0
+    ? "provider-reported-error"
+    : null;
+}
+
+function normalizeStopReason(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const allowed = new Set([
+    "stop",
+    "length",
+    "error",
+    "aborted",
+    "cancelled",
+    "toolUse",
+    "end_turn",
+  ]);
+  return allowed.has(value) ? value : "other";
+}
+
 function assistantText(event: Record<string, unknown>): {
+  rawText: string;
   text: string;
   redacted: boolean;
   stopReason: string | null;
@@ -521,7 +784,13 @@ function assistantText(event: Record<string, unknown>): {
         (message as Record<string, unknown>).role === "assistant",
     ) as Record<string, unknown> | undefined;
   if (!assistant)
-    return { text: "", redacted: false, stopReason: null, errorMessage: null };
+    return {
+      rawText: "",
+      text: "",
+      redacted: false,
+      stopReason: null,
+      errorMessage: null,
+    };
   const content = Array.isArray(assistant.content) ? assistant.content : [];
   const text = content
     .filter(
@@ -533,14 +802,68 @@ function assistantText(event: Record<string, unknown>): {
     .map((part) => String((part as Record<string, unknown>).text ?? ""))
     .join("\n");
   return {
+    rawText: text,
     text: redact(text),
     redacted: redact(text) !== text,
     stopReason:
-      typeof assistant.stopReason === "string" ? assistant.stopReason : null,
-    errorMessage:
-      typeof assistant.errorMessage === "string"
-        ? redact(assistant.errorMessage).slice(0, 500)
-        : null,
+      normalizeStopReason(assistant.stopReason),
+    errorMessage: normalizeProviderError(assistant.errorMessage),
+  };
+}
+
+function isStructuredJsonObject(text: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(text.trim());
+    return Boolean(parsed && typeof parsed === "object" && !Array.isArray(parsed));
+  } catch {
+    return false;
+  }
+}
+
+function reviewAttemptSummary(
+  attempt: 1 | 2,
+  kind: PiReviewAttemptSummaryV1["kind"],
+  startedAt: number,
+  response?: ReturnType<typeof assistantText>,
+  firstEventMs: number | null = null,
+  error?: string,
+  responseRef: string | null = null,
+): PiReviewAttemptSummaryV1 {
+  if (!response) {
+    return {
+      attempt,
+      kind,
+      outcome: "transport-error",
+      format: "unavailable",
+      responseRef: null,
+      responseSha256: null,
+      responseBytes: 0,
+      redacted: false,
+      stopReason: null,
+      errorMessage: error ? safeErrorSummary(error) : null,
+      firstEventMs,
+      elapsedMs: Math.round(performance.now() - startedAt),
+      recordedAt: new Date().toISOString(),
+    };
+  }
+  return {
+    attempt,
+    kind,
+    outcome: "settled",
+    format: isStructuredJsonObject(response.rawText)
+      ? "structured-json-object"
+      : "non-structured-json",
+    responseRef,
+    responseSha256: createHash("sha256")
+      .update(Buffer.from(response.text, "utf8"))
+      .digest("hex"),
+    responseBytes: Buffer.byteLength(response.text, "utf8"),
+    redacted: response.redacted,
+    stopReason: response.stopReason,
+    errorMessage: response.errorMessage,
+    firstEventMs,
+    elapsedMs: Math.round(performance.now() - startedAt),
+    recordedAt: new Date().toISOString(),
   };
 }
 
@@ -549,9 +872,10 @@ function evidenceEvent(
 ): Record<string, unknown> {
   const safe: Record<string, unknown> = {
     at: new Date().toISOString(),
-    type: String(event.type ?? "unknown"),
+    type: normalizeEventType(event.type),
   };
-  if (typeof event.toolName === "string") safe.tool = event.toolName;
+  if (typeof event.toolName === "string")
+    safe.tool = normalizeToolName(event.toolName);
   if (event.type === "tool_execution_end")
     safe.is_error = event.isError === true;
   if (
@@ -560,9 +884,9 @@ function evidenceEvent(
     typeof event.message === "object"
   ) {
     const message = event.message as Record<string, unknown>;
-    safe.role = typeof message.role === "string" ? message.role : "unknown";
+    safe.role = normalizeMessageRole(message.role);
     if (typeof message.stopReason === "string")
-      safe.stop_reason = message.stopReason;
+      safe.stop_reason = normalizeStopReason(message.stopReason) ?? "other";
   }
   return safe;
 }
@@ -672,6 +996,7 @@ export class PiTaskBridge {
     resumeFile: string | null,
     beforeSpawn?: () => void,
     sessionDirOverride?: string,
+    startupTimeoutMs?: number,
   ): Promise<{
     client: PiRpcClient;
     startupMs: number;
@@ -695,7 +1020,7 @@ export class PiTaskBridge {
     this.taskDir = dir;
     this.workdir = workdir;
     this.role = role;
-    const startupMs = await client.start(beforeSpawn);
+    const startupMs = await client.start(beforeSpawn, startupTimeoutMs);
     if (resumeFile) await client.switchSession(resumeFile);
     return { client, startupMs, mode: "cold" };
   }
@@ -912,6 +1237,10 @@ export class PiTaskBridge {
       .replaceAll("\\", "/");
     const startReceiptRef = `pi-bridge/starts/${runId}.json`;
     const reviewStopReceiptRef = `pi-bridge/stops/${runId}.json`;
+    const reviewAttemptsRef = `pi-bridge/review-attempts/${runId}.jsonl`;
+    const reviewSessionEvidenceId = review
+      ? `pirc-${createHash("sha256").update(runId).digest("hex").slice(0, 32)}`
+      : null;
     const record: PiRunRecord = {
       schema_version: dispatch ? 2 : 1,
       run_id: runId,
@@ -945,6 +1274,9 @@ export class PiTaskBridge {
             progress_evidence_ref: progressEvidenceRef,
             result_sha256: null,
             result_redacted: false,
+            review_attempts_ref: reviewAttemptsRef,
+            review_attempts_sha256: null,
+            review_format_correction: null,
             review_status: "pending" as const,
             review_start_receipt_ref: null,
             review_stop_receipt_ref: null,
@@ -981,6 +1313,11 @@ export class PiTaskBridge {
     };
     fs.mkdirSync(path.dirname(eventFile), { recursive: true });
     if (dispatch) fs.writeFileSync(eventFile, "", { flag: "wx", mode: 0o600 });
+    if (review) {
+      const attemptsFile = path.join(dir, reviewAttemptsRef);
+      fs.mkdirSync(path.dirname(attemptsFile), { recursive: true });
+      fs.writeFileSync(attemptsFile, "", { flag: "wx", mode: 0o600 });
+    }
     fs.writeFileSync(
       lockFile,
       JSON.stringify({ parent_pid: process.pid, run_id: runId }),
@@ -990,6 +1327,11 @@ export class PiTaskBridge {
     atomicJson(runFile, record);
     atomicJson(latestFile, record);
     const started = performance.now();
+    const checkDeadlineAt = started + input.timeoutMs;
+    let activeReviewSessionId: string | null = null;
+    const remainingCheckMs = (): number =>
+      Math.floor(checkDeadlineAt - performance.now());
+    const reviewResponseEvidence: PiReviewResponseEvidenceV1[] = [];
     let detach = (): void => undefined;
     let closeFailed = false;
     const controller = new AbortController();
@@ -1007,11 +1349,26 @@ export class PiTaskBridge {
         controller.abort();
       }
     }, 200);
+    const checkCancellationNow = (message: string): void => {
+      const cancellation = parseJson(cancelFile);
+      if (cancellation?.run_id === runId) {
+        if (review && typeof cancellation.request_id === "string") {
+          record.cancellation_request_id = cancellation.request_id;
+          atomicJson(runFile, record);
+          atomicJson(latestFile, record);
+        }
+        controller.abort();
+      }
+      if (controller.signal.aborted) throw new Error(message);
+    };
     try {
       const resumeFile = input.resume ? previousSession : null;
       if (dispatch) {
         recheckPiV2RunDispatchWorkspace(dispatch);
       }
+      const startupTimeoutMs = review ? remainingCheckMs() : undefined;
+      if (review && (startupTimeoutMs ?? 0) <= 0)
+        throw new Error("Pi Check timeout exhausted before startup");
       const { client, startupMs, mode } = await this.ensureClient(
         dir,
         workdir,
@@ -1029,6 +1386,7 @@ export class PiTaskBridge {
             }
           : undefined,
         review ? path.join(evidence, "review-sessions", runId) : undefined,
+        startupTimeoutMs,
       );
       if (parallelLeaseId)
         updateParallelChildPid(this.root, dir, parallelLeaseId, client.pid);
@@ -1043,11 +1401,28 @@ export class PiTaskBridge {
       );
       record.process_mode = mode;
       record.startup_ms = startupMs;
-      const state = await client.state();
-      record.session_id =
-        typeof state.sessionId === "string" ? state.sessionId : null;
-      record.session_file =
-        typeof state.sessionFile === "string" ? state.sessionFile : null;
+      const initialStateBudgetMs = review ? remainingCheckMs() : undefined;
+      if (review && (initialStateBudgetMs ?? 0) <= 0)
+        throw new Error("Pi Check timeout exhausted before session verification");
+      const state = await client.state(initialStateBudgetMs);
+      if (review && remainingCheckMs() <= 0)
+        throw new Error("Pi Check timeout exhausted during session verification");
+      activeReviewSessionId =
+        typeof state.sessionId === "string" && state.sessionId.length > 0
+          ? state.sessionId
+          : null;
+      record.session_id = review
+        ? activeReviewSessionId
+          ? reviewSessionEvidenceId
+          : null
+        : typeof state.sessionId === "string"
+          ? state.sessionId
+          : null;
+      record.session_file = review
+        ? null
+        : typeof state.sessionFile === "string"
+          ? state.sessionFile
+          : null;
       atomicJson(runFile, record);
       atomicJson(latestFile, record);
       if (review) {
@@ -1061,7 +1436,7 @@ export class PiTaskBridge {
             "Pi Review Check start did not provide process and session identities",
           );
         }
-        if (record.session_id === review.run.host?.sessionId) {
+        if (activeReviewSessionId === review.run.host?.sessionId) {
           throw new Error(
             "Pi Check session matches the implementation Run host session",
           );
@@ -1209,35 +1584,258 @@ export class PiTaskBridge {
             "Worker assignment:",
             input.prompt,
           ].join("\n\n");
-      const result = await client.prompt(
-        instructions,
-        input.timeoutMs,
-        controller.signal,
-      );
-      record.first_event_ms = result.firstEventMs;
-      const { text, redacted, stopReason, errorMessage } = assistantText(
-        result.event,
-      );
-      record.outcome =
-        stopReason === "stop" && text && !record.tool_errors
-          ? "settled"
-          : "needs_review";
-      if (stopReason && stopReason !== "stop")
-        record.reason = `Pi stopReason=${stopReason}${errorMessage ? `; ${errorMessage}` : ""}`;
       const resultFile = path.join(evidence, "results", `${runId}.md`);
       fs.mkdirSync(path.dirname(resultFile), { recursive: true });
-      fs.writeFileSync(
-        resultFile,
-        `${text || "(Pi returned no assistant text.)"}\n`,
-        { encoding: "utf8", mode: 0o600 },
-      );
       record.result_file = path.relative(dir, resultFile).replaceAll("\\", "/");
-      if (dispatch || review) {
-        const resultBytes = fs.readFileSync(resultFile);
-        record.result_sha256 = createHash("sha256")
-          .update(resultBytes)
-          .digest("hex");
-        record.result_redacted = redacted;
+      const attemptsFile = review ? path.join(dir, reviewAttemptsRef) : null;
+      const appendAttempt = (summary: PiReviewAttemptSummaryV1): void => {
+        if (!attemptsFile) return;
+        fs.appendFileSync(attemptsFile, `${JSON.stringify(summary)}\n`, {
+          encoding: "utf8",
+          mode: 0o600,
+        });
+      };
+      const persistReviewResponse = (
+        attempt: 1 | 2,
+        response: ReturnType<typeof assistantText>,
+      ): PiReviewResponseEvidenceV1 | null => {
+        if (!review) return null;
+        const bytes = Buffer.from(response.text, "utf8");
+        if (bytes.byteLength > MAX_PI_REVIEW_RESPONSE_BYTES) return null;
+        const ref = `pi-bridge/review-responses/${runId}-attempt-${attempt}.txt`;
+        const file = path.join(dir, ref);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, bytes, { flag: "wx", mode: 0o600 });
+        const stored: PiReviewResponseEvidenceV1 = {
+          ref,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          sizeBytes: bytes.byteLength,
+        };
+        reviewResponseEvidence.push(stored);
+        return stored;
+      };
+      let text = "";
+      let redacted = false;
+      const persistResult = (): void => {
+        const responseTooLarge =
+          review !== null &&
+          Buffer.byteLength(text, "utf8") > MAX_PI_REVIEW_RESPONSE_BYTES;
+        const resultText = responseTooLarge
+          ? "(Pi Check response omitted because it exceeded the bounded evidence limit.)"
+          : text || "(Pi returned no assistant text.)";
+        fs.writeFileSync(
+          resultFile,
+          `${resultText}\n`,
+          { encoding: "utf8", mode: 0o600 },
+        );
+        if (dispatch || review) {
+          const resultBytes = fs.readFileSync(resultFile);
+          record.result_sha256 = createHash("sha256")
+            .update(resultBytes)
+            .digest("hex");
+          record.result_redacted = redacted || responseTooLarge;
+        }
+      };
+      const firstPromptStarted = performance.now();
+      const firstPromptRemainingMs = remainingCheckMs();
+      if (review && firstPromptRemainingMs <= 0)
+        throw new Error("Pi Check timeout exhausted before first prompt");
+      const result = await client.prompt(
+        instructions,
+        review ? firstPromptRemainingMs : input.timeoutMs,
+        controller.signal,
+        undefined,
+        review ? checkDeadlineAt : undefined,
+        review
+          ? () =>
+              checkCancellationNow("Pi Check cancelled before prompt dispatch")
+          : undefined,
+      );
+      record.first_event_ms = result.firstEventMs;
+      let response = assistantText(result.event);
+      const firstResponseEvidence = review
+        ? persistReviewResponse(1, response)
+        : null;
+      text = response.text;
+      redacted = response.redacted;
+      record.outcome =
+        response.stopReason === "stop" && text && !record.tool_errors
+          ? "settled"
+          : "needs_review";
+      if (response.stopReason && response.stopReason !== "stop")
+        record.reason = `Pi stopReason=${response.stopReason}${response.errorMessage ? `; ${response.errorMessage}` : ""}`;
+      if (review) {
+        appendAttempt(
+          reviewAttemptSummary(
+            1,
+            "initial",
+            firstPromptStarted,
+            response,
+            result.firstEventMs,
+            undefined,
+            firstResponseEvidence?.ref ?? null,
+          ),
+        );
+        record.review_format_correction = {
+          attempted: false,
+          outcome: "not-needed",
+        };
+      }
+      persistResult();
+      if (review && !firstResponseEvidence) {
+        record.review_format_correction = {
+          attempted: false,
+          outcome: "failed",
+        };
+        throw new Error("Pi Check response exceeds the bounded Review evidence limit");
+      }
+
+      if (
+        review &&
+        record.outcome === "settled" &&
+        !isStructuredJsonObject(response.rawText)
+      ) {
+        record.review_format_correction = {
+          attempted: false,
+          outcome: "failed",
+        };
+        const currentReview = preparePiReviewRoute(
+          this.root,
+          review.run.taskId,
+        );
+        assertSameReviewBinding(currentReview.binding, review.binding);
+        resolvePiReviewEvidenceV1({
+          root: this.root,
+          taskDir: currentReview.taskDir,
+          candidateRoot: currentReview.workdir,
+          run: currentReview.run,
+          references: [],
+        });
+        checkCancellationNow("Pi run cancelled before format correction");
+        const preflightBudgetMs = remainingCheckMs();
+        if (preflightBudgetMs <= 0)
+          throw new Error("Pi Review format correction exceeded the Check timeout");
+
+        let correctionPromptInvoked = false;
+        let correctionStarted = performance.now();
+        let correctionResponse: ReturnType<typeof assistantText> | undefined;
+        try {
+          const beforeCorrection = await client.state(preflightBudgetMs);
+          if (remainingCheckMs() <= 0)
+            throw new Error("Pi Review format correction exceeded the Check timeout");
+          if (beforeCorrection.sessionId !== activeReviewSessionId)
+            throw new Error(
+              "Pi Review Check session changed before format correction",
+            );
+          checkCancellationNow("Pi run cancelled before format correction");
+          const correctionPrompt = [
+            "Follow the complete original Check instructions, including Task-specific Review instructions, caller instructions, and Review/Close contract. Reuse the exact original instructions below.",
+            instructions,
+            "Format correction for the same independent Pi Check session.",
+            "Your previous settled answer was not one structured JSON object.",
+            "Return exactly one JSON object matching the Review contract below.",
+            "Do not include prose, Markdown fences, prefixes, suffixes, or a JSON substring embedded in text.",
+            "Keep the same frozen Task Run, candidate snapshot, reviewer identity, evidence boundary, and Review/Close guards.",
+            "Use only the evidence already bound to this Check. Do not call tools or assume tools are available; if the bound evidence is insufficient, return needs-changes.",
+          ].join("\n\n");
+          const promptBudgetMs = remainingCheckMs();
+          if (promptBudgetMs <= 0)
+            throw new Error("Pi Review format correction exceeded the Check timeout");
+          const correction = await client.prompt(
+            correctionPrompt,
+            promptBudgetMs,
+            controller.signal,
+            () => {
+              correctionPromptInvoked = true;
+            },
+            checkDeadlineAt,
+            () => {
+              checkCancellationNow("Pi run cancelled before format correction");
+              correctionStarted = performance.now();
+            },
+          );
+          correctionResponse = assistantText(correction.event);
+          const correctionResponseEvidence = persistReviewResponse(
+            2,
+            correctionResponse,
+          );
+
+          const finalStateBudgetMs = remainingCheckMs();
+          if (finalStateBudgetMs <= 0)
+            throw new Error("Pi Review format correction exceeded the Check timeout");
+          const afterCorrection = await client.state(finalStateBudgetMs);
+          if (remainingCheckMs() <= 0)
+            throw new Error("Pi Review format correction exceeded the Check timeout");
+          if (afterCorrection.sessionId !== activeReviewSessionId)
+            throw new Error(
+              "Pi Review Check session changed after format correction",
+            );
+
+          response = correctionResponse;
+          text = response.text;
+          redacted = response.redacted;
+          appendAttempt(
+            reviewAttemptSummary(
+              2,
+              "format-correction",
+              correctionStarted,
+              response,
+              correction.firstEventMs,
+              undefined,
+              correctionResponseEvidence?.ref ?? null,
+            ),
+          );
+          record.outcome =
+            response.stopReason === "stop" && text && !record.tool_errors
+              ? "settled"
+              : "needs_review";
+          if (response.stopReason && response.stopReason !== "stop")
+            record.reason = `Pi stopReason=${response.stopReason}${response.errorMessage ? `; ${response.errorMessage}` : ""}`;
+          record.review_format_correction = {
+            attempted: true,
+            outcome: isStructuredJsonObject(response.rawText)
+              ? "accepted"
+              : "rejected",
+          };
+          persistResult();
+        } catch (error) {
+          const correctionError =
+            error instanceof Error ? error.message : String(error);
+          record.review_format_correction = {
+            attempted: correctionPromptInvoked,
+            outcome:
+              controller.signal.aborted || correctionError.includes("cancelled")
+                ? "cancelled"
+                : correctionError.includes("timed out")
+                  ? correctionPromptInvoked
+                    ? "timed-out"
+                    : "deadline-exceeded"
+                  : "failed",
+          };
+          if (correctionPromptInvoked) {
+            appendAttempt(
+              reviewAttemptSummary(
+                2,
+                "format-correction",
+                correctionStarted,
+                correctionResponse
+                  ? {
+                      ...correctionResponse,
+                      errorMessage: safeErrorSummary(correctionError),
+                    }
+                  : undefined,
+                null,
+                correctionResponse ? undefined : correctionError,
+                reviewResponseEvidence.find(
+                  (item) =>
+                    item.ref ===
+                    `pi-bridge/review-responses/${runId}-attempt-2.txt`,
+                )?.ref ?? null,
+              ),
+            );
+          }
+          throw error;
+        }
       }
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -1249,13 +1847,13 @@ export class PiTaskBridge {
             : reason.includes("exited")
               ? "interrupted"
               : "failed";
-      record.reason = redact(reason);
+      record.reason = review ? safeErrorSummary(reason) : safeProviderMessage(reason);
       if (!dispatch && !review) {
         try {
           await this.close();
         } catch (closeError) {
           closeFailed = true;
-          record.reason = `${record.reason}; Pi termination failed: ${redact(closeError instanceof Error ? closeError.message : String(closeError))}`;
+          record.reason = `${record.reason}; Pi termination failed: ${safeProviderMessage(closeError instanceof Error ? closeError.message : String(closeError))}`;
         }
       }
     } finally {
@@ -1269,11 +1867,11 @@ export class PiTaskBridge {
           reviewProcessExit = (await this.closeForReview()) ?? null;
         } catch (closeError) {
           closeFailed = true;
-          record.process_stop_error = redact(
-            closeError instanceof Error
-              ? closeError.message
-              : String(closeError),
-          );
+          const closeReason =
+            closeError instanceof Error ? closeError.message : String(closeError);
+          record.process_stop_error = review
+            ? safeErrorSummary(closeReason)
+            : safeProviderMessage(closeReason);
         }
         if (
           reviewProcessExit?.terminationVerified &&
@@ -1292,6 +1890,13 @@ export class PiTaskBridge {
             record.reason =
               "Pi reported a settled Review response but its manager-owned process exited abnormally";
           }
+          const reviewAttemptsBytes = fs.readFileSync(
+            path.join(dir, reviewAttemptsRef),
+          );
+          const reviewAttemptsSha256 = createHash("sha256")
+            .update(reviewAttemptsBytes)
+            .digest("hex");
+          record.review_attempts_sha256 = reviewAttemptsSha256;
           const receipt: PiCheckStopReceiptV1 = {
             schemaVersion: 1,
             source: "pactile-pi-review",
@@ -1316,6 +1921,9 @@ export class PiTaskBridge {
               .digest("hex"),
             resultRef: record.result_file,
             resultSha256: record.result_sha256 ?? null,
+            reviewAttemptsRef,
+            reviewAttemptsSha256,
+            reviewResponses: reviewResponseEvidence,
             recordedAt: new Date().toISOString(),
             processExit: reviewProcessExit,
           };
@@ -1338,7 +1946,7 @@ export class PiTaskBridge {
         try {
           processExit = (await this.closeForDispatch()) ?? null;
         } catch (closeError) {
-          record.process_stop_error = redact(
+          record.process_stop_error = safeProviderMessage(
             closeError instanceof Error
               ? closeError.message
               : String(closeError),
@@ -1447,7 +2055,7 @@ export class PiTaskBridge {
           record.dispatch_lease_release_reason = settlement.reasonCode;
         } catch (settleError) {
           record.dispatch_lease_released = false;
-          record.dispatch_lease_release_reason = redact(
+          record.dispatch_lease_release_reason = safeProviderMessage(
             settleError instanceof Error
               ? settleError.message
               : String(settleError),
