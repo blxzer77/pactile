@@ -144,6 +144,7 @@ function makeTask(
     dependencies?: string[];
     writeSet?: string[];
     start?: boolean;
+    resume?: boolean;
   } = {},
 ): TaskFixture {
   const taskDir = path.join(root, ".pactile", "tasks", taskId);
@@ -179,7 +180,17 @@ function makeTask(
     initialState: "waiting",
     writeSetSnapshot: options.writeSet ?? [`src/${taskId}.ts`],
   });
-  return { taskId, taskDir, runId: started.kernel.runs.at(-1)?.id ?? null };
+  const runId = started.kernel.runs.at(-1)?.id ?? null;
+  if (runId && options.resume !== false)
+    resumeTaskRun({
+      root,
+      taskDir,
+      expectedRevision: started.kernel.revision,
+      runId,
+      actor: "test-worker",
+      idempotencyKey: `resume:${taskId}`,
+    });
+  return { taskId, taskDir, runId };
 }
 
 function attachManagedWorktree(root: string, task: TaskFixture): string {
@@ -1224,7 +1235,7 @@ describe("Task Kernel V2 writer-wave dispatch", () => {
 
   it("rechecks the complete receipt before any provider starts when a Task revision goes stale", async () => {
     const root = makeGitRoot();
-    const task = makeTask(root, "wave-stale-receipt");
+    const task = makeTask(root, "wave-stale-receipt", { resume: false });
     attachManagedWorktree(root, task);
     const schedule = scheduleTaskKernelGraph(root, [task.taskId]);
     const read = readTaskKernel({ root, taskDir: task.taskDir, cwd: root });
