@@ -408,7 +408,7 @@ function assertHelpParity(contract, env) {
   const legacyText = `${legacyStarted.stdout ?? ""}\n${legacyStarted.stderr ?? ""}`;
   if (
     legacyStarted.status !== 0 ||
-    (legacyText.match(/Deprecated compatibility entry/gu) ?? []).length !== 1
+    (legacyText.match(/Deprecated CLI entry/gu) ?? []).length !== 1
   )
     throw new Error(
       "legacy cstl alias did not emit exactly one compatibility warning",
