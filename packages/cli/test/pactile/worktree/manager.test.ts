@@ -21,6 +21,7 @@ import {
 import { repoIdentity } from "../../../src/pactile/worktree/git-probe.js";
 import { persistManagerProvenance, provenanceFor, readAllManagerProvenance } from "../../../src/pactile/worktree/manager-provenance.js";
 import { WorktreeManagerError } from "../../../src/pactile/worktree/manager-types.js";
+import { sameGitRoot } from "../../../src/utils/git-root.js";
 
 const roots: string[] = [];
 const fixturePrefix = "pactile-run-worktree-";
@@ -34,10 +35,9 @@ function alternateCase(value: string): string {
 }
 
 function hasRegisteredWorktree(root: string, target: string): boolean {
-  const expected = path.resolve(target).replaceAll("\\", "/").toLowerCase();
   return git(root, "worktree", "list", "--porcelain").split(/\r?\n/)
     .filter((line) => line.startsWith("worktree "))
-    .some((line) => path.resolve(line.slice("worktree ".length)).replaceAll("\\", "/").toLowerCase() === expected);
+    .some((line) => sameGitRoot(line.slice("worktree ".length), target));
 }
 
 function fixture(): { root: string; baseSha: string } {
@@ -340,7 +340,7 @@ describe("Run worktree manager", () => {
       writeSet: ["src"], integrationState: "not-integrated", reclamationState: "not-requested",
     });
     expect(path.isAbsolute(binding.canonicalPath)).toBe(true);
-    expect(path.relative(path.join(root, ".pactile", "worktrees"), binding.canonicalPath).startsWith("..")).toBe(false);
+    expect(path.relative(path.join(repoIdentity(root).root, ".pactile", "worktrees"), binding.canonicalPath).startsWith("..")).toBe(false);
     expect(inspection).toMatchObject({ state: "unintegrated", actualPath: binding.canonicalPath, branch: binding.branch, headSha: baseSha });
     expect(inspection.issues).toEqual(["unintegrated"]);
     expect(git(root, "worktree", "list", "--porcelain")).toContain(`branch refs/heads/${binding.branch}`);

@@ -6,6 +6,7 @@ import {
   createDefaultCapabilityPolicyV1,
   executeNodeCapabilityRequestV1,
 } from "../pactile/capabilities/node.js";
+import { relativeInside } from "../pactile/capabilities/shared.js";
 
 const MAX_REQUEST_BYTES = 256 * 1024;
 
@@ -56,12 +57,8 @@ async function readRequestFile(
     throw new Error("request file must use a safe workspace-relative path");
   }
   const resolved = await fs.realpath(file);
-  const relative = path.relative(rootReal, resolved);
-  if (
-    path.isAbsolute(relative) ||
-    relative === ".." ||
-    relative.startsWith(`..${path.sep}`)
-  ) {
+  const relative = relativeInside(rootReal, resolved);
+  if (relative === null) {
     throw new Error("request file must resolve inside the workspace");
   }
   const expected = await fs.stat(resolved);
@@ -93,7 +90,7 @@ async function readRequestFile(
     }
     return {
       bytes: buffer.subarray(0, read.bytesRead),
-      relativePath: path.relative(rootReal, resolved).replaceAll("\\", "/"),
+      relativePath: relative.replaceAll("\\", "/"),
     };
   } finally {
     await handle.close();

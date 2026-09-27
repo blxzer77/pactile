@@ -24,6 +24,7 @@ import { runWorktreeCli, runWorktreeCommand } from "../../../src/commands/worktr
 import { readAllManagerProvenance } from "../../../src/pactile/worktree/manager-provenance.js";
 import { repoIdentity } from "../../../src/pactile/worktree/git-probe.js";
 import * as gitRemoval from "../../../src/pactile/worktree/git-removal.js";
+import { sameGitRoot } from "../../../src/utils/git-root.js";
 
 const { readPiHostStopReceiptMock } = vi.hoisted(() => ({ readPiHostStopReceiptMock: vi.fn() }));
 vi.mock("../../../src/pactile/pi/bridge.js", () => ({ readPiHostStopReceipt: readPiHostStopReceiptMock }));
@@ -196,10 +197,9 @@ function closeArgs(prepared: ReturnType<typeof prepareIntegratedRun>): string[] 
 }
 
 function hasRegisteredWorktree(root: string, target: string): boolean {
-  const expected = path.resolve(target).replaceAll("\\", "/").toLowerCase();
   return git(root, "worktree", "list", "--porcelain").split(/\r?\n/)
     .filter((line) => line.startsWith("worktree "))
-    .some((line) => path.resolve(line.slice("worktree ".length)).replaceAll("\\", "/").toLowerCase() === expected);
+    .some((line) => sameGitRoot(line.slice("worktree ".length), target));
 }
 
 function startActiveTaskRun(root: string, taskId: string): { taskDir: string; runId: string } {

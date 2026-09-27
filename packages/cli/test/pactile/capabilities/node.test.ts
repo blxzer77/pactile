@@ -17,6 +17,19 @@ import {
 
 let root = "";
 
+function sameParentEntry(left: string, right: string): boolean {
+  const leftName = path.basename(left);
+  const rightName = path.basename(right);
+  if (process.platform === "win32" ? leftName.toLowerCase() !== rightName.toLowerCase() : leftName !== rightName) return false;
+  try {
+    const a = fs.statSync(path.dirname(left), { bigint: true });
+    const b = fs.statSync(path.dirname(right), { bigint: true });
+    return a.isDirectory() && b.isDirectory() && a.ino !== 0n && a.dev === b.dev && a.ino === b.ino;
+  } catch {
+    return false;
+  }
+}
+
 function request(
   operation: string,
   fields: Record<string, unknown> = {},
@@ -541,7 +554,7 @@ describe("Node workspace capability adapter", () => {
       .mockImplementation(async (...args) => {
         const target = typeof args[0] === "string" ? args[0] : "";
         if (
-          path.dirname(target) === receiptDirectory &&
+          sameParentEntry(target, path.join(receiptDirectory, path.basename(target))) &&
           /^slow-\d+\.json$/u.test(path.basename(target))
         ) {
           await new Promise((resolve) => setTimeout(resolve, 25));
@@ -571,7 +584,7 @@ describe("Node workspace capability adapter", () => {
       .spyOn(fsp, "open")
       .mockImplementation(async (...args) => {
         const file = typeof args[0] === "string" ? args[0] : "";
-        if (!swapped && path.resolve(file) === target) {
+        if (!swapped && sameParentEntry(file, target)) {
           swapped = true;
           fs.unlinkSync(target);
           try {
@@ -604,7 +617,7 @@ describe("Node workspace capability adapter", () => {
       .spyOn(fsp, "open")
       .mockImplementation(async (...args) => {
         const file = typeof args[0] === "string" ? args[0] : "";
-        if (!swapped && path.resolve(file) === target) {
+        if (!swapped && sameParentEntry(file, target)) {
           swapped = true;
           fs.unlinkSync(target);
           try {
@@ -769,7 +782,7 @@ describe("Node workspace capability adapter", () => {
       .spyOn(fsp, "lstat")
       .mockImplementation(async (...args) => {
         const file = typeof args[0] === "string" ? args[0] : "";
-        if (path.resolve(file) === claimPath && ++claimStats === 2) {
+        if (sameParentEntry(file, claimPath) && ++claimStats === 2) {
           throw Object.assign(new Error("simulated metadata access failure"), {
             code: "EACCES",
           });

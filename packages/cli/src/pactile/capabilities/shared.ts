@@ -45,13 +45,37 @@ export function safeChild(root: string, relative: string | null): string {
 }
 
 export function isInside(root: string, candidate: string): boolean {
+  return relativeInside(root, candidate) !== null;
+}
+
+export function relativeInside(root: string, candidate: string): string | null {
   const relative = path.relative(root, candidate);
-  return (
-    relative === "" ||
-    (!path.isAbsolute(relative) &&
-      relative !== ".." &&
-      !relative.startsWith(`..${path.sep}`))
-  );
+  if (relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))) {
+    return relative;
+  }
+  if (process.platform !== "win32") return null;
+  try {
+    const rootStat = fs.statSync(root, { bigint: true });
+    if (!rootStat.isDirectory() || rootStat.ino === 0n) return null;
+    let current = path.resolve(candidate);
+    const segments: string[] = [];
+    while (true) {
+      try {
+        const stat = fs.statSync(current, { bigint: true });
+        if (stat.isDirectory() && stat.dev === rootStat.dev && stat.ino === rootStat.ino) {
+          return segments.reverse().join(path.sep);
+        }
+      } catch {
+        // An absent leaf can still have a physically verified parent.
+      }
+      const parent = path.dirname(current);
+      if (parent === current) return null;
+      segments.push(path.basename(current));
+      current = parent;
+    }
+  } catch {
+    return null;
+  }
 }
 
 export function sameFileIdentity(left: fs.Stats, right: fs.Stats): boolean {
