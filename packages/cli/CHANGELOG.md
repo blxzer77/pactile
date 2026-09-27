@@ -12,6 +12,22 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.2] - 2026-09-28
+
+### Fixed
+
+- Large legacy Task migrations verify source snapshots one file at a time and
+  release CLI preflight source buffers before applying the migration.
+- Completed immutable source snapshots left by an interrupted migration are
+  verified and reused without replaying every exclusive write. Source hashes,
+  file inventories, path safety checks, and journal recovery remain enforced.
+- Task listing reuses one verified migration view for the observation while
+  preserving each Task overlay and Kernel document's integrity checks.
+
+The stable package contains the same product code as `0.6.2-beta.0`.
+
+---
+
 ## [0.6.2-beta.0] - 2026-09-28
 
 ### Fixed
