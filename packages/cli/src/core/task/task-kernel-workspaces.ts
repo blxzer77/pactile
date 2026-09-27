@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 
 import { KernelError, requireNonEmptyString } from "./kernel-contract.js";
@@ -41,6 +42,18 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
   return left.length === right.length && [...left].sort().every((value, index) => value === [...right].sort()[index]);
 }
 
+function sameProjectDirectory(left: string, right: string): boolean {
+  if (path.resolve(left) === path.resolve(right)) return true;
+  try {
+    const leftStat = fs.statSync(left, { bigint: true });
+    const rightStat = fs.statSync(right, { bigint: true });
+    return leftStat.isDirectory() && rightStat.isDirectory()
+      && leftStat.ino !== 0n && leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+  } catch {
+    return false;
+  }
+}
+
 export function bindTaskRunWorkspace(request: BindTaskRunWorkspaceRequest): TaskKernelMutationResult {
   const actor = requireNonEmptyString(request.actor, "actor");
   const runId = requireNonEmptyString(request.runId, "runId");
@@ -58,7 +71,9 @@ export function bindTaskRunWorkspace(request: BindTaskRunWorkspaceRequest): Task
     if (run.workspace) throw new KernelError("INVALID_TRANSITION", "Run workspace cannot be replaced after it has been bound");
     const root = canonicalProjectRoot(request.root, request.cwd);
     const manager = workspace.manager;
-    if (!manager || path.resolve(manager.projectRoot) !== path.resolve(root)) {
+    // Git for Windows can expand an 8.3 temp path that Node keeps in its short
+    // spelling. Compare directory identity while still rejecting another root.
+    if (!manager || !sameProjectDirectory(manager.projectRoot, root)) {
       throw new KernelError("INVALID_REQUEST", "Manager provenance project root does not match this Task Kernel");
     }
     const runWriteSet = [...run.writeSetSnapshot].sort();

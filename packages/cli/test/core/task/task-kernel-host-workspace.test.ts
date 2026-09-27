@@ -76,6 +76,64 @@ function setup() {
 }
 
 describe("Task Run workspace candidate baseline", () => {
+  it("binds the same Windows project through its short-path alias but rejects a different root", (context) => {
+    if (process.platform !== "win32") {
+      context.skip("Windows 8.3 paths are unavailable on this platform");
+      return;
+    }
+    const fixture = setup();
+    const shortRoot = execFileSync(
+      "cmd.exe",
+      ["/d", "/c", `for %I in ("${fixture.root}") do @echo %~sI`],
+      { encoding: "utf8", windowsHide: true },
+    ).trim();
+    if (!fs.existsSync(shortRoot) || shortRoot === fixture.root) {
+      context.skip("This volume does not expose a distinct 8.3 alias");
+      return;
+    }
+    const prior = fixture.started.runs.at(-1);
+    if (!prior?.candidateBaseSha) throw new Error("Run Git baseline is missing");
+    execFileSync("git", ["switch", "--create", "feat/short-root"], { cwd: fixture.root, stdio: "ignore" });
+    const workspace = {
+      ownerRunId: fixture.runId,
+      canonicalPath: fixture.root,
+      branch: "feat/short-root",
+      baseSha: prior.candidateBaseSha,
+      writeSet: ["src/"],
+      integrationState: "not-integrated" as const,
+      reclamationState: "not-requested" as const,
+      manager: {
+        version: 1 as const,
+        credentialId: "manager:short-root",
+        projectRoot: fixture.root,
+        commonDir: path.join(fixture.root, ".git"),
+        gitDir: path.join(fixture.root, ".git"),
+        source: "created" as const,
+        recordedAt: "2026-09-26T00:00:00.000Z",
+      },
+      integrationReceipt: null,
+      cleanupLease: null,
+    };
+    const request = {
+      root: shortRoot,
+      taskDir: path.join(shortRoot, ".pactile", "tasks", "host-contract"),
+      expectedRevision: fixture.started.revision,
+      runId: fixture.runId,
+      actor,
+    };
+    expect(() => bindTaskRunWorkspace({
+      ...request,
+      workspace: { ...workspace, manager: { ...workspace.manager, projectRoot: os.tmpdir() } },
+      idempotencyKey: "workspace:different-project",
+    })).toThrow(/Manager provenance project root/);
+    const bound = bindTaskRunWorkspace({
+      ...request,
+      workspace,
+      idempotencyKey: "workspace:same-project-alias",
+    });
+    expect(bound.kernel.runs.at(-1)?.workspace?.manager?.projectRoot).toBe(fixture.root);
+  });
+
   it("moves the branch binding to a managed checkout at the same captured base and rejects a changed base", () => {
     const context = setup();
     const prior = context.started.runs.at(-1);
