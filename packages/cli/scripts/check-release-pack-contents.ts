@@ -19,6 +19,7 @@ export const REQUIRED_RELEASE_FILES = [
   "dist/pactile/parallel/policy.js",
   "dist/migrations/manifests/0.6.0-beta.1.json",
   "dist/migrations/manifests/0.6.0-beta.2.json",
+  "dist/migrations/manifests/0.6.0-beta.3.json",
   "dist/migrations/manifests/0.6.0.json",
   "dist/core/index.js",
   "dist/core/index.d.ts",
