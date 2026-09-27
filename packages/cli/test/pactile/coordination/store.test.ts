@@ -250,6 +250,35 @@ describe("Pactile local coordination journal", () => {
     ]);
   });
 
+  it("rejects a partially populated Kernel barrier on an unblock", () => {
+    const { store } = fixture();
+    const block = store.blockTask({
+      taskId: "task-barrier",
+      blockId: "block-barrier",
+      reason: "Waiting for a current Kernel decision.",
+      actor: actor("user", "reviewer"),
+      evidenceLevel: "local",
+    });
+
+    expectCoordinationError(
+      () =>
+        store.unblockTask({
+          taskId: "task-barrier",
+          blockId: block.block_id,
+          runId: "run-barrier",
+          kernelRevisionAtUnblock: 4,
+          kernelEventIdAtUnblock: null,
+          reason: "A partial barrier cannot authorize a Kernel Resume.",
+          actor: actor("user", "reviewer"),
+          evidenceLevel: "desktop-native",
+        }),
+      "state-conflict",
+    );
+    expect(store.snapshot().blocked_tasks).toMatchObject([
+      { task_id: "task-barrier", block_id: block.block_id },
+    ]);
+  });
+
   it("binds sequenced Pi progress and terminal result to one Task, Run and workspace id", () => {
     const { root, store } = fixture();
     store.startRun({

@@ -6,7 +6,7 @@
 
 - 消息以 `message_id` 关联 `from_task_id` / `to_task_id`，并可选关联两端 `run_id`。提供稳定的 `messageId` 可使重复写入幂等；相同 ID 携带不同内容会拒绝。
 - 回执引用 `message_id` 和调用方稳定提供的 `receiptId`。状态只能从 `pending` 向 `queued`、`sent`、`delivered`、`acknowledged` 或 `failed` 前进；后续状态不能回退，终态不能再变化。
-- `task.blocked` 有唯一 `block_id`，`task.unblocked` 必须指向该活动 block。可附阻塞/解除消息 ID；存储会验证消息方向和 Task ID。解除记录保留在日志中。
+- `task.blocked` 有唯一 `block_id`，`task.unblocked` 必须指向该活动 block。引用消息阻塞或解除时，Codex bridge 会验证当前源/目标 Task ID、Kernel 类型与修订、contract、相关 Run 身份，以及非 stale 的成功回执；新增 `task.blocked` 且引用消息指定 `to_run_id` 时，V2 Run 还必须仍处于活动状态。回执驱动的解除必须是 `desktop-native`；不带解除消息的人工解除记为本地操作。解除记录保留在日志中。
 - `run.started` 绑定全局唯一的 `run_id` 到 `task_id`，并可选记录 `workspace_id`（供 P38 worktree 身份关联）及 `provider_run_id`。进度事件带单调递增的序号，终态结果最多一条；两者都验证相同 Task/Run 绑定。
 
 最小调用示例：
@@ -33,7 +33,14 @@ coordination.recordMessageReceipt({
 const view = coordination.snapshot();
 ```
 
-Codex Node bridge 会把显式 `--to-task` 的桌面消息请求/回执映射到消息记录，并将 V2 Task Run 的 bridge 回执作为有序进度事件引用。Host 的 `sent` 只表示调用方提交了发送回执，不证明对端已读；只有成功且非 stale 的回执能关联到 Task 阻塞/解除，解除动作始终留下事件。Pi RPC 生命周期由 Pi bridge 接线到 `run_id`；此协调存储本身不启动宿主或验证 provider。
+Codex Node bridge 会把显式 `--to-task` 的桌面消息请求/回执映射到消息记录，并将 V2 Task Run 的 bridge 回执作为有序进度事件引用。Host 的 `sent` 只表示调用方提交了发送回执，不证明对端已读；回执还须匹配当前 Task/Run/Kernel/contract，且回执驱动的解除要求 `desktop-native`。Pi RPC 生命周期由 Pi bridge 接线到 `run_id`；此协调存储本身不启动宿主或验证 provider。
+
+## P39 阻塞解除与派发边界
+
+- 活动的协调 block 会关闭 Task Run admission。`task.unblocked` 只记录解除，不等于 Kernel Resume，也不直接授予执行或文件写入权限。
+- V2 解除事件绑定解除时处于活动状态的 Task Run（如有）及精确的 Kernel 修订和事件 ID。对该屏障绑定、仍处于 waiting（Kernel 事件仍为 `run.queued`）的 Run，必须通过协调锁内的 Kernel Resume 路径；该路径将 `run.resumed` 与对应解除事件写入因果授权记录，admission 再验证这组绑定。解除屏障前已 `run.started` 的旧 Run 不可借解除重新派发，须结束后重试；屏障后新启动的 Run 仍须通过 P37 admission。
+- P37 admission 会在协调日志锁和项目调度锁内重检 block、Kernel/Run 与授权、硬依赖、批准范围、owner、write set 和 lease，并在派发前再次验证 lease。`--resume-execute` 不启用；手工或消息回执解除都不能绕过 Kernel Resume、批准或 admission。
+- 执行阶段的 V2 Task 可通过同一 Task 身份与 contract 下仍有效的 Plan thread 接收跨 Task `send_message_to_thread` 协调消息；消息请求/回执绑定双方当前 Task、Run、Kernel 修订和 contract。该通道只用于协调：不得编辑文件、改变批准或派发 Codex subagent；收到消息后仍须等待明确的 Kernel Resume 和 P37 admission。Pi 的派发由 Pi Host 按自身策略执行，Node CLI 只承载边界请求与回执。
 
 ## 本地日志与边界
 

@@ -10,6 +10,13 @@ import {
 } from "../../core/task/index.js";
 import { resolveTaskDirectoryById } from "../../core/task/task-kernel-paths.js";
 import { resolveTaskDir } from "../task/session.js";
+import {
+  CoordinationError,
+  readCoordinationSnapshot,
+  type CoordinationRunResumeAuthorized,
+  type CoordinationTaskUnblocked,
+} from "../coordination/index.js";
+import { withCoordinationJournalLock } from "../coordination/journal.js";
 import type { ConflictParallelAuthorizationV1 } from "./scheduler.js";
 import {
   readTaskKernelScheduleReceiptV1,
@@ -97,8 +104,7 @@ export interface TaskKernelRunDispatchPreSpawnAssertionRequestV1 {
   owner: TaskKernelRunDispatchOwnerV1;
 }
 
-export interface TaskKernelRunDispatchPreSpawnAssertionV1
-  extends TaskKernelRunDispatchLeaseAssertionV1 {
+export interface TaskKernelRunDispatchPreSpawnAssertionV1 extends TaskKernelRunDispatchLeaseAssertionV1 {
   /** False only when every dispatch gate passed and the Run is still unbound. */
   hostBound: false | null;
 }
@@ -1147,6 +1153,102 @@ function inspectTaskRun(
   };
 }
 
+function coordinationDispatchReason(
+  root: string,
+  taskId: string,
+  kernel?: TaskKernelSnapshotV2,
+  run?: TaskRunV2,
+): string | null {
+  let coordination: ReturnType<typeof readCoordinationSnapshot>;
+  try {
+    coordination = readCoordinationSnapshot(root);
+  } catch {
+    return "coordination-state-unreadable";
+  }
+  if (coordination.blocked_tasks.some((block) => block.task_id === taskId))
+    return "coordination-task-blocked";
+  if (!kernel || !run) return null;
+
+  const runEntryIndex = kernel.events.findIndex(
+    (event) =>
+      event.entityId === run.id &&
+      (event.type === "run.queued" || event.type === "run.started"),
+  );
+  const runEntry = kernel.events[runEntryIndex];
+  if (!runEntry) return "task-run-start-event-missing";
+
+  const latestUnblock = [...coordination.events]
+    .reverse()
+    .find(
+      (event): event is CoordinationTaskUnblocked =>
+        event.type === "task.unblocked" && event.task_id === taskId,
+    );
+  if (!latestUnblock) return null;
+
+  const barrierRevision = latestUnblock.kernel_revision_at_unblock;
+  const barrierEventId = latestUnblock.kernel_event_id_at_unblock;
+  if (
+    typeof barrierRevision !== "number" ||
+    typeof barrierEventId !== "string"
+  ) {
+    return "coordination-unblock-kernel-barrier-missing";
+  }
+  const barrierIndex = kernel.events.findIndex(
+    (event) => event.id === barrierEventId,
+  );
+  const barrierEvent = kernel.events[barrierIndex];
+  if (barrierEvent?.revision !== barrierRevision || barrierIndex < 0) {
+    return "coordination-unblock-kernel-barrier-invalid";
+  }
+
+  if (runEntry.type === "run.started") {
+    return runEntryIndex > barrierIndex
+      ? null
+      : "coordination-running-run-requires-terminal-retry";
+  }
+
+  const resumeEntry = [...kernel.events]
+    .map((event, index) => ({ event, index }))
+    .reverse()
+    .find(
+      ({ event }) => event.type === "run.resumed" && event.entityId === run.id,
+    );
+  if (!resumeEntry || resumeEntry.index <= runEntryIndex)
+    return "coordination-unblock-requires-kernel-resume";
+  if (resumeEntry.index <= barrierIndex)
+    return "coordination-running-run-requires-terminal-retry";
+  if (runEntryIndex <= barrierIndex && latestUnblock.run_id !== run.id) {
+    return "coordination-unblock-kernel-barrier-mismatch";
+  }
+
+  const unblockEventIndex = coordination.events.findIndex(
+    (event) => event.event_id === latestUnblock.event_id,
+  );
+  const resumeAuthorization = [...coordination.events]
+    .reverse()
+    .find(
+      (event): event is CoordinationRunResumeAuthorized =>
+        event.type === "run.resume-authorized" &&
+        event.task_id === taskId &&
+        event.run_id === run.id &&
+        event.unblock_event_id === latestUnblock.event_id,
+    );
+  const resumeAuthorizationIndex = resumeAuthorization
+    ? coordination.events.findIndex(
+        (event) => event.event_id === resumeAuthorization.event_id,
+      )
+    : -1;
+  if (
+    !resumeAuthorization ||
+    resumeAuthorizationIndex <= unblockEventIndex ||
+    resumeAuthorization.kernel_revision !== resumeEntry.event.revision ||
+    resumeAuthorization.kernel_event_id !== resumeEntry.event.id
+  ) {
+    return "coordination-unblock-resume-authorization-missing";
+  }
+  return null;
+}
+
 function conflictAuthorization(
   receipt: TaskKernelScheduleDecisionReceiptV1,
   taskId: string,
@@ -1233,167 +1335,200 @@ export function acquireTaskKernelRunDispatchV1(
     if (!inspected.checked)
       return persistRejected(root, request, inspected.reasonCodes, null);
     const checked = inspected.checked;
-    const kernelOwner = readRunHost(checked.run);
-    const suppliedOwner = normalizeOwner(request.owner);
-    // Preserve adapter-observed process identity when the Kernel Host schema
-    // has not yet projected those fields; a null Kernel slot is not a claim.
-    const owner = suppliedOwner ?? kernelOwner;
-    if (!owner) {
-      return persistRejected(
-        root,
-        request,
-        ["dispatch-owner-missing-or-invalid"],
-        checked.kernel.revision,
-        checked.dependencyKernelRevisions,
-        checked.writeSet,
-      );
-    }
-    if (
-      kernelOwner &&
-      suppliedOwner &&
-      !ownersCompatible(kernelOwner, suppliedOwner)
-    ) {
-      return persistRejected(
-        root,
-        request,
-        ["dispatch-owner-does-not-match-task-run"],
-        checked.kernel.revision,
-        checked.dependencyKernelRevisions,
-        checked.writeSet,
-      );
-    }
-    if (request.owner && !normalizeOwner(request.owner)) {
-      return persistRejected(
-        root,
-        request,
-        ["dispatch-owner-missing-or-invalid"],
-        checked.kernel.revision,
-        checked.dependencyKernelRevisions,
-        checked.writeSet,
-      );
-    }
-    let active: ReturnType<typeof listProjectWriteLeases>;
     try {
-      active = listProjectWriteLeases(root);
-    } catch {
-      return persistRejected(
-        root,
-        request,
-        ["project-active-leases-unreadable"],
-        checked.kernel.revision,
-        checked.dependencyKernelRevisions,
-        checked.writeSet,
-      );
-    }
-    const sameRun = active.find(
-      ({ lease }) =>
-        lease.owner_kind === "task-kernel-v2-run" &&
-        lease.task_id === request.taskId &&
-        lease.run_id === request.runId,
-    );
-    if (sameRun)
-      return persistRejected(
-        root,
-        request,
-        ["task-run-already-leased"],
-        checked.kernel.revision,
-        checked.dependencyKernelRevisions,
-        checked.writeSet,
-        [sameRun.lease.id],
-      );
+      return withCoordinationJournalLock(root, () => {
+        const coordinationReason = coordinationDispatchReason(
+          root,
+          request.taskId,
+          checked.kernel,
+          checked.run,
+        );
+        if (coordinationReason) {
+          return persistRejected(
+            root,
+            request,
+            [coordinationReason],
+            checked.kernel.revision,
+            checked.dependencyKernelRevisions,
+            checked.writeSet,
+          );
+        }
+        const kernelOwner = readRunHost(checked.run);
+        const suppliedOwner = normalizeOwner(request.owner);
+        // Preserve adapter-observed process identity when the Kernel Host schema
+        // has not yet projected those fields; a null Kernel slot is not a claim.
+        const owner = suppliedOwner ?? kernelOwner;
+        if (!owner) {
+          return persistRejected(
+            root,
+            request,
+            ["dispatch-owner-missing-or-invalid"],
+            checked.kernel.revision,
+            checked.dependencyKernelRevisions,
+            checked.writeSet,
+          );
+        }
+        if (
+          kernelOwner &&
+          suppliedOwner &&
+          !ownersCompatible(kernelOwner, suppliedOwner)
+        ) {
+          return persistRejected(
+            root,
+            request,
+            ["dispatch-owner-does-not-match-task-run"],
+            checked.kernel.revision,
+            checked.dependencyKernelRevisions,
+            checked.writeSet,
+          );
+        }
+        if (request.owner && !normalizeOwner(request.owner)) {
+          return persistRejected(
+            root,
+            request,
+            ["dispatch-owner-missing-or-invalid"],
+            checked.kernel.revision,
+            checked.dependencyKernelRevisions,
+            checked.writeSet,
+          );
+        }
+        let active: ReturnType<typeof listProjectWriteLeases>;
+        try {
+          active = listProjectWriteLeases(root);
+        } catch {
+          return persistRejected(
+            root,
+            request,
+            ["project-active-leases-unreadable"],
+            checked.kernel.revision,
+            checked.dependencyKernelRevisions,
+            checked.writeSet,
+          );
+        }
+        const sameRun = active.find(
+          ({ lease }) =>
+            lease.owner_kind === "task-kernel-v2-run" &&
+            lease.task_id === request.taskId &&
+            lease.run_id === request.runId,
+        );
+        if (sameRun)
+          return persistRejected(
+            root,
+            request,
+            ["task-run-already-leased"],
+            checked.kernel.revision,
+            checked.dependencyKernelRevisions,
+            checked.writeSet,
+            [sameRun.lease.id],
+          );
 
-    const collisions = active.filter(({ lease }) =>
-      projectWriteSetsConflict(lease.touches, checked.writeSet),
-    );
-    const conflictingLeaseIds: string[] = [];
-    const missingIntegrationOwnerLeaseIds: string[] = [];
-    const authorizedConflicts: NonNullable<
-      ProjectWriteLeaseRecordV1["authorized_conflicts"]
-    > = [];
-    for (const { lease } of collisions) {
-      const authorization = conflictAuthorization(
-        schedule,
-        request.taskId,
-        lease,
-      );
-      if (!authorization) conflictingLeaseIds.push(lease.id);
-      else if (!nonEmptyString(authorization.integrationOwner)) {
-        missingIntegrationOwnerLeaseIds.push(lease.id);
-        conflictingLeaseIds.push(lease.id);
-      } else authorizedConflicts.push(authorization);
-    }
-    if (conflictingLeaseIds.length) {
-      const reasonCodes = [
-        ...(conflictingLeaseIds.length > missingIntegrationOwnerLeaseIds.length
-          ? ["project-write-set-conflict"]
-          : []),
-        ...(missingIntegrationOwnerLeaseIds.length
-          ? ["project-write-set-conflict-integration-owner-missing"]
-          : []),
-      ];
-      return persistRejected(
-        root,
-        request,
-        reasonCodes,
-        checked.kernel.revision,
-        checked.dependencyKernelRevisions,
-        checked.writeSet,
-        conflictingLeaseIds.sort(),
-      );
-    }
+        const collisions = active.filter(({ lease }) =>
+          projectWriteSetsConflict(lease.touches, checked.writeSet),
+        );
+        const conflictingLeaseIds: string[] = [];
+        const missingIntegrationOwnerLeaseIds: string[] = [];
+        const authorizedConflicts: NonNullable<
+          ProjectWriteLeaseRecordV1["authorized_conflicts"]
+        > = [];
+        for (const { lease } of collisions) {
+          const authorization = conflictAuthorization(
+            schedule,
+            request.taskId,
+            lease,
+          );
+          if (!authorization) conflictingLeaseIds.push(lease.id);
+          else if (!nonEmptyString(authorization.integrationOwner)) {
+            missingIntegrationOwnerLeaseIds.push(lease.id);
+            conflictingLeaseIds.push(lease.id);
+          } else authorizedConflicts.push(authorization);
+        }
+        if (conflictingLeaseIds.length) {
+          const reasonCodes = [
+            ...(conflictingLeaseIds.length >
+            missingIntegrationOwnerLeaseIds.length
+              ? ["project-write-set-conflict"]
+              : []),
+            ...(missingIntegrationOwnerLeaseIds.length
+              ? ["project-write-set-conflict-integration-owner-missing"]
+              : []),
+          ];
+          return persistRejected(
+            root,
+            request,
+            reasonCodes,
+            checked.kernel.revision,
+            checked.dependencyKernelRevisions,
+            checked.writeSet,
+            conflictingLeaseIds.sort(),
+          );
+        }
 
-    const leaseId = randomUUID();
-    const decisionBase = {
-      decision: "permitted" as const,
-      request,
-      owner,
-      reasonCodes: [
-        "planned-task-run-authorized",
-        "hard-dependencies-closed",
-        "project-write-set-reserved",
-      ],
-      taskKernelRevision: checked.kernel.revision,
-      dependencyKernelRevisions: checked.dependencyKernelRevisions,
-      writeSet: checked.writeSet,
-      conflictingLeaseIds: collisions.map(({ lease }) => lease.id).sort(),
-      leaseId,
-    };
-    const admissionFingerprint = decisionFingerprint(decisionBase);
-    const leaseFile = projectActiveLeasePath(root, leaseId);
-    const lease: DispatchLease = {
-      schema_version: 1,
-      owner_kind: "task-kernel-v2-run",
-      id: leaseId,
-      pid: process.pid,
-      durable: true,
-      task_id: request.taskId,
-      run_id: request.runId,
-      schedule_receipt_fingerprint: schedule.receiptFingerprint,
-      admission_receipt_fingerprint: admissionFingerprint,
-      admission_owner: owner,
-      dispatch_owner: owner,
-      touches: checked.writeSet,
-      authorized_conflicts: authorizedConflicts,
-      source_kernel_revision: checked.kernel.revision,
-      created_at: new Date().toISOString(),
-      status: "active",
-    };
-    fs.mkdirSync(path.dirname(leaseFile), { recursive: true });
-    fs.writeFileSync(leaseFile, `${JSON.stringify(lease, null, 2)}\n`, {
-      flag: "wx",
-      mode: 0o600,
-    });
-    try {
-      const stored = persistDecisionReceipt(root, decisionBase);
-      return {
-        permitted: true,
-        receipt: stored.receipt,
-        receiptFile: relative(root, stored.file),
-        leaseId,
-        leaseFile: relative(root, leaseFile),
-      };
+        const leaseId = randomUUID();
+        const decisionBase = {
+          decision: "permitted" as const,
+          request,
+          owner,
+          reasonCodes: [
+            "planned-task-run-authorized",
+            "hard-dependencies-closed",
+            "project-write-set-reserved",
+          ],
+          taskKernelRevision: checked.kernel.revision,
+          dependencyKernelRevisions: checked.dependencyKernelRevisions,
+          writeSet: checked.writeSet,
+          conflictingLeaseIds: collisions.map(({ lease }) => lease.id).sort(),
+          leaseId,
+        };
+        const admissionFingerprint = decisionFingerprint(decisionBase);
+        const leaseFile = projectActiveLeasePath(root, leaseId);
+        const lease: DispatchLease = {
+          schema_version: 1,
+          owner_kind: "task-kernel-v2-run",
+          id: leaseId,
+          pid: process.pid,
+          durable: true,
+          task_id: request.taskId,
+          run_id: request.runId,
+          schedule_receipt_fingerprint: schedule.receiptFingerprint,
+          admission_receipt_fingerprint: admissionFingerprint,
+          admission_owner: owner,
+          dispatch_owner: owner,
+          touches: checked.writeSet,
+          authorized_conflicts: authorizedConflicts,
+          source_kernel_revision: checked.kernel.revision,
+          created_at: new Date().toISOString(),
+          status: "active",
+        };
+        fs.mkdirSync(path.dirname(leaseFile), { recursive: true });
+        fs.writeFileSync(leaseFile, `${JSON.stringify(lease, null, 2)}\n`, {
+          flag: "wx",
+          mode: 0o600,
+        });
+        try {
+          const stored = persistDecisionReceipt(root, decisionBase);
+          return {
+            permitted: true,
+            receipt: stored.receipt,
+            receiptFile: relative(root, stored.file),
+            leaseId,
+            leaseFile: relative(root, leaseFile),
+          };
+        } catch (error) {
+          fs.rmSync(leaseFile, { force: true });
+          throw error;
+        }
+      });
     } catch (error) {
-      fs.rmSync(leaseFile, { force: true });
+      if (error instanceof CoordinationError) {
+        return persistRejected(
+          root,
+          request,
+          ["coordination-state-unreadable"],
+          checked.kernel.revision,
+          checked.dependencyKernelRevisions,
+          checked.writeSet,
+        );
+      }
       throw error;
     }
   });
@@ -1824,7 +1959,8 @@ function assertTaskKernelRunDispatchLeaseInternal(
     if (preSpawn) {
       const expectedOwner = normalizeOwner(preSpawn.owner);
       if (
-        preSpawn.scheduleReceiptFingerprint !== lease.schedule_receipt_fingerprint
+        preSpawn.scheduleReceiptFingerprint !==
+        lease.schedule_receipt_fingerprint
       )
         return empty("schedule-receipt-fingerprint-mismatch");
       if (
@@ -1924,13 +2060,30 @@ function assertTaskKernelRunDispatchLeaseInternal(
         writeSet: lease.touches,
       };
     }
-    if (!writeSetCoveredByLease(inspected.checked.writeSet, lease.touches))
+    const checked = inspected.checked;
+    if (!checked) return empty("task-run-not-dispatchable");
+    let coordinationReason: string | null;
+    try {
+      coordinationReason = withCoordinationJournalLock(root, () =>
+        coordinationDispatchReason(
+          root,
+          request.taskId,
+          checked.kernel,
+          checked.run,
+        ),
+      );
+    } catch (error) {
+      if (error instanceof CoordinationError)
+        return empty("coordination-state-unreadable");
+      throw error;
+    }
+    if (coordinationReason) return empty(coordinationReason);
+    if (!writeSetCoveredByLease(checked.writeSet, lease.touches))
       return empty("task-run-write-set-expanded");
     if (!sameProjectWriteSet(admission.writeSet, lease.touches))
       return empty("dispatch-lease-write-set-mismatch");
     if (preSpawn) {
-      if (inspected.checked.run.host)
-        return empty("task-run-host-already-bound");
+      if (checked.run.host) return empty("task-run-host-already-bound");
       if (
         lease.owner_binding_receipt_fingerprint ||
         !sameOwner(lease.admission_owner, lease.dispatch_owner)
@@ -1939,17 +2092,20 @@ function assertTaskKernelRunDispatchLeaseInternal(
       const ownerBindingReason = verifyOwnerBinding(
         root,
         lease,
-        inspected.checked.kernel,
-        inspected.checked.run,
+        checked.kernel,
+        checked.run,
       );
-      if (ownerBindingReason && ownerBindingReason !== "task-run-host-binding-mismatch")
+      if (
+        ownerBindingReason &&
+        ownerBindingReason !== "task-run-host-binding-mismatch"
+      )
         return empty(ownerBindingReason);
     } else {
       const ownerBindingReason = verifyOwnerBinding(
         root,
         lease,
-        inspected.checked.kernel,
-        inspected.checked.run,
+        checked.kernel,
+        checked.run,
       );
       if (ownerBindingReason) return empty(ownerBindingReason);
     }

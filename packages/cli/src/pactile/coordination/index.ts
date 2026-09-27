@@ -11,6 +11,7 @@ export {
   type CoordinationMessageStatus,
   type CoordinationRunProgress,
   type CoordinationRunResult,
+  type CoordinationRunResumeAuthorized,
   type CoordinationRunSnapshot,
   type CoordinationRunStarted,
   type CoordinationSnapshot,
@@ -30,3 +31,4 @@ export {
   type UnblockCoordinationTaskInput,
   type CoordinationErrorCode,
 } from "./store.js";
+export { resumeTaskRunWithCoordinationBarrier } from "./kernel-resume.js";

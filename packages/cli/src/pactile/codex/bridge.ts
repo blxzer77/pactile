@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   fingerprintTaskValue,
   readTaskKernel,
+  type TaskKernelEventV2,
   type TaskReviewV2,
   type TaskRunV2,
 } from "../../core/task/index.js";
@@ -136,6 +137,7 @@ interface BridgeTaskContext {
   revision: number;
   kernelKind: CodexTaskKernelKind;
   contractFingerprint: string | null;
+  events: TaskKernelEventV2[];
   runs: TaskRunV2[];
   reviews: TaskReviewV2[];
   archived: boolean;
@@ -173,6 +175,7 @@ function taskContextFromDirectory(
       revision: kernel.revision,
       kernelKind: read.kind,
       contractFingerprint: fingerprintTaskValue(kernel.definition),
+      events: kernel.events,
       runs: kernel.runs,
       reviews: kernel.reviews,
       archived,
@@ -187,6 +190,7 @@ function taskContextFromDirectory(
     revision: kernel.revision,
     kernelKind: read.kind,
     contractFingerprint: null,
+    events: [],
     runs: [],
     reviews: [],
     archived,
@@ -337,6 +341,141 @@ function codexRequestFingerprint(request: CodexBridgeRequest): string {
   return fingerprintTaskValue(payload);
 }
 
+type CoordinationMessageEntry = ReturnType<
+  CoordinationStore["snapshot"]
+>["messages"][number];
+
+function verifyFreshCoordinationMessage(
+  root: string,
+  entry: CoordinationMessageEntry,
+  destinationContext: BridgeTaskContext,
+  requireNative: boolean,
+): {
+  evidenceLevel: CoordinationEvidenceLevel;
+  sourceContext: BridgeTaskContext;
+} {
+  const message = entry.message;
+  const requestId = message.request_id;
+  if (
+    !requestId ||
+    !uuidPattern.test(requestId) ||
+    !new Set(["sent", "delivered", "acknowledged"]).has(entry.status)
+  ) {
+    throw new Error("Coordination message has no successful bound request");
+  }
+  const sourceContext = taskContext(root, message.from_task_id);
+  const request = readJson(
+    requestFile(sourceContext.dir, requestId),
+  ) as unknown as CodexBridgeRequest;
+  const receipt = readJson(
+    receiptFile(sourceContext.dir, requestId),
+  ) as unknown as CodexBridgeReceipt;
+  const sendReceipt = entry.receipts.find(
+    (candidate) => candidate.receipt_id === requestId,
+  );
+  const evidenceLevel = receipt.evidence_level;
+  const requestFingerprint = codexRequestFingerprint(request);
+  const sourceBound =
+    !sourceContext.archived &&
+    request.request_id === requestId &&
+    request.request_fingerprint === requestFingerprint &&
+    request.task === sourceContext.task &&
+    request.task_id === sourceContext.taskId &&
+    request.task_kernel_kind === sourceContext.kernelKind &&
+    request.kernel_revision === sourceContext.revision &&
+    (request.contract_fingerprint ?? null) ===
+      sourceContext.contractFingerprint &&
+    (request.run_id ?? null) === message.from_run_id &&
+    isRunBoundToContext(
+      sourceContext,
+      request.run_id,
+      request.candidate_snapshot_id,
+      request.candidate_fingerprint,
+    );
+  const destinationBound =
+    !destinationContext.archived &&
+    request.to_task === path.basename(destinationContext.dir) &&
+    request.to_task_id === destinationContext.taskId &&
+    request.to_task_kernel_kind === destinationContext.kernelKind &&
+    request.to_kernel_revision === destinationContext.revision &&
+    (request.to_contract_fingerprint ?? null) ===
+      destinationContext.contractFingerprint &&
+    (request.to_run_id ?? null) === message.to_run_id &&
+    isRunBoundToContext(
+      destinationContext,
+      request.to_run_id,
+      request.to_candidate_snapshot_id,
+      request.to_candidate_fingerprint,
+    );
+  if (
+    !sourceBound ||
+    !destinationBound ||
+    message.message_id !== request.coordination_message_id ||
+    message.message_id !== requestId ||
+    message.host_ref !== request.thread_id ||
+    request.tool !== "send_message_to_thread" ||
+    !request.thread_id ||
+    !request.host_id ||
+    receipt.schema_version !== 1 ||
+    receipt.request_id !== requestId ||
+    receipt.request_fingerprint !== requestFingerprint ||
+    receipt.task_id !== sourceContext.taskId ||
+    (receipt.run_id ?? null) !== (request.run_id ?? null) ||
+    (receipt.candidate_snapshot_id ?? null) !==
+      (request.candidate_snapshot_id ?? null) ||
+    (receipt.candidate_fingerprint ?? null) !==
+      (request.candidate_fingerprint ?? null) ||
+    (receipt.to_task_id ?? null) !== destinationContext.taskId ||
+    (receipt.to_run_id ?? null) !== (request.to_run_id ?? null) ||
+    (receipt.to_candidate_snapshot_id ?? null) !==
+      (request.to_candidate_snapshot_id ?? null) ||
+    (receipt.to_candidate_fingerprint ?? null) !==
+      (request.to_candidate_fingerprint ?? null) ||
+    receipt.destination_kernel_revision_at_receipt !==
+      request.to_kernel_revision ||
+    receipt.kernel_revision_at_receipt !== request.kernel_revision ||
+    receipt.thread_id !== request.thread_id ||
+    receipt.host_id !== request.host_id ||
+    receipt.tool !== request.tool ||
+    receipt.outcome !== "ok" ||
+    receipt.contract_stale !== false ||
+    !sendReceipt ||
+    !new Set(["sent", "delivered", "acknowledged"]).has(sendReceipt.status) ||
+    sendReceipt.evidence_level !== evidenceLevel ||
+    (evidenceLevel !== "simulated" && evidenceLevel !== "desktop-native") ||
+    (requireNative && evidenceLevel !== "desktop-native")
+  ) {
+    throw new Error(
+      "Coordination message request or receipt is stale, misbound, or not authoritative",
+    );
+  }
+  return { evidenceLevel, sourceContext };
+}
+
+function coordinationKernelBarrier(context: BridgeTaskContext): {
+  runId: string | null;
+  kernelRevision: number | null;
+  kernelEventId: string | null;
+} {
+  if (context.kernelKind !== "task-kernel-v2") {
+    return { runId: null, kernelRevision: null, kernelEventId: null };
+  }
+  const lastEvent = context.events.at(-1);
+  if (lastEvent?.revision !== context.revision) {
+    throw new Error(
+      "Cannot bind coordination unblock to the current Kernel event",
+    );
+  }
+  const activeRun = [...context.runs]
+    .reverse()
+    .find((run) => run.state === "running" || run.state === "waiting");
+  return {
+    runId: activeRun?.id ?? null,
+    kernelRevision: context.revision,
+    kernelEventId: lastEvent.id,
+  };
+}
+
 function readJson(file: string): Record<string, unknown> {
   const value: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -387,6 +526,65 @@ function boundThreads(dir: string): Map<string, BoundThread> {
     }
   }
   return bound;
+}
+
+/**
+ * A Plan thread can outlive the Kernel revision that created it. Reuse that
+ * thread only for a coordination message, and only when its original request
+ * still matches this V2 Task's identity and contract. The outgoing message is
+ * separately bound to the current Kernel revision and active Run.
+ */
+function coordinationBoundThread(
+  context: BridgeTaskContext,
+  threadId: string,
+): BoundThread | undefined {
+  if (context.archived || context.kernelKind !== "task-kernel-v2")
+    return undefined;
+
+  for (const request of requests(context.dir).reverse()) {
+    if (
+      request.tool !== "create_thread" ||
+      request.role !== "plan" ||
+      request.task !== context.task ||
+      request.task_id !== context.taskId ||
+      request.task_kernel_kind !== "task-kernel-v2" ||
+      (request.contract_fingerprint ?? null) !== context.contractFingerprint ||
+      !Number.isInteger(request.kernel_revision) ||
+      request.kernel_revision > context.revision
+    ) {
+      continue;
+    }
+    const receiptPath = receiptFile(context.dir, request.request_id);
+    if (!fs.existsSync(receiptPath)) continue;
+    const receipt = readJson(receiptPath) as unknown as CodexBridgeReceipt;
+    const requestFingerprint = codexRequestFingerprint(request);
+    if (
+      request.request_fingerprint !== requestFingerprint ||
+      receipt.schema_version !== 1 ||
+      receipt.request_id !== request.request_id ||
+      receipt.request_fingerprint !== requestFingerprint ||
+      receipt.task_id !== context.taskId ||
+      receipt.run_id !== (request.run_id ?? null) ||
+      receipt.tool !== "create_thread" ||
+      receipt.outcome !== "ok" ||
+      (request.kernel_revision === context.revision &&
+        receipt.contract_stale === true) ||
+      receipt.kernel_revision_at_receipt !== request.kernel_revision ||
+      receipt.thread_id !== threadId ||
+      !receipt.host_id ||
+      !idPattern.test(receipt.host_id)
+    ) {
+      continue;
+    }
+    return {
+      threadId,
+      hostId: receipt.host_id,
+      role: "plan",
+      runId: request.run_id ?? null,
+      dispatchLeaseId: request.dispatch_lease_id ?? null,
+    };
+  }
+  return undefined;
 }
 
 function latestWaitCursor(dir: string, threadId: string): string | null {
@@ -588,9 +786,7 @@ export function prepareCodexRequest(input: {
     throw new Error("--escalation-id is only valid for a Codex message");
   }
   if (input.replyToEscalationId && input.tool !== "read_thread") {
-    throw new Error(
-      "--reply-to-escalation-id is only valid for a Codex read",
-    );
+    throw new Error("--reply-to-escalation-id is only valid for a Codex read");
   }
   if (input.toTask && input.tool === "create_thread") {
     throw new Error("--to-task is only valid for cross-task message");
@@ -629,8 +825,15 @@ export function prepareCodexRequest(input: {
       "Task Kernel v2 --resume-execute dispatch is disabled until P37 admission, lease and Resume/block validation are connected",
     );
   }
+  const coordinationToExecutingV2Task =
+    crossTask &&
+    input.tool === "send_message_to_thread" &&
+    targetContext.kernelKind === "task-kernel-v2" &&
+    targetContext.phase === "execute";
   const bound = input.threadId
-    ? boundThreads(targetContext.dir).get(input.threadId)
+    ? coordinationToExecutingV2Task
+      ? coordinationBoundThread(targetContext, input.threadId)
+      : boundThreads(targetContext.dir).get(input.threadId)
     : undefined;
   const role = input.tool === "create_thread" ? input.role : bound?.role;
   if (!role)
@@ -649,8 +852,8 @@ export function prepareCodexRequest(input: {
     throw new Error("--role must match the bound Codex thread role");
   }
   if (
-    input.tool === "create_thread" ||
-    input.tool === "send_message_to_thread"
+    !coordinationToExecutingV2Task &&
+    (input.tool === "create_thread" || input.tool === "send_message_to_thread")
   ) {
     checkPhase(role, crossTask ? targetContext.phase : context.phase);
   }
@@ -690,6 +893,17 @@ export function prepareCodexRequest(input: {
   const targetRun = crossTask
     ? selectRun(targetContext, role, input.toRunId, executionDispatch)
     : selectedRun;
+  if (
+    coordinationToExecutingV2Task &&
+    (!targetRun.runId ||
+      (targetRun.run?.state !== "running" &&
+        targetRun.run?.state !== "waiting") ||
+      (bound?.runId && bound.runId !== targetRun.runId))
+  ) {
+    throw new Error(
+      "Coordination to an executing Task requires its current active Run and a Plan thread bound to that Task",
+    );
+  }
   if (input.escalationId) {
     const sourceRun = context.runs.at(-1);
     const review = context.reviews.at(-1);
@@ -1219,9 +1433,7 @@ export function recordCodexReceipt(
       destinationContext?.revision ?? null,
     request_fingerprint: requestFingerprint,
     evidence_level: evidenceLevel,
-    ...(request.escalation_id
-      ? { escalation_id: request.escalation_id }
-      : {}),
+    ...(request.escalation_id ? { escalation_id: request.escalation_id } : {}),
     ...(request.reply_to_escalation_id
       ? { reply_to_escalation_id: request.reply_to_escalation_id }
       : {}),
@@ -1452,38 +1664,92 @@ export function blockCodexTask(
   const context = taskContext(root, task);
   const coordination = new CoordinationStore(root);
   let blockedByTaskId = input.blockedByTaskId ?? null;
+  let evidenceLevel: CoordinationEvidenceLevel = "local";
   if (input.messageId) {
-    const message = coordination
+    const messageEntry = coordination
       .snapshot()
       .messages.find(
         (candidate) => candidate.message.message_id === input.messageId,
       );
-    if (message?.message.to_task_id !== context.taskId) {
+    if (messageEntry?.message.to_task_id !== context.taskId) {
       throw new Error("block message must be addressed to this Task");
     }
-    if (!new Set(["sent", "delivered", "acknowledged"]).has(message.status)) {
+    const sendReceipt = messageEntry.receipts.at(-1);
+    if (
+      !sendReceipt ||
+      !new Set(["sent", "delivered", "acknowledged"]).has(sendReceipt.status)
+    ) {
       throw new Error(
         "block message requires a non-stale successful send receipt",
       );
     }
-    if (message.message.to_run_id && context.kernelKind === "task-kernel-v2") {
+    const verified = verifyFreshCoordinationMessage(
+      root,
+      messageEntry,
+      context,
+      false,
+    );
+    evidenceLevel = verified.evidenceLevel;
+    if (
+      messageEntry.message.to_run_id &&
+      context.kernelKind === "task-kernel-v2"
+    ) {
       const run = context.runs.find(
-        (candidate) => candidate.id === message.message.to_run_id,
+        (candidate) => candidate.id === messageEntry.message.to_run_id,
       );
       if (!run || (run.state !== "running" && run.state !== "waiting")) {
         throw new Error("block message Run is no longer active on this Task");
       }
     }
-    blockedByTaskId ??= message.message.from_task_id;
+    blockedByTaskId ??= messageEntry.message.from_task_id;
   }
-  return coordination.blockTask({
-    taskId: context.taskId,
-    blockedByTaskId,
-    messageId: input.messageId ?? null,
-    reason: input.reason,
-    actor: { platform: "user", id: input.actorId ?? null },
-    evidenceLevel: "local",
-  });
+  return coordination.blockTaskWithPrecondition(
+    {
+      taskId: context.taskId,
+      blockedByTaskId,
+      messageId: input.messageId ?? null,
+      reason: input.reason,
+      actor: { platform: "user", id: input.actorId ?? null },
+      evidenceLevel,
+    },
+    (_event, snapshot) => {
+      const currentContext = taskContext(root, task);
+      if (
+        currentContext.taskId !== context.taskId ||
+        currentContext.revision !== context.revision
+      ) {
+        throw new Error("Task changed while the coordination block was added");
+      }
+      if (!input.messageId) return;
+      const messageEntry = snapshot.messages.find(
+        (candidate) => candidate.message.message_id === input.messageId,
+      );
+      if (messageEntry?.message.to_task_id !== context.taskId) {
+        throw new Error("block message must be addressed to this Task");
+      }
+      const verified = verifyFreshCoordinationMessage(
+        root,
+        messageEntry,
+        currentContext,
+        false,
+      );
+      if (verified.evidenceLevel !== evidenceLevel) {
+        throw new Error("block message receipt changed while adding the block");
+      }
+      if (
+        messageEntry.message.from_task_id !== blockedByTaskId ||
+        (messageEntry.message.to_run_id &&
+          currentContext.kernelKind === "task-kernel-v2" &&
+          !currentContext.runs.some(
+            (run) =>
+              run.id === messageEntry.message.to_run_id &&
+              (run.state === "running" || run.state === "waiting"),
+          ))
+      ) {
+        throw new Error("block message Run is no longer active on this Task");
+      }
+    },
+  );
 }
 
 export function unblockCodexTask(
@@ -1500,41 +1766,112 @@ export function unblockCodexTask(
   const context = taskContext(root, task);
   const coordination = new CoordinationStore(root);
   let unblockedByTaskId = input.unblockedByTaskId ?? null;
+  let evidenceLevel: CoordinationEvidenceLevel = "local";
+  let resolutionEntry: CoordinationMessageEntry | undefined;
+  let resolutionSourceTaskId: string | null = null;
   if (input.resolutionMessageId) {
-    const message = coordination
+    resolutionEntry = coordination
       .snapshot()
       .messages.find(
         (candidate) =>
           candidate.message.message_id === input.resolutionMessageId,
       );
-    if (message?.message.to_task_id !== context.taskId) {
+    if (resolutionEntry?.message.to_task_id !== context.taskId) {
       throw new Error("resolution message must be addressed to this Task");
     }
-    if (!new Set(["sent", "delivered", "acknowledged"]).has(message.status)) {
+    if (!resolutionEntry) throw new Error("Resolution message disappeared");
+    const sendReceipt = resolutionEntry.receipts.at(-1);
+    if (
+      !sendReceipt ||
+      !new Set(["sent", "delivered", "acknowledged"]).has(sendReceipt.status)
+    ) {
       throw new Error(
         "unblock requires a non-stale successful resolution receipt",
       );
     }
-    if (
-      !message.receipts.some(
-        (receipt) =>
-          new Set(["sent", "delivered", "acknowledged"]).has(receipt.status) &&
-          receipt.evidence_level === "desktop-native",
-      )
-    ) {
+    if (sendReceipt.evidence_level !== "desktop-native") {
       throw new Error(
         "unblock requires a successful desktop-native resolution receipt",
       );
     }
-    unblockedByTaskId ??= message.message.from_task_id;
+    const verified = verifyFreshCoordinationMessage(
+      root,
+      resolutionEntry,
+      context,
+      true,
+    );
+    evidenceLevel = verified.evidenceLevel;
+    resolutionSourceTaskId = resolutionEntry.message.from_task_id;
+    unblockedByTaskId ??= resolutionSourceTaskId;
   }
-  return coordination.unblockTask({
-    taskId: context.taskId,
-    blockId: input.blockId,
-    unblockedByTaskId,
-    resolutionMessageId: input.resolutionMessageId ?? null,
-    reason: input.reason,
-    actor: { platform: "user", id: input.actorId ?? null },
-    evidenceLevel: "local",
-  });
+
+  const barrier = coordinationKernelBarrier(context);
+  return coordination.unblockTaskWithPostcondition(
+    {
+      taskId: context.taskId,
+      blockId: input.blockId,
+      unblockedByTaskId,
+      resolutionMessageId: input.resolutionMessageId ?? null,
+      runId: barrier.runId,
+      kernelRevisionAtUnblock: barrier.kernelRevision,
+      kernelEventIdAtUnblock: barrier.kernelEventId,
+      reason: input.reason,
+      actor: { platform: "user", id: input.actorId ?? null },
+      evidenceLevel,
+    },
+    () => {
+      const afterContext = taskContext(root, task);
+      if (
+        afterContext.taskId !== context.taskId ||
+        afterContext.revision !== context.revision
+      ) {
+        throw new Error(
+          "Task Kernel changed while the coordination block was cleared",
+        );
+      }
+      if (input.resolutionMessageId) {
+        const afterEntry = coordination
+          .snapshot()
+          .messages.find(
+            (candidate) =>
+              candidate.message.message_id === input.resolutionMessageId,
+          );
+        if (!afterEntry) throw new Error("Resolution message disappeared");
+        const beforeEntry = resolutionEntry;
+        if (!beforeEntry) throw new Error("Resolution message disappeared");
+        const afterVerified = verifyFreshCoordinationMessage(
+          root,
+          afterEntry,
+          afterContext,
+          true,
+        );
+        const beforeVerified = verifyFreshCoordinationMessage(
+          root,
+          beforeEntry,
+          context,
+          true,
+        );
+        if (
+          afterVerified.sourceContext.revision !==
+            beforeVerified.sourceContext.revision ||
+          afterVerified.sourceContext.taskId !==
+            beforeVerified.sourceContext.taskId
+        ) {
+          throw new Error(
+            "Resolution source Task changed while the block was cleared",
+          );
+        }
+      }
+    },
+    {
+      taskId: context.taskId,
+      blockId: randomUUID(),
+      blockedByTaskId: resolutionSourceTaskId,
+      messageId: null,
+      reason:
+        "Task or Run state changed while clearing the coordination block; obtain a fresh resolution.",
+      actor: { platform: "user", id: input.actorId ?? null },
+      evidenceLevel: "local",
+    },
+  );
 }

@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import {
   CoordinationError,
+  COORDINATION_MAX_EVENT_BYTES,
+  COORDINATION_MAX_LOG_BYTES,
+  COORDINATION_MAX_LOG_EVENTS,
+  coordinationEventHash,
   type CoordinationActor,
   type CoordinationEvidenceLevel,
   type CoordinationEvent,
@@ -77,6 +81,9 @@ export interface UnblockCoordinationTaskInput {
   blockId: string;
   unblockedByTaskId?: string | null;
   resolutionMessageId?: string | null;
+  runId?: string | null;
+  kernelRevisionAtUnblock?: number | null;
+  kernelEventIdAtUnblock?: string | null;
   reason: string;
   actor: CoordinationActor;
   evidenceLevel: CoordinationEvidenceLevel;
@@ -111,6 +118,81 @@ export interface RecordCoordinationRunResultInput {
   evidenceRefs?: string[];
   actor: CoordinationActor;
   evidenceLevel: CoordinationEvidenceLevel;
+}
+
+function blockEvent(
+  input: BlockCoordinationTaskInput,
+): CoordinationTaskBlocked {
+  const normalized = validateCoordinationInput(() => ({
+    taskId: normalizeCoordinationId(input.taskId),
+    blockId: normalizeCoordinationId(input.blockId ?? randomUUID()),
+    blockedByTaskId: normalizeCoordinationNullableId(input.blockedByTaskId),
+    messageId: normalizeCoordinationNullableId(input.messageId),
+    reason: normalizeCoordinationText(input.reason),
+    actor: normalizeCoordinationActor(input.actor),
+    evidenceLevel: input.evidenceLevel,
+  }));
+  return parseCoordinationEvent({
+    ...newCoordinationEventBase("task.blocked"),
+    type: "task.blocked",
+    task_id: normalized.taskId,
+    block_id: normalized.blockId,
+    blocked_by_task_id: normalized.blockedByTaskId,
+    message_id: normalized.messageId,
+    reason: normalized.reason,
+    actor: normalized.actor,
+    evidence_level: normalized.evidenceLevel,
+  } as CoordinationTaskBlocked);
+}
+
+function unblockEvent(
+  input: UnblockCoordinationTaskInput,
+): CoordinationTaskUnblocked {
+  const normalized = validateCoordinationInput(() => ({
+    taskId: normalizeCoordinationId(input.taskId),
+    blockId: normalizeCoordinationId(input.blockId),
+    unblockedByTaskId: normalizeCoordinationNullableId(input.unblockedByTaskId),
+    resolutionMessageId: normalizeCoordinationNullableId(
+      input.resolutionMessageId,
+    ),
+    runId: normalizeCoordinationNullableId(input.runId),
+    kernelRevisionAtUnblock: input.kernelRevisionAtUnblock ?? null,
+    kernelEventIdAtUnblock: normalizeCoordinationNullableId(
+      input.kernelEventIdAtUnblock,
+    ),
+    reason: normalizeCoordinationText(input.reason),
+    actor: normalizeCoordinationActor(input.actor),
+    evidenceLevel: input.evidenceLevel,
+  }));
+  return parseCoordinationEvent({
+    ...newCoordinationEventBase("task.unblocked"),
+    type: "task.unblocked",
+    task_id: normalized.taskId,
+    block_id: normalized.blockId,
+    unblocked_by_task_id: normalized.unblockedByTaskId,
+    resolution_message_id: normalized.resolutionMessageId,
+    run_id: normalized.runId,
+    kernel_revision_at_unblock: normalized.kernelRevisionAtUnblock,
+    kernel_event_id_at_unblock: normalized.kernelEventIdAtUnblock,
+    reason: normalized.reason,
+    actor: normalized.actor,
+    evidence_level: normalized.evidenceLevel,
+  } as CoordinationTaskUnblocked);
+}
+
+function coordinationEnvelopeLineBytes(
+  previousHash: string,
+  event: CoordinationEvent,
+): number {
+  return Buffer.byteLength(
+    `${JSON.stringify({
+      schema_version: 1,
+      previous_hash: previousHash,
+      hash: coordinationEventHash(previousHash, event),
+      event,
+    })}\n`,
+    "utf8",
+  );
 }
 
 export class CoordinationStore {
@@ -204,26 +286,7 @@ export class CoordinationStore {
   }
 
   blockTask(input: BlockCoordinationTaskInput): CoordinationTaskBlocked {
-    const normalized = validateCoordinationInput(() => ({
-      taskId: normalizeCoordinationId(input.taskId),
-      blockId: normalizeCoordinationId(input.blockId ?? randomUUID()),
-      blockedByTaskId: normalizeCoordinationNullableId(input.blockedByTaskId),
-      messageId: normalizeCoordinationNullableId(input.messageId),
-      reason: normalizeCoordinationText(input.reason),
-      actor: normalizeCoordinationActor(input.actor),
-      evidenceLevel: input.evidenceLevel,
-    }));
-    const candidate = parseCoordinationEvent({
-      ...newCoordinationEventBase("task.blocked"),
-      type: "task.blocked",
-      task_id: normalized.taskId,
-      block_id: normalized.blockId,
-      blocked_by_task_id: normalized.blockedByTaskId,
-      message_id: normalized.messageId,
-      reason: normalized.reason,
-      actor: normalized.actor,
-      evidence_level: normalized.evidenceLevel,
-    } as CoordinationTaskBlocked);
+    const candidate = blockEvent(input);
     return this.transact((state) => {
       const existing = state.blocks.get(candidate.block_id);
       if (existing) {
@@ -235,31 +298,46 @@ export class CoordinationStore {
     }) as CoordinationTaskBlocked;
   }
 
+  blockTaskWithPrecondition(
+    input: BlockCoordinationTaskInput,
+    validate: (
+      event: CoordinationTaskBlocked,
+      snapshot: CoordinationSnapshot,
+    ) => void,
+  ): CoordinationTaskBlocked {
+    const candidate = blockEvent(input);
+    return withCoordinationJournalLock(this.projectRoot, () => {
+      const journal = readCoordinationJournal(this.projectRoot);
+      const state = replayCoordinationEvents(journal.events);
+      const existing = state.blocks.get(candidate.block_id);
+      if (existing) {
+        if (!sameCoordinationEventPayload(existing, candidate)) {
+          throw new CoordinationError("state-conflict");
+        }
+        validate(
+          cloneCoordinationEvent(existing),
+          toCoordinationSnapshot(state),
+        );
+        return cloneCoordinationEvent(existing);
+      }
+
+      validate(
+        cloneCoordinationEvent(candidate),
+        toCoordinationSnapshot(state),
+      );
+      try {
+        applyCoordinationEvent(state, candidate);
+      } catch (error) {
+        if (error instanceof CoordinationError) throw error;
+        throw new CoordinationError("state-conflict");
+      }
+      appendCoordinationEnvelope(this.projectRoot, journal, candidate);
+      return cloneCoordinationEvent(candidate);
+    });
+  }
+
   unblockTask(input: UnblockCoordinationTaskInput): CoordinationTaskUnblocked {
-    const normalized = validateCoordinationInput(() => ({
-      taskId: normalizeCoordinationId(input.taskId),
-      blockId: normalizeCoordinationId(input.blockId),
-      unblockedByTaskId: normalizeCoordinationNullableId(
-        input.unblockedByTaskId,
-      ),
-      resolutionMessageId: normalizeCoordinationNullableId(
-        input.resolutionMessageId,
-      ),
-      reason: normalizeCoordinationText(input.reason),
-      actor: normalizeCoordinationActor(input.actor),
-      evidenceLevel: input.evidenceLevel,
-    }));
-    const candidate = parseCoordinationEvent({
-      ...newCoordinationEventBase("task.unblocked"),
-      type: "task.unblocked",
-      task_id: normalized.taskId,
-      block_id: normalized.blockId,
-      unblocked_by_task_id: normalized.unblockedByTaskId,
-      resolution_message_id: normalized.resolutionMessageId,
-      reason: normalized.reason,
-      actor: normalized.actor,
-      evidence_level: normalized.evidenceLevel,
-    } as CoordinationTaskUnblocked);
+    const candidate = unblockEvent(input);
     return this.transact((state) => {
       const existing = state.unblocks.get(candidate.block_id);
       if (existing) {
@@ -269,6 +347,117 @@ export class CoordinationStore {
       }
       return { kind: "append", event: candidate };
     }) as CoordinationTaskUnblocked;
+  }
+
+  /**
+   * Appends an unblock, validates its postcondition, and records a compensating
+   * block before releasing the journal lock if validation fails. Admission uses
+   * this same lock, so it cannot consume the temporary unblock state.
+   */
+  unblockTaskWithPostcondition(
+    input: UnblockCoordinationTaskInput,
+    validate: (event: CoordinationTaskUnblocked) => void,
+    compensation: BlockCoordinationTaskInput,
+  ): CoordinationTaskUnblocked {
+    const candidate = unblockEvent(input);
+    const compensationEvent = blockEvent(compensation);
+    if (candidate.task_id !== compensationEvent.task_id) {
+      throw new CoordinationError("invalid-input");
+    }
+
+    return withCoordinationJournalLock(this.projectRoot, () => {
+      const journal = readCoordinationJournal(this.projectRoot);
+      const state = replayCoordinationEvents(journal.events);
+      const existing = state.unblocks.get(candidate.block_id);
+      let event: CoordinationTaskUnblocked;
+      if (existing) {
+        if (!sameCoordinationEventPayload(existing, candidate)) {
+          throw new CoordinationError("state-conflict");
+        }
+        event = existing;
+        if (!state.blocks.has(compensationEvent.block_id)) {
+          const compensationLineBytes = coordinationEnvelopeLineBytes(
+            journal.lastHash,
+            compensationEvent,
+          );
+          if (
+            compensationLineBytes > COORDINATION_MAX_EVENT_BYTES ||
+            journal.events.length + 1 > COORDINATION_MAX_LOG_EVENTS ||
+            journal.bytes + compensationLineBytes > COORDINATION_MAX_LOG_BYTES
+          ) {
+            throw new CoordinationError("store-limit");
+          }
+        }
+      } else {
+        try {
+          applyCoordinationEvent(state, candidate);
+        } catch (error) {
+          if (error instanceof CoordinationError) throw error;
+          throw new CoordinationError("state-conflict");
+        }
+
+        const unblockLineBytes = coordinationEnvelopeLineBytes(
+          journal.lastHash,
+          candidate,
+        );
+        const compensationLineBytes = coordinationEnvelopeLineBytes(
+          coordinationEventHash(journal.lastHash, candidate),
+          compensationEvent,
+        );
+        if (
+          unblockLineBytes > COORDINATION_MAX_EVENT_BYTES ||
+          compensationLineBytes > COORDINATION_MAX_EVENT_BYTES ||
+          journal.events.length + 2 > COORDINATION_MAX_LOG_EVENTS ||
+          journal.bytes + unblockLineBytes + compensationLineBytes >
+            COORDINATION_MAX_LOG_BYTES
+        ) {
+          throw new CoordinationError("store-limit");
+        }
+        appendCoordinationEnvelope(this.projectRoot, journal, candidate);
+        event = candidate;
+      }
+
+      try {
+        validate(cloneCoordinationEvent(event) as CoordinationTaskUnblocked);
+      } catch (postconditionError) {
+        try {
+          const compensationJournal = readCoordinationJournal(this.projectRoot);
+          const compensationState = replayCoordinationEvents(
+            compensationJournal.events,
+          );
+          const existingCompensation = compensationState.blocks.get(
+            compensationEvent.block_id,
+          );
+          if (existingCompensation) {
+            if (
+              !sameCoordinationEventPayload(
+                existingCompensation,
+                compensationEvent,
+              )
+            ) {
+              throw new CoordinationError("state-conflict");
+            }
+          } else {
+            try {
+              applyCoordinationEvent(compensationState, compensationEvent);
+            } catch (error) {
+              if (error instanceof CoordinationError) throw error;
+              throw new CoordinationError("state-conflict");
+            }
+            appendCoordinationEnvelope(
+              this.projectRoot,
+              compensationJournal,
+              compensationEvent,
+            );
+          }
+        } catch {
+          throw new Error("coordination-unblock-compensation-failed");
+        }
+        throw postconditionError;
+      }
+
+      return cloneCoordinationEvent(event) as CoordinationTaskUnblocked;
+    });
   }
 
   startRun(input: StartCoordinationRunInput): CoordinationRunStarted {

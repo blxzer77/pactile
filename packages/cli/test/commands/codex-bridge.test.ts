@@ -22,6 +22,7 @@ import type {
   CodexBridgeRequest,
 } from "../../src/pactile/codex/bridge.js";
 import { approvedTask as approvedPiTask } from "../../src/pactile/pi/bridge.js";
+import { CoordinationStore } from "../../src/pactile/coordination/index.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -64,6 +65,28 @@ function result(root: string, body: Record<string, unknown>): string {
   const file = path.join(root, `receipt-${Math.random()}.json`);
   fs.writeFileSync(file, JSON.stringify(body));
   return file;
+}
+
+function writeRunCandidateFile(
+  root: string,
+  repositoryPath: string,
+  content: string,
+): string {
+  const file = path.join(root, ...repositoryPath.split("/"));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content, "utf8");
+  return createHash("sha256").update(content, "utf8").digest("hex");
+}
+
+function writeTaskEvidenceFile(
+  root: string,
+  task: string,
+  reference: string,
+  content: string,
+): void {
+  const file = path.join(root, ".pactile", "tasks", task, reference);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content, "utf8");
 }
 
 function dispatchProofFixture(
@@ -520,6 +543,208 @@ describe("Codex desktop request and receipt bridge", () => {
     ]);
   });
 
+  it("binds a V2 unblock to its current Kernel barrier and authorizes Resume", () => {
+    const { root, task: senderTask, prompt } = fixture();
+    expect(
+      runTaskCli(
+        [
+          "create",
+          "Resume barrier receiver",
+          "--slug",
+          "resume-barrier-receiver",
+          "--deliverable",
+          "A waiting Run can resume after a native coordination response",
+          "--delivery-level",
+          "documentation",
+          "--accept",
+          "AC-1=The unblock is causally bound to Kernel Resume",
+        ],
+        root,
+      ),
+    ).toBe(0);
+    const receiverTask = fs
+      .readdirSync(path.join(root, ".pactile", "tasks"))
+      .find((name) => name.endsWith("-resume-barrier-receiver"));
+    if (!receiverTask) throw new Error("V2 receiver Task fixture missing");
+
+    const targetThread = prepareCodexRequest({
+      root,
+      task: receiverTask,
+      tool: "create_thread",
+      role: "plan",
+      promptFile: prompt,
+      targetType: "projectless",
+    });
+    recordCodexReceipt(
+      root,
+      receiverTask,
+      targetThread.request_id,
+      result(root, {
+        request_id: targetThread.request_id,
+        tool: targetThread.tool,
+        outcome: "ok",
+        thread_id: "resume-barrier-target-thread",
+        host_id: "local",
+      }),
+    );
+    const staleMessage = prepareCodexRequest({
+      root,
+      task: senderTask,
+      tool: "send_message_to_thread",
+      threadId: "resume-barrier-target-thread",
+      toTask: receiverTask,
+      promptFile: prompt,
+    });
+    recordCodexReceipt(
+      root,
+      senderTask,
+      staleMessage.request_id,
+      result(root, {
+        request_id: staleMessage.request_id,
+        tool: staleMessage.tool,
+        outcome: "ok",
+        thread_id: "resume-barrier-target-thread",
+        host_id: "local",
+      }),
+    );
+
+    expect(
+      runTaskCli(
+        [
+          "run-start",
+          receiverTask,
+          "--actor",
+          "implementer",
+          "--input-summary",
+          "Wait for a coordination response",
+          "--approved-by",
+          "approver",
+          "--authorization-scope",
+          "the reviewed documentation file",
+          "--authorization-evidence",
+          "approval.json",
+          "--write-set",
+          "docs/result.md",
+          "--wait",
+        ],
+        root,
+      ),
+    ).toBe(0);
+    const kernelFile = path.join(
+      root,
+      ".pactile",
+      "tasks",
+      receiverTask,
+      "kernel.json",
+    );
+    const startedKernel = JSON.parse(fs.readFileSync(kernelFile, "utf8")) as {
+      revision: number;
+      runs: { id: string }[];
+    };
+    const runId = startedKernel.runs.at(-1)?.id;
+    if (!runId) throw new Error("Receiver waiting Run missing");
+    expect(() =>
+      blockCodexTask(root, receiverTask, {
+        messageId: staleMessage.request_id,
+        reason: "A stale message cannot block the new Run",
+      }),
+    ).toThrow(/stale|misbound|not authoritative/i);
+
+    const waitingMessage = prepareCodexRequest({
+      root,
+      task: senderTask,
+      tool: "send_message_to_thread",
+      threadId: "resume-barrier-target-thread",
+      toTask: receiverTask,
+      promptFile: prompt,
+    });
+    recordCodexReceipt(
+      root,
+      senderTask,
+      waitingMessage.request_id,
+      result(root, {
+        request_id: waitingMessage.request_id,
+        tool: waitingMessage.tool,
+        outcome: "ok",
+        thread_id: "resume-barrier-target-thread",
+        host_id: "local",
+      }),
+    );
+    const blocked = blockCodexTask(root, receiverTask, {
+      messageId: waitingMessage.request_id,
+      reason: "Waiting for a current response about the active Run",
+    });
+    expect(blocked.evidence_level).toBe("simulated");
+
+    const beforeUnblock = JSON.parse(fs.readFileSync(kernelFile, "utf8")) as {
+      revision: number;
+      events: { id: string; revision: number }[];
+    };
+    const barrierEvent = beforeUnblock.events.at(-1);
+    if (!barrierEvent) throw new Error("Kernel barrier event missing");
+    const resolution = prepareCodexRequest({
+      root,
+      task: senderTask,
+      tool: "send_message_to_thread",
+      threadId: "resume-barrier-target-thread",
+      toTask: receiverTask,
+      promptFile: prompt,
+    });
+    recordCodexReceipt(
+      root,
+      senderTask,
+      resolution.request_id,
+      result(root, {
+        request_id: resolution.request_id,
+        tool: resolution.tool,
+        outcome: "ok",
+        thread_id: "resume-barrier-target-thread",
+        host_id: "local",
+      }),
+      "desktop-native",
+    );
+    const unblocked = unblockCodexTask(root, receiverTask, {
+      blockId: blocked.block_id,
+      resolutionMessageId: resolution.request_id,
+      reason: "The current native response was recorded",
+    });
+    expect(unblocked).toMatchObject({
+      run_id: runId,
+      kernel_revision_at_unblock: beforeUnblock.revision,
+      kernel_event_id_at_unblock: barrierEvent.id,
+      evidence_level: "desktop-native",
+    });
+
+    expect(
+      runTaskCli(
+        ["run-resume", receiverTask, runId, "--actor", "scheduler"],
+        root,
+      ),
+    ).toBe(0);
+    const resumedKernel = JSON.parse(fs.readFileSync(kernelFile, "utf8")) as {
+      events: {
+        id: string;
+        type: string;
+        entityId: string;
+        revision: number;
+      }[];
+    };
+    const resumedEvent = resumedKernel.events.findLast(
+      (event) => event.type === "run.resumed" && event.entityId === runId,
+    );
+    if (!resumedEvent) throw new Error("Kernel Resume event missing");
+    expect(new CoordinationStore(root).snapshot().events).toContainEqual(
+      expect.objectContaining({
+        type: "run.resume-authorized",
+        task_id: codexBridgeStatus(root, receiverTask).task_id,
+        run_id: runId,
+        unblock_event_id: unblocked.event_id,
+        kernel_revision: resumedEvent.revision,
+        kernel_event_id: resumedEvent.id,
+      }),
+    );
+  });
+
   it("uses shared Execute approval while keeping Pi worker mode specific to Pi", () => {
     const { root, task, prompt } = fixture();
     const dir = path.join(root, ".pactile", "tasks", task);
@@ -738,6 +963,17 @@ describe("Codex desktop request and receipt bridge", () => {
             root,
           ),
         ).toBe(0);
+        const candidateFingerprint = writeRunCandidateFile(
+          root,
+          "docs/result.md",
+          "The candidate is ready for Review.\n",
+        );
+        writeTaskEvidenceFile(
+          root,
+          receiverTask,
+          "test-output.txt",
+          "The review candidate was generated and inspected.\n",
+        );
         expect(
           runTaskCli(
             [
@@ -749,7 +985,7 @@ describe("Codex desktop request and receipt bridge", () => {
               "--summary",
               "The candidate is ready for review",
               "--candidate",
-              `docs/result.md=${"a".repeat(64)}`,
+              `docs/result.md=${candidateFingerprint}`,
               "--evidence",
               "test-output.txt",
             ],
@@ -866,6 +1102,17 @@ describe("Codex desktop request and receipt bridge", () => {
         root,
       ),
     ).toBe(0);
+    const sourceCandidateFingerprint = writeRunCandidateFile(
+      root,
+      "docs/result.md",
+      "Candidate ready for independent Review.\n",
+    );
+    writeTaskEvidenceFile(
+      root,
+      sourceTask,
+      "test-output.txt",
+      "Pi Run output was persisted before settlement.\n",
+    );
     expect(
       runTaskCli(
         [
@@ -877,7 +1124,7 @@ describe("Codex desktop request and receipt bridge", () => {
           "--summary",
           "Candidate ready for independent Review",
           "--candidate",
-          `docs/result.md=${"d".repeat(64)}`,
+          `docs/result.md=${sourceCandidateFingerprint}`,
           "--evidence",
           "test-output.txt",
         ],
@@ -893,6 +1140,12 @@ describe("Codex desktop request and receipt bridge", () => {
     const sourceRun = sourceKernel.runs.at(-1);
     const candidate = sourceRun?.candidateSnapshot;
     if (!candidate) throw new Error("Pi escalation source candidate missing");
+    writeTaskEvidenceFile(
+      root,
+      sourceTask,
+      "review.md",
+      "An uncertain finding requires coordination input before completion.\n",
+    );
     expect(
       runTaskCli(
         [
@@ -1091,7 +1344,8 @@ describe("Codex desktop request and receipt bridge", () => {
       thread_id: "p40-escalation-thread",
       host_id: "local",
     });
-    const replyBody = "Codex reply: the review finding is supported by the linked test result.";
+    const replyBody =
+      "Codex reply: the review finding is supported by the linked test result.";
     const readResult = result(root, {
       request_id: readRequest.request_id,
       tool: "read_thread",
@@ -1104,7 +1358,9 @@ describe("Codex desktop request and receipt bridge", () => {
         reply_to_escalation_id: escalationId,
         response_turn_id: "turn:codex-reply-1",
         body: replyBody,
-        body_sha256: createHash("sha256").update(replyBody, "utf8").digest("hex"),
+        body_sha256: createHash("sha256")
+          .update(replyBody, "utf8")
+          .digest("hex"),
       },
     });
     expect(
@@ -1190,7 +1446,9 @@ describe("Codex desktop request and receipt bridge", () => {
         reply_to_escalation_id: escalationId,
         response_turn_id: "turn:codex-reply-1",
         body: replyBody,
-        body_sha256: createHash("sha256").update(replyBody, "utf8").digest("hex"),
+        body_sha256: createHash("sha256")
+          .update(replyBody, "utf8")
+          .digest("hex"),
       },
     });
     expect(path.relative(root, sendReceiptFile).replaceAll("\\", "/")).toBe(

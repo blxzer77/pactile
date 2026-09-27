@@ -126,9 +126,25 @@ export const coordinationEventSchema = z.discriminatedUnion("type", [
       block_id: logicalId,
       unblocked_by_task_id: logicalId.nullable(),
       resolution_message_id: logicalId.nullable(),
+      run_id: logicalId.nullable().optional(),
+      kernel_revision_at_unblock: z.number().int().min(0).nullable().optional(),
+      kernel_event_id_at_unblock: eventId.nullable().optional(),
       reason: safeText,
       actor,
       evidence_level: evidenceLevel,
+    })
+    .strict(),
+  z
+    .object({
+      ...base,
+      type: z.literal("run.resume-authorized"),
+      task_id: logicalId,
+      run_id: logicalId,
+      unblock_event_id: eventId,
+      kernel_revision: z.number().int().min(1),
+      kernel_event_id: eventId,
+      actor,
+      evidence_level: z.literal("local"),
     })
     .strict(),
   z
@@ -207,6 +223,10 @@ export type CoordinationTaskBlocked = Extract<
 export type CoordinationTaskUnblocked = Extract<
   CoordinationEvent,
   { type: "task.unblocked" }
+>;
+export type CoordinationRunResumeAuthorized = Extract<
+  CoordinationEvent,
+  { type: "run.resume-authorized" }
 >;
 export type CoordinationRunStarted = Extract<
   CoordinationEvent,
