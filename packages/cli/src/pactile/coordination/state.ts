@@ -13,6 +13,7 @@ import {
   type CoordinationMessageStatus,
   type CoordinationRunProgress,
   type CoordinationRunResult,
+  type CoordinationRunResumeAuthorized,
   type CoordinationRunSnapshot,
   type CoordinationRunStarted,
   type CoordinationSnapshot,
@@ -35,6 +36,7 @@ export interface CoordinationReplayState {
   blocks: Map<string, CoordinationTaskBlocked>;
   activeBlocks: Map<string, CoordinationTaskBlocked>;
   unblocks: Map<string, CoordinationTaskUnblocked>;
+  resumeAuthorizations: Map<string, CoordinationRunResumeAuthorized>;
   runs: Map<string, RunState>;
 }
 
@@ -65,6 +67,7 @@ export function createCoordinationReplayState(): CoordinationReplayState {
     blocks: new Map(),
     activeBlocks: new Map(),
     unblocks: new Map(),
+    resumeAuthorizations: new Map(),
     runs: new Map(),
   };
 }
@@ -87,6 +90,14 @@ function runStateKey(runId: string): string {
 
 function receiptStateKey(messageId: string, receiptId: string): string {
   return `${messageId}\u0000${receiptId}`;
+}
+
+function resumeAuthorizationStateKey(
+  taskId: string,
+  runId: string,
+  unblockEventId: string,
+): string {
+  return `${taskId}\u0000${runId}\u0000${unblockEventId}`;
 }
 
 export function cloneCoordinationEvent<T extends CoordinationEvent>(
@@ -295,10 +306,25 @@ export function applyCoordinationEvent(
     }
     case "task.unblocked": {
       const block = state.blocks.get(event.block_id);
+      const hasLegacyBarrierOmission =
+        event.run_id === undefined &&
+        event.kernel_revision_at_unblock === undefined &&
+        event.kernel_event_id_at_unblock === undefined;
+      const hasLegacyNullBarrier =
+        event.run_id === null &&
+        event.kernel_revision_at_unblock === null &&
+        event.kernel_event_id_at_unblock === null;
+      const hasCompleteKernelBarrier =
+        (event.run_id === null || typeof event.run_id === "string") &&
+        typeof event.kernel_revision_at_unblock === "number" &&
+        typeof event.kernel_event_id_at_unblock === "string";
       if (
         block?.task_id !== event.task_id ||
         state.activeBlocks.get(event.task_id)?.block_id !== event.block_id ||
-        state.unblocks.has(event.block_id)
+        state.unblocks.has(event.block_id) ||
+        (!hasLegacyBarrierOmission &&
+          !hasLegacyNullBarrier &&
+          !hasCompleteKernelBarrier)
       ) {
         throw new CoordinationError("state-conflict");
       }
@@ -314,6 +340,37 @@ export function applyCoordinationEvent(
       }
       state.unblocks.set(event.block_id, event);
       state.activeBlocks.delete(event.task_id);
+      break;
+    }
+    case "run.resume-authorized": {
+      const unblock = state.events.find(
+        (prior): prior is CoordinationTaskUnblocked =>
+          prior.type === "task.unblocked" &&
+          prior.event_id === event.unblock_event_id,
+      );
+      const latestUnblock = [...state.events]
+        .reverse()
+        .find(
+          (prior): prior is CoordinationTaskUnblocked =>
+            prior.type === "task.unblocked" && prior.task_id === event.task_id,
+        );
+      const key = resumeAuthorizationStateKey(
+        event.task_id,
+        event.run_id,
+        event.unblock_event_id,
+      );
+      if (
+        unblock?.task_id !== event.task_id ||
+        latestUnblock?.event_id !== event.unblock_event_id ||
+        typeof unblock.kernel_revision_at_unblock !== "number" ||
+        typeof unblock.kernel_event_id_at_unblock !== "string" ||
+        (unblock.run_id !== null && unblock.run_id !== event.run_id) ||
+        state.activeBlocks.has(event.task_id) ||
+        state.resumeAuthorizations.has(key)
+      ) {
+        throw new CoordinationError("state-conflict");
+      }
+      state.resumeAuthorizations.set(key, event);
       break;
     }
     case "run.started": {

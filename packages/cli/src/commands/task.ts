@@ -25,7 +25,6 @@ import {
   recordTaskReview,
   recordTaskRunResult,
   resolveRequiredControls,
-  resumeTaskRun,
   startTaskRun,
   taskRecordSchema,
   unmetRequires,
@@ -50,6 +49,7 @@ import * as piBridge from "../pactile/pi/bridge.js";
 import { approvedExecuteTask } from "../pactile/task/authorization.js";
 import { createTaskWithArtifacts } from "../pactile/task/creation.js";
 import { readPactileConfig } from "../pactile/task/config.js";
+import { resumeTaskRunWithCoordinationBarrier } from "../pactile/coordination/index.js";
 import {
   runTaskScheduleCli,
   runTaskScheduleCliAsync,
@@ -758,7 +758,7 @@ function resumeTask(root: string, args: string[]): number {
   const reference = requireArgument(args[0], "task");
   const runId = requireArgument(args[1], "run ID");
   const { dir, kernel } = taskV2(root, reference);
-  const result = resumeTaskRun({
+  const result = resumeTaskRunWithCoordinationBarrier({
     root,
     taskDir: dir,
     expectedRevision: kernel.revision,
@@ -1883,7 +1883,10 @@ function listTasks(args: string[], root: string): void {
       if (record.status !== "imported") return [];
       const taskJsonPath =
         record.legacySourceMetadata?.fileReferences.taskJson?.path;
-      if (!taskJsonPath?.startsWith(".pactile/tasks/") || !taskJsonPath.endsWith("/task.json"))
+      if (
+        !taskJsonPath?.startsWith(".pactile/tasks/") ||
+        !taskJsonPath.endsWith("/task.json")
+      )
         return [];
       const sourceTaskPath = taskJsonPath.slice(0, -"/task.json".length);
       return sourceTaskPath === record.taskPath
@@ -1905,9 +1908,12 @@ function listTasks(args: string[], root: string): void {
       record.status === "imported" ||
       record.status === "archived-historical-only" ||
       restoredSourcePaths.has(
-        path.relative(path.join(root, ".pactile", "tasks"), taskDir).replaceAll("\\", "/"),
+        path
+          .relative(path.join(root, ".pactile", "tasks"), taskDir)
+          .replaceAll("\\", "/"),
       )
-    ) return false;
+    )
+      return false;
     const raw = taskRecord(taskDir);
     return (
       (!assignee || raw?.assignee === assignee) &&
@@ -2954,10 +2960,7 @@ export async function runTaskCliAsync(
   }
   if (command === "schedule") {
     try {
-      return await runTaskScheduleCliAsync(
-        [operation ?? "", ...args],
-        root,
-      );
+      return await runTaskScheduleCliAsync([operation ?? "", ...args], root);
     } catch (error) {
       console.error(
         `Error: ${error instanceof Error ? error.message : String(error)}`,
