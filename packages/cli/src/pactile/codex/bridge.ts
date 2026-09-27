@@ -751,7 +751,7 @@ function normalizeReplyEvidence(
     typeof body !== "string" ||
     body.trim() !== body ||
     Buffer.byteLength(body, "utf8") < 1 ||
-    Buffer.byteLength(body, "utf8") > 4_096 ||
+    Buffer.byteLength(body, "utf8") > 8_192 ||
     escalationSecretPattern.test(body) ||
     typeof bodySha256 !== "string" ||
     !/^[a-f0-9]{64}$/.test(bodySha256) ||

@@ -995,6 +995,70 @@ describe("P40 independent Pi Review route", () => {
     );
   });
 
+  it("accepts a bounded native Review reply over 4 KiB and rejects one over 8 KiB", async () => {
+    const route = await prepareP40Route();
+    expect(
+      runCodexCli(
+        [
+          "prepare",
+          route.target.task,
+          "--tool",
+          "read",
+          "--thread-id",
+          route.threadId,
+          "--reply-to-escalation-id",
+          route.escalationId,
+          "--source-task",
+          route.source.task,
+          "--send-request-id",
+          route.sendRequest.request_id,
+        ],
+        route.source.root,
+      ),
+    ).toBe(0);
+    const nativeReadRequest = readRequest(route.source.root, route.target.task);
+    const receiptFile = path.join(
+      route.target.taskDir,
+      "codex-bridge",
+      "receipts",
+      `${nativeReadRequest.request_id}.json`,
+    );
+    const receiptArgs = (body: string): string[] => [
+      "receipt",
+      route.target.task,
+      nativeReadRequest.request_id,
+      "--result-file",
+      path.relative(
+        route.source.root,
+        bridgeResult(route.source.root, {
+          request_id: nativeReadRequest.request_id,
+          tool: "read_thread",
+          outcome: "ok",
+          status: "completed",
+          thread_id: route.threadId,
+          host_id: route.hostId,
+          reply_to_escalation_id: route.escalationId,
+          reply_evidence: {
+            reply_to_escalation_id: route.escalationId,
+            response_turn_id: "p40-reply-boundary-turn",
+            body,
+            body_sha256: createHash("sha256").update(body, "utf8").digest("hex"),
+          },
+        }),
+      ),
+      "--evidence-level",
+      "desktop-native",
+    ];
+
+    expect(runCodexCli(receiptArgs("x".repeat(8_193)), route.source.root)).toBe(1);
+    expect(fs.existsSync(receiptFile)).toBe(false);
+    const boundedBody = "x".repeat(4_396);
+    expect(runCodexCli(receiptArgs(boundedBody), route.source.root)).toBe(0);
+    expect(JSON.parse(fs.readFileSync(receiptFile, "utf8"))).toMatchObject({
+      reply_evidence: { body: boundedBody },
+    });
+  });
+
   it("records a bound native Codex reply as a new Kernel Review without closing the Task", async () => {
     const route = await prepareP40Route();
     const before = readKernel(route.source.root, route.source.taskDir);
