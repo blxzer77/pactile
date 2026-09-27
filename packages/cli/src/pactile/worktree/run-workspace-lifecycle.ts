@@ -216,6 +216,9 @@ export function reconcileTaskRunWorktree(input: ReconcileTaskRunWorktreeInput): 
     throw new WorktreeManagerError("run-not-active", "Only the latest waiting or running Run can reconcile a managed worktree");
   }
   try {
+    if (stored.run.writeSetSnapshot.length === 0) {
+      throw new WorktreeManagerError("invalid-write-set", "A managed Run workspace requires a non-empty frozen write set");
+    }
     if (stored.run.workspace) {
       const provenance = readAllManagerProvenance(repoIdentity(input.repoRoot))
         .find((item) => item.ownerRunId === input.runId);

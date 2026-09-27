@@ -4,12 +4,16 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { createTaskKernel, readTaskKernel, startTaskRun } from "../../../src/core/task/index.js";
 import {
   adoptRunWorktree,
   createRunWorktree,
+  createTaskRunWorktree,
   decideParallelWriteSets,
   inspectRunWorktree,
   planRunWorktreeCleanup,
+  reconcileRunWorktree,
+  reconcileTaskRunWorktree,
   verifyWorktreeIntegration,
   type RunResultEvidence,
   type RunWorkspaceBinding,
@@ -77,6 +81,26 @@ function create(input: { root: string; baseSha: string; runId?: string; writeSet
   });
 }
 
+function startKernelRun(root: string, taskId: string, writeSetSnapshot: string[]): { taskDir: string; runId: string } {
+  const taskDir = path.join(root, ".pactile", "tasks", taskId);
+  const created = createTaskKernel({
+    root, taskDir, actor: "author", idempotencyKey: `create:${taskId}`,
+    definition: {
+      taskId, title: "Managed worktree write-set test", description: "", deliverable: "an isolated checkout",
+      deliveryLevel: "local-result", acceptanceCriteria: [{ id: "AC-1", description: "Run scope is bound" }], dependencies: [],
+    },
+  });
+  const started = startTaskRun({
+    root, taskDir, expectedRevision: created.kernel.revision, actor: "runner", idempotencyKey: `start:${taskId}`,
+    input: { summary: "Create a scoped worktree", references: [] },
+    authorization: { approvedBy: "approver", approvedAt: "2026-09-27T00:00:00.000Z", scope: "src", evidenceRef: "approval:manager-test" },
+    writeSetSnapshot,
+  });
+  const runId = started.kernel.runs.at(-1)?.id;
+  if (!runId) throw new Error("Started Run is missing");
+  return { taskDir, runId };
+}
+
 function result(runId: string): RunResultEvidence {
   return { runId, summary: "Run result saved", evidenceRefs: [`kernel://runs/${runId}/result`] };
 }
@@ -113,6 +137,14 @@ function integration(input: {
 function ownershipRegistry(root: string): string {
   const commonDir = path.resolve(root, git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"));
   return path.join(commonDir, "pactile-run-workspaces-v1");
+}
+
+function expectManagerError(action: () => unknown, code: string): void {
+  let caught: unknown;
+  try { action(); }
+  catch (error) { caught = error; }
+  expect(caught).toBeInstanceOf(WorktreeManagerError);
+  expect(caught).toMatchObject({ code });
 }
 
 function ownerProvenance(input: {
@@ -287,6 +319,131 @@ describe("Run worktree manager", () => {
     expect(inspection).toMatchObject({ state: "unintegrated", actualPath: binding.canonicalPath, branch: binding.branch, headSha: baseSha });
     expect(inspection.issues).toEqual(["unintegrated"]);
     expect(git(root, "worktree", "list", "--porcelain")).toContain(`branch refs/heads/${binding.branch}`);
+  });
+
+  it("rejects an empty Task Kernel Run snapshot before creating a Git checkout or manager provenance", () => {
+    const { root, baseSha } = fixture();
+    const taskId = "run-empty-create";
+    const { taskDir, runId } = startKernelRun(root, taskId, []);
+    const canonicalPath = path.join(root, ".pactile", "worktrees", runId);
+
+    expectManagerError(() => createTaskRunWorktree({
+      repoRoot: root, taskDir, runId, branch: "feat/run-empty-create", baseRef: baseSha,
+      actor: "runner", idempotencyKey: `workspace:${taskId}`,
+    }), "invalid-write-set");
+
+    expect(fs.existsSync(canonicalPath)).toBe(false);
+    expect(hasRegisteredWorktree(root, canonicalPath)).toBe(false);
+    expect(git(root, "branch", "--list", "feat/run-empty-create")).toBe("");
+    expect(readAllManagerProvenance(repoIdentity(root))).toEqual([]);
+
+    const read = readTaskKernel({ root, taskDir });
+    expect(read?.kind).toBe("task-kernel-v2");
+    if (read?.kind !== "task-kernel-v2") throw new Error("Task Kernel v2 was not preserved");
+    expect(read.kernel.runs.at(-1)?.workspace).toBeNull();
+    expect(read.kernel.events.some((event) => event.type === "run.workspace-claim-refused" && event.entityId === runId)).toBe(true);
+    expect(read.kernel.events.some((event) => event.type === "run.workspace-bound" && event.entityId === runId)).toBe(false);
+  });
+
+  it("rejects empty write sets before adoption or reconciliation changes ownership", () => {
+    const { root, baseSha } = fixture();
+    const adoptedPath = path.join(root, ".pactile", "worktrees", "run-empty-adopt");
+    fs.mkdirSync(path.dirname(adoptedPath), { recursive: true });
+    git(root, "worktree", "add", "--no-track", "-b", "feat/run-empty-adopt", adoptedPath, baseSha);
+    const registrationsBeforeAdoption = git(root, "worktree", "list", "--porcelain");
+    const ownersBeforeAdoption = readAllManagerProvenance(repoIdentity(root));
+
+    expectManagerError(() => adoptRunWorktree({
+      repoRoot: root, runId: "run-empty-adopt", runState: "running", canonicalPath: adoptedPath,
+      branch: "feat/run-empty-adopt", baseSha, writeSet: [], knownOwners: [],
+      authorization: { approvedBy: "alice", approvedAt: "2026-09-25T10:00:00Z", evidenceRef: "approval:empty-adopt" },
+    }), "invalid-write-set");
+
+    expect(git(root, "worktree", "list", "--porcelain")).toBe(registrationsBeforeAdoption);
+    expect(readAllManagerProvenance(repoIdentity(root))).toEqual(ownersBeforeAdoption);
+    expect(hasRegisteredWorktree(root, adoptedPath)).toBe(true);
+
+    const reconciled = create({ root, baseSha, runId: "run-empty-reconcile", writeSet: ["src"] });
+    const ownersBeforeReconcile = readAllManagerProvenance(repoIdentity(root));
+    const registrationsBeforeReconcile = git(root, "worktree", "list", "--porcelain");
+
+    expectManagerError(() => reconcileRunWorktree({
+      repoRoot: root, runId: reconciled.ownerRunId, runState: "running", baseSha, writeSet: [],
+    }), "invalid-write-set");
+
+    expect(git(root, "worktree", "list", "--porcelain")).toBe(registrationsBeforeReconcile);
+    expect(readAllManagerProvenance(repoIdentity(root))).toEqual(ownersBeforeReconcile);
+    expect(hasRegisteredWorktree(root, reconciled.canonicalPath)).toBe(true);
+  });
+
+  it("refuses to reconcile a legacy bound Run whose frozen snapshot has become empty", () => {
+    const { root, baseSha } = fixture();
+    const taskId = "run-legacy-empty-reconcile";
+    const { taskDir, runId } = startKernelRun(root, taskId, ["src"]);
+    const { binding } = createTaskRunWorktree({
+      repoRoot: root, taskDir, runId, branch: `feat/${taskId}`, baseRef: baseSha,
+      actor: "runner", idempotencyKey: `workspace:${taskId}`,
+    });
+    const before = readTaskKernel({ root, taskDir });
+    if (before?.kind !== "task-kernel-v2") throw new Error("Task Kernel v2 was not preserved");
+    const boundEventCount = before.kernel.events.filter(
+      (event) => event.type === "run.workspace-bound" && event.entityId === runId,
+    ).length;
+    const ownerRecordsBefore = readAllManagerProvenance(repoIdentity(root));
+    const registrationsBefore = git(root, "worktree", "list", "--porcelain");
+
+    const kernelPath = path.join(taskDir, "kernel.json");
+    const document = JSON.parse(fs.readFileSync(kernelPath, "utf8")) as {
+      runs: { id: string; writeSetSnapshot: string[] }[];
+    };
+    const legacyRun = document.runs.find((run) => run.id === runId);
+    if (!legacyRun) throw new Error("Persisted Run is missing");
+    legacyRun.writeSetSnapshot = [];
+    fs.writeFileSync(kernelPath, `${JSON.stringify(document, null, 2)}\n`);
+
+    expectManagerError(() => reconcileTaskRunWorktree({
+      repoRoot: root, taskDir, runId, actor: "runner", idempotencyKey: `reconcile:${taskId}`,
+    }), "invalid-write-set");
+
+    const after = readTaskKernel({ root, taskDir });
+    expect(after?.kind).toBe("task-kernel-v2");
+    if (after?.kind !== "task-kernel-v2") throw new Error("Task Kernel v2 was not preserved");
+    expect(after.kernel.runs.at(-1)?.workspace).toEqual(binding);
+    expect(after.kernel.events.filter(
+      (event) => event.type === "run.workspace-bound" && event.entityId === runId,
+    )).toHaveLength(boundEventCount);
+    const refusal = after.kernel.events.find(
+      (event) => event.type === "run.workspace-claim-refused" && event.entityId === runId,
+    );
+    expect(refusal).toBeDefined();
+    expect(after.kernel.audit.find((entry) => entry.idempotencyKey === refusal?.idempotencyKey)?.evidence)
+      .toContain("Workspace reconcile claim refused [invalid-write-set]:");
+    expect(readAllManagerProvenance(repoIdentity(root))).toEqual(ownerRecordsBefore);
+    expect(git(root, "worktree", "list", "--porcelain")).toBe(registrationsBefore);
+  });
+
+  it("binds a normal non-empty Run write set and preserves explicit wildcard claims", () => {
+    const { root, baseSha } = fixture();
+    const taskId = "run-nonempty-write-set";
+    const { taskDir, runId } = startKernelRun(root, taskId, ["src"]);
+
+    const { binding } = createTaskRunWorktree({
+      repoRoot: root, taskDir, runId, branch: `feat/${taskId}`, baseRef: baseSha,
+      actor: "runner", idempotencyKey: `workspace:${taskId}`,
+    });
+    const read = readTaskKernel({ root, taskDir });
+
+    expect(binding.writeSet).toEqual(["src"]);
+    expect(read?.kind).toBe("task-kernel-v2");
+    if (read?.kind !== "task-kernel-v2") throw new Error("Task Kernel v2 was not preserved");
+    expect(read.kernel.runs.at(-1)?.workspace?.writeSet).toEqual(["src"]);
+    expect(read.kernel.events.some((event) => event.type === "run.workspace-bound" && event.entityId === runId)).toBe(true);
+
+    const wildcard = createRunWorktree({
+      repoRoot: root, runId: "run-explicit-wildcard", branch: "feat/run-explicit-wildcard", baseRef: baseSha,
+      writeSet: ["*"], knownOwners: [],
+    });
+    expect(wildcard.writeSet).toEqual(["*"]);
   });
 
   it("resolves Windows case-only path spellings to the registered physical worktree", () => {
