@@ -780,7 +780,7 @@ export function safeParseIndependentPiReview(
       candidateFingerprint: trusted.candidateFingerprint,
       reviewer: trusted.reviewerId,
       decision: parsed.verdict,
-      evidenceRefs: parsed.evidenceRefs,
+      evidenceRefs: trusted.evidenceVerification.items.map((item) => item.ref),
       acceptanceEvidence: parsed.acceptanceEvidence,
       unresolvedBlockers,
     };
