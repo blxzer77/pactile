@@ -16,15 +16,16 @@ export interface DetachOptions {
 }
 
 function adapterId(value: string): string {
-  if (value === "cursor" || value === "codex") return `adapter.${value}`;
-  return value;
+  if (value === "codex" || value === "adapter.codex") return "adapter.codex";
+  throw new Error(`Unsupported Adapter: ${value}`);
 }
 
 export function detach(options: DetachOptions): DetachPlan | DetachApplyResult {
   if (isCwdHomedir() && !homedirBypassEnabled())
     throw new Error(homedirGuardMessage("detach"));
+  const id = adapterId(options.adapter);
   const manager = new PactileExitManager(process.cwd());
-  const planned = manager.planDetach(adapterId(options.adapter));
+  const planned = manager.planDetach(id);
   if (planned.status !== "ready")
     throw new Error(`Cannot safely detach Adapter: ${planned.reason}`);
 

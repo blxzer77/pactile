@@ -92,7 +92,7 @@ export interface AIToolConfig {
  * Registry of all supported AI tools and their configurations.
  * This is the single source of truth for platform data.
  *
- * Codex is the only current host; legacy Cursor state is handled by exit
+ * Codex is the only current host; legacy host state is handled by exit
  * compatibility paths rather than this install registry.
  */
 export const AI_TOOLS: Record<AITool, AIToolConfig> = {

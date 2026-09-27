@@ -34,8 +34,8 @@ projection, migrations, templates, and release validation.
 
 Canonical project state is under `.pactile/`. Host projections are receipts-
 and-ledger governed: preserve foreign, borrowed, shared, and user-modified
-resources. The active host projection targets Codex; older Cursor claims are
-read only so `pactile detach cursor` can remove them safely.
+resources. The active host projection targets Codex. Retired host files in
+existing user projects remain untouched and require manual cleanup.
 
 Compatibility rules for the 0.5.x line:
 
@@ -44,6 +44,8 @@ Compatibility rules for the 0.5.x line:
 - the legacy CLI spelling is a warning alias for the canonical `pactile` bin;
 - previously published legacy npm packages remain historical releases and are
   not part of the v0.6.0 build or publish graph;
+- host-specific migration manifests from before v0.6.0 no longer execute or
+  ship; the current Node and task migration path remains active;
 - upstream-owned project state is never auto-claimed or rewritten;
 - compatibility readers are centralized and must have focused tests and a
   documented removal condition.

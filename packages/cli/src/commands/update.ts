@@ -103,7 +103,6 @@ import {
   pruneOrphanManifestKeys,
 } from "../utils/manifest-prune.js";
 import { runPostUpdateSmoke } from "../utils/post-update-smoke.js";
-import { cleanupRetiredAlternateClientResidue } from "../pactile/compat/retired-alternate-client.js";
 import { listLegacyPythonScripts } from "../pactile/compat/node-entry-migration.js";
 import {
   applyLegacyTaskUpdate,
@@ -133,10 +132,6 @@ import {
 } from "../pactile/lifecycle/index.js";
 import { InstallStateStore } from "../pactile/runtime/stores.js";
 import { filterReadOnlyLegacyMigrationItems } from "../pactile/compat/legacy-migrations.js";
-import {
-  printLegacyCursorSkillResidueNotice,
-  printRetiredAlternateClientNotice,
-} from "../pactile/compat/update-residue.js";
 import { LEGACY_UPDATE_BLOCK_MESSAGE } from "../pactile/compat/cli-options.js";
 
 export interface UpdateOptions {
@@ -769,7 +764,7 @@ export function collectTemplateFiles(
    * Bypass `update.skip` when collecting templates. Enable this for breaking
    * releases so new files (e.g. `continue.md` added in 0.5.0) and template
    * updates can land even under skip-protected paths. Without this, users with
-   * `.cursor/commands/` in their skip list would silently miss new commands.
+   * a retired host command directory in their skip list would silently miss new commands.
    * Existing user customizations are still guarded at WRITE time via the
    * "Modified by you" conflict prompt — they can skip per-file there.
    */
@@ -1122,11 +1117,8 @@ const BACKUP_EXCLUDE_PATTERNS = [
   "/middleware/", // User middleware overlay (never managed)
   "/backlog/", // Backlog data (user data)
   "/agent-traces/", // Agent traces (user data, legacy name)
-  // Platform-native worktree dirs — these are full sub-repos the CLI
-  // spawns for parallel sessions. Backing them up on every update would
-  // snapshot the entire nested working tree. Confirmed convention:
-  //   Cursor CLI:  .cursor/worktrees/
-  // Matches any platform using the same convention (future-proof).
+  // Platform-native worktree dirs may contain complete nested checkouts.
+  // Backing them up on every update would snapshot the full working tree.
   "/worktrees/",
   "/worktree/",
 ];
@@ -1138,7 +1130,7 @@ const BACKUP_EXCLUDE_PATTERNS = [
 export function shouldExcludeFromBackup(relativePath: string): boolean {
   // Normalize Windows backslashes to forward slashes so patterns like
   // "/worktrees/" / "/tasks/" match regardless of host OS. Without this,
-  // Windows `path.relative` returns `.cursor\worktrees\...` and none of
+  // Windows `path.relative` returns backslash-separated worktree paths and none of
   // the slash-prefixed exclude patterns trigger — which causes
   // `collectAllFiles` to descend into platform worktrees (full nested
   // project copies) and explode the scan. Same normalization pattern
@@ -2272,7 +2264,6 @@ export async function update(options: UpdateOptions): Promise<void> {
   // match the shipped template (dogfood pin absorbed by this release).
   const officialTemplates = collectTemplateFiles(cwd, true);
   const templates = collectTemplateFiles(cwd, breakingBypass);
-  printLegacyCursorSkillResidueNotice(cwd);
 
   // Load update.skip paths (used for both safe-file-delete and template collection)
   const skipPaths = loadUpdateSkipPaths(cwd);
@@ -2454,27 +2445,6 @@ export async function update(options: UpdateOptions): Promise<void> {
   // Print safe-file-delete summary (always shown, runs without --migrate)
   if (safeFileDeletes.length > 0) {
     printSafeFileDeleteSummary(safeFileDeletes);
-  }
-
-  // Preview retired alternate-client cleanup (hash-safe; always considered).
-  const alternateClientResiduePreview = cleanupRetiredAlternateClientResidue(
-    cwd,
-    {
-      dryRun: true,
-    },
-  );
-  if (alternateClientResiduePreview.deleted.length > 0) {
-    console.log(chalk.cyan("\nRetired alternate-client cleanup (hash-safe):"));
-    for (const rel of alternateClientResiduePreview.deleted) {
-      console.log(chalk.gray(`  would delete: ${rel}`));
-    }
-  }
-  if (alternateClientResiduePreview.preservedModified.length > 0) {
-    console.log(
-      chalk.yellow(
-        `  preserve (user-modified): ${alternateClientResiduePreview.preservedModified.join(", ")}`,
-      ),
-    );
   }
 
   // Analyze changes (pass hashes for modification detection)
@@ -3194,23 +3164,6 @@ export async function update(options: UpdateOptions): Promise<void> {
     safeDeleted += deleted;
   }
 
-  const alternateClientCleanup = cleanupRetiredAlternateClientResidue(cwd);
-  if (alternateClientCleanup.deleted.length > 0) {
-    safeDeleted += alternateClientCleanup.deleted.length;
-    console.log(
-      chalk.cyan(
-        `\nCleaned up ${alternateClientCleanup.deleted.length} retired alternate-client file(s)`,
-      ),
-    );
-  }
-  if (alternateClientCleanup.preservedModified.length > 0) {
-    console.log(
-      chalk.yellow(
-        `Preserved user-modified alternate-client residue: ${alternateClientCleanup.preservedModified.join(", ")}`,
-      ),
-    );
-  }
-
   applyDeferredLiveWrites(cwd, deferredLiveWrites);
   clearDeferredLivePlan(cwd);
   if (deferredLiveConfigSections.length > 0) {
@@ -3335,7 +3288,6 @@ export async function update(options: UpdateOptions): Promise<void> {
       `\n✅ ${actionWord} complete! (${projectVersion} → ${cliVersion})`,
     ),
   );
-  printRetiredAlternateClientNotice(cwd);
 
   if (createdNew > 0) {
     console.log(

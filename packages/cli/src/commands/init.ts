@@ -645,10 +645,10 @@ function getBootstrapPrdContent(
 
 **Task state: V2 Define. No Run exists, and init does not authorize execution.**
 
-pactile init created this V2 Task as a proposal to document the project's actual conventions. Its kernel.json records Task state; this prd.md is the human-readable plan. Before starting any Run or making project changes, obtain the user's ordinary, explicit approval for that work.\n\n**Deliverable**: useful, evidence-based project guidance in .pactile/spec/. Read the current workflow and the project itself. Do not assume that a named sub-agent, Cursor hook, or automatic prompt injection is installed or active; verify actual host behavior before making such a claim. Contributors can consult relevant spec files directly when working on this project.
+pactile init created this V2 Task as a proposal to document the project's actual conventions. Its kernel.json records Task state; this prd.md is the human-readable plan. Before starting any Run or making project changes, obtain the user's ordinary, explicit approval for that work.\n\n**Deliverable**: useful, evidence-based project guidance in .pactile/spec/. Read the current workflow and the project itself. Do not assume that a named sub-agent, host hook, or automatic prompt injection is installed or active; verify actual host behavior before making such a claim. Contributors can consult relevant spec files directly when working on this project.
 
 Don't dump instructions. Open with a short greeting, figure out if the repo
-has any existing convention docs (AGENTS.md, .cursorrules, CONTRIBUTING.md, etc.), and drive
+has any existing convention docs (AGENTS.md, CONTRIBUTING.md, etc.), and drive
 the rest conversationally.
 
 ---
@@ -715,8 +715,6 @@ usually much faster than documenting from scratch.
 | File / Directory | Notes |
 |------|------|
 | \`AGENTS.md\` | Agent entry / managed instructions |
-| \`.cursorrules\` | Legacy Cursor rules file |
-| \`.cursor/rules/*.mdc\` | Cursor rules directory |
 | \`CONTRIBUTING.md\` | General project conventions |
 | \`.editorconfig\` | Editor formatting rules |
 
