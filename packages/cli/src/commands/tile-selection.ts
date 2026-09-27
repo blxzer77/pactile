@@ -139,15 +139,20 @@ export function runTileSelectionCli(args: string[], root = process.cwd()): numbe
       return 0;
     }
 
-    if (operation === "decide") {
-      const sessionProfile = rest.includes("--session");
-      if (sessionProfile)
-        validateSessionProfileArguments(rest, new Set(["--offer-fingerprint", "--kind", "--tile", "--prior-tile"]));
-      const request = sessionProfile ? null : selectionRequest(rest, root);
-      const offerFingerprint = option(rest, "--offer-fingerprint");
-      const kind = option(rest, "--kind");
-      if (!offerFingerprint || !kind)
-        throw new Error("Usage: pactile tile-selection decide --offer-fingerprint <sha256> --kind <adopt|override|no-match> --intent <intent> --output <output> [--tile <ref>]");
+      if (operation === "decide") {
+        const sessionProfile = rest.includes("--session");
+        if (sessionProfile)
+          validateSessionProfileArguments(rest, new Set(["--offer-fingerprint", "--kind", "--tile", "--prior-tile", "--jev-advice-fingerprint"]));
+        else if (rest.includes("--jev-advice-fingerprint"))
+          throw new Error("--jev-advice-fingerprint is available only with --session");
+        const request = sessionProfile ? null : selectionRequest(rest, root);
+        const offerFingerprint = option(rest, "--offer-fingerprint");
+        const kind = option(rest, "--kind");
+        const jevAdviceFingerprint = option(rest, "--jev-advice-fingerprint");
+        if (jevAdviceFingerprint && !/^sha256:[a-f0-9]{64}$/u.test(jevAdviceFingerprint))
+          throw new Error("--jev-advice-fingerprint must be a sha256 fingerprint");
+        if (!offerFingerprint || !kind)
+          throw new Error("Usage: pactile tile-selection decide --offer-fingerprint <sha256> --kind <adopt|override|no-match> --intent <intent> --output <output> [--tile <ref>]");
       const selectedRefs = repeatedOptions(rest, "--tile");
       const priorAttemptRefs = repeatedOptions(rest, "--prior-tile");
       const decision: TileSelectionDecision = {
@@ -155,10 +160,10 @@ export function runTileSelectionCli(args: string[], root = process.cwd()): numbe
         offerFingerprint,
         ...(selectedRefs.length ? { selectedRefs } : {}),
         ...(priorAttemptRefs.length ? { priorAttemptRefs } : {}),
-      };
-      const result = sessionProfile
-        ? decideSelectedTaskAgentTileSelection(root, decision)
-        : decideSelectedTaskBatch2TileSelection(root, request as Omit<TileSelectionRequest, "taskLifecycle">, decision);
+        };
+        const result = sessionProfile
+          ? decideSelectedTaskAgentTileSelection(root, decision, process.env, jevAdviceFingerprint)
+          : decideSelectedTaskBatch2TileSelection(root, request as Omit<TileSelectionRequest, "taskLifecycle">, decision);
       if (!result.success) {
         writeJson(result);
         return 1;
