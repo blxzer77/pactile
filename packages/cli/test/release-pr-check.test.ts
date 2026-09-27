@@ -37,10 +37,11 @@ function gitCommand(args: string[]) {
 
 const run = {
   event: "push",
+  head_branch: betaTag,
   head_sha: "beta-sha",
   status: "completed",
   conclusion: "success",
-  path: `.github/workflows/publish.yml@refs/tags/${betaTag}`,
+  path: ".github/workflows/publish.yml",
 };
 
 describe("PR source and release evidence", () => {
@@ -65,8 +66,8 @@ describe("PR source and release evidence", () => {
     expect(result).toMatchObject({ kind: "release", betaTag, runId: "123" });
     await expect(checkPullRequest({
       event: event("main", "develop"), stablePackage, gitCommand,
-      getWorkflowRun: async () => ({ ...run, path: `.github/workflows/publish.yml@${betaTag}` }),
-    })).resolves.toMatchObject({ kind: "release", betaTag });
+      getWorkflowRun: async () => ({ ...run, head_branch: "develop" }),
+    })).rejects.toThrow(/did not succeed/);
   });
 
   it("rejects product changes after beta and requires a new beta", async () => {
@@ -91,7 +92,7 @@ describe("PR source and release evidence", () => {
     })).rejects.toThrow(/did not succeed/);
     await expect(checkPullRequest({
       event: event("main", "develop"), stablePackage, gitCommand,
-      getWorkflowRun: async () => ({ ...run, path: ".github/workflows/publish.yml@refs/heads/develop" }),
+      getWorkflowRun: async () => ({ ...run, path: ".github/workflows/ci.yml" }),
     })).rejects.toThrow(/did not succeed/);
     await expect(checkPullRequest({
       event: event("main", "develop", body.replace("actions/runs/123", "other/actions/runs/123")),

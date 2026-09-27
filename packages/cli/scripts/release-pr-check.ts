@@ -28,6 +28,7 @@ interface PullRequestEvent {
 
 interface WorkflowRun {
   event: string;
+  head_branch: string | null;
   head_sha: string;
   status: string;
   conclusion: string | null;
@@ -42,6 +43,7 @@ function parseWorkflowRun(value: unknown): WorkflowRun {
   if (
     !isRecord(value) ||
     typeof value.event !== "string" ||
+    (typeof value.head_branch !== "string" && value.head_branch !== null) ||
     typeof value.head_sha !== "string" ||
     typeof value.status !== "string" ||
     (typeof value.conclusion !== "string" && value.conclusion !== null) ||
@@ -53,6 +55,8 @@ function parseWorkflowRun(value: unknown): WorkflowRun {
     typeof value.conclusion === "string" ? value.conclusion : null;
   return {
     event: value.event,
+    head_branch:
+      typeof value.head_branch === "string" ? value.head_branch : null,
     head_sha: value.head_sha,
     status: value.status,
     conclusion,
@@ -222,16 +226,13 @@ export async function checkPullRequest({
   }
 
   const run = await getWorkflowRun(repository, runMatch[1]);
-  const publishPath = `.github/workflows/publish.yml@`;
   if (
     run.event !== "push" ||
+    run.head_branch !== betaTag ||
     run.head_sha !== betaCommit ||
     run.status !== "completed" ||
     run.conclusion !== "success" ||
-    ![
-      `${publishPath}${betaTag}`,
-      `${publishPath}refs/tags/${betaTag}`,
-    ].includes(run.path)
+    run.path !== ".github/workflows/publish.yml"
   ) {
     throw new Error(
       "Linked beta Publish workflow did not succeed for the beta tag commit.",
