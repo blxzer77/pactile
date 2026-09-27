@@ -12,7 +12,7 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [Unreleased] - v0.6.0
+## [0.6.0] - 2026-09-28
 
 ### Changed
 
@@ -57,10 +57,10 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
   lifecycle, and simulated Pi/Codex paths. Live providers, desktop-host behavior,
   migration samples, and end-to-end acceptance are separate evidence gates.
 
-The beta.4 tag Publish workflow succeeded, its npm package installed in a
-fresh local project, and `develop` CI passed on Ubuntu and Windows. Release PR
-policy integration defects are corrected in beta.5 and beta.6.
-Stable publication still follows the
+The beta.6 tag Publish workflow succeeded, and its npm package installed in a
+fresh local project with Codex and FastCtx capability smoke passing. Release PR
+policy integration defects were corrected and accepted in beta.5 and beta.6.
+Stable publication follows the
 [upgrade guide](../../docs/lifecycle/upgrade-and-migrate.md) and
 [release procedure](../../docs/governance/releasing.md).
 
