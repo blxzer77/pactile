@@ -11,10 +11,20 @@ import {
 } from "../parallel/policy.js";
 import { sameGitRoot } from "../../utils/git-root.js";
 import {
+  readTaskKernel,
+  type TaskKernelSnapshotV2,
+  type TaskRunV2,
+} from "../../core/task/index.js";
+import { resolveTaskDir } from "../task/session.js";
+import {
   PiRpcClient,
   type PiRpcLaunch,
   type PiRpcProcessExitReceipt,
 } from "./rpc.js";
+import {
+  buildIndependentPiReviewPrompt,
+  type PiReviewPromptBinding,
+} from "../review/contract.js";
 import {
   bindPiV2RunHost,
   persistPiV2StopAndRelease,
@@ -34,6 +44,57 @@ export type PiRunOutcome =
   | "cancelled"
   | "timed_out"
   | "interrupted";
+
+export interface PiCheckStartReceiptV1 {
+  schemaVersion: 1;
+  source: "pactile-pi-review";
+  taskId: string;
+  taskRunId: string;
+  piRunId: string;
+  role: "check";
+  sessionId: string;
+  processId: number;
+  startRequestId: string;
+  kernelRevision: number;
+  candidateSnapshotId: string;
+  candidateFingerprint: string;
+  progressEvidenceRef: string;
+  evidenceRef: string;
+  recordedAt: string;
+}
+
+export interface PiCheckStopReceiptV1 {
+  schemaVersion: 1;
+  source: "pactile-pi-review";
+  assurance: "manager-owned-child-exit";
+  taskId: string;
+  taskRunId: string;
+  piRunId: string;
+  role: "check";
+  sessionId: string;
+  processId: number;
+  startRequestId: string;
+  startReceiptRef: string;
+  stopReceiptId: string;
+  terminal: "exited" | "cancelled";
+  exitCode: number | null;
+  signalCode: string | null;
+  cancellationRequestId: string | null;
+  evidenceRef: string;
+  progressEvidenceRef: string;
+  progressEvidenceSha256: string;
+  resultRef: string | null;
+  resultSha256: string | null;
+  recordedAt: string;
+  processExit: PiRpcProcessExitReceipt;
+}
+
+export interface PiCheckRunEvidenceV1 {
+  start: PiCheckStartReceiptV1;
+  stop: PiCheckStopReceiptV1;
+  resultBytes: Buffer;
+  evidenceRefs: string[];
+}
 
 export interface PiRunRecord {
   schema_version: 1 | 2;
@@ -73,6 +134,29 @@ export interface PiRunRecord {
   dispatch_stop_proof_ref?: string | null;
   dispatch_lease_released?: boolean;
   dispatch_lease_release_reason?: string | null;
+  candidate_snapshot_id?: string | null;
+  candidate_fingerprint?: string | null;
+  kernel_revision_at_dispatch?: number | null;
+  reviewer_id?: string | null;
+  reviewer_identity_assurance?: "caller-declared" | null;
+  cancellation_request_id?: string | null;
+  review_status?: "pending" | "recorded" | "rejected";
+  review_rejection_reason?: string | null;
+  review_file?: string | null;
+  review_start_receipt_ref?: string | null;
+  review_stop_receipt_ref?: string | null;
+  kernel_review_id?: string | null;
+  codex_escalation?: {
+    required: boolean;
+    target: "none" | "codex";
+    reasons: string[];
+  } | null;
+  codex_escalation_request_ref?: string | null;
+  codex_escalation_request_status?:
+    | "pending"
+    | "not-required"
+    | "prepared"
+    | "preparation-failed";
 }
 
 export interface PiRunInput {
@@ -86,6 +170,276 @@ export interface PiRunInput {
   resume?: boolean;
   signal?: AbortSignal;
   onProgress?: (event: Record<string, unknown>) => void;
+  reviewBinding?: PiReviewPromptBinding;
+}
+
+function safeReviewEvidencePath(taskDir: string, reference: string): string {
+  if (!reference || path.isAbsolute(reference) || reference.includes("\0")) {
+    throw new Error("Pi Review evidence reference is invalid");
+  }
+  const resolved = path.resolve(taskDir, reference);
+  const relative = path.relative(path.resolve(taskDir), resolved);
+  if (
+    !relative ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error("Pi Review evidence reference escapes the Task directory");
+  }
+  const realTaskDir = fs.realpathSync(taskDir);
+  const realFile = fs.realpathSync(resolved);
+  const realRelative = path.relative(realTaskDir, realFile);
+  if (
+    !realRelative ||
+    realRelative === ".." ||
+    realRelative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(realRelative)
+  ) {
+    throw new Error("Pi Review evidence resolves outside the Task directory");
+  }
+  if (!fs.statSync(realFile).isFile())
+    throw new Error("Pi Review evidence is not a file");
+  return realFile;
+}
+
+function requireObjectJson(
+  file: string,
+  label: string,
+): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    throw new Error(`${label} is not valid JSON`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label} must be a JSON object`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/** Read the persisted Check receipts and exact structured response bytes before Review parsing. */
+export function readPiCheckRunEvidenceV1(
+  taskDir: string,
+  record: PiRunRecord,
+): PiCheckRunEvidenceV1 {
+  if (
+    record.role !== "check" ||
+    record.outcome !== "settled" ||
+    record.tool_errors !== 0 ||
+    record.result_redacted === true ||
+    !record.session_id ||
+    !record.reviewer_id ||
+    !record.task_id ||
+    !record.task_run_id ||
+    !record.candidate_snapshot_id ||
+    !record.candidate_fingerprint ||
+    !record.start_request_id ||
+    !Number.isSafeInteger(record.process_id) ||
+    !record.process_id ||
+    !record.review_start_receipt_ref ||
+    !record.review_stop_receipt_ref ||
+    !record.result_file ||
+    !record.result_sha256 ||
+    !record.progress_evidence_ref ||
+    !record.kernel_revision_at_dispatch
+  ) {
+    throw new Error("Pi Check run is incomplete or did not settle safely");
+  }
+  if (
+    record.review_start_receipt_ref !==
+      `pi-bridge/starts/${record.run_id}.json` ||
+    record.review_stop_receipt_ref !==
+      `pi-bridge/stops/${record.run_id}.json` ||
+    record.progress_evidence_ref !==
+      `pi-bridge/events/${record.run_id}.jsonl` ||
+    record.result_file !== `pi-bridge/results/${record.run_id}.md`
+  ) {
+    throw new Error("Pi Check evidence references are not bound to this run");
+  }
+  const startPath = safeReviewEvidencePath(
+    taskDir,
+    record.review_start_receipt_ref,
+  );
+  const stopPath = safeReviewEvidencePath(
+    taskDir,
+    record.review_stop_receipt_ref,
+  );
+  const eventPath = safeReviewEvidencePath(
+    taskDir,
+    record.progress_evidence_ref,
+  );
+  const resultPath = safeReviewEvidencePath(taskDir, record.result_file);
+  const start = requireObjectJson(
+    startPath,
+    "Pi Check start receipt",
+  ) as unknown as PiCheckStartReceiptV1;
+  const stop = requireObjectJson(
+    stopPath,
+    "Pi Check stop receipt",
+  ) as unknown as PiCheckStopReceiptV1;
+  const events = fs
+    .readFileSync(eventPath, "utf8")
+    .split(/\r?\n/u)
+    .filter(Boolean);
+  const resultBytes = fs.readFileSync(resultPath);
+  const resultSha256 = createHash("sha256").update(resultBytes).digest("hex");
+  const progressSha256 = createHash("sha256")
+    .update(fs.readFileSync(eventPath))
+    .digest("hex");
+  if (
+    start.schemaVersion !== 1 ||
+    start.source !== "pactile-pi-review" ||
+    start.role !== "check" ||
+    stop.schemaVersion !== 1 ||
+    stop.source !== "pactile-pi-review" ||
+    stop.assurance !== "manager-owned-child-exit" ||
+    stop.role !== "check" ||
+    start.taskId !== record.task_id ||
+    stop.taskId !== record.task_id ||
+    start.taskRunId !== record.task_run_id ||
+    stop.taskRunId !== record.task_run_id ||
+    start.piRunId !== record.run_id ||
+    stop.piRunId !== record.run_id ||
+    start.sessionId !== record.session_id ||
+    stop.sessionId !== record.session_id ||
+    start.processId !== record.process_id ||
+    stop.processId !== record.process_id ||
+    start.startRequestId !== record.start_request_id ||
+    stop.startRequestId !== record.start_request_id ||
+    start.kernelRevision !== record.kernel_revision_at_dispatch ||
+    start.candidateSnapshotId !== record.candidate_snapshot_id ||
+    start.candidateFingerprint !== record.candidate_fingerprint ||
+    start.evidenceRef !== `pi-bridge/runs/${record.run_id}.json` ||
+    stop.evidenceRef !== start.evidenceRef ||
+    start.progressEvidenceRef !== record.progress_evidence_ref ||
+    stop.progressEvidenceRef !== record.progress_evidence_ref ||
+    stop.progressEvidenceSha256 !== progressSha256 ||
+    stop.startReceiptRef !== record.review_start_receipt_ref ||
+    stop.stopReceiptId !== `review-stop-${record.run_id}` ||
+    stop.terminal !== "exited" ||
+    stop.exitCode !== 0 ||
+    stop.signalCode !== null ||
+    stop.cancellationRequestId !== null ||
+    stop.resultRef !== record.result_file ||
+    stop.resultSha256 !== record.result_sha256 ||
+    resultSha256 !== record.result_sha256 ||
+    record.event_count < 1 ||
+    events.length !== record.event_count ||
+    stop.processExit?.terminationVerified !== true ||
+    !stop.processExit.exitObservedAt ||
+    stop.processExit.processId !== record.process_id ||
+    stop.processExit.exitCode !== 0 ||
+    stop.processExit.signalCode !== null ||
+    record.reviewer_id !== `pi-session:${record.session_id}` ||
+    (record.cancellation_request_id !== undefined &&
+      record.cancellation_request_id !== null) ||
+    record.reviewer_identity_assurance !== "caller-declared"
+  ) {
+    throw new Error(
+      "Pi Check receipts, events, or result bytes do not match the persisted run",
+    );
+  }
+  return {
+    start,
+    stop,
+    resultBytes,
+    evidenceRefs: [
+      record.review_start_receipt_ref,
+      record.review_stop_receipt_ref,
+      record.progress_evidence_ref,
+      record.result_file,
+    ],
+  };
+}
+
+export interface PiReviewRouteContext {
+  taskDir: string;
+  kernel: TaskKernelSnapshotV2;
+  run: TaskRunV2;
+  workdir: string;
+  binding: PiReviewPromptBinding;
+}
+
+/** Build the independent Review binding from the current Verify Kernel state. */
+export function preparePiReviewRoute(
+  root: string,
+  taskReference: string,
+): PiReviewRouteContext {
+  const projectRoot = fs.realpathSync(root);
+  const taskDir = resolveTaskDir(projectRoot, taskReference);
+  if (!fs.statSync(taskDir, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new Error(`Task not found: ${taskReference}`);
+  }
+  if (!fs.existsSync(path.join(taskDir, "verify.md"))) {
+    throw new Error("Pi Review requires verify.md");
+  }
+  const read = readTaskKernel({ root: projectRoot, taskDir, cwd: projectRoot });
+  if (read.kind !== "task-kernel-v2") {
+    throw new Error("Pi Review requires a V2 Task Kernel");
+  }
+  const kernel = read.kernel;
+  if (kernel.phase !== "verify") {
+    throw new Error("Pi Review requires the Task Kernel Verify phase");
+  }
+  const run = kernel.runs.at(-1);
+  if (run?.state !== "completed" || !run.result || !run.candidateSnapshot) {
+    throw new Error("Pi Review requires the latest completed Run candidate");
+  }
+  const workdir = run.workspace
+    ? fs.realpathSync(run.workspace.canonicalPath)
+    : projectRoot;
+  if (run.workspace) {
+    const worktreesRoot = fs.realpathSync(
+      path.join(projectRoot, ".pactile", "worktrees"),
+    );
+    const relative = path.relative(worktreesRoot, workdir);
+    if (
+      !relative ||
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    ) {
+      throw new Error("Pi Review Run worktree is outside .pactile/worktrees");
+    }
+  }
+  const binding: PiReviewPromptBinding = {
+    kernelRevision: kernel.revision,
+    taskId: kernel.identity.taskId,
+    runId: run.id,
+    candidateSnapshotId: run.candidateSnapshot.id,
+    candidateFingerprint: run.candidateSnapshot.fingerprint,
+    taskTitle: kernel.definition.title,
+    taskDescription: kernel.definition.description,
+    deliverable: kernel.definition.deliverable,
+    runSummary: run.result.summary,
+    runReferences: [...run.input.references],
+    authorizationScope: run.authorization.scope,
+    writeSetSnapshot: [...run.writeSetSnapshot],
+    candidateEntries: run.candidateSnapshot.entries.map((entry) => ({
+      ref: entry.ref,
+      fingerprint: entry.fingerprint,
+    })),
+    acceptanceCriteria: kernel.definition.acceptanceCriteria.map(
+      (criterion) => ({
+        id: criterion.id,
+        description: criterion.description,
+      }),
+    ),
+  };
+  return { taskDir, kernel, run, workdir, binding };
+}
+
+function assertSameReviewBinding(
+  actual: PiReviewPromptBinding,
+  expected: PiReviewPromptBinding,
+): void {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(
+      "Pi Review binding is stale or does not match the current Run candidate",
+    );
+  }
 }
 
 function atomicJson(file: string, value: unknown): void {
@@ -96,6 +450,15 @@ function atomicJson(file: string, value: unknown): void {
     mode: 0o600,
   });
   fs.renameSync(temporary, file);
+}
+
+function writeExclusiveJson(file: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o600,
+  });
 }
 
 function parseJson(file: string): Record<string, unknown> | null {
@@ -298,6 +661,7 @@ export class PiTaskBridge {
     role: PiRunInput["role"],
     resumeFile: string | null,
     beforeSpawn?: () => void,
+    sessionDirOverride?: string,
   ): Promise<{
     client: PiRpcClient;
     startupMs: number;
@@ -313,7 +677,7 @@ export class PiTaskBridge {
       return { client: this.client, startupMs: 0, mode: "warm" };
     const client = new PiRpcClient({
       cwd: workdir,
-      sessionDir: path.join(dir, "pi-bridge", "sessions"),
+      sessionDir: sessionDirOverride ?? path.join(dir, "pi-bridge", "sessions"),
       launch: this.launch,
       readOnly: role !== "implement",
     });
@@ -327,6 +691,19 @@ export class PiTaskBridge {
   }
 
   private async closeForDispatch(): Promise<PiRpcProcessExitReceipt | null> {
+    const client = this.client;
+    if (!client) return null;
+    const receipt = await client.closeAndObserve();
+    if (receipt?.terminationVerified) {
+      this.client = null;
+      this.taskDir = null;
+      this.workdir = null;
+      this.role = null;
+    }
+    return receipt;
+  }
+
+  private async closeForReview(): Promise<PiRpcProcessExitReceipt | null> {
     const client = this.client;
     if (!client) return null;
     const receipt = await client.closeAndObserve();
@@ -374,7 +751,37 @@ export class PiTaskBridge {
         null,
         null,
         dispatch,
+        null,
       );
+    }
+    if (input.role === "check") {
+      if (!input.reviewBinding) {
+        throw new Error("Pi Check requires an independent Review binding");
+      }
+      if (input.runId || input.resume) {
+        throw new Error(
+          "Pi Review Check cannot resume or reuse an execution Run",
+        );
+      }
+      if (this.client) {
+        throw new Error(
+          "Pi Review Check requires a fresh independent Pi session",
+        );
+      }
+      const review = preparePiReviewRoute(this.root, input.task);
+      assertSameReviewBinding(review.binding, input.reviewBinding);
+      return this.runApproved(
+        input,
+        review.taskDir,
+        review.workdir,
+        null,
+        null,
+        null,
+        review,
+      );
+    }
+    if (input.reviewBinding) {
+      throw new Error("Pi Review binding is only valid for the Check role");
     }
     const dir = approvedTask(this.root, input.task, input.role);
     const workdir = piWorkdir(this.root, dir, input.role);
@@ -392,6 +799,7 @@ export class PiTaskBridge {
         scope?.touches ?? null,
         leaseId,
         null,
+        null,
       );
     } finally {
       release();
@@ -405,6 +813,7 @@ export class PiTaskBridge {
     touches: string[] | null,
     parallelLeaseId: string | null,
     dispatch: PiV2RunDispatch | null,
+    review: PiReviewRouteContext | null,
   ): Promise<PiRunRecord> {
     const evidence = path.join(dir, "pi-bridge");
     const lockFile = path.join(evidence, "active.json");
@@ -483,7 +892,7 @@ export class PiTaskBridge {
       throw new Error("No previous Pi session is available to resume");
     }
     const runId = randomUUID();
-    const startRequestId = dispatch ? randomUUID() : null;
+    const startRequestId = dispatch || review ? randomUUID() : null;
     const now = new Date();
     const runFile = path.join(evidence, "runs", `${runId}.json`);
     const eventFile = path.join(evidence, "events", `${runId}.jsonl`);
@@ -492,6 +901,7 @@ export class PiTaskBridge {
       .relative(dir, eventFile)
       .replaceAll("\\", "/");
     const startReceiptRef = `pi-bridge/starts/${runId}.json`;
+    const reviewStopReceiptRef = `pi-bridge/stops/${runId}.json`;
     const record: PiRunRecord = {
       schema_version: dispatch ? 2 : 1,
       run_id: runId,
@@ -511,6 +921,30 @@ export class PiTaskBridge {
       tool_errors: 0,
       reason: null,
       result_file: null,
+      ...(review
+        ? {
+            task_id: review.run.taskId,
+            task_run_id: review.run.id,
+            candidate_snapshot_id: review.run.candidateSnapshot?.id ?? null,
+            candidate_fingerprint:
+              review.run.candidateSnapshot?.fingerprint ?? null,
+            kernel_revision_at_dispatch: review.kernel.revision,
+            reviewer_identity_assurance: "caller-declared" as const,
+            start_request_id: startRequestId as string,
+            process_id: null,
+            progress_evidence_ref: progressEvidenceRef,
+            result_sha256: null,
+            result_redacted: false,
+            review_status: "pending" as const,
+            review_start_receipt_ref: null,
+            review_stop_receipt_ref: null,
+            review_file: null,
+            kernel_review_id: null,
+            codex_escalation: null,
+            codex_escalation_request_ref: null,
+            codex_escalation_request_status: "pending" as const,
+          }
+        : {}),
       ...(dispatch
         ? {
             task_id: dispatch.taskId,
@@ -553,7 +987,15 @@ export class PiTaskBridge {
     const onAbort = (): void => controller.abort();
     input.signal?.addEventListener("abort", onAbort, { once: true });
     const pollCancel = setInterval(() => {
-      if (parseJson(cancelFile)?.run_id === runId) controller.abort();
+      const cancellation = parseJson(cancelFile);
+      if (cancellation?.run_id === runId) {
+        if (review && typeof cancellation.request_id === "string") {
+          record.cancellation_request_id = cancellation.request_id;
+          atomicJson(runFile, record);
+          atomicJson(latestFile, record);
+        }
+        controller.abort();
+      }
     }, 200);
     try {
       const resumeFile = input.resume ? previousSession : null;
@@ -576,6 +1018,7 @@ export class PiTaskBridge {
               }
             }
           : undefined,
+        review ? path.join(evidence, "review-sessions", runId) : undefined,
       );
       if (parallelLeaseId)
         updateParallelChildPid(this.root, dir, parallelLeaseId, client.pid);
@@ -597,6 +1040,52 @@ export class PiTaskBridge {
         typeof state.sessionFile === "string" ? state.sessionFile : null;
       atomicJson(runFile, record);
       atomicJson(latestFile, record);
+      if (review) {
+        if (
+          !startRequestId ||
+          !record.session_id ||
+          !Number.isSafeInteger(client.pid) ||
+          !client.pid
+        ) {
+          throw new Error(
+            "Pi Review Check start did not provide process and session identities",
+          );
+        }
+        if (record.session_id === review.run.host?.sessionId) {
+          throw new Error(
+            "Pi Check session matches the implementation Run host session",
+          );
+        }
+        const currentReview = preparePiReviewRoute(
+          this.root,
+          review.run.taskId,
+        );
+        assertSameReviewBinding(currentReview.binding, review.binding);
+        const startReceipt: PiCheckStartReceiptV1 = {
+          schemaVersion: 1,
+          source: "pactile-pi-review",
+          taskId: review.run.taskId,
+          taskRunId: review.run.id,
+          piRunId: runId,
+          role: "check",
+          sessionId: record.session_id,
+          processId: client.pid,
+          startRequestId,
+          kernelRevision: review.kernel.revision,
+          candidateSnapshotId: review.binding.candidateSnapshotId,
+          candidateFingerprint: review.binding.candidateFingerprint,
+          progressEvidenceRef,
+          evidenceRef: runReceiptRef,
+          recordedAt: new Date().toISOString(),
+        };
+        writeExclusiveJson(path.join(dir, startReceiptRef), startReceipt);
+        record.process_id = client.pid;
+        record.start_request_id = startRequestId;
+        record.reviewer_id = `pi-session:${record.session_id}`;
+        record.review_start_receipt_ref = startReceiptRef;
+        atomicJson(runFile, record);
+        atomicJson(latestFile, record);
+      }
       if (dispatch) {
         if (
           !startRequestId ||
@@ -684,24 +1173,32 @@ export class PiTaskBridge {
       const writeSetLabel = dispatch
         ? "Task Run write set"
         : "Parent-declared write set";
-      const instructions = [
-        `Pactile task: ${taskPath}`,
-        `Execution worktree: ${workdir}`,
-        `Role: ${input.role}`,
-        `Definition: ${taskPath}/prd.md`,
-        `Evidence: ${taskPath}/verify.md`,
-        "Approved execution contract excerpt:",
-        contractExcerpt,
-        "Follow the approved task contract and its write set. Do not commit, archive, finalize, or mutate Pactile Kernel state. Report evidence and unresolved issues. Do not include credentials in the final answer.",
-        effectiveTouches?.length
-          ? `${writeSetLabel}: ${effectiveTouches.join(", ")}. Do not change files outside it.`
-          : "",
-        input.role === "implement"
-          ? "Implementation may change files only inside the approved write set."
-          : "This role is read-only; do not change files.",
-        "Worker assignment:",
-        input.prompt,
-      ].join("\n\n");
+      const instructions = review
+        ? [
+            "Task-specific Review instructions:",
+            fs.readFileSync(path.join(dir, "verify.md"), "utf8"),
+            "Additional caller instructions:",
+            input.prompt,
+            buildIndependentPiReviewPrompt(review.binding),
+          ].join("\n\n")
+        : [
+            `Pactile task: ${taskPath}`,
+            `Execution worktree: ${workdir}`,
+            `Role: ${input.role}`,
+            `Definition: ${taskPath}/prd.md`,
+            `Evidence: ${taskPath}/verify.md`,
+            "Approved execution contract excerpt:",
+            contractExcerpt,
+            "Follow the approved task contract and its write set. Do not commit, archive, finalize, or mutate Pactile Kernel state. Report evidence and unresolved issues. Do not include credentials in the final answer.",
+            effectiveTouches?.length
+              ? `${writeSetLabel}: ${effectiveTouches.join(", ")}. Do not change files outside it.`
+              : "",
+            input.role === "implement"
+              ? "Implementation may change files only inside the approved write set."
+              : "This role is read-only; do not change files.",
+            "Worker assignment:",
+            input.prompt,
+          ].join("\n\n");
       const result = await client.prompt(
         instructions,
         input.timeoutMs,
@@ -725,7 +1222,7 @@ export class PiTaskBridge {
         { encoding: "utf8", mode: 0o600 },
       );
       record.result_file = path.relative(dir, resultFile).replaceAll("\\", "/");
-      if (dispatch) {
+      if (dispatch || review) {
         const resultBytes = fs.readFileSync(resultFile);
         record.result_sha256 = createHash("sha256")
           .update(resultBytes)
@@ -743,7 +1240,7 @@ export class PiTaskBridge {
               ? "interrupted"
               : "failed";
       record.reason = redact(reason);
-      if (!dispatch) {
+      if (!dispatch && !review) {
         try {
           await this.close();
         } catch (closeError) {
@@ -756,6 +1253,77 @@ export class PiTaskBridge {
       clearInterval(pollCancel);
       input.signal?.removeEventListener("abort", onAbort);
       let processExit: PiProcessExitEvidence | null = null;
+      let reviewProcessExit: PiRpcProcessExitReceipt | null = null;
+      if (review) {
+        try {
+          reviewProcessExit = (await this.closeForReview()) ?? null;
+        } catch (closeError) {
+          closeFailed = true;
+          record.process_stop_error = redact(
+            closeError instanceof Error
+              ? closeError.message
+              : String(closeError),
+          );
+        }
+        if (
+          reviewProcessExit?.terminationVerified &&
+          reviewProcessExit.exitObservedAt &&
+          startRequestId &&
+          record.session_id &&
+          Number.isSafeInteger(record.process_id) &&
+          record.process_id
+        ) {
+          if (
+            record.outcome === "settled" &&
+            (reviewProcessExit.exitCode !== 0 ||
+              reviewProcessExit.signalCode !== null)
+          ) {
+            record.outcome = "interrupted";
+            record.reason =
+              "Pi reported a settled Review response but its manager-owned process exited abnormally";
+          }
+          const receipt: PiCheckStopReceiptV1 = {
+            schemaVersion: 1,
+            source: "pactile-pi-review",
+            assurance: "manager-owned-child-exit",
+            taskId: review.run.taskId,
+            taskRunId: review.run.id,
+            piRunId: runId,
+            role: "check",
+            sessionId: record.session_id,
+            processId: record.process_id,
+            startRequestId,
+            startReceiptRef,
+            stopReceiptId: `review-stop-${runId}`,
+            terminal: record.outcome === "cancelled" ? "cancelled" : "exited",
+            exitCode: reviewProcessExit.exitCode,
+            signalCode: reviewProcessExit.signalCode,
+            cancellationRequestId: record.cancellation_request_id ?? null,
+            evidenceRef: runReceiptRef,
+            progressEvidenceRef,
+            progressEvidenceSha256: createHash("sha256")
+              .update(fs.readFileSync(eventFile))
+              .digest("hex"),
+            resultRef: record.result_file,
+            resultSha256: record.result_sha256 ?? null,
+            recordedAt: new Date().toISOString(),
+            processExit: reviewProcessExit,
+          };
+          writeExclusiveJson(path.join(dir, reviewStopReceiptRef), receipt);
+          record.review_stop_receipt_ref = reviewStopReceiptRef;
+          record.process_stop_error = null;
+        } else {
+          closeFailed = true;
+          record.process_stop_error ??=
+            "Pi Check process termination was not verified; Review is not recordable";
+          if (
+            record.outcome === "settled" ||
+            record.outcome === "needs_review"
+          ) {
+            record.outcome = "interrupted";
+          }
+        }
+      }
       if (dispatch) {
         try {
           processExit = (await this.closeForDispatch()) ?? null;
@@ -828,11 +1396,15 @@ export class PiTaskBridge {
       atomicJson(runFile, record);
       atomicJson(latestFile, record);
       const v2ChildClosed = processExit?.terminationVerified === true;
-      if (
-        (!dispatch && !(closeFailed && alive(this.client?.pid))) ||
-        (dispatch && v2ChildClosed)
-      )
+      if (review && reviewProcessExit?.terminationVerified) {
         fs.rmSync(lockFile, { force: true });
+      } else if (
+        !review &&
+        ((!dispatch && !(closeFailed && alive(this.client?.pid))) ||
+          (dispatch && v2ChildClosed))
+      ) {
+        fs.rmSync(lockFile, { force: true });
+      }
       if (parseJson(cancelFile)?.run_id === runId)
         fs.rmSync(cancelFile, { force: true });
       if (

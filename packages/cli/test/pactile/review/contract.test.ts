@@ -51,7 +51,11 @@ function context(): IndependentPiReviewContext {
         evidenceRef: "approval.md",
       },
       host: null,
-      candidateSnapshot: { id: candidate.snapshotId, fingerprint: candidate.fingerprint, entries: [] },
+      candidateSnapshot: {
+        id: candidate.snapshotId,
+        fingerprint: candidate.fingerprint,
+        entries: [],
+      },
     },
     boundCandidate: { ...candidate },
     acceptanceCriterionIds: ["AC-1"],
@@ -62,7 +66,12 @@ function context(): IndependentPiReviewContext {
       runId: "run-1",
       candidateSnapshotId: candidate.snapshotId,
       candidateFingerprint: candidate.fingerprint,
-      items: reviewEvidenceRefs.map((ref) => ({ ref, sha256: "b".repeat(64), sizeBytes: 1, source: "candidate-snapshot" as const })),
+      items: reviewEvidenceRefs.map((ref) => ({
+        ref,
+        sha256: "b".repeat(64),
+        sizeBytes: 1,
+        source: "candidate-snapshot" as const,
+      })),
     },
   };
 }
@@ -74,10 +83,17 @@ function report(): Record<string, unknown> {
     candidateSnapshotId: candidate.snapshotId,
     candidateFingerprint: candidate.fingerprint,
     verdict: "pass",
-    coverage: Object.fromEntries(INDEPENDENT_REVIEW_AREAS.map((area) => [
-      area,
-      { status: "clear", confidence: "high", evidenceRefs: ["evidence/" + area + ".md"], note: null },
-    ])),
+    coverage: Object.fromEntries(
+      INDEPENDENT_REVIEW_AREAS.map((area) => [
+        area,
+        {
+          status: "clear",
+          confidence: "high",
+          evidenceRefs: ["evidence/" + area + ".md"],
+          note: null,
+        },
+      ]),
+    ),
     findings: [],
     blockers: [],
     unresolvedQuestions: [],
@@ -107,7 +123,10 @@ describe("independent Pi Review contract", () => {
     expect(result.value.independent).toBe(true);
     expect(result.value.reviewer).toBe("pi-session:session-1");
     expect(result.value.reviewerIdentityAssurance).toBe("caller-declared");
-    expect(result.value.piReceipt).toMatchObject({ piRunId: "pi-run-1", sessionId: "session-1" });
+    expect(result.value.piReceipt).toMatchObject({
+      piRunId: "pi-run-1",
+      sessionId: "session-1",
+    });
     expect(result.value.kernelReview).toMatchObject({
       actor: "pi-session:session-1",
       runId: "run-1",
@@ -117,92 +136,140 @@ describe("independent Pi Review contract", () => {
       unresolvedBlockers: [],
     });
     expect(result.value.telemetry.elapsedMs).toBe(200);
-    expect(result.value.telemetry).toMatchObject({ timingAssurance: "pi-bridge-local", usageAssurance: "caller-declared" });
-    expect(result.value.evidenceVerification.items.map((item) => item.ref).sort()).toEqual([...reviewEvidenceRefs].sort());
+    expect(result.value.telemetry).toMatchObject({
+      timingAssurance: "pi-bridge-local",
+      usageAssurance: "caller-declared",
+    });
+    expect(
+      result.value.evidenceVerification.items.map((item) => item.ref).sort(),
+    ).toEqual([...reviewEvidenceRefs].sort());
+    expect([...result.value.kernelReview.evidenceRefs].sort()).toEqual(
+      [...reviewEvidenceRefs].sort(),
+    );
   });
 
   it("rejects self-review and Jev/advisor output as an independent Review", () => {
     const selfReview = context();
     selfReview.run.startedBy = "pi-session:session-1";
-    expect(safeParseIndependentPiReview(report(), selfReview)).toMatchObject({ ok: false });
+    expect(safeParseIndependentPiReview(report(), selfReview)).toMatchObject({
+      ok: false,
+    });
 
     const advisor = context();
     advisor.reviewerAuthority = "jev-advisor";
-    expect(safeParseIndependentPiReview(report(), advisor)).toMatchObject({ ok: false });
+    expect(safeParseIndependentPiReview(report(), advisor)).toMatchObject({
+      ok: false,
+    });
   });
 
   it("rejects a Pi reviewer session that matches the implementation Run host session", () => {
     const sameSession = context();
-    (sameSession.run as unknown as { host: { sessionId: string } | null }).host = { sessionId: "session-1" };
-    expect(safeParseIndependentPiReview(report(), sameSession)).toMatchObject({ ok: false });
+    (
+      sameSession.run as unknown as { host: { sessionId: string } | null }
+    ).host = { sessionId: "session-1" };
+    expect(safeParseIndependentPiReview(report(), sameSession)).toMatchObject({
+      ok: false,
+    });
   });
 
   it("rejects a stale observed candidate and a report for an older candidate", () => {
     const staleObservation = context();
-    staleObservation.boundCandidate = { snapshotId: "candidate-old", fingerprint: "b".repeat(64) };
-    expect(safeParseIndependentPiReview(report(), staleObservation)).toMatchObject({ ok: false });
+    staleObservation.boundCandidate = {
+      snapshotId: "candidate-old",
+      fingerprint: "b".repeat(64),
+    };
+    expect(
+      safeParseIndependentPiReview(report(), staleObservation),
+    ).toMatchObject({ ok: false });
 
     const staleReport = report();
     staleReport["candidateFingerprint"] = "b".repeat(64);
-    expect(safeParseIndependentPiReview(staleReport, context())).toMatchObject({ ok: false });
+    expect(safeParseIndependentPiReview(staleReport, context())).toMatchObject({
+      ok: false,
+    });
   });
 
   it("does not turn Pi settled into PASS without a structured verdict and complete evidence", () => {
-    expect(safeParseIndependentPiReview({ outcome: "settled" }, context())).toMatchObject({ ok: false });
+    expect(
+      safeParseIndependentPiReview({ outcome: "settled" }, context()),
+    ).toMatchObject({ ok: false });
 
     const missingEvidence = report();
     const coverage = missingEvidence["coverage"] as Record<string, unknown>;
     const security = coverage["security"] as Record<string, unknown>;
     security["evidenceRefs"] = [];
-    expect(safeParseIndependentPiReview(missingEvidence, context())).toMatchObject({ ok: false });
+    expect(
+      safeParseIndependentPiReview(missingEvidence, context()),
+    ).toMatchObject({ ok: false });
 
     const missingAcceptance = report();
     missingAcceptance["acceptanceEvidence"] = { "AC-1": [] };
-    expect(safeParseIndependentPiReview(missingAcceptance, context())).toMatchObject({ ok: false });
+    expect(
+      safeParseIndependentPiReview(missingAcceptance, context()),
+    ).toMatchObject({ ok: false });
   });
 
   it("rejects a Review citation that has no matching byte-verified evidence receipt", () => {
     const incomplete = context();
-    incomplete.evidenceVerification.items = incomplete.evidenceVerification.items.filter((item) => item.ref !== "tests/verify.log");
-    expect(safeParseIndependentPiReview(report(), incomplete)).toMatchObject({ ok: false });
+    incomplete.evidenceVerification.items =
+      incomplete.evidenceVerification.items.filter(
+        (item) => item.ref !== "tests/verify.log",
+      );
+    expect(safeParseIndependentPiReview(report(), incomplete)).toMatchObject({
+      ok: false,
+    });
   });
 
   it("rejects passing Reviews with unresolved blockers or questions", () => {
     const unresolved = report();
-    unresolved["unresolvedQuestions"] = [{
-      id: "question-1",
-      question: "Is this behavior intended?",
-      evidenceRefs: ["review/question.md"],
-    }];
+    unresolved["unresolvedQuestions"] = [
+      {
+        id: "question-1",
+        question: "Is this behavior intended?",
+        evidenceRefs: ["review/question.md"],
+      },
+    ];
     const coverage = unresolved["coverage"] as Record<string, unknown>;
     const questionsArea = coverage["open-questions"] as Record<string, unknown>;
     questionsArea["status"] = "finding";
-    unresolved["escalation"] = { required: true, target: "codex", reasons: ["uncertainty"] };
-    expect(safeParseIndependentPiReview(unresolved, context())).toMatchObject({ ok: false });
+    unresolved["escalation"] = {
+      required: true,
+      target: "codex",
+      reasons: ["uncertainty"],
+    };
+    expect(safeParseIndependentPiReview(unresolved, context())).toMatchObject({
+      ok: false,
+    });
   });
 
   it("rejects a blocking finding even when the report says pass", () => {
     const blocked = report();
-    blocked["findings"] = [{
-      id: "finding-blocker",
-      area: "security",
-      severity: "blocker",
-      confidence: "high",
-      impact: "low",
-      disputed: false,
-      summary: "A required security fix is missing.",
-      evidenceRefs: ["src/handler.ts:42"],
-    }];
-    blocked["blockers"] = [{
-      id: "blocker-1",
-      findingId: "finding-blocker",
-      summary: "Resolve the security finding before closing.",
-      evidenceRefs: ["src/handler.ts:42"],
-    }];
+    blocked["findings"] = [
+      {
+        id: "finding-blocker",
+        area: "security",
+        severity: "blocker",
+        confidence: "high",
+        impact: "low",
+        disputed: false,
+        summary: "A required security fix is missing.",
+        evidenceRefs: ["src/handler.ts:42"],
+      },
+    ];
+    blocked["blockers"] = [
+      {
+        id: "blocker-1",
+        findingId: "finding-blocker",
+        summary: "Resolve the security finding before closing.",
+        evidenceRefs: ["src/handler.ts:42"],
+      },
+    ];
     const coverage = blocked["coverage"] as Record<string, unknown>;
     const security = coverage["security"] as Record<string, unknown>;
     security["status"] = "finding";
-    expect(safeParseIndependentPiReview(blocked, context())).toMatchObject({ ok: false });
+    expect(safeParseIndependentPiReview(blocked, context())).toMatchObject({
+      ok: false,
+    });
   });
 
   it("marks uncertainty, high impact, and disputes for Codex escalation", () => {
@@ -211,16 +278,18 @@ describe("independent Pi Review contract", () => {
     const coverage = needsCodex["coverage"] as Record<string, unknown>;
     const security = coverage["security"] as Record<string, unknown>;
     security["confidence"] = "medium";
-    needsCodex["findings"] = [{
-      id: "finding-1",
-      area: "security",
-      severity: "warning",
-      confidence: "high",
-      impact: "high",
-      disputed: true,
-      summary: "Security impact needs a second opinion.",
-      evidenceRefs: ["src/handler.ts:42"],
-    }];
+    needsCodex["findings"] = [
+      {
+        id: "finding-1",
+        area: "security",
+        severity: "warning",
+        confidence: "high",
+        impact: "high",
+        disputed: true,
+        summary: "Security impact needs a second opinion.",
+        evidenceRefs: ["src/handler.ts:42"],
+      },
+    ];
     security["status"] = "finding";
     needsCodex["escalation"] = {
       required: true,
@@ -244,7 +313,9 @@ describe("independent Pi Review contract", () => {
     });
 
     needsCodex["verdict"] = "pass";
-    expect(safeParseIndependentPiReview(needsCodex, escalationContext)).toMatchObject({ ok: false });
+    expect(
+      safeParseIndependentPiReview(needsCodex, escalationContext),
+    ).toMatchObject({ ok: false });
   });
 
   it("preserves nullable local timing and unavailable usage without inventing hard cost limits", () => {
@@ -259,7 +330,12 @@ describe("independent Pi Review contract", () => {
     const result = safeParseIndependentPiReview(highUsage, unavailable);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.telemetry).toMatchObject({ startupMs: null, firstEventMs: null, elapsedMs: null, outputTokens: 250 });
+      expect(result.value.telemetry).toMatchObject({
+        startupMs: null,
+        firstEventMs: null,
+        elapsedMs: null,
+        outputTokens: 250,
+      });
       expect(result.value.telemetry.inputTokens).toBe(100_000_001);
       expect(result.value.telemetry.estimatedCostMicros).toBe(100_000_001);
     }
@@ -269,29 +345,46 @@ describe("independent Pi Review contract", () => {
     missingUsageFields["inputTokens"] = null;
     missingUsageFields["outputTokens"] = null;
     missingUsageFields["estimatedCostMicros"] = null;
-    const missingUsageResult = safeParseIndependentPiReview(missingUsage, context());
+    const missingUsageResult = safeParseIndependentPiReview(
+      missingUsage,
+      context(),
+    );
     expect(missingUsageResult.ok).toBe(true);
 
     const secret = report();
-    secret["evidenceRefs"] = ["https://ci.example/job?token=supersecretvalue123"];
-    expect(safeParseIndependentPiReview(secret, context())).toMatchObject({ ok: false });
+    secret["evidenceRefs"] = [
+      "https://ci.example/job?token=supersecretvalue123",
+    ];
+    expect(safeParseIndependentPiReview(secret, context())).toMatchObject({
+      ok: false,
+    });
   });
 
   it("rejects a stale Kernel revision, RPC tool failure, and an unbound session receipt", () => {
     const stale = context();
     stale.piReceipt.kernelRevisionAtDispatch += 1;
-    expect(safeParseIndependentPiReview(report(), stale)).toMatchObject({ ok: false });
+    expect(safeParseIndependentPiReview(report(), stale)).toMatchObject({
+      ok: false,
+    });
 
     const failedTool = context();
     failedTool.piReceipt.toolErrors = 1;
-    expect(safeParseIndependentPiReview(report(), failedTool)).toMatchObject({ ok: false });
+    expect(safeParseIndependentPiReview(report(), failedTool)).toMatchObject({
+      ok: false,
+    });
 
     const missingSession = context();
     missingSession.piReceipt.sessionId = null;
-    expect(safeParseIndependentPiReview(report(), missingSession)).toMatchObject({ ok: false });
+    expect(
+      safeParseIndependentPiReview(report(), missingSession),
+    ).toMatchObject({ ok: false });
 
     const malformedReceipt = context();
-    (malformedReceipt.piReceipt as unknown as Record<string, unknown>)["forgedTiming"] = 1;
-    expect(safeParseIndependentPiReview(report(), malformedReceipt)).toMatchObject({ ok: false });
+    (malformedReceipt.piReceipt as unknown as Record<string, unknown>)[
+      "forgedTiming"
+    ] = 1;
+    expect(
+      safeParseIndependentPiReview(report(), malformedReceipt),
+    ).toMatchObject({ ok: false });
   });
 });
