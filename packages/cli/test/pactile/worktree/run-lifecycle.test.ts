@@ -406,6 +406,7 @@ describe("managed Run worktree reclamation", () => {
       .toContain("Workspace create claim refused [workspace-kernel-bind-failed]:");
     expect(ownerAKernelAfterFailure.runs.at(-1)?.workspace).toBeNull();
     const preservedPath = path.join(root, ".pactile", "worktrees", ownerA.runId);
+    const canonicalPreservedPath = path.join(repoIdentity(root).root, ".pactile", "worktrees", ownerA.runId);
     expect(hasRegisteredWorktree(root, preservedPath)).toBe(true);
     const commonDir = path.resolve(root, git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"));
     const registry = path.join(commonDir, "pactile-run-workspaces-v1");
@@ -442,9 +443,9 @@ describe("managed Run worktree reclamation", () => {
     vi.spyOn(taskKernelApi, "bindTaskRunWorkspace").mockImplementation(originalBind);
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     expect(await runWorktreeCli(["reconcile", "claim-reconcile-owner-a", ownerA.runId], root)).toBe(0);
-    expect(JSON.parse(String(log.mock.lastCall?.[0]))).toMatchObject({ operation: "reconcile", state: "reconciled", canonicalPath: preservedPath });
+    expect(JSON.parse(String(log.mock.lastCall?.[0]))).toMatchObject({ operation: "reconcile", state: "reconciled", canonicalPath: canonicalPreservedPath });
     const ownerAAfterReconcile = readKernel(root, ownerA.taskDir);
-    expect(ownerAAfterReconcile.runs.at(-1)?.workspace).toMatchObject({ ownerRunId: ownerA.runId, canonicalPath: preservedPath });
+    expect(ownerAAfterReconcile.runs.at(-1)?.workspace).toMatchObject({ ownerRunId: ownerA.runId, canonicalPath: canonicalPreservedPath });
     expect(ownerAAfterReconcile.events.filter((event) => event.type === "run.workspace-bound")).toHaveLength(1);
 
     expect(await runWorktreeCli(["reconcile", "claim-reconcile-owner-a", ownerA.runId], root)).toBe(0);
@@ -838,8 +839,9 @@ describe("managed Run worktree reclamation", () => {
     });
 
     expect(result.binding).toMatchObject({ ownerRunId: runId, integrationState: "not-integrated", manager: { source: "adopted" } });
+    expect(sameGitRoot(result.binding.canonicalPath, canonicalPath)).toBe(true);
     expect(readKernel(root, taskDir).runs.at(-1)?.workspace).toMatchObject({
-      ownerRunId: runId, canonicalPath, manager: { credentialId: result.binding.manager?.credentialId, source: "adopted" },
+      ownerRunId: runId, canonicalPath: result.binding.canonicalPath, manager: { credentialId: result.binding.manager?.credentialId, source: "adopted" },
     });
   });
 
