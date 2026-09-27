@@ -1023,7 +1023,8 @@ describe("Pi V2 dispatch admission and host stop", () => {
     expect(cancelled.outcome).toBe("cancelled");
     expect(cancelled.process_stop_receipt?.terminal).toBe("cancelled");
     expect(cancelled.process_stop_receipt?.processExit.terminationVerified).toBe(true);
-    expect(cancelled.dispatch_lease_released).toBe(true);
+    expect(cancelled.result_file).toBeNull();
+    expect(cancelled.dispatch_lease_released, cancelled.dispatch_lease_release_reason ?? "").toBe(true);
     await cancelBridge.close();
 
     const timedOutTask = createTask(root, "timed-out-run");
@@ -1042,7 +1043,7 @@ describe("Pi V2 dispatch admission and host stop", () => {
     expect(fs.existsSync(timeoutMarker)).toBe(true);
     expect(timedOut.outcome).toBe("timed_out");
     expect(timedOut.process_stop_receipt?.processExit.terminationVerified).toBe(true);
-    expect(timedOut.dispatch_lease_released).toBe(true);
+    expect(timedOut.dispatch_lease_released, timedOut.dispatch_lease_release_reason ?? "").toBe(true);
     await timeoutBridge.close();
   });
 

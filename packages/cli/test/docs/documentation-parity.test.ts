@@ -69,7 +69,7 @@ function commandLines(content: string): string[] {
   return content
     .split(/\r?\n/u)
     .map((line) => line.trim())
-    .filter((line) => /^(?:pactile|pnpm|npm|node|git)\b/u.test(line));
+    .filter((line) => /^(?:pactile|pnpm|npm|node|git)(?:\s|$)/u.test(line));
 }
 
 function sectionAfterAnchor(content: string, id: string): string {
