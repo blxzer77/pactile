@@ -42,6 +42,7 @@ import {
   projectWriteSetsConflict,
   withProjectSchedulerMutex,
 } from "./project-lease-store.js";
+import { hasActiveOrUncertainTaskRunDispatch } from "./task-run-dispatch-state.js";
 import {
   planTaskScheduleV1,
   type SchedulerCostVectorV1,
@@ -427,10 +428,28 @@ function stateForV2(
 }
 
 function stateForTaskKernelCandidate(
+  root: string,
+  taskId: string,
   kernel: TaskKernelSnapshotV2,
 ): SchedulerTaskStateV1 {
   const projectedState = stateForV2(kernel, null);
   const lifecycle = projectTaskKernelLifecycle(kernel);
+  const latestRun = kernel.runs.at(-1) ?? null;
+  if (
+    projectedState === "running" &&
+    latestRun?.state === "running" &&
+    latestRun.host === null &&
+    latestRun.candidateSnapshot === null &&
+    !hasActiveOrUncertainTaskRunDispatch(root, taskId, latestRun.id) &&
+    kernel.events.some(
+      (event) =>
+        event.entityId === latestRun.id && event.type === "run.resumed",
+    )
+  ) {
+    // A public resume starts the Kernel Run; until a Host is bound, keep it
+    // eligible for the next schedule receipt to dispatch its provider work.
+    return "waiting";
+  }
   if (
     projectedState === "blocked" &&
     kernel.condition === "ready" &&
@@ -1443,7 +1462,7 @@ function buildTaskKernelGraphSnapshot(
     const isClosed =
       projectTaskKernelLifecycle(kernel).closed &&
       projectTaskKernelLifecycle(kernel).outcome === "completed";
-    const currentState = stateForTaskKernelCandidate(kernel);
+    const currentState = stateForTaskKernelCandidate(root, taskId, kernel);
     const schedulerState =
       graphNode.external && !isClosed
         ? currentState === "failed"

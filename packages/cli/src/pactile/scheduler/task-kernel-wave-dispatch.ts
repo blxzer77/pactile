@@ -11,6 +11,7 @@ import { resolveTaskDirectoryById } from "../../core/task/task-kernel-paths.js";
 import { resolveTaskDir } from "../task/session.js";
 import { inspectRunWorktree } from "../worktree/manager.js";
 import { projectWriteSetsConflict } from "./project-lease-store.js";
+import { hasActiveOrUncertainTaskRunDispatch } from "./task-run-dispatch-state.js";
 import {
   planTaskKernelGraphV1,
   readTaskKernelScheduleReceiptV1,
@@ -822,8 +823,17 @@ function inspectTask(
     defaults.blockedReason = "task-kernel-revision-changed";
     return defaults;
   }
-  if (run.state !== "waiting" && run.state !== "running") {
+  if (run.state === "waiting") {
+    defaults.blockedReason =
+      "task-run-waiting-requires-run-resume-and-replan";
+    return defaults;
+  }
+  if (run.state !== "running") {
     defaults.blockedReason = "task-run-not-dispatchable:" + run.state;
+    return defaults;
+  }
+  if (hasActiveOrUncertainTaskRunDispatch(root, taskId, run.id)) {
+    defaults.blockedReason = "task-run-already-admitted-or-lease-active";
     return defaults;
   }
   if (run.host) {
@@ -1167,6 +1177,46 @@ export async function dispatchTaskKernelWaveV1(
   const scheduled = receipt.plan.decisions.filter(
     (decision) => decision.action === "scheduled",
   );
+  const waitingRunBlockers = plan.blockers.filter((blocker) =>
+    blocker.reasonCodes.includes(
+      "task-run-waiting-requires-run-resume-and-replan",
+    ),
+  );
+  if (waitingRunBlockers.length) {
+    const resultTaskIds = new Set(tasks.map(({ taskId }) => taskId));
+    for (const decision of scheduled) {
+      if (resultTaskIds.has(decision.taskId)) continue;
+      const task = prepared.get(decision.taskId);
+      if (!task) continue;
+      tasks.push(
+        taskResult(
+          task,
+          decision.wave,
+          "blocked",
+          "dispatch-not-started-because-waiting-run-requires-run-resume-and-replan",
+        ),
+      );
+    }
+    return {
+      schemaVersion: 1,
+      dispatchId,
+      runnerLabel: options.runnerLabel,
+      scheduleReceiptFingerprint: fingerprint,
+      status: "blocked",
+      kernelRunSettlement: "not-performed",
+      integrationPlan: plan,
+      tasks,
+      measurements: {
+        source: "dispatch-wall-clock",
+        mode: options.serialControl ? "serial-control" : "scheduled-waves",
+        elapsedMs: Math.max(
+          0,
+          Math.round(performance.now() - dispatchStartedAt),
+        ),
+        waves: [],
+      },
+    };
+  }
   if (!scheduled.length) {
     return {
       schemaVersion: 1,
