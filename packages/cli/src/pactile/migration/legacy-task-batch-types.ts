@@ -26,6 +26,7 @@ export const JOURNAL_EVENTS = [
   "targets-validated",
   "authority-committed",
   "needs-review",
+  "source-change-reconciled",
 ] as const;
 
 export interface LegacyTaskBatchTargetFile {
@@ -88,6 +89,9 @@ export interface LegacyTaskBatchJournal {
     readonly at: string;
     readonly event: (typeof JOURNAL_EVENTS)[number];
     readonly evidenceFingerprint: string;
+    readonly relatedBatchId?: string;
+    readonly relatedSourceFingerprint?: string;
+    readonly relatedPlanFingerprint?: string;
   }[];
 }
 

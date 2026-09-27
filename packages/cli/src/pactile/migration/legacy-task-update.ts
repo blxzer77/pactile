@@ -11,6 +11,7 @@ import {
 import { assertLegacyTaskMigrationAuthorityOrCleanStore } from "../../core/task/legacy-task-migration-reader.js";
 import { assertLegacyTaskKernelMigrationOverlaysIntact } from "../../core/task/task-kernel-store-v2.js";
 import {
+  canReconcileLegacyTaskBatchSourceChangeWithoutAuthority,
   canResumeLegacyTaskBatchWithoutAuthority,
   legacyTaskBatchTaskIdConflict,
   readPreparedLegacyTaskBatch,
@@ -53,11 +54,15 @@ function inspectWithCurrentSource(
       if (
         reason !==
           "legacy-task-migration-authority-missing-with-residual-state" ||
-        !canResumeLegacyTaskBatchWithoutAuthority({
+        !(canResumeLegacyTaskBatchWithoutAuthority({
           projectRoot,
           plan,
           targets: imported.targets,
-        })
+        }) || canReconcileLegacyTaskBatchSourceChangeWithoutAuthority({
+          projectRoot,
+          plan,
+          targets: imported.targets,
+        }))
       ) throw error;
     }
   }

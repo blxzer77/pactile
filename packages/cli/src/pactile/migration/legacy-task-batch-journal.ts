@@ -47,7 +47,12 @@ function parseJournal(value: unknown): LegacyTaskBatchJournal {
         event.sequence !== index + 1 ||
         !JOURNAL_EVENTS.includes(event.event) ||
         !FINGERPRINT.test(event.evidenceFingerprint) ||
-        Number.isNaN(Date.parse(event.at)),
+        Number.isNaN(Date.parse(event.at)) ||
+        event.event === "source-change-reconciled" &&
+          (typeof event.relatedBatchId !== "string" ||
+            !/^legacy-[a-f0-9]{64}$/.test(event.relatedBatchId) ||
+            !FINGERPRINT.test(event.relatedSourceFingerprint ?? "") ||
+            !FINGERPRINT.test(event.relatedPlanFingerprint ?? "")),
     )
   )
     throw new Error("migration-journal-invalid");
