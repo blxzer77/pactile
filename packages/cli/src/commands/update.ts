@@ -52,7 +52,6 @@ import {
   type DeferredLiveWrite,
 } from "../pactile/lifecycle/deferred-live.js";
 import { toPosix } from "../utils/posix.js";
-import { setupProxy } from "../utils/proxy.js";
 import {
   reportUpdateReadiness,
   snapshotReadinessForRollout,
@@ -2121,9 +2120,6 @@ export async function update(options: UpdateOptions): Promise<void> {
 
   console.log(chalk.cyan("\nPactile Update"));
   console.log(chalk.cyan("══════════════\n"));
-
-  // Set up proxy before any network calls (npm version check)
-  setupProxy();
 
   readinessSnapshot = snapshotReadinessForRollout({
     cwd,
