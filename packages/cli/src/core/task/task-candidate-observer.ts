@@ -496,6 +496,23 @@ function isWithin(parent: string, candidate: string): boolean {
   );
 }
 
+function samePhysicalDirectory(left: string, right: string): boolean {
+  if (left === right) return true;
+  try {
+    const a = fs.statSync(left, { bigint: true });
+    const b = fs.statSync(right, { bigint: true });
+    return (
+      a.isDirectory() &&
+      b.isDirectory() &&
+      a.ino !== 0n &&
+      a.dev === b.dev &&
+      a.ino === b.ino
+    );
+  } catch {
+    return false;
+  }
+}
+
 function realRepositoryRoot(repositoryRoot: string): string {
   let requestedRoot: string;
   try {
@@ -519,10 +536,10 @@ function realRepositoryRoot(repositoryRoot: string): string {
       "Git repository root cannot be resolved.",
     );
   }
-  if (
-    !isWithin(resolvedGitRoot, requestedRoot) ||
-    !isWithin(requestedRoot, resolvedGitRoot)
-  ) {
+  // Git for Windows can expand an 8.3 temp path while Node preserves its short
+  // spelling. Require directory identity so the alias is accepted without
+  // accepting a nested directory or a different repository.
+  if (!samePhysicalDirectory(requestedRoot, resolvedGitRoot)) {
     throw new GitCandidateObservationError(
       "invalid-root",
       "Repository root must be the Git top-level directory.",

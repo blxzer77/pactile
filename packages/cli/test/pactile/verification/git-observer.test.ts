@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -17,6 +18,43 @@ import {
 } from "./git-fixture.js";
 
 describe("read-only Git candidate observation", () => {
+  it("rejects a nested directory as the repository root", () => {
+    const repository = createTemporaryGitRepository();
+    try {
+      expect(() =>
+        observeGitRepositoryBaseline(path.join(repository.root, "src")),
+      ).toThrow(/Git top-level directory/);
+    } finally {
+      removeTemporaryGitRepository(repository);
+    }
+  });
+
+  it("accepts a Windows short-path spelling of the same Git root", (context) => {
+    if (process.platform !== "win32") {
+      context.skip("Windows 8.3 paths are unavailable on this platform");
+      return;
+    }
+    const repository = createTemporaryGitRepository();
+    try {
+      const shortRoot = execFileSync(
+        "cmd.exe",
+        ["/d", "/c", `for %I in ("${repository.root}") do @echo %~sI`],
+        { encoding: "utf8", windowsHide: true },
+      ).trim();
+      if (!fs.existsSync(shortRoot) || shortRoot === repository.root) {
+        context.skip("This volume does not expose a distinct 8.3 alias");
+        return;
+      }
+      const baseline = observeGitRepositoryBaseline(shortRoot);
+      expect(baseline.headSha).toBe(repository.head);
+      expect(() =>
+        observeGitRepositoryBaseline(path.join(shortRoot, "src")),
+      ).toThrow(/Git top-level directory/);
+    } finally {
+      removeTemporaryGitRepository(repository);
+    }
+  });
+
   it("fingerprints staged, unstaged and allowed untracked bytes deterministically", () => {
     const repository = createTemporaryGitRepository();
     try {
