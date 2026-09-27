@@ -279,7 +279,7 @@ function fakePi(
   fixture: ReviewFixture,
   value: Record<string, unknown>,
   sessionId = "pi-checker",
-  malformed: "none" | "first" | "first-sensitive" | "always" | "hang-after-first" = "none",
+  malformed: "none" | "first" | "first-sensitive" | "always" | "hang-first" | "hang-after-first" = "none",
   switchSessionOnSecond = false,
   delayCorrectionGetStateMs = 0,
   maliciousMetadata = false,
@@ -298,6 +298,9 @@ function fakePi(
       resultFile,
       "--malformed",
       malformed,
+      ...(malformed === "hang-first"
+        ? ["--first-prompt-marker", path.join(fixture.taskDir, "pi-bridge", "first-prompt-started")]
+        : []),
       "--delay-correction-get-state-ms",
       String(delayCorrectionGetStateMs),
       ...(switchSessionOnSecond ? ["--switch-session-on-second"] : []),
@@ -365,7 +368,7 @@ async function runReview(
   value: Record<string, unknown>,
   prompt = "Review the candidate.",
   sessionId = "pi-checker",
-  malformed: "none" | "first" | "first-sensitive" | "always" | "hang-after-first" = "none",
+  malformed: "none" | "first" | "first-sensitive" | "always" | "hang-first" | "hang-after-first" = "none",
   timeoutMs = 30 * 60_000,
   switchSessionOnSecond = false,
   delayCorrectionGetStateMs = 0,
@@ -1567,6 +1570,54 @@ describe("P40 independent Pi Review route", () => {
       review_status: "rejected",
       cancellation_request_id: "cancel-format-correction",
       review_format_correction: { attempted: true, outcome: "cancelled" },
+    });
+  });
+
+  it("records null result evidence when the first Check prompt is cancelled", async () => {
+    const task = fixture();
+    const pending = runReview(
+      task,
+      report(task),
+      "Review the candidate.",
+      "pi-checker",
+      "hang-first",
+      5_000,
+    );
+    const marker = path.join(task.taskDir, "pi-bridge", "first-prompt-started");
+    for (let attempt = 0; attempt < 100 && !fs.existsSync(marker); attempt += 1)
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fs.existsSync(marker)).toBe(true);
+    const latest = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    fs.writeFileSync(
+      path.join(task.taskDir, "pi-bridge", "cancel-request.json"),
+      `${JSON.stringify({ request_id: "cancel-first-check", run_id: latest["run_id"] })}\n`,
+      { mode: 0o600 },
+    );
+
+    expect(await pending).toBe(1);
+    expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
+    const piRun = JSON.parse(
+      fs.readFileSync(path.join(task.taskDir, "pi-bridge", "latest.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(piRun).toMatchObject({
+      outcome: "cancelled",
+      review_status: "rejected",
+      result_file: null,
+      result_sha256: null,
+      cancellation_request_id: "cancel-first-check",
+    });
+    const stop = JSON.parse(
+      fs.readFileSync(
+        path.join(task.taskDir, String(piRun["review_stop_receipt_ref"])),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    expect(stop).toMatchObject({
+      terminal: "cancelled",
+      resultRef: null,
+      resultSha256: null,
     });
   });
 

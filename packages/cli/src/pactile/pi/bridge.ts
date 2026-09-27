@@ -1321,7 +1321,8 @@ export class PiTaskBridge {
         : {}),
     };
     fs.mkdirSync(path.dirname(eventFile), { recursive: true });
-    if (dispatch) fs.writeFileSync(eventFile, "", { flag: "wx", mode: 0o600 });
+    if (dispatch || review)
+      fs.writeFileSync(eventFile, "", { flag: "wx", mode: 0o600 });
     if (review) {
       const attemptsFile = path.join(dir, reviewAttemptsRef);
       fs.mkdirSync(path.dirname(attemptsFile), { recursive: true });
@@ -1881,6 +1882,10 @@ export class PiTaskBridge {
           record.process_stop_error = review
             ? safeErrorSummary(closeReason)
             : safeProviderMessage(closeReason);
+        }
+        if (record.result_sha256 === null) {
+          // A cancelled Check may stop before the first response is persisted.
+          record.result_file = null;
         }
         if (
           reviewProcessExit?.terminationVerified &&
