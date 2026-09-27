@@ -63,6 +63,16 @@ and [release procedure](../../docs/governance/releasing.md) for acceptance.
 
 ---
 
+## [0.6.0-beta.4] - 2026-09-28
+
+The beta.3 tag passed build, type checking, lint, tests, and package-content
+checks, but its release preparation stopped before npm publish: the Node-only
+conformance script was invoked from the workspace root, where `tsx` is not
+installed. This beta runs that check from the CLI package directory. Runtime
+behavior and project migration rules are unchanged.
+
+---
+
 ## [0.6.0-beta.2] - 2026-09-25
 
 The Node-only, single-package beta now publishes through npm Trusted Publisher.
