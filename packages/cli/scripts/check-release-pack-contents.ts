@@ -44,7 +44,7 @@ const CURSOR_IDE_CONTENT_RULES = [
   { label: "host name", pattern: /\bCursor\b/u },
   {
     label: "editor file surface",
-    pattern: /\.cursor(?:[/\\]|(?=[\s"'`]|$))/iu,
+    pattern: /(?:^|[\s"'`])\.cursor(?:[/\\]|(?=[\s"'`]|$))/iu,
   },
   {
     label: "editor command option",

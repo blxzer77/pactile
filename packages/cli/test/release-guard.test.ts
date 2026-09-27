@@ -157,7 +157,7 @@ describe("single-package release policy", () => {
     const safeContent = new Map([
       ["dist/bin/cli-cursor.js", "cli-cursor is a terminal command."],
       ["dist/bin/restore-cursor.js", "restore-cursor is a terminal command."],
-      ["dist/pactile/retrieval/pagination.js", "const cursor = nextPage;"],
+      ["dist/pactile/retrieval/pagination.js", "const cursor = receipt.cursor;"],
     ]);
     expect(
       validateReleasePackPaths(safePaths, (file) => safeContent.get(file) ?? ""),
