@@ -6,4 +6,4 @@ For current external facts, run Smart Search when configured. If it is unavailab
 
 A retrieval plan describes the next search and its expected evidence. A retrieval pack scores already collected evidence; it does not perform a search. Never turn a provider's presence into a verified claim without a fresh probe and observable result.
 
-Cursor-specific routing, hooks, and semantic counters from older installations are historical compatibility data. They are not part of the active Codex projection.
+Host-specific routing, hooks, and semantic counters from older installations are historical data. They are not part of the active Codex projection.

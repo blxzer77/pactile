@@ -4,7 +4,7 @@ P29 表名：`debug-recovery`（不得改名）。层：on-demand。
 
 ## 职责
 
-打转逃生，不是第一次修 bug，也不是独立 Check。同一症状在没有新证据的情况下被同一假设反复处理时：停手、分类、升级给人，必要时 Return-to-Define，修完或放弃后再做 break-loop（根因分类 + 防再发 disposition）。进行中的硬诊断纪律（先建 red-capable 环再假设）是本块可加载的深层指南，不是每回合短契约。不拥有 Cursor Debug 模式本身（Adapter 绑定）。
+打转逃生，不是第一次修 bug，也不是独立 Check。同一症状在没有新证据的情况下被同一假设反复处理时：停手、分类、升级给人，必要时 Return-to-Define，修完或放弃后再做 break-loop（根因分类 + 防再发 disposition）。进行中的硬诊断纪律（先建 red-capable 环再假设）是本块可加载的深层指南，不是每回合短契约。宿主原生调试界面由 Adapter 绑定，本模块不拥有其 UI。
 
 ## 触发/披露
 
@@ -23,7 +23,7 @@ Agent 看见：
 2. 实现缺陷 → 仍在 Execute 修，但必须先有（或声明跳过理由的）可复现环；不得先读代码再编原因。
 3. 契约/范围/capability 假设错 → Return-to-Define，再走 Execute 门。这是本块**触发**合法转换，转换本身仍是 Kernel + `define-basic` / `approval-personal`。
 4. 分类结果升级给用户（同一 frontier 可批量选项），不得一个人连试三次还不说。
-5. Adapter 可把运行时复现绑到 Cursor Debug；证据仍落回任务产物。Debug UI 说明书不在本块。
+5. Adapter 可把运行时复现绑定到宿主原生调试界面；证据仍落回任务产物。调试 UI 说明书不在本块。
 6. 打转结束后（修好、降级或取消）才做 break-loop：为什么同一手法失败、防再发、是否叫醒 `spec-learning`。break-loop 不负责找到第一因，也不亲自改长期 spec。不是用户 slash。
 
 用户看见：卡住时被问「这是代码、契约、环境还是该停」。日常一次失败的修复看不见本块。没有常驻 Debug 配置页。
@@ -33,11 +33,11 @@ Agent 看见：
 - 触发与非触发（第一次失败不是本块）。
 - 停手 + 分类出口（上列五类）+ 人升级。
 - 进行中 vs 修完后：诊断纪律 vs break-loop；二者不互相替代。
-- 停止：把第一次红测当 break-loop；用本块代替 `verify-basic` 的 AC 映射；在 Execute 里改 PRD 充数；把 Cursor Debug 写成 PACTILE 自研调试器；把防再发直接写成 spec（那是 `spec-learning`）。
+- 停止：把第一次红测当 break-loop；用本块代替 `verify-basic` 的 AC 映射；在 Execute 里改 PRD 充数；把宿主原生调试器写成 Pactile 自研工具；把防再发直接写成 spec（那是 `spec-learning`）。
 
 ## 关掉必须消失
 
-无失败分类、无停手纪律、无 break-loop 教战、无「先建红环」深层指南注入。第一次失败仍可修。因契约变更的 Return-to-Define 仍可由 Kernel + define/approval 处理。Adapter 仍可打开 Cursor Debug，只是没有 PACTILE 打转剧本。
+无失败分类、无停手纪律、无 break-loop 教战、无「先建红环」深层指南注入。第一次失败仍可修。因契约变更的 Return-to-Define 仍可由 Kernel + define/approval 处理。Adapter 仍可打开宿主原生调试界面，只是没有 Pactile 打转剧本。
 
 ## 不得带走
 

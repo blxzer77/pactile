@@ -1,16 +1,8 @@
-# Cursor 宿主（历史）
+# 历史宿主参考
 
 [English](cursor.md) | 简体中文
 
-Cursor 适配器曾在 Pactile v0.5 中提供，v0.6 已退役。新安装使用
-[Codex](codex.zh-CN.md)；`pactile init --cursor` 和
-`pactile validate-rules` 已不可用。
+Pactile v0.5 曾提供此宿主适配器；v0.6 发布线已移除该适配器。本页仅保留历史参考，
+不包含当前安装或清理步骤。当前支持的宿主集成见 [Codex](codex.zh-CN.md)。
 
-旧项目可能仍有 `.cursor/` 和 `adapter.cursor` ownership claim。先预览清理：
-
-```bash
-pactile detach cursor --dry-run
-```
-
-审阅计划后再运行 `pactile detach cursor`。Pactile 按 ownership 规则保留
-borrowed、modified 与用户所有的内容。参见[分离与卸载](../lifecycle/detach-and-uninstall.zh-CN.md)。
+旧项目布局及其 ownership 记录属于 v0.5 历史。当前行为请查看受支持的宿主页。

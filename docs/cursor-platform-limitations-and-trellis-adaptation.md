@@ -1,8 +1,8 @@
 # Cursor limitations documentation moved
 
-**Historical v0.5 reference:** The Cursor adapter is retired in the v0.6 development line, which targets Codex. For an older installation, preview safe cleanup with `pactile detach cursor --dry-run`.
+This older documentation URL remains for inbound links. The former host adapter
+was removed from the v0.6 release line; current support is listed in
+[Hosts](hosts/index.md).
 
-The historical pages are [Hosts / Cursor limitations](hosts/cursor-limitations.md)
-and [宿主 / Cursor 限制](hosts/cursor-limitations.zh-CN.md).
-This pointer contains no operational procedure so it cannot drift from the
-current host contract.
+Historical context is in [the former limits guide](hosts/cursor-limitations.md)
+and its [Chinese edition](hosts/cursor-limitations.zh-CN.md).

@@ -45,7 +45,8 @@ my-pactile-project/
 
 Pactile owns only the managed content recorded in its ownership ledger. Existing host-native Skills, MCP configuration, plugins, and user-authored files remain external or borrowed unless a reviewed plan says otherwise.
 
-Existing Cursor files from earlier versions are left untouched by the active install path. Use `pactile detach cursor --dry-run` to review legacy cleanup.
+Pactile changes only managed content recorded in its ownership ledger. Borrowed,
+modified, and user-authored files remain available for review.
 
 ## Mental model
 
@@ -72,7 +73,7 @@ See [Hosts](docs/hosts/index.md) and [Capabilities](docs/capabilities/index.md) 
 ## Lifecycle and safety
 
 - `pactile update --dry-run` previews official-file and projection changes before applying them.
-- `pactile detach codex` removes the active adapter's claims while preserving borrowed resources. `pactile detach cursor` remains available to clean up an older installation after preview.
+- `pactile detach codex` removes the active adapter's claims while preserving borrowed resources.
 - `pactile uninstall --dry-run` previews detaching every adapter while retaining canonical `.pactile/` state.
 - `pactile rollback <generation> --dry-run` verifies a sealed generation before switching.
 - `pactile purge --dry-run` only produces a target fingerprint. Destructive cleanup requires a second, explicit confirmation using that exact fingerprint.

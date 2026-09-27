@@ -45,7 +45,6 @@ my-pactile-project/
 
 Pactile 只拥有 ownership ledger 中记录的托管内容。既有宿主原生 Skills、MCP 配置、插件和用户文件仍属于外部或 borrowed 资产，除非经过审阅的计划明确另行处理。
 
-旧版本生成的 Cursor 文件不会被当前安装路径刷新。可先用 `pactile detach cursor --dry-run` 审阅旧安装的清理计划。
 
 ## 心智模型
 
@@ -72,7 +71,7 @@ Pactile 将能力来源（`native`、`provider`、`heuristic`、`unsupported`）
 ## 生命周期与安全
 
 - `pactile update --dry-run` 在应用前预览官方文件与投影变化。
-- `pactile detach codex` 移除当前 Adapter 的声明并保留 borrowed 资源；`pactile detach cursor` 仅用于审阅并清理旧安装。
+- `pactile detach codex` 移除当前 Adapter 的声明并保留 borrowed 资源。
 - `pactile uninstall --dry-run` 预览分离全部 Adapter，同时保留 canonical `.pactile/` 状态。
 - `pactile rollback <generation> --dry-run` 在切换前验证 sealed generation。
 - `pactile purge --dry-run` 只生成目标指纹；破坏性清理需要带同一指纹的第二次显式确认。

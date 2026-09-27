@@ -34,6 +34,7 @@ import {
   resolveNpmCliPath,
 } from "../scripts/release-conformance.js";
 import { assertNoPythonOrPiOnPath } from "../scripts/assert-no-python-on-path.js";
+import { readCliPackageFiles } from "../scripts/cli-pack-files-utils.js";
 
 const packageInfo = {
   cliName: "@blxzer/pactile",
@@ -76,6 +77,14 @@ function artifact() {
 }
 
 describe("single-package release policy", () => {
+  it("publishes only the built package, root README, and license", () => {
+    expect(readCliPackageFiles()).toEqual([
+      "dist",
+      "README.md",
+      "LICENSE",
+    ]);
+  });
+
   it("routes beta and stable tags to beta and candidate only", () => {
     expect(resolveNpmTag("0.6.0-beta.1")).toBe("beta");
     expect(resolveNpmTag("0.6.0")).toBe("candidate");
@@ -134,6 +143,40 @@ describe("single-package release policy", () => {
       .toContain("missing required packed file: dist/core/index.js");
     expect(validateReleasePackPaths([...releasePaths, "dist/legacy.py"]))
       .toContain("forbidden packed path: dist/legacy.py");
+  });
+
+  it("rejects Cursor IDE residue in packed names and contents", () => {
+    const safePaths = [
+      ...REQUIRED_RELEASE_FILES,
+      "dist/migrations/manifests/0.6.0.json",
+      "dist/templates/common/bundled-skills/pactile-check/SKILL.md",
+      "dist/bin/cli-cursor.js",
+      "dist/bin/restore-cursor.js",
+      "dist/pactile/retrieval/pagination.js",
+    ];
+    const safeContent = new Map([
+      ["dist/bin/cli-cursor.js", "cli-cursor is a terminal command."],
+      ["dist/bin/restore-cursor.js", "restore-cursor is a terminal command."],
+      ["dist/pactile/retrieval/pagination.js", "const cursor = nextPage;"],
+    ]);
+    expect(
+      validateReleasePackPaths(safePaths, (file) => safeContent.get(file) ?? ""),
+    ).toEqual([]);
+
+    const forbidden = validateReleasePackPaths(
+      [...safePaths, "dist/templates/cursor/commands/pactile.md"],
+      (file) =>
+        file === "README.md"
+          ? "Use Cursor IDE with pactile init --cursor."
+          : "",
+    );
+    expect(forbidden).toEqual(
+      expect.arrayContaining([
+        "forbidden Cursor IDE packed path: dist/templates/cursor/commands/pactile.md",
+        "forbidden Cursor IDE host name in packed file: README.md",
+        "forbidden Cursor IDE editor command option in packed file: README.md",
+      ]),
+    );
   });
 
   it("checks the sealed install with a private Node-only PATH and default lifecycle scripts", () => {

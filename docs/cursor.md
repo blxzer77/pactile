@@ -1,5 +1,6 @@
 # Cursor documentation (historical)
 
-The Cursor adapter is retired. New installations use [Codex](hosts/codex.md).
-For an older project, see [legacy detach](hosts/cursor.md) ([简体中文](hosts/cursor.zh-CN.md)) and
-[compatibility inputs](pactile/compatibility-inputs.md).
+This page is retained for old inbound links. The former host adapter has been
+removed; current support is documented in [Hosts](hosts/index.md). Historical
+context is in [the former host guide](hosts/cursor.md) and its
+[Chinese edition](hosts/cursor.zh-CN.md).
