@@ -12,6 +12,27 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.5-beta.0] - 2026-09-29
+
+### Added
+
+- Reuse-first planning and implementation guidance compares existing project
+  capabilities and mature external options, records justified decisions, and
+  preserves explicit from-scratch, prior-research and outbound-policy boundaries.
+- Fresh installations and upgrades provide the shared reuse guide and concise
+  Define, Execute and Verify Skill entry points.
+
+### Fixed
+
+- Pi roles retain the user's default MCP, Skills, tools, model and thinking
+  settings. Research and check use read-only behavioral instructions; exact
+  candidate, independent review and Kernel evidence gates remain in place.
+- Upgrades retain previously generated, unchanged Skill content by its recorded
+  fingerprint so updated Skill bodies can be safely projected. Modified or
+  foreign host resources retain their existing protection.
+
+---
+
 ## [0.6.4] - 2026-09-28
 
 ### Fixed
