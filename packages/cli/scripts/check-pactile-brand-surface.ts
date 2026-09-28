@@ -53,10 +53,10 @@ const CONTRACT_IDS = {
   documentationMap: "pactile.documentation-map/v1",
 };
 const CANONICAL_POLICY_DIGESTS = {
-  inventory: "1b80e5487f3409671babfd5bd44f8a53066cbafcb4ccee2f34317e2ced64a6aa",
+  inventory: "430b700d9fe6346cddff2d9c4440eb0315015dd5efe1a719a9414a4016a1dd1e",
   renameMap: "e7e3a0eeb7ba5c97b5ed614b13c8ac628e9e3781d57ec763be06f405bb1b91aa",
   documentationMap:
-    "02b591edaa8dab2bba0f9d5e17a86b217e3928f67f71e7d2981023a5d3230ee1",
+    "32fca84fba592a52261c77d574776f9bd5c4b477805cd7228d0eb2885a764bdd",
 };
 const REQUIRED_TOKEN_IDS = [
   "legacy-product-name",
@@ -73,14 +73,12 @@ const REQUIRED_DOCUMENTATION_SOURCES = [
   ".github/workflows/ci.yml",
   ".github/workflows/publish.yml",
   "AGENTS.md",
-  "PERSONAL_SKILLS_TRELLIS_INTEGRATION_RESEARCH.md",
   "README.md",
   "README.zh-CN.md",
   "docs/agent-tooling-narrative.zh-CN.md",
   "docs/architecture.md",
   "docs/architecture.zh-CN.md",
   "docs/campaign-ui.md",
-  "docs/community/linux-do-release.md",
   "docs/cursor-platform-limitations-and-trellis-adaptation.md",
   "docs/cursor-platform-limitations-and-trellis-adaptation.zh-CN.md",
   "docs/cursor-trellis-release-coexistence-guide.md",
@@ -165,8 +163,6 @@ const REQUIRED_DOCUMENTATION_SOURCES = [
   "docs/history/cursor-plus-plus.zh-CN.md",
   "docs/history/index.md",
   "docs/history/index.zh-CN.md",
-  "docs/history/community/linux-do-release.md",
-  "docs/history/research/personal-skills-integration.md",
   "docs/hosts/codex.md",
   "docs/hosts/codex.zh-CN.md",
   "docs/hosts/coexistence.md",
@@ -200,17 +196,13 @@ const REQUIRED_DOCUMENTATION_SOURCES = [
   "examples/minimal-agent-app/README.zh-CN.md",
 ];
 const REQUIRED_HISTORY_DOCUMENTATION_SOURCES = [
-  "PERSONAL_SKILLS_TRELLIS_INTEGRATION_RESEARCH.md",
   "docs/campaign-ui.md",
-  "docs/community/linux-do-release.md",
   "packages/cli/CHANGELOG.md",
   "docs/history/campaign-ui.md",
   "docs/history/cursor-plus-plus.md",
   "docs/history/cursor-plus-plus.zh-CN.md",
   "docs/history/index.md",
   "docs/history/index.zh-CN.md",
-  "docs/history/community/linux-do-release.md",
-  "docs/history/research/personal-skills-integration.md",
 ];
 const REQUIRED_COMPAT_DOCUMENTATION_SOURCES = [
   "docs/pactile/compatibility-inputs.md",
@@ -317,8 +309,6 @@ const REQUIRED_TARGET_PAGE_IDS = [
   "history.index",
   "history.cursor-plus-plus",
   "history.campaign-ui",
-  "history.community-linux-do",
-  "history.research-personal-skills",
   "history.release-changelog",
 ];
 const P23_HISTORY_PAGE = "history.cursor-plus-plus";
