@@ -37,6 +37,21 @@ function fixture(approve = true): { root: string; script: string; task: string }
 }
 
 describe("Pi native RPC task bridge", () => {
+  it("keeps research capable of gathering evidence under a read-only role contract", async () => {
+    const { root, script, task } = fixture();
+    const bridge = new PiTaskBridge(root, { command: process.execPath, args: [script] });
+    try {
+      const result = await bridge.run({ root, task, role: "research", prompt: "Investigate the task", timeoutMs: 5000 });
+      expect(result.outcome).toBe("settled");
+      if (!result.session_file) throw new Error("Pi session file missing");
+      const received = fs.readFileSync(result.session_file, "utf8");
+      expect(received).toContain("configured MCP servers, skills, and tools");
+      expect(received).toContain("read-only for project sources");
+      expect(received).toContain("separate temporary directory outside the project");
+      expect(received).toContain("Do not commit, merge, publish");
+    } finally { await bridge.close(); }
+  });
+
   it("rejects a Planning task without creating Pi state", async () => {
     const { root, script, task } = fixture(false);
     const bridge = new PiTaskBridge(root, { command: process.execPath, args: [script] });

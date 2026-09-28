@@ -27,7 +27,9 @@ Agent 看见：
 3. Codex 不派发 subagent，只用独立桌面任务通信。Pi 可按已授权职责在自己的写入范围内使用内部 subagent；内部派发不新增 Pactile Child，也不扩大批准范围。
 4. 工人不 `git commit`、不 Finalize、不 `integrate-child`、不改 Kernel 核心状态。
 5. 能并行则并行（P18 / P38），但 HITL / Execute 门 / Check / 集成仍串行。串行必须写 `serial_reason`（共享写集 / 门禁 / 依赖未满足 / 用户要求 / 冲突面无法隔离）。平台没有并行面 → 顺序派工或降回 inline，记 assurance，不得假装已隔离或已并行。
-6. 模型选择归 Adapter / 宿主；本块不写死模型 ID。无可靠宿主工人绑定 → 诚实降级，可走手动派工提示，不得假 spawn。
+6. 所有角色按 Pi Default 加载已配置的 MCP、Skill、工具、模型与推理设置。角色通过 prompt 约束职责，不默认附加 `--tools` 白名单、`--no-tools`、`--no-extensions`、`--no-skills`、`--no-context-files` 或推理强度覆盖。不可用能力须披露，不能把配置存在当作可用证据。
+7. research/check 是行为契约上的只读：可自主检索、查询仓库/MR/CI，按风险做必要的定向验证；不得修改候选实现、既有证据或 Kernel，不得提交、合并、发布或写生产。验证临时产物放在候选工作区之外。契约不宣称 OS 只读沙箱，Review 的候选指纹与证据绑定仍须验证。
+8. 模型选择归 Adapter / 宿主；本块不写死模型 ID。无可靠宿主工人绑定 → 诚实降级，可走手动派工提示，不得假 spawn。静态证据包复核或格式纠正须明确声明范围与局限，不能伪装成主动取证审核。
 
 用户看见：只有真正要派工时才出现工人/并行叙事。Lite 主会话改代码时看不到本块。Parent 的并行批次可用 `pactile parallel status` 读取耗时、等待、结果与集成状态。
 

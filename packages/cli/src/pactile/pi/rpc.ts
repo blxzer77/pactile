@@ -16,7 +16,6 @@ export interface PiRpcOptions {
   launch?: PiRpcLaunch;
   env?: NodeJS.ProcessEnv;
   onEvent?: (event: RpcObject) => void;
-  readOnly?: boolean;
 }
 
 export interface PiRpcProcessExitReceipt {
@@ -132,8 +131,8 @@ export class PiRpcClient {
     if (this.child) throw new Error("Pi RPC process cannot be restarted after exit");
     fs.mkdirSync(this.options.sessionDir, { recursive: true });
     const launch = this.options.launch ?? (process.platform === "win32"
-      ? { command: process.env.ComSpec ?? "cmd.exe", args: ["/d", "/s", "/c", `pi.cmd --mode rpc${this.options.readOnly ? " --tools read,grep,find,ls" : ""}`] }
-      : { command: "pi", args: ["--mode", "rpc", ...(this.options.readOnly ? ["--tools", "read,grep,find,ls"] : [])] });
+      ? { command: process.env.ComSpec ?? "cmd.exe", args: ["/d", "/s", "/c", "pi.cmd --mode rpc"] }
+      : { command: "pi", args: ["--mode", "rpc"] });
     const started = performance.now();
     // This callback is synchronous and has no await between its return and spawn.
     beforeSpawn?.();

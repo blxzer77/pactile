@@ -14,6 +14,8 @@ import {
 } from "../../../src/pactile/lifecycle/index.js";
 import { buildSharedProjectionPlan } from "../../../src/pactile/projection/shared/index.js";
 import { ProjectionStore } from "../../../src/pactile/projection/store.js";
+import { fingerprintBytes } from "../../../src/pactile/projection/planner.js";
+import { parseProjectionPlanV1 } from "../../../src/core/index.js";
 
 const runtimeVersion = "0.6.3-beta.0";
 const occurredAt = "2026-09-28T04:00:00.000Z";
@@ -51,6 +53,90 @@ async function initialize(
 }
 
 describe("default lifecycle host skill rendering", () => {
+  it.each(["unchanged", "edited"] as const)(
+    "updates a previous rendered Skill only when its owned bytes are %s",
+    async (condition) => {
+      const projectRoot = temporaryRoot();
+      const result = await initialize(projectRoot, []);
+      const adapter = createDefaultLifecycleAdapters(
+        projectRoot,
+        result.installState.state.generationId,
+        runtimeVersion,
+        ["codex"],
+      )[0];
+      if (!adapter) throw new Error("missing Codex adapter");
+      const context = {
+        generationId: result.installState.state.generationId,
+        canonicalFingerprint: result.generationFingerprint,
+        ledger: null,
+        ledgerFingerprint: null,
+        occurredAt,
+      };
+      const current = await adapter.buildProjection(context);
+      const parsed = parseProjectionPlanV1(current.plan);
+      if (!parsed.success) throw new Error("invalid current plan");
+      const oldBytes = Buffer.from(
+        '---\nname: "define-basic"\ndescription: "Previous release"\n---\n\n# Define Basic\n\nPrevious instructions.\n',
+      );
+      const oldFingerprint = fingerprintBytes(oldBytes);
+      const oldRef = `shared.skill.define-basic.${oldFingerprint.slice(7)}`;
+      const previous = {
+        ...current,
+        plan: {
+          ...parsed.data,
+          operations: parsed.data.operations.map((op) =>
+            op.resourceId === "shared.skill.define-basic"
+              ? {
+                  ...op,
+                  contentRef: oldRef,
+                  desiredFingerprint: oldFingerprint,
+                }
+              : op,
+          ),
+        },
+        resolveContent: (ref: string) =>
+          ref === oldRef ? { bytes: oldBytes } : current.resolveContent(ref),
+      };
+      const store = new ProjectionStore(projectRoot);
+      const initial = store.inspect(previous);
+      if (initial.status !== "ready") throw new Error(JSON.stringify(initial));
+      expect(store.apply(initial).status).toBe("applied");
+      const skillPath = path.join(
+        projectRoot,
+        ".agents/skills/define-basic/SKILL.md",
+      );
+      if (condition === "edited")
+        fs.appendFileSync(skillPath, "User addition.\n");
+      const before = fs.readFileSync(skillPath);
+      const ledger = store.readLedger();
+      if (!ledger) throw new Error("missing ledger");
+      const inputs = await adapter.buildProjection({
+        ...context,
+        ledger: ledger.ledger,
+        ledgerFingerprint: ledger.fingerprint,
+      });
+      const preview = store.inspect(inputs);
+      if (condition === "edited") {
+        expect(preview.status).toBe("review");
+        expect(fs.readFileSync(skillPath)).toEqual(before);
+      } else {
+        if (preview.status !== "ready")
+          throw new Error(JSON.stringify(preview));
+        expect(store.apply(preview).status).toBe("applied");
+        expect(fs.readFileSync(skillPath, "utf8")).toContain(
+          ".pactile/framework/reuse-first-guide.md",
+        );
+        expect(store.readLedger()?.ledger.entries).toContainEqual(
+          expect.objectContaining({
+            resourceId: "shared.skill.define-basic",
+            generated: expect.objectContaining({
+              fingerprint: fingerprintBytes(fs.readFileSync(skillPath)),
+            }),
+          }),
+        );
+      }
+    },
+  );
   it("projects all baseline skills with Agent Skills metadata under ledger ownership", async () => {
     const projectRoot = temporaryRoot();
     const result = await initialize(projectRoot);

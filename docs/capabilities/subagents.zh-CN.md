@@ -14,7 +14,11 @@ pactile pi status <task>
 pactile pi cancel <task>
 ```
 
-implement 工人要求已批准的 `implement.md` 写明 `execution_mode: worker`。check 与 research 角色只开放 Pi 只读工具。重复传入 `--prompt-file` 可以在同一 Pi 进程里顺序执行，后续 CLI 调用可用 `--resume` 恢复记录的 Pi 会话。桥接在任务 `pi-bridge/` 下记录会话身份、事件摘要、最终文本、失败结局和冷/热启动耗时。它不会把 Kernel 阶段改成 Close；`settled` 只表示 Pi 正常停下，验收与验证仍需单独完成。
+implement 工人要求已批准的 `implement.md` 写明 `execution_mode: worker`。所有角色均继承 Pi 已配置的 MCP、Skill、工具、模型与推理设置；默认 RPC 启动只添加 `--mode rpc`，不添加工具白名单、资源禁用参数或模型覆盖。
+
+check 与 research 是行为契约上的只读角色：可以使用已配置工具自主调查，并按需做定向验证，但不得修改项目实现、被审文件、既有证据或 Kernel，也不得提交、合并、发布或写生产。验证临时产物须放在项目／候选工作区之外的单独临时目录。这不等于 OS 只读沙箱；独立 Review 仍校验固定候选与已绑定证据，需要补充新证据时返回 `needs-changes`。静态证据包复核和格式纠正必须说明范围与局限，能力不可用必须明确披露。
+
+重复传入 `--prompt-file` 可以在同一 Pi 进程里顺序执行，后续 CLI 调用可用 `--resume` 恢复记录的 Pi 会话。桥接在任务 `pi-bridge/` 下记录会话身份、事件摘要、最终文本、失败结局和冷/热启动耗时。它不会把 Kernel 阶段改成 Close；`settled` 只表示 Pi 正常停下，验收与验证仍需单独完成。
 
 ## 关键路径调度的 Parent 派发
 

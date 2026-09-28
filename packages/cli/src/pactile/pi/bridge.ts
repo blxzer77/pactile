@@ -1023,7 +1023,6 @@ export class PiTaskBridge {
       cwd: workdir,
       sessionDir: sessionDirOverride ?? path.join(dir, "pi-bridge", "sessions"),
       launch: this.launch,
-      readOnly: role !== "implement",
     });
     this.client = client;
     this.taskDir = dir;
@@ -1568,8 +1567,10 @@ export class PiTaskBridge {
       const writeSetLabel = dispatch
         ? "Task Run write set"
         : "Parent-declared write set";
+      const defaultCapabilities = "Use Pi's configured MCP servers, skills, and tools for this assignment. Report unavailable capabilities and evidence gaps; do not assume that a loaded skill proves a tool is usable.";
       const instructions = review
         ? [
+            defaultCapabilities,
             "Task-specific Review instructions:",
             fs.readFileSync(path.join(dir, "verify.md"), "utf8"),
             "Additional caller instructions:",
@@ -1577,6 +1578,7 @@ export class PiTaskBridge {
             buildIndependentPiReviewPrompt(review.binding),
           ].join("\n\n")
         : [
+            defaultCapabilities,
             `Pactile task: ${taskPath}`,
             `Execution worktree: ${workdir}`,
             `Role: ${input.role}`,
@@ -1584,13 +1586,13 @@ export class PiTaskBridge {
             `Evidence: ${taskPath}/verify.md`,
             "Approved execution contract excerpt:",
             contractExcerpt,
-            "Follow the approved task contract and its write set. Do not commit, archive, finalize, or mutate Pactile Kernel state. Report evidence and unresolved issues. Do not include credentials in the final answer.",
+            "Follow the approved task contract and its write set. Do not commit, merge, publish, archive, finalize, perform production writes, or mutate Pactile Kernel state. Report evidence and unresolved issues. Do not include credentials in the final answer.",
             effectiveTouches?.length
               ? `${writeSetLabel}: ${effectiveTouches.join(", ")}. Do not change files outside it.`
               : "",
             input.role === "implement"
               ? "Implementation may change files only inside the approved write set."
-              : "This role is read-only; do not change files.",
+              : "This role is read-only for project sources. Use configured retrieval, repository queries, and only necessary targeted validation to investigate the task. Do not change project implementation or existing evidence. Keep any validation artifacts in a separate temporary directory outside the project. Read-only is a behavioral contract, not an operating-system sandbox.",
             "Worker assignment:",
             input.prompt,
           ].join("\n\n");
@@ -1746,7 +1748,7 @@ export class PiTaskBridge {
             "Return exactly one JSON object matching the Review contract below.",
             "Do not include prose, Markdown fences, prefixes, suffixes, or a JSON substring embedded in text.",
             "Keep the same frozen Task Run, candidate snapshot, reviewer identity, evidence boundary, and Review/Close guards.",
-            "Use only the evidence already bound to this Check. Do not call tools or assume tools are available; if the bound evidence is insufficient, return needs-changes.",
+            "Correct the response format only; do not repeat the Review, call tools, or fetch new evidence during this correction. Use only the evidence already bound to this Check; if it is insufficient, return needs-changes.",
           ].join("\n\n");
           const promptBudgetMs = remainingCheckMs();
           if (promptBudgetMs <= 0)

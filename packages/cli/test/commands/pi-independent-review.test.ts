@@ -914,6 +914,11 @@ describe("P40 independent Pi Review route", () => {
     expect(context.Run.allowedEvidenceRefs.some((reference) => reference.startsWith("pactile:"))).toBe(false);
     expect(context.Run.candidateEntries.some((entry) => entry.ref.startsWith("pactile:"))).toBe(true);
     expect(session).toContain("Put only those path strings in reference arrays");
+    expect(session).toContain("Use configured tools to investigate relevant source");
+    expect(session).toContain("separate temporary directory outside the candidate workspace");
+    expect(session).toContain("do not modify reviewed files or existing evidence");
+    expect(session).toContain("Do not commit, merge, publish");
+    expect(session).toContain("evidence beyond allowedEvidenceRefs, return needs-changes");
     expect(session).toContain("do not use explanations, summaries, or sentence fragments as evidence references");
   });
 

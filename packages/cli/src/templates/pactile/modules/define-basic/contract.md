@@ -17,6 +17,8 @@ P29 表名：`define-basic`（不得改名）。层：baseline。
 
 ## 触发/披露
 
+选择实现方案前按 `.pactile/framework/reuse-first-guide.md` 检查项目及环境已有能力，并通过获准的搜索能力主动评估成熟外部方案。已有且仍适用的研究可以引用复用；人类明确要求从零设计时记录该指令。搜索受限或不可用时披露未知事实，不新增权限或审批门。将选项、适配/维护/许可证/平台/依赖/成本理由和风险写入 Task `design.md` 的 Decision/Rationale/Risk 分节，保持需求与方案分离。
+
 V2 Define 阶段加载。Kernel Definition 是 Task 交付物、AC、交付层级和依赖 ID 的事实来源。草稿可以帮助人写定义，但不能代替 Kernel 中的记录。
 
 ## 停止条件

@@ -5,6 +5,7 @@ These framework-owned files are refreshed by `pactile update` with conflict revi
 | Doc | Purpose |
 | --- | --- |
 | [prd-grill-frontier.md](./prd-grill-frontier.md) | Requirements and planning questions |
+| [reuse-first-guide.md](./reuse-first-guide.md) | Existing capabilities, mature external alternatives, justified self-build and decision evidence |
 | [dogfood-only-surfaces.md](./dogfood-only-surfaces.md) | Product versus maintainer-local files |
 | [codex-worker-dispatch.md](./codex-worker-dispatch.md) | Codex desktop task request/receipt bridge and worker boundary |
 | [retrieval-daily-guide.md](./retrieval-daily-guide.md) | Source search and evidence routing |

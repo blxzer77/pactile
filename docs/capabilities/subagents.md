@@ -21,7 +21,19 @@ pactile pi cancel <task>
 ```
 
 An implement worker requires `execution_mode: worker` in the approved
-`implement.md`. Check and research roles use read-only Pi tools. Repeating
+`implement.md`. All roles inherit Pi's configured MCP servers, skills, tools,
+model and thinking settings. The default RPC launcher adds only `--mode rpc`;
+it does not add tool allowlists, resource-disabling flags or model overrides.
+Check and research are read-only behavioral roles: they may investigate with
+configured tools and run necessary targeted validation, but must not modify
+project implementation, reviewed files, existing evidence or Kernel state, or
+commit, merge, publish or perform production writes. Keep validation artifacts
+in a separate temporary directory outside the project/candidate workspace.
+This is not an operating-system sandbox. Independent Review still requires
+the fixed candidate and verified bound evidence; missing new evidence results
+in `needs-changes`. Static evidence-only review and format correction must
+declare their scope and limitations. Report unavailable capabilities explicitly.
+Repeating
 `--prompt-file` runs sequential prompts in one warm Pi process; a later CLI
 invocation can use `--resume` to reopen the recorded Pi session. The bridge
 records session identity, event summaries, final text, failure outcome, and

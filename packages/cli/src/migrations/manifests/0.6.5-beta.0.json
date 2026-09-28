@@ -1,0 +1,9 @@
+{
+  "version": "0.6.5-beta.0",
+  "description": "Preserve default Pi capabilities and provide reuse-first workflow guidance",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "Keep default Pi MCP, Skills, tools, model and thinking across roles; add discoverable reuse-first planning, implementation and review guidance; safely update unchanged generated Skill bodies by their recorded fingerprint.",
+  "migrations": [],
+  "notes": "No Task data transformation. Reuse guidance respects existing external-access policy. Research/check read-only prompts are behavioral constraints, not an operating-system sandbox. Modified or foreign host resources remain protected."
+}

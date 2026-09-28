@@ -56,7 +56,7 @@ const CANONICAL_POLICY_DIGESTS = {
   inventory: "430b700d9fe6346cddff2d9c4440eb0315015dd5efe1a719a9414a4016a1dd1e",
   renameMap: "e7e3a0eeb7ba5c97b5ed614b13c8ac628e9e3781d57ec763be06f405bb1b91aa",
   documentationMap:
-    "32fca84fba592a52261c77d574776f9bd5c4b477805cd7228d0eb2885a764bdd",
+    "10a8e04e7755747d64b0a24ff93418bcd0ce5e234fb4b713d168c7a20d1608cb",
 };
 const REQUIRED_TOKEN_IDS = [
   "legacy-product-name",
@@ -117,6 +117,8 @@ const REQUIRED_DOCUMENTATION_SOURCES = [
   "docs/capabilities/bounded-workspace-requests.zh-CN.md",
   "docs/capabilities/index.md",
   "docs/capabilities/index.zh-CN.md",
+  "docs/capabilities/reuse-first.md",
+  "docs/capabilities/reuse-first.zh-CN.md",
   "docs/capabilities/mcp.md",
   "docs/capabilities/mcp.zh-CN.md",
   "docs/capabilities/native-adoption.md",

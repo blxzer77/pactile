@@ -20,6 +20,7 @@ assurance; a name in a config file is not proof.
 | Privacy          | [Privacy and permissions](privacy-and-permissions.md) | policy boundary                          | Review data flow and credential scope before enabling. |
 | Subagents        | [Subagents](subagents.md)                             | host dispatch plus shared Task contract  | Use the CLI dispatch prompt and task gates.            |
 | Structured task artifacts | [Structured task artifacts (简体中文)](structured-task-artifacts.zh-CN.md) | Kernel-derived lifecycle facts | Read the index first, then expand selected facts or authored documents. |
+| Reuse decisions | [Reuse before building](reuse-first.md) | Define/Execute/Verify guidance | Inspect existing capabilities, permitted alternatives and decision evidence. |
 
 ## Four modes
 
