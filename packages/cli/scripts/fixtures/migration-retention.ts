@@ -4,8 +4,26 @@ import path from "node:path";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
-type SourceApi = typeof import("../../dist/core/task/legacy-task-migration.js");
-type BatchApi = typeof import("../../dist/pactile/migration/legacy-task-batch.js");
+// Script compilation runs before dist exists on a fresh checkout. Describe only
+// the diagnostic seam here; selected package modules are loaded at probe runtime.
+interface ProbePlan { sourceFingerprint: string; scannedFileCount: number }
+interface SourceApi {
+  scanLegacyTaskMigration(input: { projectRoot: string }): ProbePlan;
+}
+interface BatchApi {
+  runLegacyTaskBatch(
+    request: {
+      projectRoot: string;
+      plan: ProbePlan;
+      targets: { path: string; bytes: Uint8Array }[];
+    },
+    options: {
+      approved: boolean;
+      occurredAt: string;
+      onPhase(phase: string): Promise<void>;
+    },
+  ): Promise<{ status: string; reason?: string; journal?: { state: string } }>;
+}
 
 const [packageRootArg, fixtureRootArg, sizeArg = "64"] = process.argv.slice(2);
 if (
