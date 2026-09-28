@@ -24,7 +24,26 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 - Task listing reuses one verified migration view for the observation while
   preserving each Task overlay and Kernel document's integrity checks.
 
-The stable package contains the same product code as `0.6.2-beta.0`.
+- Printable ASCII paths bypass the pinned Unicode decomposition and folding
+  tables; mixed and non-ASCII names still use the Unicode 15 implementation.
+  Each directory sibling comparison computes the target fold once. Filesystem
+  path, collision, link, and hash checks are unchanged.
+
+The stable package contains the same product code as `0.6.2-beta.1`.
+
+---
+
+## [0.6.2-beta.1] - 2026-09-28
+
+### Fixed
+
+- Large immutable source snapshots spend less CPU in repeated normalization
+  and case-fold checks. Printable ASCII uses an equivalent fast path, and
+  sibling comparisons reuse the target component's fold within that comparison.
+  Mixed and non-ASCII names retain the pinned Unicode 15 implementation.
+
+Every filesystem, link, casing, collision, inventory, and byte hash check is
+preserved. Existing source snapshots and journals remain compatible.
 
 ---
 
