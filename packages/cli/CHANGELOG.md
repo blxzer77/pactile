@@ -12,6 +12,58 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.4] - 2026-09-28
+
+### Fixed
+
+- Task evidence archives, media and dependency links remain user data outside
+  canonical product generations. Managed files retain their size, path and link
+  safety checks.
+- Exact repeated managed-block projections preserve recorded foreign provenance
+  and host bytes. Changed content, new claimants and changed observations retain
+  their existing review gates.
+- Restore manifest continuity for the published `0.6.3` version with truthful
+  metadata and no task data transformations.
+
+The stable package contains the same product code as `0.6.4-beta.2`.
+
+---
+
+## [0.6.4-beta.2] - 2026-09-28
+
+### Fixed
+
+- Repeating an unchanged managed-block projection can verify an existing
+  claimant without rewriting host bytes or replacing recorded foreign
+  provenance. Changed content, new claimants and changed observations still
+  require review.
+- Retain Task evidence generation boundaries and manifest continuity fixes.
+
+---
+
+## [0.6.4-beta.1] - 2026-09-28
+
+### Fixed
+
+- Restore manifest continuity for the published `0.6.3` version with metadata
+  that declares no task data transformations, and include the planned `0.6.4`
+  stable manifest before beta acceptance.
+- Retain the Task evidence generation boundary fix from `0.6.4-beta.0`, whose
+  publication was stopped by the manifest continuity gate before npm upload.
+
+---
+
+## [0.6.4-beta.0] - 2026-09-28
+
+### Fixed
+
+- Task evidence under `.pactile/evidence/` remains user data during canonical
+  generation discovery, build seeding, capture and materialization. Source
+  archives, media and dependency links no longer enter a product generation.
+- Managed canonical files retain their existing size, path and link checks.
+
+---
+
 ## [0.6.3] - 2026-09-28
 
 ### Fixed

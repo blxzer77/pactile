@@ -53,6 +53,53 @@ const release = (store: ProjectionStore, id = "adapter-a") => ({
   desiredFingerprint: null,
 });
 describe("projection transaction store", () => {
+  it("reconciles an unchanged recorded block after reload without rewriting foreign provenance", () => {
+    const bytes = Buffer.from(
+      "<!-- PACTILE:START -->\nOwned rules\n<!-- PACTILE:END -->\n",
+    );
+    let store = new ProjectionStore(root);
+    const request = () => {
+      const op = operation({
+        action: "merge",
+        format: "managed-block",
+        contentRef: "block-v1",
+        desiredFingerprint: fingerprintBytes(bytes),
+        expectedCurrentFingerprint: fs.existsSync(target())
+          ? fingerprintBytes(fs.readFileSync(target()))
+          : null,
+      });
+      return { ...input(store, op), resolveContent: () => ({ bytes }) };
+    };
+    expect(store.apply(ready(store.inspect(request()))).status).toBe("applied");
+    fs.writeFileSync(
+      target(),
+      Buffer.concat([
+        Buffer.from("Personal rules\n\n"),
+        fs.readFileSync(target()),
+        Buffer.from("\nForeign footer\n"),
+      ]),
+    );
+    expect(store.apply(ready(store.inspect(request()))).status).toBe("applied");
+
+    store = new ProjectionStore(root);
+    const recorded = store.readLedger()?.ledger.entries[0];
+    const hostBytes = fs.readFileSync(target());
+    const modifiedAt = fs.statSync(target()).mtimeMs;
+    const next = request();
+    const preview = ready(
+      store.inspect({
+        ...next,
+        plan: { ...next.plan, generationId: "generation-b" },
+      }),
+    );
+    expect(preview.mutations).toEqual([]);
+    expect(store.apply(preview).status).toBe("applied");
+    expect(store.verifyApplied(preview).status).toBe("applied");
+    expect(fs.readFileSync(target())).toEqual(hostBytes);
+    expect(fs.statSync(target()).mtimeMs).toBe(modifiedAt);
+    expect(store.readLedger()?.ledger.entries[0]).toEqual(recorded);
+  });
+
   it("inspect writes nothing; apply and replay are idempotent; forged or edited preview is rejected", () => {
     const store = new ProjectionStore(root),
       preview = inspect(store);

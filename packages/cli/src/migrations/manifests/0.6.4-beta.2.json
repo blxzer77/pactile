@@ -1,0 +1,9 @@
+{
+  "version": "0.6.4-beta.2",
+  "description": "Verify exact repeated host projections while preserving foreign provenance.",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "An unchanged managed-block projection by an existing claimant may verify without host byte writes or ownership changes. The recorded generated and current fingerprints remain intact. Changed content, new claimants and changed observations still require review. Task evidence boundaries and manifest continuity fixes remain included.",
+  "migrations": [],
+  "notes": "No project data transformation or ownership adoption is introduced. Existing published manifests, task evidence, migration snapshots, journals, user configuration and foreign host content remain preserved."
+}

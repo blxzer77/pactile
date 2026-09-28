@@ -1,0 +1,9 @@
+{
+  "version": "0.6.4-beta.1",
+  "description": "Restore release manifest continuity before Task evidence fix acceptance.",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "Retain the Task evidence generation boundary fix. Add the missing stable 0.6.3 metadata and prepare the stable 0.6.4 manifest before beta acceptance. All new manifests declare no project data transformations.",
+  "migrations": [],
+  "notes": "The 0.6.4-beta.0 publication stopped before npm upload. Existing published manifests are not modified. Task evidence, migration snapshots, journals and user backups remain preserved."
+}
