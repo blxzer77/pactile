@@ -122,6 +122,9 @@ export const frameworkIndexContent: string = readLocalTemplate(
 export const frameworkRetrievalDailyGuideContent: string = readLocalTemplate(
   "framework/retrieval-daily-guide.md.txt",
 );
+export const frameworkReuseFirstGuideContent: string = readLocalTemplate(
+  "framework/reuse-first-guide.md.txt",
+);
 export const frameworkCodexWorkerDispatchContent: string = readLocalTemplate(
   "framework/codex-worker-dispatch.md.txt",
 );
@@ -164,6 +167,7 @@ export const frameworkDocs: readonly {
   content: string;
 }[] = [
   { name: "index.md", content: frameworkIndexContent },
+  { name: "reuse-first-guide.md", content: frameworkReuseFirstGuideContent },
   {
     name: "retrieval-daily-guide.md",
     content: frameworkRetrievalDailyGuideContent,

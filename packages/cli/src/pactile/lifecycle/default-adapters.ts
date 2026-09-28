@@ -14,6 +14,7 @@ import {
 import { BASELINE_TILE_IDS } from "../tiles/content/baseline/index.js";
 import type { TileCatalogEntry } from "../tiles/loader.js";
 import {
+  canonicalOwnershipLedger,
   fingerprintBytes,
   type ProjectionInputs,
 } from "../projection/planner.js";
@@ -152,6 +153,12 @@ function withHostSkillFrontmatter(
     ]),
   );
   const rendered = new Map<string, Uint8Array>();
+  const priorEntries = new Map(
+    (projection.ledger === null
+      ? []
+      : canonicalOwnershipLedger(projection.ledger).ledger.entries
+    ).map((entry) => [entry.resourceId, entry]),
+  );
   let renderedCount = 0;
   const operations = parsed.data.operations.map((operation) => {
     if (
@@ -168,6 +175,27 @@ function withHostSkillFrontmatter(
     );
     const desiredFingerprint = fingerprintBytes(bytes);
     const contentRef = `${operation.resourceId}.${desiredFingerprint.slice(7)}`;
+    // Earlier releases do not ship their rendered bodies in the current catalog.
+    // Recover only the exact unchanged whole-file bytes proved by the owned ledger.
+    const prior = priorEntries.get(operation.resourceId);
+    if (
+      prior?.origin === "created" &&
+      prior.control === "pactile-owned" &&
+      prior.owner.kind === "pactile" &&
+      prior.format === "text" &&
+      prior.targetPath === operation.targetPath &&
+      prior.generated.state === "present" &&
+      prior.generated.fingerprint !== null &&
+      prior.generated.contentRef ===
+        `${operation.resourceId}.${prior.generated.fingerprint.slice(7)}`
+    ) {
+      const observed = projection.observe(prior.targetPath);
+      if (
+        observed !== null &&
+        fingerprintBytes(observed) === prior.generated.fingerprint
+      )
+        rendered.set(prior.generated.contentRef, Buffer.from(observed));
+    }
     rendered.set(contentRef, bytes);
     renderedCount += 1;
     return { ...operation, contentRef, desiredFingerprint };

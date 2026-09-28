@@ -5,6 +5,8 @@
 The installed guide index is `.pactile/framework/index.md`. Load only the guide
 needed for the current decision; reading a guide does not change Kernel state.
 
+Before choosing an implementation, follow [reuse before building](./framework/reuse-first-guide.md): inspect existing capabilities, research permitted mature external alternatives, and record a compact Decision/Rationale/Risk in Task `design.md`. Reuse applicable prior research and disclose network or evidence limits. The guide grants no new permission.
+
 ## V2 Task contract
 
 A V2 Task is one reviewable deliverable. Its Kernel definition records:
