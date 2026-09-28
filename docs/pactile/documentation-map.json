@@ -728,6 +728,24 @@
       "reason": "Canonical Chinese guide for bounded Node workspace requests, linked from the capability index."
     },
     {
+      "path": "docs/capabilities/reuse-first.md",
+      "classification": "live",
+      "language": "en",
+      "action": "rewrite",
+      "targetPage": "capabilities.index",
+      "ownerLane": "batch-4-docs-hosts-capabilities",
+      "reason": "Canonical English reuse-first decision guide, linked from the capability index."
+    },
+    {
+      "path": "docs/capabilities/reuse-first.zh-CN.md",
+      "classification": "live",
+      "language": "zh-CN",
+      "action": "rewrite",
+      "targetPage": "capabilities.index",
+      "ownerLane": "batch-4-docs-hosts-capabilities",
+      "reason": "Canonical Chinese reuse-first decision guide, linked from the capability index."
+    },
+    {
       "path": "docs/capabilities/index.md",
       "classification": "live",
       "language": "en",
