@@ -1,0 +1,9 @@
+{
+  "version": "0.6.3-beta.0",
+  "description": "Reduce migration retention, separate read-only Task overviews and repair Agent Skill discovery.",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "Legacy Task batch migration releases redundant freshness evidence. Read-only Task dashboard and list queries verify committed Task data and declare historical source backups unaudited; execution, Review, Close and recovery retain full validation. Baseline host skills include standard name and description metadata.",
+  "migrations": [],
+  "notes": "Existing source snapshots, task records and migration journals remain compatible. No project data transformation is introduced."
+}

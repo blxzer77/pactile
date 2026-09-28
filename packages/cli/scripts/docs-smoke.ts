@@ -251,7 +251,10 @@ function assertCanonicalSurface(root) {
       path.join(root, ".agents", "skills", id, "SKILL.md"),
       "utf8",
     );
-    if (!text.startsWith("# ") || /\bcstl\b|Cursor\+\+/iu.test(text))
+    const metadata = new RegExp(
+      `^---\\r?\\nname: "${id}"\\r?\\ndescription: .+\\r?\\n---\\r?\\n\\r?\\n# `,
+    );
+    if (!metadata.test(text) || /\bcstl\b|Cursor\+\+/iu.test(text))
       throw new Error(`non-canonical shared skill surface: ${id}`);
   }
 
@@ -317,7 +320,9 @@ async function assertSourceSkillParity(root) {
   const expected = new Map(
     loaded.data.map((entry) => [
       entry.manifest.identity.id,
-      normalizeText(entry.skillText),
+      normalizeText(
+        `---\nname: ${JSON.stringify(entry.manifest.identity.id)}\ndescription: ${JSON.stringify(entry.manifest.summary)}\n---\n\n${entry.skillText}`,
+      ),
     ]),
   );
   const diffs = [];

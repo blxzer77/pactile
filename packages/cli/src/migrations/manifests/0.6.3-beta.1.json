@@ -1,0 +1,9 @@
+{
+  "version": "0.6.3-beta.1",
+  "description": "Keep worktree cleanup backups outside canonical generation payloads.",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "Cleanup backups remain user data during generation discovery, build seeding, capture and materialization. Dependency links and hard links inside backups do not enter a generation. Managed canonical files retain full path and link safety checks.",
+  "migrations": [],
+  "notes": "No project data transformation is introduced. Existing task migration snapshots, journals and user backups remain preserved."
+}

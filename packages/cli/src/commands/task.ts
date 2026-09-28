@@ -15,7 +15,7 @@ import {
   emptyTaskRecord,
   fingerprintTaskValue,
   isTaskDeliveryLevel,
-  listTaskKernelSnapshots,
+  readTaskKernelOverview,
   parseAcceptanceItems,
   qualityFingerprint,
   readDependencyGraph,
@@ -1837,10 +1837,11 @@ function showTask(root: string, args: string[]): number {
 
 function activeV2Tasks(
   root: string,
+  tasks: ReturnType<typeof readTaskKernelOverview>["tasks"],
 ): { dir: string; kernel: TaskKernelSnapshotV2 }[] {
   const archivePrefix =
     `${path.resolve(root, ".pactile", "tasks", "archive")}${path.sep}`.toLowerCase();
-  return listTaskKernelSnapshots(root)
+  return tasks
     .filter(
       ({ taskDir: dir }) =>
         !path.resolve(dir).toLowerCase().startsWith(archivePrefix),
@@ -1868,7 +1869,8 @@ function listTasks(args: string[], root: string): void {
     closed: "close",
   };
   const requiredPhase = status ? (phaseForStatus[status] ?? status) : undefined;
-  const migrationRecords = listLegacyTaskImportRecords(root);
+  const overview = readTaskKernelOverview(root);
+  const migrationRecords = listLegacyTaskImportRecords(root, overview.migrationView);
   const restoredSourcePaths = new Set(
     migrationRecords.flatMap(({ record }) => {
       if (record.status !== "imported") return [];
@@ -1911,7 +1913,7 @@ function listTasks(args: string[], root: string): void {
       (!status || raw?.status === status)
     );
   });
-  const v2Tasks = activeV2Tasks(root).filter(
+  const v2Tasks = activeV2Tasks(root, overview.tasks).filter(
     ({ kernel }) =>
       (!assignee || kernel.definition.createdBy === assignee) &&
       (!requiredPhase || kernel.phase === requiredPhase),
@@ -1920,6 +1922,8 @@ function listTasks(args: string[], root: string): void {
     assignee ? `Tasks (assignee: ${assignee}):` : "All active tasks:",
   );
   console.log();
+  if (overview.migrationView)
+    console.log("History: source backup not audited for this read-only overview.\n");
   for (const { dir, record } of tasks) {
     const marker = `.pactile/tasks/${dir}` === selected ? " <- selected" : "";
     console.log(
@@ -1986,7 +1990,10 @@ function dashboard(root: string): void {
     `Selected task: ${selected.taskPath ?? "none"}${selected.taskPath ? ` (${selected.source})` : ""}\n`,
   );
   const tasks = activeTasks(root);
-  const v2Tasks = activeV2Tasks(root);
+  const overview = readTaskKernelOverview(root);
+  const v2Tasks = activeV2Tasks(root, overview.tasks);
+  if (overview.migrationView)
+    console.log("History: source backup not audited for this read-only overview.\n");
   if (!tasks.length) console.log("Tasks: none");
   for (const [status, heading] of [
     ["planning", "Define"],

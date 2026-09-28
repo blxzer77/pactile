@@ -19,6 +19,8 @@ const EXCLUDED_PREFIXES = [
   // particular, worktrees may contain dependency junctions and hard links.
   ".pactile/worktrees/",
   ".pactile/worktree-archives/",
+  // Preserved cleanup residues are user data and may contain dependency links.
+  ".pactile/cleanup-backups/",
   ".pactile/templates/",
   ".pactile/tmp/",
   ".pactile/tmp-",

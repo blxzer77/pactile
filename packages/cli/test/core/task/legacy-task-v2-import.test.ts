@@ -12,10 +12,13 @@ import { buildLegacyTaskV2Import } from "../../../src/core/task/legacy-task-v2-i
 import { scanLegacyTaskMigration } from "../../../src/core/task/legacy-task-migration.js";
 import {
   legacyTaskMigrationOverlayPath,
+  readLegacyTaskMigrationOverview,
+  assertValidatedLegacyTaskMigrationView,
   readLegacyTaskImportRecord,
 } from "../../../src/core/task/legacy-task-migration-reader.js";
 import {
   listTaskKernelSnapshots,
+  readTaskKernelOverview,
   readTaskKernel,
   startTaskRun,
 } from "../../../src/core/task/task-kernel.js";
@@ -149,6 +152,72 @@ afterEach(() => {
 });
 
 describe("legacy Task to V2 import mapping", () => {
+  it("keeps overview queries independent of historical source bytes without granting execution evidence", async () => {
+    const root = makeRoot();
+    const taskDir = addLegacyTask(root, {
+      id: "overview-task",
+      directory: "01-overview",
+      prd: prd(),
+    });
+    const { result } = await commitImport(root);
+    const initial = v2At(root, taskDir);
+    const sourceRoot = path.join(root, ".pactile", "runtime", "legacy-task-migrations", "sources");
+    const backupFile = path.join(sourceRoot, result.sourceFingerprint.slice("sha256:".length), "files", ".pactile", "tasks", "01-overview", "task.json");
+    fs.writeFileSync(backupFile, "damaged historical backup");
+    const readSpy = vi.spyOn(fs, "readFileSync");
+    const overview = readTaskKernelOverview(root);
+    expect(overview.tasks.map(({ kernel }) => kernel.identity.taskId)).toEqual(["overview-task"]);
+    expect(overview.migrationView?.sourceBackupValidation).toBe("not-checked");
+    const migrationOverview = readLegacyTaskMigrationOverview(root);
+    if (!migrationOverview) throw new Error("missing overview snapshot");
+    expect(() => assertValidatedLegacyTaskMigrationView(migrationOverview)).toThrow(/view-unvalidated/);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(runTaskCli(["dashboard"], root)).toBe(0);
+    expect(runTaskCli(["list"], root)).toBe(0);
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("source backup not audited");
+    expect(readSpy.mock.calls.some(([file]) => typeof file === "string" && file.startsWith(sourceRoot + path.sep))).toBe(false);
+    readSpy.mockRestore();
+    expect(() => readTaskKernel({ root, taskDir, cwd: root })).toThrow(/backup-invalid/);
+    expect(() => listTaskKernelSnapshots(root)).toThrow(/backup-invalid/);
+    expect(() => startTaskRun({
+      root,
+      taskDir,
+      expectedRevision: initial.revision,
+      actor: "overview-test",
+      idempotencyKey: "must-not-use-overview-as-execution",
+      input: { summary: "A separately authorized execution", references: [] },
+      authorization: {
+        approvedBy: "test-approver",
+        approvedAt: "2026-09-28T00:00:00.000Z",
+        scope: "one Task",
+        evidenceRef: "approval.json",
+      },
+    })).toThrow(/backup-invalid/);
+  });
+
+  it.each(["target-bytes", "unexpected-target", "authority"] as const)(
+    "rejects a corrupted %s in read-only overview queries",
+    async (damage) => {
+      const root = makeRoot();
+      addLegacyTask(root, { id: "checked-target", directory: "01-checked", prd: prd() });
+      const { result } = await commitImport(root);
+      const store = path.join(root, ".pactile", "runtime", "legacy-task-migrations");
+      const targetRoot = path.join(store, "generations", result.generationId, "files");
+      if (damage === "authority") {
+        fs.writeFileSync(path.join(store, "authority.json"), '{"schemaVersion":1}\n');
+      } else if (damage === "unexpected-target") {
+        fs.writeFileSync(path.join(targetRoot, "unclaimed.txt"), "unclaimed target");
+      } else {
+        fs.appendFileSync(path.join(targetRoot, ".pactile", "tasks", "01-checked", "kernel.json"), " ");
+      }
+      expect(() => readTaskKernelOverview(root)).toThrow(/migration-(generation|authority)-invalid/);
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      expect(runTaskCli(["dashboard"], root)).toBe(1);
+      expect(runTaskCli(["list"], root)).toBe(1);
+    },
+  );
+
   it("fails closed on deleted or hash-mismatched mutable overlays across read, list, show, and Run", async () => {
     const root = makeRoot();
     const taskDir = addLegacyTask(root, {
@@ -185,6 +254,7 @@ describe("legacy Task to V2 import mapping", () => {
       /overlay hash-mismatch/,
     );
     expect(() => listTaskKernelSnapshots(root)).toThrow(/overlay hash-mismatch/);
+    expect(() => readTaskKernelOverview(root)).toThrow(/overlay hash-mismatch/);
     const errorOutput: string[] = [];
     const errorSpy = vi.spyOn(console, "error").mockImplementation((message) => {
       errorOutput.push(String(message));
@@ -205,6 +275,7 @@ describe("legacy Task to V2 import mapping", () => {
     );
     expect(() => startTaskRun(request)).toThrow(/overlay kernel-missing/);
     expect(() => listTaskKernelSnapshots(root)).toThrow(/overlay kernel-missing/);
+    expect(() => readTaskKernelOverview(root)).toThrow(/overlay kernel-missing/);
     expect(runContextCli(["--mode", "record", "--json"], root)).toBe(1);
     expect(runContextCli(["--mode", "lite", "--json"], root)).toBe(1);
     fs.rmSync(overlayDir, { recursive: true, force: true });

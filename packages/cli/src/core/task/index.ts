@@ -387,6 +387,7 @@ export {
   checkTaskClose,
   closeTaskKernel,
   listTaskKernelSnapshots,
+  readTaskKernelOverview,
 } from "./task-kernel.js";
 
 export type {

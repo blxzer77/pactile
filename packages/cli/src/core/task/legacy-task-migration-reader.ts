@@ -3,6 +3,8 @@
  *
  * The migration pointer is the single visibility boundary. Readers validate
  * the complete generation and source backup before consuming any staged file.
+ * Explicit read-only overviews validate committed Task data without auditing
+ * historical source bytes, and never qualify as transaction snapshots.
  */
 
 import { createHash } from "node:crypto";
@@ -107,6 +109,10 @@ export interface LegacyTaskMigrationView {
   readonly reconciliationFiles: ReadonlyMap<string, LegacyTaskMigrationFile>;
   /** Effective view: base files overlaid by the committed reconciliation pointer. */
   readonly files: ReadonlyMap<string, LegacyTaskMigrationFile>;
+}
+
+export interface LegacyTaskMigrationOverview extends LegacyTaskMigrationView {
+  readonly sourceBackupValidation: "not-checked";
 }
 
 const validatedMigrationViews = new WeakMap<object, string>();
@@ -483,9 +489,9 @@ function verifyGeneration(
   return files;
 }
 
-/** Read only the immutable initial import pointer for a controlled recovery path. */
-export function readLegacyTaskMigrationBaseView(
+function readLegacyTaskMigrationBaseSnapshot(
   projectRoot: string,
+  auditSourceBackup: boolean,
 ): LegacyTaskMigrationView | null {
   const root = path.resolve(projectRoot);
   const authorityPath = `${LEGACY_TASK_MIGRATION_STORE}/authority.json`;
@@ -502,15 +508,23 @@ export function readLegacyTaskMigrationBaseView(
   } catch {
     throw new Error("legacy-task-migration-authority-invalid");
   }
-  verifySourceBackup(root, authority.sourceFingerprint);
+  if (auditSourceBackup) verifySourceBackup(root, authority.sourceFingerprint);
   const baseFiles = verifyGeneration(root, authority);
-  return registerValidatedMigrationView({
+  return {
     authority,
     baseFiles,
     reconciliationAuthority: null,
     reconciliationFiles: new Map(),
     files: baseFiles,
-  });
+  };
+}
+
+/** Read only the immutable initial import pointer for a controlled recovery path. */
+export function readLegacyTaskMigrationBaseView(
+  projectRoot: string,
+): LegacyTaskMigrationView | null {
+  const snapshot = readLegacyTaskMigrationBaseSnapshot(projectRoot, true);
+  return snapshot ? registerValidatedMigrationView(snapshot) : null;
 }
 
 /** Return a fully verified active migration snapshot, or null before first import. */
@@ -532,6 +546,31 @@ export function readLegacyTaskMigrationView(
     reconciliationFiles: reconciliation.files,
     files: new Map([...base.baseFiles, ...reconciliation.files]),
   });
+}
+
+/**
+ * Display-only snapshot: validate pointers, complete Task generation inventory,
+ * target bytes and reconciliation. Source backup integrity remains unaudited.
+ * Do not register this snapshot for execution or migration transaction reuse.
+ */
+export function readLegacyTaskMigrationOverview(
+  projectRoot: string,
+): LegacyTaskMigrationOverview | null {
+  const base = readLegacyTaskMigrationBaseSnapshot(projectRoot, false);
+  if (!base) return null;
+  const reconciliation = readLegacyTaskReconciliationFiles(
+    path.resolve(projectRoot),
+    base.authority,
+    base.baseFiles,
+  );
+  return {
+    authority: base.authority,
+    baseFiles: base.baseFiles,
+    reconciliationAuthority: reconciliation.authority,
+    reconciliationFiles: reconciliation.files,
+    files: new Map([...base.baseFiles, ...reconciliation.files]),
+    sourceBackupValidation: "not-checked",
+  };
 }
 
 function taskRelativePath(

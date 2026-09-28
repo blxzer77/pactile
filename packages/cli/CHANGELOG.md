@@ -12,6 +12,54 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.3] - 2026-09-28
+
+### Fixed
+
+- Legacy Task migration releases redundant source-scan evidence before asynchronous
+  backup and staging while retaining freshness, fingerprint and recovery checks.
+- Read-only Task dashboard and list queries validate committed Task data and clearly
+  identify unaudited historical source backups. Run, Review, Close and recovery
+  retain their full validation.
+- Generated Agent Skills provide discoverable name and description metadata for
+  Codex and Pi while preserving instruction bodies and ownership boundaries.
+- Worktree cleanup backups remain private user data and no longer block canonical
+  generation through their dependency links. Managed canonical safety checks remain.
+
+The stable package contains the same product code as `0.6.3-beta.1`.
+
+---
+
+## [0.6.3-beta.1] - 2026-09-28
+
+### Fixed
+
+- Cleanup backups under `.pactile/cleanup-backups/` remain user data. Canonical
+  generation discovery, build seeding, capture and materialization preserve
+  these backups without traversing their dependency links or hard links.
+- Managed canonical files retain their existing path and link safety checks.
+
+---
+
+## [0.6.3-beta.0] - 2026-09-28
+
+### Fixed
+
+- Legacy Task batch migration retains only the result of its freshness check
+  across asynchronous backup and staging phases. The complete source scan,
+  preflight result, fingerprint comparison and recovery checks remain enforced.
+- A developer diagnostic compares retained memory at the verified backup
+  boundary using bounded synthetic evidence. It does not commit Task authority
+  or claim real-project migration acceptance.
+- Read-only Task dashboard and list queries validate committed Task data without
+  rereading the historical source backup. They identify the unaudited history;
+  execution, Review, Close and recovery keep their full validation.
+- Generated baseline Agent Skills include discoverable name and description
+  metadata for Codex and Pi while preserving their instruction bodies and
+  ownership boundaries.
+
+---
+
 ## [0.6.2] - 2026-09-28
 
 ### Fixed

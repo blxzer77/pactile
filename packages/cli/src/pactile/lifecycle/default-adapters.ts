@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { CapabilityBindingV1 } from "../../core/index.js";
+import {
+  parseProjectionPlanV1,
+  type CapabilityBindingV1,
+} from "../../core/index.js";
 import { planBinding } from "../adoption/bindings.js";
 import { discoverSnapshot } from "../adoption/inventory.js";
 import {
@@ -9,7 +12,12 @@ import {
   type PactilePlatform,
 } from "../registry.js";
 import { BASELINE_TILE_IDS } from "../tiles/content/baseline/index.js";
-import type { ProjectionInputs } from "../projection/planner.js";
+import type { TileCatalogEntry } from "../tiles/loader.js";
+import {
+  fingerprintBytes,
+  type ProjectionInputs,
+} from "../projection/planner.js";
+import { renderHostSkill } from "./host-skill-renderer.js";
 import type {
   LifecycleAdapter,
   LifecycleProjectionContext,
@@ -127,7 +135,54 @@ function buildProjection(
     throw new Error(
       composed.diagnostics[0]?.code ?? "default-adapter-plan-unavailable",
     );
-  return composed.projection;
+  return withHostSkillFrontmatter(composed.projection, selected);
+}
+
+function withHostSkillFrontmatter(
+  projection: ProjectionInputs,
+  selected: readonly TileCatalogEntry[],
+): ProjectionInputs {
+  const parsed = parseProjectionPlanV1(projection.plan);
+  if (!parsed.success) throw new Error("default-adapter-projection-invalid");
+
+  const byResourceId = new Map(
+    selected.map((entry) => [
+      `shared.skill.${entry.manifest.identity.id}`,
+      entry,
+    ]),
+  );
+  const rendered = new Map<string, Uint8Array>();
+  let renderedCount = 0;
+  const operations = parsed.data.operations.map((operation) => {
+    if (
+      !operation.resourceId.startsWith("shared.skill.") ||
+      operation.action !== "ensure"
+    )
+      return operation;
+    const tile = byResourceId.get(operation.resourceId);
+    if (!tile || operation.contentRef === null)
+      throw new Error("default-adapter-skill-operation-invalid");
+    const bytes = Buffer.from(
+      renderHostSkill(tile.manifest, tile.skillText),
+      "utf8",
+    );
+    const desiredFingerprint = fingerprintBytes(bytes);
+    const contentRef = `${operation.resourceId}.${desiredFingerprint.slice(7)}`;
+    rendered.set(contentRef, bytes);
+    renderedCount += 1;
+    return { ...operation, contentRef, desiredFingerprint };
+  });
+  if (renderedCount !== selected.length)
+    throw new Error("default-adapter-skill-operation-incomplete");
+
+  return {
+    ...projection,
+    plan: { ...parsed.data, operations },
+    resolveContent: (contentRef) => {
+      const bytes = rendered.get(contentRef);
+      return bytes ? { bytes } : projection.resolveContent(contentRef);
+    },
+  };
 }
 
 /** Build the shipped baseline composition without touching a host surface. */

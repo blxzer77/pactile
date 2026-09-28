@@ -46,6 +46,16 @@ Close 请求中的 candidate ID 和 fingerprint 必须匹配最新冻结的 Run 
 
 actor、approver、reviewer 与 Run authorization 字段由调用方提供；Core 会检查字段形状和记录之间的关联，但不会认证身份或向外部宿主验证审批。Close 请求中的 candidate ID/fingerprint 只负责绑定所选 Run；当前 observation 由 Core 自行生成。Review 和验收 evidence ref 会在记录 Review 时解析为有界文件并计算指纹，Close 时再打开文件复核。PR 状态只通过内置的只读 GitHub provider 查询，适用于受支持的 GitHub 仓库，不代表通用 PR 主机集成。
 
+## 只读概览
+
+`task dashboard` 和 `task list` 校验已提交的 Task 目标 generation、指针、
+当前 Kernel 文档与协调数据，每次查询不再重读整份历史源备份。存在已导入
+generation 时，输出会明确标注本次查询没有审计历史源备份。
+
+`readTaskKernelOverview` 提供这类展示数据。它的迁移快照不能用作已完整验证的
+事务快照。`readTaskKernel`、`listTaskKernelSnapshots`、执行、Review、Close 与
+历史恢复保留现有完整校验；概览不能证明历史源字节仍然完整，不能代替验收证据。
+
 ## 0.5.x Kernel v1 记录与命令
 
 ## 定义
