@@ -150,6 +150,54 @@ describe("lifecycle command facade", () => {
     ).toBe(true);
   });
 
+  it("keeps task evidence outside generation capture and materialization", () => {
+    const projectRoot = root();
+    const buildRoot = root();
+    const dependencies = root();
+    const evidenceRoot = path.join(projectRoot, ".pactile/evidence/review");
+    fs.mkdirSync(evidenceRoot, { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, ".pactile/workflow.md"), "old\n");
+    const archivePath = path.join(evidenceRoot, "source.tar");
+    const archive = Buffer.alloc(5 * 1024 * 1024, 7);
+    fs.writeFileSync(archivePath, archive);
+    fs.symlinkSync(
+      dependencies,
+      path.join(evidenceRoot, "node_modules"),
+      "junction",
+    );
+
+    const managed = [".pactile/workflow.md"];
+    expect(discoverCanonicalGenerationPaths(projectRoot)).toEqual(managed);
+    expect(seedCanonicalBuildRoot(projectRoot, buildRoot)).toEqual(managed);
+    expect(fs.existsSync(path.join(buildRoot, ".pactile/evidence"))).toBe(
+      false,
+    );
+    expect(captureCanonicalView(projectRoot).map((file) => file.path)).toEqual([
+      "workflow.md",
+    ]);
+    expect(
+      collectCanonicalGenerationFiles(
+        projectRoot,
+        [...managed, ".pactile/evidence/review/source.tar"],
+        [],
+        runtimeVersion,
+      ).map((file) => file.path),
+    ).toEqual(["runtime/composition.json", "workflow.md"]);
+
+    materializeCanonicalGeneration(projectRoot, {
+      generationId: "generation.evidence-boundary",
+      files: [{ path: "workflow.md", fingerprint: `sha256:${"0".repeat(64)}` }],
+      readFile: () => Buffer.from("new\n"),
+    });
+    expect(fs.readFileSync(archivePath)).toEqual(archive);
+    expect(
+      fs.lstatSync(path.join(evidenceRoot, "node_modules")).isSymbolicLink(),
+    ).toBe(true);
+    expect(
+      fs.readFileSync(path.join(projectRoot, ".pactile/workflow.md"), "utf8"),
+    ).toBe("new\n");
+  });
+
   it("still rejects hard links in managed canonical files", () => {
     const projectRoot = root();
     fs.mkdirSync(path.join(projectRoot, ".pactile"));
