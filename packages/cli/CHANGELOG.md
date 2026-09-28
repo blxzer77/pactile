@@ -12,6 +12,18 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.4-beta.2] - 2026-09-28
+
+### Fixed
+
+- Repeating an unchanged managed-block projection can verify an existing
+  claimant without rewriting host bytes or replacing recorded foreign
+  provenance. Changed content, new claimants and changed observations still
+  require review.
+- Retain Task evidence generation boundaries and manifest continuity fixes.
+
+---
+
 ## [0.6.4-beta.1] - 2026-09-28
 
 ### Fixed

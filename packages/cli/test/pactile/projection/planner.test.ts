@@ -18,7 +18,177 @@ import {
   timestamp,
 } from "./fixtures.js";
 
+function recordedBlockWithForeignText() {
+  const block = "<!-- PACTILE:START -->\nOwned rules\n<!-- PACTILE:END -->\n";
+  const nextBlock = block.replace("Owned rules", "Changed rules");
+  const content = (ref: string) => ({
+    bytes: Buffer.from(ref === "block-v1" ? block : nextBlock),
+  });
+  const initialOperation = operation({
+    action: "merge",
+    format: "managed-block",
+    contentRef: "block-v1",
+    desiredFingerprint: fingerprintBytes(block),
+  });
+  const initial = ready(
+    planProjection({
+      plan: plan(initialOperation),
+      ledger: null,
+      canonicalFingerprint: canonical,
+      updatedAt: timestamp,
+      observe: () => null,
+      resolveContent: content,
+    }),
+  );
+  const foreign = Buffer.from(`Personal rules\n\n${block}\nForeign footer\n`);
+  const op = {
+    ...initialOperation,
+    expectedCurrentFingerprint: fingerprintBytes(foreign),
+  };
+  const recorded = ready(
+    planProjection({
+      plan: plan(op, canonicalOwnershipLedger(initial.ledger).fingerprint),
+      ledger: initial.ledger,
+      canonicalFingerprint: canonical,
+      updatedAt: timestamp,
+      observe: () => foreign,
+      resolveContent: content,
+    }),
+  );
+  const bytes = Buffer.from(recorded.mutations[0]?.bytes ?? foreign);
+  const request = {
+    ledger: recorded.ledger,
+    canonicalFingerprint: canonical,
+    updatedAt: timestamp,
+    observe: () => bytes,
+    resolveContent: content,
+  };
+  return {
+    block,
+    nextBlock,
+    bytes,
+    ledger: recorded.ledger,
+    ledgerFingerprint: canonicalOwnershipLedger(recorded.ledger).fingerprint,
+    op: { ...op, expectedCurrentFingerprint: fingerprintBytes(bytes) },
+    request,
+  };
+}
+
 describe("canonical ownership planner", () => {
+  it("repeats a recorded block without writes, new claims or provenance changes", () => {
+    const fixture = recordedBlockWithForeignText();
+    const preview = ready(
+      planProjection({
+        ...fixture.request,
+        plan: {
+          ...plan(fixture.op, fixture.ledgerFingerprint),
+          generationId: "generation-b",
+        },
+      }),
+    );
+    expect(preview.mutations).toEqual([]);
+    expect(preview.ledger.entries).toEqual(fixture.ledger.entries);
+    expect(preview.ledger.entries[0].generated.fingerprint).toBe(
+      fingerprintBytes(fixture.bytes),
+    );
+    expect(preview.ledger.entries[0].generated.fingerprint).not.toBe(
+      fingerprintBytes(fixture.block),
+    );
+  });
+
+  it("still requires review for changed desired blocks even with a reused reference", () => {
+    const fixture = recordedBlockWithForeignText();
+    for (const reusedReference of [false, true]) {
+      expect(
+        planProjection({
+          ...fixture.request,
+          resolveContent: (ref) => ({
+            bytes: Buffer.from(
+              reusedReference || ref === "block-v2"
+                ? fixture.nextBlock
+                : fixture.block,
+            ),
+          }),
+          plan: plan(
+            {
+              ...fixture.op,
+              contentRef: reusedReference ? "block-v1" : "block-v2",
+              desiredFingerprint: fingerprintBytes(fixture.nextBlock),
+            },
+            fixture.ledgerFingerprint,
+          ),
+        }),
+      ).toMatchObject({
+        status: "review",
+        reason: "foreign-provenance-requires-review",
+      });
+    }
+  });
+
+  it("does not use unchanged blocks to authorize a new claimant", () => {
+    const fixture = recordedBlockWithForeignText();
+    expect(
+      planProjection({
+        ...fixture.request,
+        plan: plan(
+          { ...fixture.op, claimantId: "adapter-b" },
+          fixture.ledgerFingerprint,
+          "adapter-b",
+        ),
+      }),
+    ).toMatchObject({
+      status: "review",
+      reason: "foreign-provenance-requires-review",
+    });
+  });
+
+  it("does not silently absorb newer foreign bytes during a repeated block", () => {
+    const fixture = recordedBlockWithForeignText();
+    const changed = Buffer.concat([
+      fixture.bytes,
+      Buffer.from("New personal rules\n"),
+    ]);
+    expect(
+      planProjection({
+        ...fixture.request,
+        observe: () => changed,
+        plan: plan(
+          {
+            ...fixture.op,
+            expectedCurrentFingerprint: fingerprintBytes(changed),
+          },
+          fixture.ledgerFingerprint,
+        ),
+      }),
+    ).toMatchObject({
+      status: "review",
+      reason: "foreign-provenance-requires-review",
+    });
+  });
+
+  it("keeps foreign text and its provenance when the last claimant detaches", () => {
+    const fixture = recordedBlockWithForeignText();
+    const preview = ready(
+      planProjection({
+        ...fixture.request,
+        plan: plan(
+          {
+            ...fixture.op,
+            action: "remove",
+            contentRef: null,
+            desiredFingerprint: null,
+          },
+          fixture.ledgerFingerprint,
+        ),
+      }),
+    );
+    expect(preview.mutations).toEqual([]);
+    expect(preview.ledger.entries[0].claimants).toEqual([]);
+    expect(preview.ledger.entries[0].generated).toEqual(
+      fixture.ledger.entries[0].generated,
+    );
+  });
+
   it("review F3 protects imported fingerprint-only generated state from another claimant", () => {
     const initial = ready(
       planProjection({
@@ -196,7 +366,8 @@ describe("canonical ownership planner", () => {
             });
             if (observed === "missing") {
               expect(result.status).toBe("ready");
-              if (result.status === "ready") expect(result.mutations).toEqual([]);
+              if (result.status === "ready")
+                expect(result.mutations).toEqual([]);
               continue;
             }
             const preview = ready(result),
