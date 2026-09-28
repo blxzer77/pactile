@@ -12,6 +12,17 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.3-beta.1] - 2026-09-28
+
+### Fixed
+
+- Cleanup backups under `.pactile/cleanup-backups/` remain user data. Canonical
+  generation discovery, build seeding, capture and materialization preserve
+  these backups without traversing their dependency links or hard links.
+- Managed canonical files retain their existing path and link safety checks.
+
+---
+
 ## [0.6.3-beta.0] - 2026-09-28
 
 ### Fixed

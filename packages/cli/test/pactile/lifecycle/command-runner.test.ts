@@ -5,11 +5,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   prepareLegacyCstlImport,
   collectLegacyCstlLifecycleFiles,
+  captureCanonicalView,
+  collectCanonicalGenerationFiles,
   discoverCanonicalGenerationPaths,
   installedPactilePlatforms,
   materializeCanonicalGeneration,
   materializePreparedLegacyUserState,
   runLifecycleCommand,
+  seedCanonicalBuildRoot,
 } from "../../../src/pactile/lifecycle/index.js";
 
 const roots: string[] = [];
@@ -94,6 +97,77 @@ describe("lifecycle command facade", () => {
     expect(discoverCanonicalGenerationPaths(projectRoot)).toEqual([
       ".pactile/workflow.md",
     ]);
+  });
+
+  it("preserves cleanup backups without traversing their dependency links", () => {
+    const projectRoot = root();
+    const buildRoot = root();
+    const dependencies = root();
+    const backup = path.join(projectRoot, ".pactile/cleanup-backups/retired");
+    fs.mkdirSync(backup, { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, ".pactile/workflow.md"), "old\n");
+    const privateFile = path.join(dependencies, "private.txt");
+    fs.writeFileSync(privateFile, "preserved user data\n");
+    fs.linkSync(privateFile, path.join(backup, "private.txt"));
+    fs.symlinkSync(dependencies, path.join(backup, "node_modules"), "junction");
+
+    const managed = [".pactile/workflow.md"];
+    expect(discoverCanonicalGenerationPaths(projectRoot)).toEqual(managed);
+    expect(seedCanonicalBuildRoot(projectRoot, buildRoot)).toEqual(managed);
+    expect(
+      fs.existsSync(path.join(buildRoot, ".pactile/cleanup-backups")),
+    ).toBe(false);
+    expect(captureCanonicalView(projectRoot).map((file) => file.path)).toEqual([
+      "workflow.md",
+    ]);
+    expect(
+      collectCanonicalGenerationFiles(
+        projectRoot,
+        [
+          ...managed,
+          ".pactile/cleanup-backups/retired/private.txt",
+          ".pactile/cleanup-backups/retired/node_modules/private.txt",
+        ],
+        [],
+        runtimeVersion,
+      ).map((file) => file.path),
+    ).toEqual(["runtime/composition.json", "workflow.md"]);
+
+    materializeCanonicalGeneration(projectRoot, {
+      generationId: "generation.backup-boundary",
+      files: [{ path: "workflow.md", fingerprint: `sha256:${"0".repeat(64)}` }],
+      readFile: () => Buffer.from("new\n"),
+    });
+    expect(
+      fs.readFileSync(path.join(projectRoot, ".pactile/workflow.md"), "utf8"),
+    ).toBe("new\n");
+    expect(fs.readFileSync(path.join(backup, "private.txt"), "utf8")).toBe(
+      "preserved user data\n",
+    );
+    expect(fs.readFileSync(privateFile, "utf8")).toBe("preserved user data\n");
+    expect(
+      fs.lstatSync(path.join(backup, "node_modules")).isSymbolicLink(),
+    ).toBe(true);
+  });
+
+  it("still rejects hard links in managed canonical files", () => {
+    const projectRoot = root();
+    fs.mkdirSync(path.join(projectRoot, ".pactile"));
+    const original = path.join(projectRoot, "user.txt");
+    fs.writeFileSync(original, "unchanged\n");
+    fs.linkSync(original, path.join(projectRoot, ".pactile/workflow.md"));
+    expect(() => discoverCanonicalGenerationPaths(projectRoot)).toThrow(
+      "canonical-generation-source-unsafe",
+    );
+    expect(() =>
+      collectCanonicalGenerationFiles(
+        projectRoot,
+        [".pactile/workflow.md"],
+        [],
+        runtimeVersion,
+      ),
+    ).toThrow("canonical-generation-source-unsafe");
+    expect(fs.readFileSync(original, "utf8")).toBe("unchanged\n");
   });
 
   it("publishes an exact managed live view without touching Runtime or user data", () => {
