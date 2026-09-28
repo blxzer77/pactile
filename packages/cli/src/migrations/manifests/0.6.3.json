@@ -1,0 +1,9 @@
+{
+  "version": "0.6.3",
+  "description": "Stable metadata for legacy Task overview, Agent Skills and cleanup backup fixes.",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "The stable 0.6.3 product code matches 0.6.3-beta.1. Legacy Task migration releases redundant source evidence; read-only overview avoids re-auditing history; baseline Agent Skills provide metadata; cleanup backups stay outside product generations. No task data transformation is introduced.",
+  "migrations": [],
+  "notes": "This metadata completes continuity in a subsequent release. The original 0.6.3 tarball omitted its stable-version manifest. Existing task migration snapshots, journals, host ownership and user data remain preserved."
+}

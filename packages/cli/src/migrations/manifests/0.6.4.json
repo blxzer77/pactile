@@ -1,0 +1,9 @@
+{
+  "version": "0.6.4",
+  "description": "Keep Task evidence outside canonical product generations.",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "Task evidence under .pactile/evidence remains user data during generation discovery, build seeding, capture and materialization. Source archives, media and dependency links do not enter a generation. Managed canonical files retain full size, path and link safety checks. Manifest continuity is restored for 0.6.3.",
+  "migrations": [],
+  "notes": "Prepared before beta acceptance so stable promotion changes only package version and release documentation. No project data transformation is introduced. Task evidence, migration snapshots, journals and user backups remain preserved."
+}
