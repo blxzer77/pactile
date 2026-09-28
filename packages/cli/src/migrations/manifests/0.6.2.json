@@ -1,0 +1,9 @@
+{
+  "version": "0.6.2",
+  "description": "Stable legacy migration source snapshot memory correction.",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "Pactile verifies legacy Task source snapshots one file at a time and avoids repeated directory preparation while retaining per-file path, link, hash and durability checks.",
+  "migrations": [],
+  "notes": "The beta manifest records the same correction for beta users. Source backups and journals from earlier 0.6.x versions remain compatible."
+}

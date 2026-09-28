@@ -3,6 +3,11 @@
 This repository contains the Pactile product. Node.js is its only required
 runtime. Generated host state and personal task data stay outside Git.
 
+The public repository contains product source, fixtures, release tooling and
+developer documentation. Root host configuration, agent skills, project tasks,
+retrieval indexes and personal drafts stay local. `pnpm repo:check` verifies
+this boundary. This file is the product developer guide, not generated host state.
+
 ## Repository policy
 
 - The existing `private` Git remote is authoritative. Do not add or push to an

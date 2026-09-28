@@ -42,6 +42,8 @@ function composePair(starter: number, code: number): number | undefined {
 
 /** Unicode 15 NFC; never delegates normalization to the host's ICU version. */
 export function normalizeNfc15(value: string): string {
+  // Printable ASCII is already NFC; no decomposition or composition is needed.
+  if (!/[^\u0020-\u007e]/u.test(value)) return value;
   const decomposed: number[] = [];
   for (const character of value)
     decompose(character.codePointAt(0) ?? 0, decomposed);

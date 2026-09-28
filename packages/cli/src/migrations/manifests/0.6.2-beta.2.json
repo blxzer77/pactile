@@ -1,0 +1,9 @@
+{
+  "version": "0.6.2-beta.2",
+  "description": "Complete the public product and developer-documentation repository boundary.",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "Repository-local agent state and personal material are excluded from the public source tree. The runtime and migration behavior are unchanged from 0.6.2-beta.1.",
+  "migrations": [],
+  "notes": "No project data transformation is needed."
+}

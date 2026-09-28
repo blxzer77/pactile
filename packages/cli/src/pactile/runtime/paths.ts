@@ -203,9 +203,10 @@ function canonicalWriteTarget(
   for (const [index, part] of parts.entries()) {
     const parentStat = maybeStat(io, current);
     if (parentStat) {
+      const foldedPart = caseFoldComponent(part);
       const matches = io
         .readdirSync(current)
-        .filter((name) => caseFoldComponent(name) === caseFoldComponent(part));
+        .filter((name) => caseFoldComponent(name) === foldedPart);
       if (matches.length > 1 || (matches.length === 1 && matches[0] !== part)) {
         throw new RuntimeError("canonical-collision");
       }

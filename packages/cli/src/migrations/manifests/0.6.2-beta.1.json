@@ -1,0 +1,9 @@
+{
+  "version": "0.6.2-beta.1",
+  "description": "Reduce CPU in repeated legacy source snapshot path verification.",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "Printable ASCII normalization and case folding use equivalent fast paths, while mixed and non-ASCII names retain Unicode 15 behavior. All filesystem, link, collision, inventory and byte hash checks remain enforced.",
+  "migrations": [],
+  "notes": "Source snapshots, migration journals and task state remain compatible; no data transformation is needed."
+}

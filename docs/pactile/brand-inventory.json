@@ -138,8 +138,8 @@
     },
     {
       "classification": "history",
-      "pathRegex": "^(?:PERSONAL_SKILLS_TRELLIS_INTEGRATION_RESEARCH\\.md|docs/campaign-ui\\.md|docs/community/linux-do-release\\.md)$",
-      "reason": "These are frozen research, removed experiments, or released community narratives.",
+      "pathRegex": "^docs/campaign-ui\\.md$",
+      "reason": "This is a frozen record of a removed product experiment.",
       "exitCondition": "Move under the history IA without rewriting the historical claims."
     },
     {
@@ -228,24 +228,24 @@
     "^scripts/"
   ],
   "baselineSnapshot": {
-    "sha256": "5bf6244a7224e01632c4072c2135f1180b1f8fe2463077f8eba94f210a7c7ca2",
-    "occurrences": 4074,
-    "files": 283,
+    "sha256": "1520e666ffe38466320575eb4976662cf4d1456b72ed1af49973b911c534f348",
+    "occurrences": 3851,
+    "files": 279,
     "byClassification": {
       "attribution": 3,
       "compat": 721,
-      "history": 3350
+      "history": 3127
     },
     "byToken": {
-      "cursor-plus-plus": 97,
-      "legacy-cstl-token": 646,
-      "legacy-environment-name": 59,
+      "cursor-plus-plus": 80,
+      "legacy-cstl-token": 606,
+      "legacy-environment-name": 56,
       "legacy-managed-marker": 27,
-      "legacy-package-name": 216,
-      "legacy-product-name": 195,
-      "legacy-runtime-path": 293,
-      "legacy-trellis-token": 2141,
-      "upstream-runtime-path": 400
+      "legacy-package-name": 210,
+      "legacy-product-name": 177,
+      "legacy-runtime-path": 286,
+      "legacy-trellis-token": 2027,
+      "upstream-runtime-path": 382
     }
   }
 }

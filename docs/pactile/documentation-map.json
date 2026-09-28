@@ -73,7 +73,10 @@
       "ownerLane": "batch-4-docs-entry-concepts",
       "status": "rewrite",
       "parityRequired": true,
-      "paths": { "en": "README.md", "zh-CN": "README.zh-CN.md" },
+      "paths": {
+        "en": "README.md",
+        "zh-CN": "README.zh-CN.md"
+      },
       "topics": ["install", "cursor", "codex", "upgrade"]
     },
     {
@@ -106,7 +109,9 @@
       "ownerLane": "batch-3-brand-runtime",
       "status": "rewrite",
       "parityRequired": false,
-      "paths": { "neutral": "AGENTS.md" },
+      "paths": {
+        "neutral": "AGENTS.md"
+      },
       "topics": ["projection", "ownership"]
     },
     {
@@ -115,7 +120,9 @@
       "ownerLane": "batch-3-brand-runtime",
       "status": "rewrite",
       "parityRequired": false,
-      "paths": { "neutral": ".github/workflows/ci.yml" },
+      "paths": {
+        "neutral": ".github/workflows/ci.yml"
+      },
       "topics": ["release"]
     },
     {
@@ -124,7 +131,9 @@
       "ownerLane": "batch-3-brand-runtime",
       "status": "rewrite",
       "parityRequired": false,
-      "paths": { "neutral": ".github/workflows/publish.yml" },
+      "paths": {
+        "neutral": ".github/workflows/publish.yml"
+      },
       "topics": ["release"]
     },
     {
@@ -592,26 +601,10 @@
       "ownerLane": "batch-4-docs-governance-history",
       "status": "archive-original-language",
       "parityRequired": false,
-      "paths": { "en": "docs/history/campaign-ui.md" },
+      "paths": {
+        "en": "docs/history/campaign-ui.md"
+      },
       "topics": ["governance"]
-    },
-    {
-      "id": "history.community-linux-do",
-      "navigationGroup": "history",
-      "ownerLane": "batch-4-docs-governance-history",
-      "status": "archive-original-language",
-      "parityRequired": false,
-      "paths": { "zh-CN": "docs/history/community/linux-do-release.md" },
-      "topics": ["release"]
-    },
-    {
-      "id": "history.research-personal-skills",
-      "navigationGroup": "history",
-      "ownerLane": "batch-4-docs-governance-history",
-      "status": "archive-original-language",
-      "parityRequired": false,
-      "paths": { "en": "docs/history/research/personal-skills-integration.md" },
-      "topics": ["skills"]
     },
     {
       "id": "history.release-changelog",
@@ -619,7 +612,9 @@
       "ownerLane": "batch-4-docs-governance-history",
       "status": "preserve-in-place",
       "parityRequired": false,
-      "paths": { "en": "packages/cli/CHANGELOG.md" },
+      "paths": {
+        "en": "packages/cli/CHANGELOG.md"
+      },
       "topics": ["release"]
     }
   ],
@@ -1129,15 +1124,6 @@
       "reason": "History IA wrapper keeps the removed UI experiment out of current guidance."
     },
     {
-      "path": "docs/history/community/linux-do-release.md",
-      "classification": "history",
-      "language": "zh-CN",
-      "action": "archive",
-      "targetPage": "history.community-linux-do",
-      "ownerLane": "batch-4-docs-governance-history",
-      "reason": "History IA wrapper preserves the original community release narrative."
-    },
-    {
       "path": "docs/history/cursor-plus-plus.md",
       "classification": "history",
       "language": "en",
@@ -1172,15 +1158,6 @@
       "targetPage": "history.index",
       "ownerLane": "batch-4-docs-governance-history",
       "reason": "Bilingual history index labels preserved evidence as non-operational context."
-    },
-    {
-      "path": "docs/history/research/personal-skills-integration.md",
-      "classification": "history",
-      "language": "en",
-      "action": "archive",
-      "targetPage": "history.research-personal-skills",
-      "ownerLane": "batch-4-docs-governance-history",
-      "reason": "History IA wrapper preserves the personal Skills research record."
     },
     {
       "path": "docs/hosts/codex.md",
@@ -1570,15 +1547,6 @@
       "reason": "The page already records a removed experiment and must not become current product guidance."
     },
     {
-      "path": "docs/community/linux-do-release.md",
-      "classification": "history",
-      "language": "zh-CN",
-      "action": "archive",
-      "targetPage": "history.community-linux-do",
-      "ownerLane": "batch-4-docs-governance-history",
-      "reason": "Preserve the published community release narrative and label it as a historical snapshot."
-    },
-    {
       "path": "docs/cursor-platform-limitations-and-trellis-adaptation.md",
       "classification": "compat",
       "language": "en",
@@ -1766,15 +1734,6 @@
       "targetPage": "history.release-changelog",
       "ownerLane": "batch-4-docs-governance-history",
       "reason": "Published version facts and historical commands remain immutable; only new entries use the new brand."
-    },
-    {
-      "path": "PERSONAL_SKILLS_TRELLIS_INTEGRATION_RESEARCH.md",
-      "classification": "history",
-      "language": "en",
-      "action": "archive",
-      "targetPage": "history.research-personal-skills",
-      "ownerLane": "batch-4-docs-governance-history",
-      "reason": "Preserve the research decision record without presenting it as current architecture."
     }
   ],
   "p23CursorPlusPlus": {
@@ -1782,7 +1741,10 @@
     "canonicalTargetPage": "history.cursor-plus-plus",
     "disposition": "Remove operational Cursor++ guidance from live prose and link to the canonical history page only when useful.",
     "routes": [
-      { "sourcePath": "README.md", "targetPage": "history.cursor-plus-plus" },
+      {
+        "sourcePath": "README.md",
+        "targetPage": "history.cursor-plus-plus"
+      },
       {
         "sourcePath": "README.zh-CN.md",
         "targetPage": "history.cursor-plus-plus"

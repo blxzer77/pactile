@@ -10,6 +10,9 @@ const data: { version: string; ranges: number[][]; special: [number, string][] }
 const expansions = new Map(data.special);
 
 export function caseFoldComponent(value: string): string {
+  // Printable ASCII has identical mappings in every Unicode version. Keep the
+  // pinned table for any other input, including mixed ASCII/Unicode names.
+  if (!/[^\u0020-\u007e]/u.test(value)) return value.toLowerCase();
   return Array.from(normalizeNfc15(value), (character) => {
     const code = character.codePointAt(0) ?? 0;
     const expansion = expansions.get(code);

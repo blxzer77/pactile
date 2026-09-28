@@ -6,6 +6,7 @@
     "test": "pnpm --filter @blxzer/pactile test",
     "lint": "pnpm --filter @blxzer/pactile lint",
     "typecheck": "pnpm --filter @blxzer/pactile typecheck",
+    "repo:check": "pnpm --filter @blxzer/pactile exec tsx scripts/check-public-repository.ts",
     "release": "pnpm --filter @blxzer/pactile release",
     "release:minor": "pnpm --filter @blxzer/pactile release:minor",
     "release:major": "pnpm --filter @blxzer/pactile release:major",

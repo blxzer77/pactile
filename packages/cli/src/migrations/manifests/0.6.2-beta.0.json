@@ -1,0 +1,9 @@
+{
+  "version": "0.6.2-beta.0",
+  "description": "Bound source snapshot verification memory and reduce repeated legacy migration directory checks.",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "Legacy Task source backups preserve the same bytes and fingerprints while verifying one file at a time. Repeated files in one directory no longer repeat directory preparation; every write still rechecks path and link boundaries.",
+  "migrations": [],
+  "notes": "Existing source backups and migration journals remain compatible. No one-time migration is needed. The source inventory still preserves all legacy Task files."
+}

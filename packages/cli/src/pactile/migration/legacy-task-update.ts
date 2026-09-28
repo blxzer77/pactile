@@ -40,6 +40,17 @@ export interface LegacyTaskUpdateApplyResult extends LegacyTaskUpdateInspection 
   readonly batchResult: LegacyTaskBatchResult | null;
 }
 
+export interface LegacyTaskUpdateSummary {
+  readonly status: LegacyTaskUpdateStatus;
+  readonly import: Pick<
+    LegacyTaskV2ImportSummary,
+    "imported" | "needsDefinition" | "needsCoordination" | "archived"
+  >;
+  readonly findings: LegacyTaskMigrationPlan["findings"];
+  readonly activeBatchId: string | null;
+  readonly reason: string | null;
+}
+
 function inspectWithCurrentSource(
   projectRoot: string,
 ): LegacyTaskUpdateInspection {
@@ -145,6 +156,25 @@ export function inspectLegacyTaskUpdate(
           : "legacy-task-inspection-failed",
     };
   }
+}
+
+/** CLI preflight needs counts and findings, not a retained copy of source bytes. */
+export function inspectLegacyTaskUpdateSummary(
+  projectRoot: string,
+): LegacyTaskUpdateSummary {
+  const inspected = inspectLegacyTaskUpdate(projectRoot);
+  return {
+    status: inspected.status,
+    import: {
+      imported: inspected.import.imported,
+      needsDefinition: inspected.import.needsDefinition,
+      needsCoordination: inspected.import.needsCoordination,
+      archived: inspected.import.archived,
+    },
+    findings: inspected.plan.findings,
+    activeBatchId: inspected.activeBatchId,
+    reason: inspected.reason,
+  };
 }
 
 /** Re-scan immediately before writing, then let the batch journal recheck source bytes and CAS. */
