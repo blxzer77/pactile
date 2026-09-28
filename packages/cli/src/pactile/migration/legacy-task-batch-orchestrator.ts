@@ -1,10 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import {
-  scanLegacyTaskMigration,
-  type LegacyTaskMigrationPlan,
-} from "../../core/task/legacy-task-migration.js";
 import { assertUniqueTaskIdForLegacyBatchTarget } from "../../core/task/task-kernel-paths.js";
 import { parseTaskKernelSnapshotV2 } from "../../core/task/task-kernel-schema.js";
 import { assertLegacyTaskMigrationAuthorityOrCleanStore } from "../../core/task/legacy-task-migration-reader.js";
@@ -27,6 +23,7 @@ import {
 } from "./legacy-task-batch-types.js";
 import {
   assertSourceUnchanged,
+  sourceMatchesPlan,
   validatePlanAtRoot,
   verifySourceBackup,
   writeSourceBackup,
@@ -567,11 +564,9 @@ async function runLegacyTaskBatchUnlocked(
   const taskIdConflict = legacyTaskBatchTaskIdConflict(normalized.projectRoot, normalized.targets);
   if (taskIdConflict) return makeResult("blocked", taskIdConflict, normalized, false, null);
 
-  let currentPlan: LegacyTaskMigrationPlan;
+  let currentSourceMatches: boolean;
   try {
-    currentPlan = scanLegacyTaskMigration({
-      projectRoot: normalized.projectRoot,
-    });
+    currentSourceMatches = sourceMatchesPlan(normalized);
   } catch {
     return makeResult(
       "blocked",
@@ -581,10 +576,7 @@ async function runLegacyTaskBatchUnlocked(
       null,
     );
   }
-  if (
-    currentPlan.preflight.status !== "clear-to-review" ||
-    currentPlan.sourceFingerprint !== normalized.sourceFingerprint
-  )
+  if (!currentSourceMatches)
     return makeResult(
       "blocked",
       "migration-source-changed",

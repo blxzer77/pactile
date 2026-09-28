@@ -12,6 +12,19 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.3-beta.0] - 2026-09-28
+
+### Fixed
+
+- Legacy Task batch migration retains only the result of its freshness check
+  across asynchronous backup and staging phases. The complete source scan,
+  preflight result, fingerprint comparison and recovery checks remain enforced.
+- A developer diagnostic compares retained memory at the verified backup
+  boundary using bounded synthetic evidence. It does not commit Task authority
+  or claim real-project migration acceptance.
+
+---
+
 ## [0.6.2] - 2026-09-28
 
 ### Fixed
