@@ -43,13 +43,17 @@ export function validatePlanAtRoot(
   );
 }
 
-export function assertSourceUnchanged(request: NormalizedRequest): void {
+/** Finish the full scan before returning scalar evidence to an async caller. */
+export function sourceMatchesPlan(request: NormalizedRequest): boolean {
   const current = scanLegacyTaskMigration({ projectRoot: request.projectRoot });
-  if (
-    current.preflight.status !== "clear-to-review" ||
-    current.sourceFingerprint !== request.sourceFingerprint
-  )
-    throw new Error("migration-source-changed");
+  return (
+    current.preflight.status === "clear-to-review" &&
+    current.sourceFingerprint === request.sourceFingerprint
+  );
+}
+
+export function assertSourceUnchanged(request: NormalizedRequest): void {
+  if (!sourceMatchesPlan(request)) throw new Error("migration-source-changed");
 }
 
 function backupManifest(plan: LegacyTaskMigrationPlan): Buffer {

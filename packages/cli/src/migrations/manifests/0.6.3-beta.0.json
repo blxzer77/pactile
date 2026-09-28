@@ -1,0 +1,9 @@
+{
+  "version": "0.6.3-beta.0",
+  "description": "Release redundant migration freshness scan evidence before asynchronous backup and staging.",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "Legacy Task batch migration keeps only a scalar freshness result after the complete source scan, allowing redundant source evidence to be reclaimed. Source, path, fingerprint and recovery validation remain enforced.",
+  "migrations": [],
+  "notes": "Existing source snapshots, task records and migration journals remain compatible. No project data transformation is introduced."
+}
