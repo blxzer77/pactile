@@ -1,0 +1,81 @@
+# Reuse before building
+
+Use this guide in Define before choosing an implementation, in Execute when a
+choice is missing or constraints change, and in Review when checking that choice.
+The objective is useful delivery with lower total cost. Reuse may mean a project
+module, an environment tool, a standard runtime API, a library, or a design pattern.
+
+## Choose with evidence
+
+1. Name the required behavior, acceptance boundary, runtime/platform, privacy and
+   maintenance constraints. Inspect existing project and environment capabilities.
+2. Unless the user explicitly requests from-scratch work, actively look for mature
+   external alternatives through the host/project's permitted search capability.
+   Internal deduplication alone does not satisfy external research. Prefer primary
+   documentation and verify relevant facts in source or package metadata.
+3. Compare fit, maintenance/support, license, runtime/platform compatibility,
+   dependency burden, integration cost and long-term ownership. Mark unknown facts
+   as unknown. Downloads, popularity, a recent date or a license field alone do not
+   prove suitability. Investigate only what could change the choice.
+4. Reuse a suitable option with a small integration layer. A local implementation
+   is valid when alternatives fail a concrete requirement or cost more overall;
+   record the evaluated options, specific gaps and ownership cost.
+5. Verify the delivered behavior at the integration boundary. Review the rationale
+   and requirements rather than counting dependencies or search calls.
+
+## Avoid repeated work
+
+Reuse a prior decision when its requirements, environment and evidence still
+apply; cite its location and explain why. Refresh only facts affected by a changed
+version, platform, constraint or observed defect. A small repair to an accepted
+adapter normally needs that decision and the relevant check, not a new survey.
+Stop research when the evidence is sufficient to choose; do not expand into an
+open-ended market report. The user can explicitly require from-scratch work:
+record that instruction and assess its implementation risks without pretending
+that external research occurred.
+
+## Respect capability and data boundaries
+
+This guide grants no network, dependency-installation or data-egress permission.
+Baseline Tile policies remain unchanged. Use a separately permitted host/project
+search capability; no specific provider, model, service, proxy or search engine is
+required. Do not send secrets or sensitive material, and minimize project detail
+in public queries. Project denial takes precedence over this guide.
+
+If search is unavailable, prohibited or insufficient, state which facts remain
+unverified and use available local evidence. Proceed only as far as the existing
+authorization and acceptance contract allow. Ask for a decision only if missing
+evidence materially prevents an authorized choice; do not create a new approval
+gate for every unavailable search. Never invent a URL, result or maintenance claim.
+
+## Record a compact decision
+
+Keep the record in Task `design.md`; the existing artifact index exposes Design
+Decision/Rationale/Risk sections with fingerprints. Use these headings (or their
+supported localized equivalents) and add detail only where it changes the choice:
+
+```markdown
+## Decision
+Choose <existing capability / external option / local implementation> for <need>.
+Status: proposed or accepted; cite the applicable user instruction when relevant.
+
+## Rationale
+- Constraints and existing project/environment capability: ...
+- Alternatives: fit, maintenance, license, platform/runtime, dependencies and cost.
+- Evidence: source path or verified primary URL, observed date/version and limits.
+- Prior research: reused location and unchanged assumptions, or changed facts.
+- Self-build, from-scratch or unavailable search: precise reason and unknowns.
+
+## Risk
+Remaining uncertainty, ownership cost and the focused acceptance/integration check.
+```
+
+The record is authored evidence, not an automatic approval, Review PASS or Close.
+Use `pactile task artifacts <task-id> --agent --stage design` for its index, then
+expand the selected section with its current fingerprint; keep Kernel facts in
+the Kernel. Do not create a second decision database or copy research into every
+stage document.
+
+Decision-record approach informed by [MADR](https://adr.github.io/madr/), whose
+template is available under MIT or CC0. This guide uses Pactile's existing Task
+artifacts; no MADR package or tooling is required.
