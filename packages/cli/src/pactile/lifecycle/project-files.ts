@@ -15,6 +15,8 @@ const EXCLUDED_PREFIXES = [
   ".pactile/.runtime/",
   ".pactile/tasks/",
   ".pactile/workspace/",
+  // Task evidence can contain source archives, media and dependency links.
+  ".pactile/evidence/",
   // Legacy project worktrees and personal templates are user state. In
   // particular, worktrees may contain dependency junctions and hard links.
   ".pactile/worktrees/",

@@ -12,6 +12,17 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.4-beta.0] - 2026-09-28
+
+### Fixed
+
+- Task evidence under `.pactile/evidence/` remains user data during canonical
+  generation discovery, build seeding, capture and materialization. Source
+  archives, media and dependency links no longer enter a product generation.
+- Managed canonical files retain their existing size, path and link checks.
+
+---
+
 ## [0.6.3] - 2026-09-28
 
 ### Fixed
