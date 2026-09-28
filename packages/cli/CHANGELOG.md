@@ -12,6 +12,18 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.4-beta.1] - 2026-09-28
+
+### Fixed
+
+- Restore manifest continuity for the published `0.6.3` version with metadata
+  that declares no task data transformations, and include the planned `0.6.4`
+  stable manifest before beta acceptance.
+- Retain the Task evidence generation boundary fix from `0.6.4-beta.0`, whose
+  publication was stopped by the manifest continuity gate before npm upload.
+
+---
+
 ## [0.6.4-beta.0] - 2026-09-28
 
 ### Fixed
