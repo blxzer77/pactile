@@ -354,11 +354,49 @@ export function planProjection(
           existing.generated.contentRef &&
           onlyGeneratedBytes(existing, resolveContent) !==
             existing.generated.fingerprint
-        )
+        ) {
+          // An exact repeat by an existing claimant grants no new ownership
+          // and writes no host bytes. Keep the complete recorded provenance intact.
+          if (
+            op.format === "managed-block" &&
+            op.action === "merge" &&
+            former !== undefined &&
+            existing.conflict === "none" &&
+            existing.disposition === "no-op" &&
+            op.contentRef === existing.generated.contentRef &&
+            currentBytes !== null &&
+            current.fingerprint === existing.generated.fingerprint &&
+            current.fingerprint === existing.current.fingerprint
+          ) {
+            const prior = resolveContent(existing.generated.contentRef);
+            const desired = resolveContent(op.contentRef);
+            if (
+              fingerprintBytes(prior.bytes) === op.desiredFingerprint &&
+              Buffer.from(prior.bytes).equals(Buffer.from(desired.bytes))
+            ) {
+              const repeated = mergeManagedBlock(
+                utf8(currentBytes),
+                utf8(prior.bytes),
+                utf8(desired.bytes),
+              );
+              if (
+                repeated.status === "merged" &&
+                Buffer.from(repeated.text).equals(Buffer.from(currentBytes))
+              ) {
+                decisions.push({
+                  operationId: op.id,
+                  resourceId: op.resourceId,
+                  disposition: "no-op",
+                });
+                continue;
+              }
+            }
+          }
           return {
             status: "review",
             reason: "foreign-provenance-requires-review",
           };
+        }
         const content = resolveContent(op.contentRef);
         if (fingerprintBytes(content.bytes) !== op.desiredFingerprint)
           return { status: "conflict", reason: "content-fingerprint-mismatch" };
