@@ -12,6 +12,24 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.3] - 2026-09-28
+
+### Fixed
+
+- Legacy Task migration releases redundant source-scan evidence before asynchronous
+  backup and staging while retaining freshness, fingerprint and recovery checks.
+- Read-only Task dashboard and list queries validate committed Task data and clearly
+  identify unaudited historical source backups. Run, Review, Close and recovery
+  retain their full validation.
+- Generated Agent Skills provide discoverable name and description metadata for
+  Codex and Pi while preserving instruction bodies and ownership boundaries.
+- Worktree cleanup backups remain private user data and no longer block canonical
+  generation through their dependency links. Managed canonical safety checks remain.
+
+The stable package contains the same product code as `0.6.3-beta.1`.
+
+---
+
 ## [0.6.3-beta.1] - 2026-09-28
 
 ### Fixed
