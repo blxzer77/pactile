@@ -1,3 +1,0 @@
-display_name: Smart Search CLI
-short_description: Source-backed web research via CLI
-default_prompt: Use $smart-search-cli to research this current web question.

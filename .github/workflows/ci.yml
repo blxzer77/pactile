@@ -63,6 +63,9 @@ jobs:
       - name: Verify strict Pactile brand surface
         run: pnpm --filter @blxzer/pactile exec tsx scripts/check-pactile-brand-surface.ts --release
 
+      - name: Verify public repository boundary
+        run: pnpm repo:check
+
       - name: Build
         run: pnpm build
 

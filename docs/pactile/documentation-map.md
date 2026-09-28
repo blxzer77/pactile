@@ -114,8 +114,6 @@ Every discovered source has exactly one primary action. Section-level historical
 | `docs/cursor-trellis-release-coexistence-guide.md` | compat | redirect | `governance.releasing` | Governance/history |
 | `packages/cli/CHANGELOG.md` | history | archive | `history.release-changelog` | Governance/history |
 | `docs/campaign-ui.md` | history | archive | `history.campaign-ui` | Governance/history |
-| `docs/community/linux-do-release.md` | history | archive | `history.community-linux-do` | Governance/history |
-| `PERSONAL_SKILLS_TRELLIS_INTEGRATION_RESEARCH.md` | history | archive | `history.research-personal-skills` | Governance/history |
 
 The grouped rows above are presentation shorthand only. The JSON inventory contains one explicit record per source path and is what the checker validates.
 

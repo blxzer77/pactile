@@ -29,7 +29,21 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
   Each directory sibling comparison computes the target fold once. Filesystem
   path, collision, link, and hash checks are unchanged.
 
-The stable package contains the same product code as `0.6.2-beta.1`.
+The stable package contains the same product code as `0.6.2-beta.2`.
+
+---
+
+## [0.6.2-beta.2] - 2026-09-28
+
+### Changed
+
+- The public source tree excludes repository-local agent skills, host settings,
+  personal research and community drafts. Untracking preserves local configuration.
+- Removed the previously approved community assets and two release drafts.
+- CI verifies the product and developer-documentation boundary with a TypeScript
+  repository check. Product templates, fixtures and the developer guide remain public.
+
+The runtime is unchanged from `0.6.2-beta.1`.
 
 ---
 
