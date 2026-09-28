@@ -12,6 +12,28 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.5] - 2026-09-29
+
+### Added
+
+- Reuse-first workflow guidance and concise Define, Execute and Verify Skill
+  entry points are available on fresh installations and upgrades.
+
+### Fixed
+
+- Pi roles preserve the user's default capabilities and configured model settings,
+  with behavioral read-only instructions for research/check and unchanged
+  independent review and Kernel evidence gates.
+- Unchanged generated Skill bodies can upgrade by their recorded fingerprint;
+  modified or foreign host resources remain protected.
+
+The stable package contains the same product code as `0.6.5-beta.0`. Beta
+acceptance covered fresh init, a `0.6.4` upgrade, user-owned guide preservation,
+and native Pi RPC Skill/extension registration without model calls. Exact
+candidate independent Pi planning/review evidence was recorded separately.
+
+---
+
 ## [0.6.5-beta.0] - 2026-09-29
 
 ### Added
