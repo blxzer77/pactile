@@ -81,6 +81,7 @@ export {
   readTaskKernel,
   createTaskKernel,
   listTaskKernelSnapshots,
+  readTaskKernelOverview,
 } from "./task-kernel-store-v2.js";
 export { addTaskDependency } from "./task-kernel-dependencies.js";
 export {
