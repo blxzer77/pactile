@@ -22,6 +22,12 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 - A developer diagnostic compares retained memory at the verified backup
   boundary using bounded synthetic evidence. It does not commit Task authority
   or claim real-project migration acceptance.
+- Read-only Task dashboard and list queries validate committed Task data without
+  rereading the historical source backup. They identify the unaudited history;
+  execution, Review, Close and recovery keep their full validation.
+- Generated baseline Agent Skills include discoverable name and description
+  metadata for Codex and Pi while preserving their instruction bodies and
+  ownership boundaries.
 
 ---
 

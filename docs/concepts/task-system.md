@@ -46,6 +46,19 @@ The new `task create` contract requires `--deliverable`, `--delivery-level`, and
 
 Actor, approver, reviewer, and Run authorization fields are caller-declared: Core validates their shape and recorded relationships but does not authenticate identities or verify approval with an external host. The candidate ID/fingerprint in a Close request only binds the request to the selected Run; Core creates the current observation itself. Review and acceptance evidence references are resolved to bounded files and fingerprinted when the Review is recorded, then reopened and checked again at Close. PR state is checked only for supported GitHub repositories through the built-in read-only provider; this is not a generic PR-host integration.
 
+## Read-only overviews
+
+`task dashboard` and `task list` validate the committed Task generation, its
+pointer, current Kernel documents and reconciliation data. They do not reread
+the historical source backup on every query. When an imported generation exists,
+the output explicitly says that its source backup was not audited by this query.
+
+`readTaskKernelOverview` provides this display data. Its migration snapshot cannot
+be reused as a fully verified transaction snapshot. `readTaskKernel`,
+`listTaskKernelSnapshots`, execution, Review, Close and historical recovery retain
+their existing full validation. An overview is not acceptance evidence that the
+historical source bytes remain intact.
+
 ## 0.5.x Kernel v1 records and commands
 
 ## Definition

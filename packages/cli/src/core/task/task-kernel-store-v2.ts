@@ -31,10 +31,12 @@ import {
   listLegacyTaskMigrationDirectories,
   readLegacyTaskImportRecord,
   readLegacyTaskMigrationFile,
+  readLegacyTaskMigrationOverview,
   readLegacyTaskMigrationView,
   assertValidatedLegacyTaskMigrationView,
   type LegacyTaskImportRecord,
   type LegacyTaskMigrationView,
+  type LegacyTaskMigrationOverview,
 } from "./legacy-task-migration-reader.js";
 import {
   assertDependenciesResolvable,
@@ -214,6 +216,31 @@ export function listTaskKernelSnapshots(root: string): { taskDir: string; kernel
   } catch (error) {
     throw new KernelError("CORRUPT_STATE", error instanceof Error ? error.message : String(error));
   }
+  return collectTaskKernelSnapshots(canonicalRoot, migrationView);
+}
+
+/** Read-only display data; historical source bytes are not acceptance evidence. */
+export function readTaskKernelOverview(root: string): {
+  tasks: { taskDir: string; kernel: TaskKernelSnapshotV2 }[];
+  migrationView: LegacyTaskMigrationOverview | null;
+} {
+  const canonicalRoot = canonicalProjectRoot(root);
+  let migrationView: LegacyTaskMigrationOverview | null;
+  try {
+    migrationView = readLegacyTaskMigrationOverview(canonicalRoot);
+  } catch (error) {
+    throw new KernelError("CORRUPT_STATE", error instanceof Error ? error.message : String(error));
+  }
+  return {
+    tasks: collectTaskKernelSnapshots(canonicalRoot, migrationView),
+    migrationView,
+  };
+}
+
+function collectTaskKernelSnapshots(
+  canonicalRoot: string,
+  migrationView: LegacyTaskMigrationView | null,
+): { taskDir: string; kernel: TaskKernelSnapshotV2 }[] {
   const tasksRoot = path.resolve(canonicalRoot, ".pactile", "tasks");
   const output: { taskDir: string; kernel: TaskKernelSnapshotV2 }[] = [];
   const directories: string[] = [];
