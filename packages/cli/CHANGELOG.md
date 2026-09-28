@@ -12,6 +12,23 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.4] - 2026-09-28
+
+### Fixed
+
+- Task evidence archives, media and dependency links remain user data outside
+  canonical product generations. Managed files retain their size, path and link
+  safety checks.
+- Exact repeated managed-block projections preserve recorded foreign provenance
+  and host bytes. Changed content, new claimants and changed observations retain
+  their existing review gates.
+- Restore manifest continuity for the published `0.6.3` version with truthful
+  metadata and no task data transformations.
+
+The stable package contains the same product code as `0.6.4-beta.2`.
+
+---
+
 ## [0.6.4-beta.2] - 2026-09-28
 
 ### Fixed
