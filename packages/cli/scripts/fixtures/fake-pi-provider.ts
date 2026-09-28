@@ -62,6 +62,7 @@ function handleLine(line: string): void {
         isStreaming,
         sessionId: option("--session-id", "fake-id"),
         sessionFile,
+        launchArgs: process.argv.slice(2),
       },
     });
     return;
