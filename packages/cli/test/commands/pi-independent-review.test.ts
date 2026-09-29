@@ -18,7 +18,9 @@ import {
   type TaskKernelSnapshotV2,
 } from "../../src/core/task/index.js";
 import { INDEPENDENT_REVIEW_AREAS } from "../../src/pactile/review/contract.js";
-import { PiTaskBridge } from "../../src/pactile/pi/bridge.js";
+import { assertPiReviewToolRecoveriesV1, PiReviewToolObserverV1, piReviewToolReferenceV1, readPiReviewToolEvidenceV1 } from "../../src/pactile/review/evidence.js";
+import { PiTaskBridge, preparePiReviewRoute } from "../../src/pactile/pi/bridge.js";
+import { authorizePiTool, buildPiRoleContract } from "../../src/pactile/pi/policy/index.js";
 import type { PiRunInput, PiRunRecord } from "../../src/pactile/pi/bridge.js";
 import { PiRpcClient, type PiRpcLaunch } from "../../src/pactile/pi/rpc.js";
 import { codexBridgeStatus } from "../../src/pactile/codex/bridge.js";
@@ -34,6 +36,21 @@ const fakePiScript = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../.tmp/p31-script-build/fixtures/fake-pi-review-provider.js",
 );
+
+function recoveryProofForBash(command: string) {
+  const observer = new PiReviewToolObserverV1();
+  const events = [
+    { type: "tool_execution_start", toolCallId: "failed", toolName: "bash", args: { command } },
+    { type: "tool_execution_end", toolCallId: "failed", toolName: "bash", isError: true, result: { content: [{ type: "text", text: "Command exited with code 1" }] } },
+    { type: "tool_execution_start", toolCallId: "recovered", toolName: "bash", args: { command: "which node" } },
+    { type: "tool_execution_end", toolCallId: "recovered", toolName: "bash", isError: false, result: { content: [{ type: "text", text: "/usr/local/bin/node" }] } },
+  ].map((event, index) => {
+    const safe: Record<string, unknown> = { type: event.type, tool: "bash", is_error: event.isError === true };
+    observer.observe(event, index + 1, safe);
+    return safe;
+  });
+  return readPiReviewToolEvidenceV1(events);
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -60,6 +77,7 @@ function fixture(
     includeRunEvidence?: boolean;
     taskId?: string;
     largeCandidate?: boolean;
+    verificationRef?: string;
   } = {},
 ): ReviewFixture {
   const root = fs.mkdtempSync(
@@ -94,6 +112,7 @@ function fixture(
       "Run completion evidence\n",
     );
   }
+  if (options.verificationRef) fs.writeFileSync(path.join(taskDir, options.verificationRef), "# Current Run verification\nCurrent contract and scoped evidence.\n");
 
   const created = createTaskKernel({
     root,
@@ -158,6 +177,7 @@ function fixture(
     evidenceRefs: [
       "tests/verify.txt",
       ...(runEvidenceRef ? [runEvidenceRef] : []),
+      ...(options.verificationRef ? [options.verificationRef] : []),
     ],
     actor: "runner",
     idempotencyKey: "complete:pi-review",
@@ -1862,6 +1882,149 @@ describe("P40 independent Pi Review route", () => {
     });
     expect(await runReview(task, report(task))).toBe(1);
     expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
+  });
+
+  it.each([17, null])("rejects a Docker stop with abnormal or unobserved exit code %s before Kernel Review", async (exitCode) => {
+    const task = fixture();
+    const originalRun = PiTaskBridge.prototype.run;
+    vi.spyOn(PiTaskBridge.prototype, "run").mockImplementation(async function (this: PiTaskBridge, input: PiRunInput): Promise<PiRunRecord> {
+      const result = await originalRun.call(this, input);
+      if (!result.role_policy) throw new Error("Expected native policy fixture receipt");
+      result.role_policy = { ...result.role_policy, backend: "docker", containerId: "a".repeat(64),
+        containerStop: { stopped: true, removed: true, exitCode, stoppedAt: new Date().toISOString(), recordedAt: new Date().toISOString() } };
+      fs.writeFileSync(path.join(task.taskDir, "pi-bridge", "role-policy-receipts", `${result.run_id}.json`), `${JSON.stringify(result.role_policy)}\n`);
+      return result;
+    });
+    expect(await runReview(task, report(task))).toBe(1);
+    expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
+  });
+
+  it("uses and protects the current Run-bound verification instructions", () => {
+    const task = fixture({ verificationRef: "verify-run3.md" });
+    const prepared = preparePiReviewRoute(task.root, task.task);
+    expect(prepared.verificationRef).toBe("verify-run3.md");
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-p48-run-verify-scratch-"));
+    roots.push(scratch);
+    const contract = buildPiRoleContract({ root: task.root, taskDir: task.taskDir, workdir: prepared.workdir, scratchDir: scratch, timeoutMs: 60_000, role: "check", writeSet: [], kernel: prepared.kernel, run: prepared.run });
+    expect(authorizePiTool(contract, "read", { path: "result.txt" }).allowed).toBe(true);
+    fs.appendFileSync(path.join(task.taskDir, "verify-run3.md"), "Unauthorized contract change.\n");
+    expect(authorizePiTool(contract, "read", { path: "result.txt" }).allowed).toBe(false);
+  });
+
+  it("records recovered exploration errors with independent explanation and byte-bound proof", async () => {
+    const task = fixture();
+    const value = report(task);
+    value["toolRecoveries"] = [{ failedToolCallId: "explore-failed", recoveredByToolCallId: "explore-recovered", rationale: "The scratch probe targeted read-only /tmp. A later in-memory query recovered the same investigation without writes or waived validation." }];
+    expect(await runReview(task, value, "TEST_RECOVERED_TOOL_ERROR")).toBe(0);
+    const kernel = readKernel(task.root, task.taskDir);
+    expect(kernel.reviews.at(-1)?.decision).toBe("pass");
+    const run = JSON.parse(fs.readFileSync(path.join(task.taskDir, "pi-bridge/latest.json"), "utf8")) as PiRunRecord;
+    expect(run.tool_errors).toBe(1);
+    expect(run.review_tool_evidence?.fatalErrors).toBe(0);
+    expect(run.review_tool_evidence?.calls).toMatchObject([{ id: "explore-failed", outcome: "error", failure: "readonly-temp" }, { id: "explore-recovered", outcome: "success", failure: null }]);
+    const artifact = JSON.parse(fs.readFileSync(path.join(task.taskDir, run.review_file as string), "utf8")) as { review: { toolRecoveries: unknown[] } };
+    expect(artifact.review.toolRecoveries).toEqual(value["toolRecoveries"]);
+    expect(checkTaskClose(closeInput(task))).toEqual([]);
+    fs.appendFileSync(path.join(task.taskDir, run.progress_evidence_ref as string), "{}\n");
+    expect(checkTaskClose(closeInput(task)).join("\n")).toContain("Stored Review evidence");
+  });
+
+  it("preserves native Pi compound tool IDs and does not conflate their shared call prefix", async () => {
+    const task = fixture();
+    const value = report(task);
+    value["toolRecoveries"] = [{ failedToolCallId: "call_native_0|fc_native_0", recoveredByToolCallId: "call_native_0|fc_native_1", rationale: "The later native provider call performed the in-memory query; its distinct function ID is preserved." }];
+    expect(await runReview(task, value, "TEST_RECOVERED_TOOL_ERROR TEST_NATIVE_TOOL_ID")).toBe(0);
+    const record = JSON.parse(fs.readFileSync(path.join(task.taskDir, "pi-bridge/latest.json"), "utf8")) as PiRunRecord;
+    expect(record.tool_errors).toBe(1);
+    expect(record.review_tool_evidence?.fatalErrors).toBe(0);
+    expect(record.review_tool_evidence?.calls.map((call) => call.id)).toEqual(["call_native_0|fc_native_0", "call_native_0|fc_native_1"]);
+    expect(readKernel(task.root, task.taskDir).reviews.at(-1)?.decision).toBe("pass");
+  });
+
+  it.each([
+    { marker: "TEST_READONLY_PROBE_FAILURE", failure: "read-probe" },
+    { marker: "TEST_EMPTY_QUERY_FAILURE", failure: "empty-query" },
+    { marker: "TEST_MISSING_DISCOVERY_TOOL", failure: "missing-tool" },
+    { marker: "TEST_GIT_EMPTY_QUERY", failure: "empty-query" },
+  ])("accepts recovered native discovery errors as $failure without waiving validation", async ({ marker, failure }) => {
+    const task = fixture();
+    const value = report(task);
+    value["toolRecoveries"] = [{ failedToolCallId: "explore-failed", recoveredByToolCallId: "explore-recovered", rationale: "This was a readonly discovery query, not a validation command. The later successful source query recovered the investigation; the original failure is retained." }];
+    expect(await runReview(task, value, `TEST_RECOVERED_TOOL_ERROR ${marker}`)).toBe(0);
+    const record = JSON.parse(fs.readFileSync(path.join(task.taskDir, "pi-bridge/latest.json"), "utf8")) as PiRunRecord;
+    expect(record.tool_errors).toBe(1);
+    expect(record.review_tool_evidence?.calls[0]).toMatchObject({ outcome: "error", failure });
+    expect(readKernel(task.root, task.taskDir).reviews.at(-1)?.decision).toBe("pass");
+  });
+
+  it.each([false, true])("resolves exact short recovery references to complete native IDs; wrong reference=%s", async (wrong) => {
+    const task = fixture();
+    const value = report(task);
+    value["toolRecoveries"] = [{ failedToolCallId: piReviewToolReferenceV1("call_native_0|fc_native_0") + (wrong ? "-wrong" : ""), recoveredByToolCallId: piReviewToolReferenceV1("call_native_0|fc_native_1"), rationale: "The later distinct native call recovered the scratch investigation; the short references identify recorded calls exactly." }];
+    expect(await runReview(task, value, "TEST_RECOVERED_TOOL_ERROR TEST_NATIVE_TOOL_ID")).toBe(wrong ? 1 : 0);
+    const kernel = readKernel(task.root, task.taskDir);
+    if (wrong) expect(kernel.reviews).toHaveLength(0);
+    else {
+      const record = JSON.parse(fs.readFileSync(path.join(task.taskDir, "pi-bridge/latest.json"), "utf8")) as PiRunRecord;
+      const artifact = JSON.parse(fs.readFileSync(path.join(task.taskDir, record.review_file as string), "utf8")) as { review: { toolRecoveries: { failedToolCallId: string; recoveredByToolCallId: string }[] } };
+      expect(artifact.review.toolRecoveries[0]).toMatchObject({ failedToolCallId: "call_native_0|fc_native_0", recoveredByToolCallId: "call_native_0|fc_native_1" });
+      expect(record.tool_errors).toBe(1);
+      expect(checkTaskClose(closeInput(task))).toEqual([]);
+    }
+  });
+
+  it.each(["missing", "earlier", "duplicate", "no-explanation"])("rejects invalid exploration recovery proof: %s", async (mode) => {
+    const task = fixture();
+    const value = report(task);
+    const recovery = { failedToolCallId: "explore-failed", recoveredByToolCallId: mode === "earlier" ? "explore-failed" : "explore-recovered", rationale: mode === "no-explanation" ? "" : "The later in-memory query recovered the read-only temporary probe." };
+    value["toolRecoveries"] = mode === "missing" ? [] : mode === "duplicate" ? [recovery, recovery] : [recovery];
+    expect(await runReview(task, value, "TEST_RECOVERED_TOOL_ERROR")).toBe(1);
+    expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
+  });
+
+  it.each(["TEST_REQUIRED_VALIDATION_FAILURE", "TEST_VALIDATION_BEFORE_DISCOVERY", "TEST_GREP_ASSERTION_FAILURE", "TEST_GIT_ASSERTION_FAILURE", "TEST_ASSERTION_FAILURE", "TEST_INCOMPLETE_RECOVERY", "TEST_EXTENSION_ERROR", "TEST_PROVIDER_ERROR", "TEST_FILTERED_VALIDATION_FAILURE", "TEST_WRAPPED_VALIDATION_FAILURE", "TEST_ENV_VALIDATION_FAILURE", "TEST_GREP_LATE_ASSERTION_FAILURE", "TEST_GIT_LATE_ASSERTION_FAILURE", "TEST_GREP_SILENT_ASSERTION_FAILURE", "TEST_GREP_ABBREVIATED_ASSERTION_FAILURE"])("keeps blocking failures fatal despite recovery claims: %s", async (marker) => {
+    const task = fixture();
+    const value = report(task);
+    value["toolRecoveries"] = [{ failedToolCallId: "explore-failed", recoveredByToolCallId: "explore-recovered", rationale: "Claimed recovery must not waive a hard gate." }];
+    expect(await runReview(task, value, `TEST_RECOVERED_TOOL_ERROR ${marker}`)).toBe(1);
+    expect(readKernel(task.root, task.taskDir).reviews).toHaveLength(0);
+  });
+
+  it("rejects ambiguous shell recovery claims even after a successful follow-up", () => {
+    const commands = [
+      "env CI=1 pnpm test; which node python3 rg",
+      "timeout 60 pnpm test; which node python3 rg",
+      "bash -c 'pnpm test'; which node python3 rg",
+      "(pnpm test); which node python3 rg",
+      "$(pnpm test); which node python3 rg",
+      "echo `pnpm test`; which node python3 rg",
+      "echo \"PWD: $(pwd)\"; which node python3 rg",
+      "grep -r --quiet=yes marker result.txt; which node python3 rg",
+      "grep --q marker result.txt; which node python3 rg",
+      "grep --sil marker result.txt; which node python3 rg",
+      "grep --s marker result.txt; which node python3 rg",
+      "git check-ignore --qui result.txt; which node python3 rg",
+      "git check-ignore --no-index -q result.txt; which node python3 rg",
+      "find . -exec pnpm test \\;; which node python3 rg",
+      "sed -e 'e pnpm test' result.txt; which node python3 rg",
+      "/pactile/scratch/ls; which node python3 rg",
+      "pwd\npnpm test\nwhich node python3 rg",
+      "$CHECK marker; which node python3 rg",
+      "grep marker result.txt || exit 1; which node python3 rg",
+    ];
+    for (const command of commands) {
+      const evidence = recoveryProofForBash(command);
+      expect(() => assertPiReviewToolRecoveriesV1(evidence, 1, [{ failedToolCallId: "failed", recoveredByToolCallId: "recovered", rationale: "A later discovery succeeded, but this cannot waive an unknown or validation failure." }]), command).toThrow(/unclassified|required-validation/u);
+    }
+  });
+
+  it("keeps quiet-like search data eligible after regexp options or an option terminator", () => {
+    for (const command of ["grep -e '-q' result.txt", "grep --regexp=--quiet result.txt", "grep -- '-q' result.txt", "git check-ignore -- '-q'"]) {
+      const evidence = recoveryProofForBash(command);
+      const recovery = [{ failedToolCallId: "failed", recoveredByToolCallId: "recovered", rationale: "The quiet-like word is search data or a literal path. The later successful source discovery recovered the exploratory no-match." }];
+      expect(evidence.calls[0], command).toMatchObject({ outcome: "error", failure: "empty-query" });
+      expect(assertPiReviewToolRecoveriesV1(evidence, 1, recovery), command).toEqual(recovery);
+    }
   });
 
   it.each(["response-body", "attempt-order", "final-result"] as const)(

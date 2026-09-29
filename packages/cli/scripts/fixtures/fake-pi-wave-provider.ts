@@ -3,6 +3,7 @@
  * It is compiled from this checked fixture and is not provider acceptance evidence.
  */
 import fs from "node:fs";
+import { fakePiRolePolicyHandshake } from "./pi-role-policy-probe.js";
 import path from "node:path";
 
 interface PiRequest extends Record<string, unknown> {
@@ -72,6 +73,7 @@ function handleLine(line: string): void {
       "The fake Pi wave fixture received an invalid RPC request.",
     );
   const request = value as PiRequest;
+  if (fakePiRolePolicyHandshake(request, writeMessage)) return;
   const reply = (data: Record<string, unknown> = {}) =>
     writeMessage({
       id: request.id,

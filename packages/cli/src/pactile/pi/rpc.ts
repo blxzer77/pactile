@@ -1,4 +1,5 @@
-import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFileSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import spawn from "cross-spawn";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { StringDecoder } from "node:string_decoder";
@@ -15,6 +16,10 @@ export interface PiRpcOptions {
   sessionDir: string;
   launch?: PiRpcLaunch;
   env?: NodeJS.ProcessEnv;
+  /** A container attachment can consume early stdin before its reader is ready. Only retry a readonly readiness query. */
+  readinessProbeRetryMs?: number;
+  /** Allow configured extension cleanup on EOF; bounded at 30 seconds. */
+  shutdownGraceMs?: number;
   onEvent?: (event: RpcObject) => void;
 }
 
@@ -50,6 +55,8 @@ export class PiRpcClient {
   private verifiedClose: PiRpcProcessExitReceipt | null = null;
 
   constructor(private readonly options: PiRpcOptions) {
+    if (options.shutdownGraceMs !== undefined && (!Number.isSafeInteger(options.shutdownGraceMs) || options.shutdownGraceMs < 0 || options.shutdownGraceMs > 30_000))
+      throw new Error("Pi RPC shutdown grace must be an integer between 0 and 30000 milliseconds");
     if (options.onEvent) this.listeners.add(options.onEvent);
   }
 
@@ -141,7 +148,7 @@ export class PiRpcClient {
       env: { ...process.env, ...this.options.env, PI_CODING_AGENT_SESSION_DIR: this.options.sessionDir },
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
-    });
+    }) as ChildProcessWithoutNullStreams;
     this.child = child;
     this.childClose = new Promise((resolve) => {
       child.once("close", (code, signal) => {
@@ -157,7 +164,16 @@ export class PiRpcClient {
     child.stderr.resume();
     child.on("error", (error) => this.fail(new Error(`Pi RPC launch failed: ${error.message}`)));
     child.on("exit", (code, signal) => this.fail(new Error(`Pi RPC exited (code=${code ?? "null"}, signal=${signal ?? "none"})`)));
-    await this.request("get_state", {}, timeoutMs);
+    const deadline = performance.now() + timeoutMs;
+    for (;;) {
+      const remaining = Math.max(1, Math.floor(deadline - performance.now()));
+      try {
+        await this.request("get_state", {}, this.options.readinessProbeRetryMs ? Math.min(remaining, this.options.readinessProbeRetryMs) : remaining);
+        break;
+      } catch (error) {
+        if (!this.options.readinessProbeRetryMs || this.ended || performance.now() >= deadline || !(error instanceof Error) || !error.message.includes("response timed out")) throw error;
+      }
+    }
     this.startupMs = Math.round(performance.now() - started);
     return this.startupMs;
   }
@@ -399,7 +415,7 @@ export class PiRpcClient {
       if (timer) clearTimeout(timer);
       return result;
     };
-    let closed = await waitForClose(2_000);
+    let closed = await waitForClose(this.options.shutdownGraceMs ?? 2_000);
     if (!closed) {
       this.killRequestedAt ??= new Date().toISOString();
       if (process.platform === "win32") {
