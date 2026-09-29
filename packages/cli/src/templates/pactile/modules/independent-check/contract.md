@@ -22,6 +22,10 @@ Agent 看见：
 
 ## 停止条件
 
+Pi Check 默认能力继续加载，权限通过原生扩展及可选整进程后端执行。只读候选和既有证据，scratch 可写；未获批的动作单独拒绝。Review 收据绑定当前 Task/Run、真实注册 workspace、精确候选及策略证明，Docker 还须确认容器停止。握手、JSON 格式和退出均不等同于独立 PASS。详见 `.pactile/framework/pi-role-policy.md`。
+
+逐条保留工具错误。仅有限探查错误可以提供 `toolRecoveries`：真实失败调用、之后成功的恢复调用及独立解释，宿主核对事件/指纹/顺序。必需验证失败、未知错误、缺证据、候选/权限/授权失效或模型异常结束仍阻断；不能清零错误数或覆盖原失败记录。
+
 - 触发：Full 或 Policy。
 - 输出：verdict + findings；assurance 字段。
 - 停止：在 Check 中改代码还声称同一 verdict；Lite 强制本块；无 Worker 却写 true-independent。
