@@ -1,105 +1,40 @@
-# PRD Grill & Frontier Discipline
+# Requirements and planning questions
 
-> **Purpose**: When the workflow routes to planning / PRD Grill, this is the on-demand path to the grill and Frontier discipline. The full interview contract and Thinking Principles live in the bundled `brainstorm` skill (SSOT); this guide is a summary, not a second source of truth.
+Use this guide when unresolved decisions affect the Task deliverable, acceptance criteria, dependencies, scope or material risk. Deep planning and Grill are optional methods; Task size and question count do not create new gates.
 
-## When to read this
+## Read facts before asking
 
-The workflow or AGENTS invocation map says planning / PRD Grill → **`Read ./prd-grill-frontier.md`** (this file) or the full bundled `common/skills/brainstorm.md` when another carrier is available. Read it **before** asking any user questions. Do **not** claim the grill discipline is loaded without a file read.
+Inspect current code, constraints and applicable prior research first. Ask the user for intent, preferences, authorization and trade-offs that evidence cannot decide. Do not ask them to confirm repository facts or repeat an existing scoped grant.
 
-## Optional brick — not a hard gate
+Resolve only questions whose prerequisites are decided. Present up to three independent choices together, each with a recommendation and its trade-off; keep dependent decisions pending. Continue authorized independent work while awaiting an answer. Stop asking when further questions would not change acceptance or risk.
 
-Grill is an **optional brick**（可选积木）, not a hard gate. The model chooses whether to run it; skipping grill is allowed. Do **not** restore a Claude-only `grill-me` forced subagent gate. When grill *is* used, keep the existing integration: document-surface checklist (grill-with-docs spirit), in-session frontier / micro-grill pacing, and Platform checklist row 10 (no independent `grill-me` / `grill-with-docs` subagent gate).
+## Definition checklist
 
-## Front-anchor principle
-
-**Product principle:** high front-end completeness → backend process drift is tolerable（前端完成度高则后端漂移可容忍）. When the front-end grill nails requirements, later backend process drift remains acceptable.
-
-## Non-negotiable evidence rule
-
-If a question can be answered by exploring the codebase, explore the codebase instead — never ask the user to confirm facts the repo can answer. Read root `CONTEXT.md` (if present) before asking and use its glossary terms. Ask only for product intent, preference, scope, risk tolerance, or decisions that remain ambiguous after inspection.
-
-## PRD Grill (Phase B)
-
-Treat `prd.md` (+ existing `design.md` fragments) as the **only document surface**. Run this checklist and fix the PRD in place (no new subagent):
-
-| # | Check |
+| Check | Evidence needed |
 | --- | --- |
-| 1 | **Goal & user value** — single clear statement |
-| 2 | **Confirmed facts vs assumptions** — repo facts not listed as assumptions |
-| 3 | **Testable acceptance criteria** |
-| 4 | **Out of scope** explicit |
-| 5 | **Dependencies & sequencing** |
-| 6 | **Parent/Child & deliverables** when applicable |
-| 7 | **Research & external facts** — smart-search or documented fallback |
-| 8 | **Execution gate & artifacts** — `design.md` / `implement.md` / `verify.md` expectations |
-| 9 | **Durable Learning** — Phase 3.3 will need `update-spec` \| `no-update` \| `unsure` |
-| 10 | **Platform** — Codex project entry; PRD Grill stays in the current task |
-| 11 | **Risk & rollback** for complex tasks |
-| 12 | **Open questions** — only **blocking** strategic/preference items remain |
-| 13 | **Root vs inherited assumptions** — every requirement traces to a user-facing root need; inherited assumptions flagged or removed (First Principles) |
-| 14 | **Minimal sufficient design** — simplest design that meets acceptance wins (Occam's Razor) |
+| Goal and value | One independently acceptable deliverable |
+| Facts and assumptions | Current sources; uncertainty identified |
+| Acceptance | Observable criteria that distinguish incompatible outcomes |
+| Scope | Explicit non-goals and authorized write boundaries |
+| Dependencies | Known Task IDs, successful-Close prerequisites and sequencing |
+| Delivery | `local-result`, `pull-request`, `merged-result` or `documentation` |
+| Reuse | Existing capabilities, permitted mature alternatives or justified self-build |
+| Design risk | Interfaces, state, isolation, failure handling and rollback where relevant |
+| Verification | Required gates plus checks for affected public behavior and material risk |
+| Open decisions | Only unresolved choices that can change the result |
 
-## Micro-grill unresolved
+Use [reuse before building](./reuse-first-guide.md) and [risk-driven verification](./verification-strength-guide.md). Do not create a dependency tree, document bundle or exhaustive research exercise when a small definition already suffices.
 
-For each **blocking** open question after the checklist, embed the `pactile-micro-grill` contract:
+## Artifacts and authority
 
-- exactly **one** question per message
-- user-facing text in the project's human-review language (default Simplified Chinese)
-- recommended answer + trade-off
-- **update `prd.md` after every answer** before the next question
+The unified Task Kernel reader identifies the schema. For V2, the Kernel owns the definition, ACs, delivery level and hard dependencies. `prd.md` is authored explanation, not a state patch. Create a Task only after agreement to its proposal; implementation needs an authorized, admitted Run.
 
-Stop micro-grill when no blocking open questions remain. Do not ask process questions ("should I search?"); do not re-ask facts Discovery already confirmed.
+Agent-facing context uses `pactile task artifacts <task> --agent`, then fingerprint-bound facts/documents/sections. Human-facing Markdown explains the decision in the user's language. Put technical Decision/Rationale/Risk in Task `design.md`; use `implement.md` for ordered work, write boundaries and chosen checks when those details help. Do not fill redundant documents or synthesize a missing Kernel fact.
 
-## Frontier rounds (question pacing)
+An approved narrative change cannot silently alter an executed definition. Use a supported authorized update path or coordinate a new Task/Run; do not invent an automatic Return-to-Define transition.
 
-- **frontier** = all "prerequisite-decided" questions: their prerequisite decisions are resolved, so they can be asked now without guessing unheard answers.
-- Each round lists the current frontier at once, each question numbered (❓Q1/Q2/Q3…) with a recommended answer.
-- **≤3 questions per round**; split into more rounds beyond that to avoid information overload.
-- **Facts are the agent's job**: when a frontier question needs environment facts, dispatch a sub-agent to check; while exploration is pending it counts as an unresolved prerequisite that only blocks its downstream questions — ask the rest of the frontier anyway.
-- **Decisions are the user's job**: every decision waits for the user's answer; do not answer for them.
-- A user answer reshapes the design tree and the frontier extrapolates into the next round; **an empty frontier = the design tree is exhausted** — summarize the consensus and confirm before treating planning as done.
+## Optional Grill
 
-> **Override note**: this pacing overrides the "Ask the questions one at a time" line in the Non-Negotiable Interview Contract — Phase B (PRD Grill) follows frontier rounds; `pactile-micro-grill` still defaults to one question at a time.
+Check the existing definition and authored documents in the current conversation. Inspect unexplained assumptions, conflicting AC interpretations, unnecessary complexity and unresolved risks. This retains useful document-review practice without a mandatory new Subagent, a standalone slash command or a bundled `brainstorm` dependency.
 
-## Question rules
-
-Each question must include: the decision needed, why it matters, your recommended answer, and the trade-off if the user chooses differently. Default recommendation = Occam's Razor: the **minimal sufficient** option that still satisfies the acceptance criteria. Only recommend a more complex option when you can cite evidence (a contract, a verified edge case, a repo constraint).
-
-## Artifact rules (summary)
-
-- `prd.md` records requirements + acceptance (goal, confirmed facts, requirements, acceptance criteria, out of scope, blocking open questions).
-- `design.md` records technical design when Risk/Policy or `verification_profile: architecture` requires it (architecture, data flow, contracts, trade-offs, rollback).
-- `implement.md` records execution planning (ordered checklist, validation commands, and Development Strategy Contract).
-- Complex tasks need `prd.md` and `implement.md` before `start-execution --check`; include `design.md` only when Risk/Policy or `verification_profile: architecture` requires it.
-
-## Stop — AC ambiguity face = 0
-
-Do **not** measure grill completeness by question count（不能用提问次数度量）. No question-count KPI.
-
-Two stop conditions (D1c); both are model judgments, not machine counters:
-
-1. **需求侧** — every AC is in testable / acceptable wording and traces to a user-facing root need. Further questions that would not change any AC = 过度 grill — stop.
-2. **前锚有效性代理** — each AC's **歧义面 = 0** (AC ambiguity face = 0). Two mutually conflicting implementations must not both count as satisfying that AC.
-
-When these hold, stop grilling even if more questions could be asked.
-
-## Completion — PRD Grill done
-
-If grill was used, it is done when the **Stop — AC ambiguity face = 0** rule holds and **all** of the following hold. Grill remains an optional brick, not an execution hard gate.
-
-Planning is ready for the execution gate when **all** hold:
-
-- PRD Grill checklist satisfied or explicitly N/A with rationale in `prd.md`
-- **No blocking** open questions in `prd.md`
-- Acceptance criteria testable; out of scope explicit
-- If grill ran: stop rule met (**AC 歧义面 = 0**); not measured by question count
-- Complex tasks: `implement.md` present; `design.md` only when Risk/Policy or `verification_profile: architecture` requires it
-- User reviewed artifacts or explicitly approved proceeding
-
-Then proceed to Research (if needed), `pactile task start-execution <task> --check`, and implementation **only after** explicit user execution approval. Do not start implementation until the user approves or asks for implementation.
-
-## Related
-
-- Full SSOT: bundled `brainstorm` skill (`common/skills/brainstorm.md`) — interview contract, First Principles, Occam's Razor.
-- Reachability: inspect the installed `.agents/skills/` entry and current capability readiness.
-- Workflow routing: `.pactile/workflow.md` Phase 1 (Plan) and Active Task Routing.
+Finish when the deliverable, ACs and boundaries are clear, blocking decisions are resolved, and required authorization is available. Proceed through the current [V2 workflow](../workflow.md); V1 `start-execution` applies only to a Task explicitly identified as legacy.

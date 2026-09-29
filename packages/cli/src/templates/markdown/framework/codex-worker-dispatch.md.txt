@@ -1,9 +1,19 @@
-# Codex worker dispatch
+# Codex desktop task bridge
 
-Codex work uses independent desktop tasks and cross-session messaging. The main task owns planning, integration, review, and final acceptance. Pactile does not dispatch Codex subagents.
+Codex desktop conversations handle analysis, planning, coordination and independent review. Pi executes admitted V2 implementation Runs. Pactile does not dispatch Codex subagents, and current V2 Codex Execute dispatch is disabled. A Task has no Parent that automatically owns every integration or acceptance action.
 
-Use `pactile codex prepare <task> --tool create|message|wait|read ...` to bind a Pactile Task and its Kernel revision to a native desktop tool request. Roles are `plan`, `execute`, and `review`; Execute requires recorded user approval and a project worktree. The current Codex desktop task invokes the native tool, then records its returned identity and outcome with `pactile codex receipt <task> <request-id> --result-file <file>`. Inspect `pactile codex status <task>` for pending requests, bound desktop tasks, and stale contracts. An Execute Child holds its Parent's bounded dispatch slot until a completed wait receipt; failed creation releases it. Only create a new desktop task when the user explicitly requests one.
+## Native request and receipt
 
-Each worker receives a bounded objective, write set, and acceptance evidence. Record the destination task identity and final evidence in the parent task. A worker message alone does not prove implementation or verification.
+Use `pactile codex prepare <task> --tool create|message|wait|read ...` with the available planning/review route to prepare a request bound to the Task contract and Kernel revision. Confirm arguments with `pactile codex --help`; cross-task coordination also binds the destination Task/Run and current authorization.
 
-The Node CLI does not call the desktop tools directly. A receipt is host-reported evidence, not implementation or acceptance proof. `pactile task` and the Kernel retain phase, approval, and review authority; `pactile pi run` checks execution approval before Pi dispatch. If cross-session coordination is unavailable, continue in the current task and record the reason for serial execution. Do not silently substitute a Codex subagent or a Codex CLI/App Server/ACP session.
+The desktop conversation invokes its native tool, then records the actual identity and outcome with `pactile codex receipt <task> <request-id> --result-file <file>`. Inspect `pactile codex status <task>` for pending requests, bound conversations and stale contracts. The Node CLI cannot invoke desktop tools by itself. Only create or message another desktop conversation when the user has authorized that action or an applicable ongoing coordination workflow.
+
+## Boundaries and evidence
+
+Provide a bounded objective, actual Task path, role, authorized actions, candidate identity where applicable, and evidence destinations. Review is independent and does not change the candidate. Planning does not approve implementation; messages do not waive hard dependencies or admit a Run.
+
+A receipt is host-reported transport evidence, not proof of implementation, role enforcement, OS isolation or acceptance. Kernel Run/Review/Close gates remain authoritative. Refresh stale contracts and preserve failed requests; do not reinterpret a completed wait as a successful deliverable.
+
+If native coordination is unavailable, continue authorized work in the current conversation or record the affected block. Do not silently substitute a Codex subagent, CLI/App Server/ACP session, or promise an executable route that the product has disabled.
+
+Legacy V1 `execute` and Child-slot records remain readable under the unified legacy contract; they must not be offered as V2 Run dispatch instructions.

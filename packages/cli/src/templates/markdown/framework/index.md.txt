@@ -12,7 +12,7 @@ These framework-owned files are refreshed by `pactile update` with conflict revi
 | [Task/Run critical-path scheduling](./parallel-first-execution.md) | Dependencies, write sets, isolation, completion-time estimates, optional host dispatch, Review, and Close |
 | [middleware-protocol.md](./middleware-protocol.md) | Middleware overlay and provider contracts |
 | [upgrade.md](./upgrade.md) | Project update steps |
-| [execution-strategy.md](./execution-strategy.md) | Execution mode and isolation |
+| [execution-strategy.md](./execution-strategy.md) | Task/Run roles, current host paths and isolation |
 | [verification-strength-guide.md](./verification-strength-guide.md) | Verification depth |
 | [injection-budget-guide.md](./injection-budget-guide.md) | Context budget |
 | [artifact-locale-guide.md](./artifact-locale-guide.md) | Artifact language |

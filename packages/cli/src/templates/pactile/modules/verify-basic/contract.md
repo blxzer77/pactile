@@ -14,6 +14,10 @@ P29 表名：`verify-basic`（不得改名）。层：baseline。
 
 Run 完成并产生候选快照后加载。按已记录的交付物和 AC 检查候选。Reviewer 必须与 Run 执行者和授权者都不同。为 Review 记录证据引用，并为每条 AC 记录证据。
 
+验证选择见 [风险驱动验证](../../framework/verification-strength-guide.md)：满足 AC 和仓库必需 gate，优先覆盖受影响的公开行为和真实失败风险；无新风险不重复全量回归。`pactile task verify-plan` 只产出候选绑定的规划收据，不运行测试、记录 Review 或 Close。
+
+独立审核保持候选及业务状态只读；必要报告/临时产物须有明确写入范围。能力可用不等于所有动作获准，提示词不能证明执行保护。当前 Pi 默认 RPC 无职责动作拦截或 OS 沙箱；需要该保护却不可达时，不派发危险动作或冒认受保护 Review。
+
 ## 停止条件
 
 - 候选 ID 和 fingerprint 必须与选中的已完成 Run 完全一致。

@@ -200,7 +200,7 @@ export function compileSessionPack(root: string, factGap = false): Record<string
           : stuck
             ? "Stop. Classify the stall before retrying the same hypothesis."
             : v2 ? v2Next[phase] : NEXT[phase];
-  const constraints = ["Do not treat `.pactile/workflow.md` or AGENTS longform as runtime SSOT.", "Modules absent from this pack are not installed."];
+  const constraints = ["Do not treat `.pactile/workflow.md` or AGENTS longform as runtime SSOT.", "Absence from this pack does not indicate installation state or grant permission."];
   if (v2) constraints.push("Task model=V2 deliverable with hard dependencies.");
   else if (selectedLegacy) constraints.push(`V1 legacy Task: Rigor=${rigor}; topology=${topologyKind}.`);
   else if (migrationNeedsReconciliation && migrationRecord) {
@@ -230,7 +230,7 @@ export function compileSessionPack(root: string, factGap = false): Record<string
   const layer5 = stuck ? "Deep diagnosis pointer only (not a layer-2 contract): `debug-recovery`. Stop homogeneous retries. Classify implementation / contract / environment / platform / process-loop. First failure is not break-loop." : "";
   return {
     version: 1, source: "context-progressive",
-    activationSource: { kind: "profile-runtime", filter: "phase-intersect-active", baselineActive, ondemandActive, note: "Layer 2 is phase-needed intersect still-active. Unactivated modules are not installed." },
+    activationSource: { kind: "profile-runtime", filter: "phase-intersect-active", baselineActive, ondemandActive, note: "Layer 2 is phase-needed intersect still-active. This pack does not activate omitted modules." },
     kernel: { taskId: resolvedSelection ? taskId : null,
       schemaVersion: resolvedSelection ? v2?.schemaVersion ?? (snapshot ? 1 : migrationNeedsReconciliation ? 0 : null) : null,
       revision: resolvedSelection ? v2?.revision ?? snapshot?.revision ?? 0 : null,

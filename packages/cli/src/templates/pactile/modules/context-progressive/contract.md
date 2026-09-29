@@ -4,41 +4,32 @@ P29 表名：`context-progressive`（不得改名）。层：baseline。
 
 ## 职责
 
-唯一上下文编译器，也是渐进式披露的机械保证。输入只有：Kernel 的 Phase / Condition / Outcome、已激活模块列表、当前需要的产物角色。输出一份预算内的 Session 包（可去重、带来源与 freshness）。Baseline 只带四类检索意图（exact / semantic / structural / external），不绑 codegraph、fast-context 或任何 Agent 工具名。`workflow.md`、AGENTS 长文、`[workflow-state:*]` 整坨方法论**不是**合法输入。Adapter 只负责注入编译结果，不负责拼方法论。
+按统一读取器识别的 Task schema、Kernel 阶段/条件、模块激活事实和产物角色编译 Session Pack。V2 定义来自 Kernel，不从旧 `task.json` 或 Markdown 推断状态。保留 `exact` / `semantic` / `structural` / `external` 四类检索意图；工具与 Provider 由适配面绑定。
 
 ## 触发/披露
 
-五层，按序，不得跳层一次灌全：
+通过 `pactile context --mode session --json` 查看编译结果，逐层取最少必要信息：
 
-1. 常驻最小：阶段、关键约束、下一动作（无任务时几乎只有这些 + 若发生 Intake 事件则加 intake 短契约）。
-2. 已激活模块短契约（仅当前 Phase 需要的那些）。
-3. 当前阶段产物片段（如 Define 的 PRD/AC，不是整个 task 目录）。
-4. 有事实缺口才检索（薄路由；打分/pack 归 `retrieval-extended`）。
-5. 失败或复杂卡住才深诊断（break-loop、完整指南）。
+1. 当前阶段、约束与下一动作。
+2. 当前阶段所需且已激活的短契约；注册、选择建议和执行授权是不同事实。
+3. V2 Kernel 定义及产物索引；用 `pactile task artifacts <task> --agent` 获取指纹引用，再按 fact/document/section 展开。原始 V1 文件片段只在读取器明确识别旧任务时使用。
+4. 有事实缺口才规划检索；排序和证据 pack 属于 `retrieval-extended`。Jev 建议受项目外发策略约束，不改变显式意图或授予权限。
+5. 卡住时提供 `debug-recovery` 指针，再按实际原因读诊断材料。
 
-编译器自己几乎没有「教战」；它决定别人谁能进包。过了阶段，上一阶段模块正文从常驻包掉下去，需要时按产物角色再取片段。
-
-Agent 看见：
-
-1. 当前包里没有的模块 = 当作没装。不得自己去读 `workflow.md` 当 SSOT 补回来。
-2. 无 `selected_task`：不装任务产物；不装 Parent/Worker/VCS 教战。
-3. Worker / Resume 包与 Session 包语义分离：工人只带其任务路径与合同片段，不继承「整份梯子」。
-4. SessionStart 若只能注入编译结果；禁止再切 `workflow.md` 的 Phase Index 当 overview。
-
-用户看见：默认简单。高级模块用到才出现。不靠一次打开就看到全部 PACTILE。
+没有选中 Task 时只做 Intake 提案，不载入任务产物或执行指引。目标 schema 未识别、迁移待协调或 Kernel 读失败时停止，不回退为可执行的 V1。
 
 ## 停止条件
 
-- 输入集合：Kernel 的 Phase / Condition / Outcome、已激活模块列表、当前需要的产物角色。非法输入：上帝文档、未激活模块正文。
-- 五层顺序与预算/去重/provenance/freshness 义务（数值实现后置）。
-- 有任务才装产物；Lite Single 拒绝把 Parent/VCS/Memory/Retention/retrieval-extended 塞进常驻包。
-- 停止：把未激活模块「顺便」编进去；用 workflow 切片冒充第 1 层。
-- 不新增第五个常驻检索意图。
+- 当前编译器最多保留 8 项、4000 estimated tokens；单个模块正文最多读取 2200 字符。遗漏项带原因，关键边界不能靠被截掉的正文传递。
+- 包里没有某模块，不表示未安装；本包不替未披露模块激活，也不授予执行权限。不得补读全部方法论来绕过披露边界。
+- 源码、文档或 section 指纹过期时先重新取索引；不要把旧引用当当前证据。
+- `workflow.md`、AGENTS 长文和 `[workflow-state:*]` 不是运行时 SSOT；V1 的强度/拓扑过滤不适用于 V2。
+- 不新增第五个常驻检索意图，不把工具名写入 baseline。
 
 ## 关掉必须消失
 
-没有 PACTILE 上下文包。Adapter 仍可起会话，但没有模块化披露。缺本槽则渐进式披露无法验收。
+没有 Pactile 编译上下文包；宿主可能仍可启动，但不能声称已交付渐进披露。传输或注入是否成功由实际宿主收据证明。
 
 ## 不得带走
 
-各模块短契约正文的所有权；Event Bridge 总线（Adapter）；检索打分与 stop 钩（`retrieval-extended`）；journal 常驻注入（`personal-memory`）。
+模块正文所有权；Kernel 生命周期/批准；Artifact 指纹读取；Middleware Provider；检索评分/pack；journal 的授权存取。

@@ -138,7 +138,7 @@ function createActiveTask(
     "--actor",
     "alice",
     "--input-summary",
-    "Select a Tile that can provide worker.handoff",
+    "Select a Tile that can provide execution.result",
     "--approved-by",
     "user",
     "--approved-at",
@@ -312,6 +312,7 @@ describe("Pactile session Jev route", () => {
     if (!current.success)
       throw new Error("Expected the authorized current session offer");
     const suggestedRefs = current.data.offer.candidates
+      .filter((candidate) => candidate.outputScore > 0)
       .slice(0, 2)
       .map((candidate) => candidate.ref);
     if (suggestedRefs.length !== 2)
@@ -371,12 +372,8 @@ describe("Pactile session Jev route", () => {
       application: "pending-explicit-decision",
       fallback: null,
     });
-    expect(advice.candidateRefs).toEqual(
-      expect.arrayContaining([
-        "worker-orchestration@1.0.0",
-        "parent-child@1.0.0",
-      ]),
-    );
+    expect(advice.candidateRefs).toContain("worker-orchestration@1.0.0");
+    expect(advice.candidateRefs).not.toContain("parent-child@1.0.0");
     expect(advice.suggestedRefs).toEqual(suggestedRefs);
     expect(advice.recommendedAction).toBe("override");
     expect(advice.decisionCommand).toContain("--kind override");
@@ -391,8 +388,10 @@ describe("Pactile session Jev route", () => {
       method: "POST",
       authorizationMatchesConfiguredKey: true,
     });
-    expect(capture.body.state.taskSummary).toContain("worker.handoff");
-    expect(Object.keys(capture.body.questions)).toHaveLength(2);
+    expect(capture.body.state.taskSummary).toContain("execution.result");
+    expect(Object.keys(capture.body.questions)).toHaveLength(
+      current.data.offer.candidates.filter((candidate) => candidate.outputScore > 0).length,
+    );
     expect(capture.body.state.sourceSnippets.length).toBeGreaterThan(0);
     expect(JSON.stringify(capture)).not.toContain(API_KEY);
     expect(JSON.stringify(advice)).not.toContain(API_KEY);
@@ -520,6 +519,17 @@ describe("Pactile session Jev route", () => {
     );
     const decisionCommand = String(advice["decisionCommand"]);
     const decisionArgs = decisionCommand.trim().split(/\s+/).slice(1);
+    // Exercise set-equivalent adoption without relying on catalog rank order.
+    const reorderedRefs = [...suggestedRefs].sort().reverse();
+    const tileArgIndexes = decisionArgs.flatMap((arg, index) =>
+      arg === "--tile" ? [index + 1] : [],
+    );
+    expect(tileArgIndexes).toHaveLength(reorderedRefs.length);
+    tileArgIndexes.forEach((argIndex, index) => {
+      const ref = reorderedRefs[index];
+      if (!ref) throw new Error("Expected a reordered Tile ref");
+      decisionArgs[argIndex] = ref;
+    });
     const filesBeforeTamperDecision = fs
       .readdirSync(receiptsDir)
       .filter((file) => file.startsWith("tile-selection-"))
@@ -555,7 +565,7 @@ describe("Pactile session Jev route", () => {
       "selectedRefs"
     ] as string[];
     expect(acceptedRefs).toEqual([...suggestedRefs].sort());
-    expect(acceptedRefs).not.toEqual(suggestedRefs);
+    expect(acceptedRefs).not.toEqual(reorderedRefs);
     const snapshot = decisionReceipt.snapshot as {
       fingerprint: string;
       fileName: string;
@@ -732,7 +742,7 @@ describe("Pactile session Jev route", () => {
       throw new Error("Expected the authorized current session offer");
     const deterministicRefs = current.data.offer.suggestion.selectedRefs;
     const alternateRef = current.data.offer.candidates.find(
-      (candidate) => !deterministicRefs.includes(candidate.ref),
+      (candidate) => candidate.outputScore > 0 && !deterministicRefs.includes(candidate.ref),
     )?.ref;
     if (!alternateRef)
       throw new Error("Expected an eligible alternative Tile candidate");
