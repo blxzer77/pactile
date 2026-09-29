@@ -4,43 +4,27 @@ P29 表名：`vcs-integration`（不得改名）。层：on-demand。
 
 ## 职责
 
-Git（或其它已探测 VCS）上的真实操作：branch、worktree、commit、PR、push。它把「隔离 / 留下提交 / 开 PR」从 capability 落到命令。**不是** Kernel 前提，也不是 Close 的完成条件。人批仍走 `approval-personal` 的 Finalize（commit / 远程 / 不可逆）。工人默认不 commit（`worker-orchestration` 已锁）。
+处理交付所需的 Git/PR/合并事实和 Run worktree 集成、回收。`local-result` / `documentation` 可不要求 Git；`pull-request` / `merged-result` 必须满足定义的层级与 HTTPS 交付引用。Git 操作和 Kernel Close 是分别可核对的结果。
 
 ## 触发/披露
 
-未触发当没装。仓库里有 `.git` **不够**进 Prompt。触发（可审计）：
+Task 的交付层级、获授权的 Git 最终操作或已结束 Run 的资源清理需要时加载。按仓库分支策略和已有授权操作；commit、merge、push、tag、release 保持各自边界，不能由 Review PASS 或交接自动获得。
 
-1. Finalize 窗口且用户要 commit / PR / push；或
-2. Policy / Close 合同要求 commit Evidence；或
-3. Parent/Worker 要求 isolation，需要 worktree；或
-4. 用户明确说提交、开分支、开 PR。
+复用 `pactile worktree create|adopt|reconcile|inspect|integrate|reclaim`；先用 `pactile worktree --help` 核对参数。`integrate <task> <run> --target <local-branch>` 校验目标已含该 Run 结果，不执行 Git merge。worktree 提供文件隔离，不等于 OS 沙箱或所有资源隔离。
 
-**不是**触发：每次 Execute；无 Git 的 Lite Close；只改文件还不想留提交。
-
-Finalize/隔离窗口结束，Git 教战从常驻包消失。
-
-Agent 看见：
-
-1. 无 VCS → 本块不出现；生命周期仍可 Close；需要隔离则按 `worker-orchestration` 诚实降级，不得假装 worktree 已建。
-2. `git commit` ≠ Outcome completed。没 Finalize 授权不得 commit、不得 push、不得 `--force` 到默认分支。
-3. 远程、破坏性 Git、跳过 hook、改全局 git config：先问（Finalize / 用户明确）。不静默 push。
-4. worktree 细节（add/remove/路径）归本块；谁有权 integrate、哪个 Child 要隔离，归 `parent-child`。
-5. 个人默认不把「禁止在 main 上开发」写成 Kernel 规则；那是仓库/用户 overlay。若用户或 Policy 已有分支约定，本块遵守。
-6. 不提交密钥。PR 只在存在对应远程托管时做；没有 GitHub/远程 ≠ Close 失败。
-
-用户看见：要留提交或开 PR 时才出现 Git 步骤，并与 Finalize 并成一次确认。无 Git 的项目收工像普通 Close。日常改代码不灌 Git 教战。
+回收通过 manager 在 Host 已停止、集成事实和 Task Close 等门满足后进行；先核对具体路径、所有者、dirty/ignored 数据、独有历史及其他进程。被使用或有需保全内容时保留并记录原因，不能裸删目录来满足清理指标。
 
 ## 停止条件
 
-- 探测 ≠ 激活；激活条件见上。
-- 操作清单：branch / worktree / commit / PR / push 各自还要不要 Finalize。
-- 停止：无 Git 却挡 Close；把 commit 当 Close；工人代 commit；未授权 push；把窗口改名当本块。
-- 降级：无 VCS / 无远程 / 无 worktree 能力 → 记 assurance，生命周期继续（除非 Policy 硬要 commit Evidence）。
+- 候选、基线、目标或远端事实变化时，刷新相关证据再操作。
+- 用户 dirty 文件、未集成提交、其他会话工作或授权不清时，不 reset/clean/force 或迁移所有权。
+- 隔离能力不可达时说明实际保证并停止依赖该保证的派发，不声称主工作树等同受管隔离。
+- 集成或清理失败，保留原状态和可恢复引用；不靠目录消失或命令退出证明交付。
 
 ## 关掉必须消失
 
-不能 commit/PR/worktree 教战。Open→Close 仍必须能走完。不得把缺 Git 写成 Kernel 坏了。物理搬家仍是 `retention-storage`。
+Git/PR/资源专项指引不再注入；定义的交付层级和已有 worktree 管理门不消失，也不要求无关任务新增 Git 仪式。
 
 ## 不得带走
 
-业务 Outcome（`close-basic`）；Finalize 人批（`approval-personal`）；Integrate 权威（`parent-child`）；isolation **要求**（执行合同 / `worker-orchestration`）；窗口标题（Adapter UX）；任务目录 archive（`retention-storage`）。
+任务拆分/调度；批准；实际角色动作策略；Kernel Review/Close；Task 证据的保留/归档。

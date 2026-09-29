@@ -4,46 +4,40 @@ P29 表名：`worker-orchestration`（不得改名）。层：on-demand。
 
 ## 职责
 
-执行要求的**派工绑定**，不是生命周期槽，也不是通用调度器。当合同要求 worker / 隔离 / 并行时，把「谁去做」绑到可用的类型化工人（implement / check / research）。Parent 可用 Node 的 `pactile parallel run` 对已批 Child 做有上限的 Pi 批次派发；Codex 独立桌面任务仍走原生工具与回执。主会话是唯一集成 owner；工人不是 Kernel Phase。
+按已批准合同，把工作绑定到可用的 implement / research / check 角色。Task 是可独立验收的交付；Run 是执行尝试；Review 绑定准确候选。依赖和职责决定协作，无预设任务强度、固定并发上限或全局串行门。
+
+复用 [Task/Run 关键路径调度](../../framework/parallel-first-execution.md) 和 [V2 工作流](../../workflow.md)。本块不授予执行、Git 或远程写入权限，不接管 Kernel 生命周期。
 
 ## 触发/披露
 
-未触发当没装。Lite 默认看不见 spawn 教战。触发（任一即可，且可审计）：
+仅在用户明确要求派发，或当前任务合同需要独立执行、研究、审核且具备相应授权时披露。任务大小、任务关系和可拆分性不自动触发派发；派工结束后移除相关教战。
 
-1. 已声明可隔离组 **且** 派工窗口到来（Execute 已批的实现工人；Define 下独立 research 切片）；
-2. 已批 Execution Contract 写明 `execution_mode: worker`（或同等 isolation/parallel 要求）；
-3. 用户本回合明确要求派工 / 并行工人；
-4. `independent-check` 已激活且 Policy 要求 `true-independent`，平台又有独立 Worker；
-5. `define-extended` 已激活且研究合同要求独立 research worker。
+派发前核验任务、依赖、批准、写入范围、隔离、能力和证据绑定；V2 实现只派发已准入的 Run。研究和审核走各自合同，不冒充实现 Run。
 
-**不是**触发：Rigor=Full 本身；Topology=parent-child 本身（拓扑 ≠ 已派工）。已声明可隔离组且窗口到来时，不得以「Parent 默默顺序做完」代替激活；未声明可隔离组且已写 `serial_reason` 的真·单写集可 inline。
+## 角色与动作边界
 
-派工窗口结束，spawn 教战从常驻包消失。
+- implement 在获批工作区及写入范围实现和验证；research 对研究对象只读；check / Review 对准确候选和业务状态只读。临时验证及报告只能写入合同指定区域，不修改候选、既有证据或 Kernel。
+- Pi 默认加载已配置的 MCP、Skill、工具、扩展、模型及推理设置，不默认附加 `--tools` 白名单、`--no-tools`、`--no-extensions`、`--no-skills`、`--no-context-files` 或推理强度覆盖。能力可加载不等于任意动作获授权：按操作及目标约束本地和远程写入，允许职责内的检索、查询和必要验证；提示词说明职责，不能代替执行限制。
+- Pi RPC 在任务 prompt 前通过原生权限扩展完成职责合同握手，具体动作/目标受已批准职责约束。配置存在、能力加载和操作获批分别披露，详见 `.pactile/framework/pi-role-policy.md`。需要的保护不可用时保持相关派发未启动或停止无法保护的动作，不默默退回提示词并声称受保护。
+- 任意 Shell、MCP 脚本及内部派发需要已证明的整进程隔离；未启用时拒绝该调用。可选 Docker 后端限制 Pi、扩展及子进程，失败不自动降级；回执记录实际保证，候选指纹和独立 Review 门继续校验。research/check 的必要定向验证只把临时产物写入合同指定 scratch。
+- Codex 独立桌面任务负责分析、规划、协调与审核，使用原生任务通信，不派发 Codex subagent；Pi 执行 Run，可按职责内部派发。子进程及内部派发继承权限，不扩大批准范围。
+- 派发上下文明确 Task ID、任务路径、职责、批准、写入范围及证据位置；审核另带 Run 和候选 ID/指纹。会话或 worktree 只证明对应事实，不证明沙箱。模型由宿主选择，权限不由模型或 Jev 扩大。
+- 工人不承担 Kernel Finalize、Git 提交或集成；此类操作走独立批准的集成流程。无可靠宿主工人绑定时只生成手动派工提示，保持相关派发未启动，不得伪称 spawn。静态证据包复核或格式纠正须准确披露范围与局限，不能伪装成主动取证审核。
 
-Agent 看见：
+## 调度与回执
 
-1. 三种角色，槽位仍归别人：implement → Execute（`execute-agent` 的非 inline 绑定）；check → 只读第二遍（服从 `independent-check`，工人默认不改代码）；research → Define 深研（服从 `define-extended`）。
-2. 每个 Pi Agent 工人 prompt 必须带显式 `.pactile/tasks/<dir>`，不依赖 dispatcher 的 `selected_task`。工人包 = 该任务路径 + 合同片段；不继承整份梯子。Pactile 的 Node 桥接按本块激活状态提供上下文。
-3. Codex 不派发 subagent，只用独立桌面任务通信。Pi 可按已授权职责在自己的写入范围内使用内部 subagent；内部派发不新增 Pactile Child，也不扩大批准范围。
-4. 工人不 `git commit`、不 Finalize、不 `integrate-child`、不改 Kernel 核心状态。
-5. 能并行则并行（P18 / P38），但 HITL / Execute 门 / Check / 集成仍串行。串行必须写 `serial_reason`（共享写集 / 门禁 / 依赖未满足 / 用户要求 / 冲突面无法隔离）。平台没有并行面 → 顺序派工或降回 inline，记 assurance，不得假装已隔离或已并行。
-6. 所有角色按 Pi Default 加载已配置的 MCP、Skill、工具、模型与推理设置，不默认附加 `--tools` 白名单、`--no-tools`、`--no-extensions`、`--no-skills`、`--no-context-files` 或推理强度覆盖。原生权限扩展在任务 prompt 前完成合同握手；具体动作/目标受已批准职责约束。配置存在、能力加载及操作获批分别披露。详见 `.pactile/framework/pi-role-policy.md`。
-7. research/check 对候选、既有证据和 Kernel 只读，可执行获批检索/查询与必要定向验证，临时产物写入独立 scratch。任意 Shell、MCP 脚本及内部派发需要已证明的整进程隔离；未启用时拒绝该调用。可选 Docker 后端限制 Pi、扩展及子进程，失败不自动降级；回执记录实际保证，候选指纹和独立 Review 门继续校验。
-8. 模型选择归 Adapter / 宿主；本块不写死模型 ID。无可靠宿主工人绑定 → 诚实降级，可走手动派工提示，不得假 spawn。静态证据包复核或格式纠正须明确声明范围与局限，不能伪装成主动取证审核。
+比较包含等待、执行、返工、集成和审核的完成时间；并行有收益才采用。硬依赖须成功 Close；写入重叠默认顺序，显式重叠须批准和集成计划。并发写入须真实隔离；缺估算或能力时记录未知并选择安全路径，不因顺序执行而补造理由。
 
-用户看见：只有真正要派工时才出现工人/并行叙事。Lite 主会话改代码时看不到本块。Parent 的并行批次可用 `pactile parallel status` 读取耗时、等待、结果与集成状态。
+复用 `pactile task schedule plan` / `show` / `dispatch` 的现有 V2 合同；计划不等于执行授权。派发前复核绑定事实，过期则重算。宿主结束不等于 Run 成功；保留停止、结果和耗时回执。各 Task 依次满足自己的门，互不相关的 Task 无须全局串行。
 
 ## 停止条件
 
-- 触发与非触发见上。
-- 三角色 ↔ 槽位 owner 对照；工人包形状（任务路径 + 合同片段）。
-- 停止：未激活仍派工；Codex 派发 subagent；Pi 内部派发越过批准范围；把 Check 工人当执行修补手（与已锁定的 `independent-check` 只读冲突）；把 Child 拓扑当成已经派工；无平台能力却写 true-independent / isolated / parallel；有可隔离组且窗口已到却全程 inline 且无 `serial_reason`。
-- 降级：无 Worker / 无隔离 / 无并行 → assurance + inline 或顺序；`execute-agent` 仍可用。
+未获批准、硬依赖未满足、候选或合同过期、写入冲突未获准、隔离或职责保护无法证明时，停止受影响派发并记录原因。不可将审核员当修补者，不可伪称独立、只读、隔离或已执行。无可用独立审核时保留 Review 待办，不能用 self-review 替代必需独立 Review。
 
 ## 关掉必须消失
 
-无 spawn 教战、无 subagent 注入钩、无并行工人说明书。Execute 只走 `execute-agent` inline。Check 最多 `self-review`。研究留在主会话。Parent 仍可存在，但只能顺序/inline，没有工人扇出。
+移除派工教战、派发钩子和工人说明；保留普通任务执行与已启动工作的停止/收据义务。关闭本块不解除依赖、批准、独立 Review 或 Close 门。
 
 ## 不得带走
 
-Execute 槽本身（`execute-agent`）；Check 语义与 assurance 标签（`independent-check`）；Decompose / 集成权威 / task-map（`parent-child`）；worktree 探测细节（`vcs-integration`，本块只要求 isolation capability）；宿主可见并行面是否存在（Adapter 探测）；跨窗人肉搬运（`session-transfer`）。
+任务定义、依赖、Run/Review/Close 权威属于 Kernel；执行方法归 `execute-agent`，审核结论归独立 Review，worktree 管理归既有隔离能力，Git 操作遵循单独批准。V1 兼容命令只用于统一读者明确识别的旧任务。
