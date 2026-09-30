@@ -1457,7 +1457,6 @@ export class PiTaskBridge {
         startupTimeoutMs,
         guarded,
       );
-      checkCancellationNow("Pi cancelled before role policy attestation");
       this.dockerLaunch?.verifyStarted();
       record.role_policy = await attestPiRolePolicy(client, guarded.contract, review ? remainingCheckMs() : Math.min(input.timeoutMs, 15_000));
       if (this.dockerLaunch) {
@@ -1598,6 +1597,12 @@ export class PiTaskBridge {
           progressEvidenceRef,
         });
       }
+      // A cancellation can arrive while the child is starting. Keep the
+      // manager-owned handshake and identity receipts intact before honoring
+      // it; the prompt below still receives the aborted signal and will not
+      // dispatch work. Without this ordering a verified child exit could be
+      // left without the session/process evidence needed to settle the Run.
+      checkCancellationNow("Pi cancelled before prompt dispatch");
       detach = client.onEvent((event) => {
         if (event.type === "transport_error") return;
         record.event_count += 1;

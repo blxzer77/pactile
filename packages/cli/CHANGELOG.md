@@ -31,6 +31,9 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
   its prepared checkout.
 - The retrieval quality module is explicitly optional and remains on-demand;
   it does not force CodeGraph or fast-context installation.
+- Cancellation during Pi startup now completes the manager-owned handshake
+  before stopping the child, so verified cancellation retains a complete stop
+  receipt and can release the dispatch lease safely.
 
 This patch release is intended for the stable candidate channel first; promote
 it to `latest` only after the candidate checks pass.
