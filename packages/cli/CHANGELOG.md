@@ -12,6 +12,24 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.6] - 2026-10-01
+
+### Fixed
+
+- The Node Task Kernel workflow is now the documented default: `create` →
+  `run-start` → `run-result` → `review` → `close`, while V1 commands remain
+  explicitly marked as compatibility paths.
+- Worktree help and lifecycle documentation expose `reconcile`, and the
+  reconcile/inspect/integrate/reclaim boundaries are documented together.
+- Session and archive auto-commit are opt-in and accept the documented boolean
+  forms; session commits honor `session_commit_message` without touching
+  unrelated staged files.
+- Documentation source mapping and locale command parity now include the
+  internal Skill and Pi role contracts used by the release checks.
+
+This patch release is intended for the stable candidate channel first; promote
+it to `latest` only after the candidate checks pass.
+
 ## [0.6.5] - 2026-09-29
 
 ### Added

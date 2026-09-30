@@ -37,4 +37,8 @@ An approved narrative change cannot silently alter an executed definition. Use a
 
 Check the existing definition and authored documents in the current conversation. Inspect unexplained assumptions, conflicting AC interpretations, unnecessary complexity and unresolved risks. This retains useful document-review practice without a mandatory new Subagent, a standalone slash command or a bundled `brainstorm` dependency.
 
+This is an **optional brick** in the planning path. The **Front-anchor principle** is to resolve only decisions that can change the deliverable, acceptance, scope or material risk; the stop condition is **AC 歧义面 = 0**. A clear Task may proceed without this brick.
+
+`design.md` records technical design when Risk/Policy or `verification_profile: architecture` requires it. Complex Tasks need `prd.md` and `implement.md` before the current V2 execution contract is admitted; do not infer a mandatory design document from Task size.
+
 Finish when the deliverable, ACs and boundaries are clear, blocking decisions are resolved, and required authorization is available. Proceed through the current [V2 workflow](../workflow.md); V1 `start-execution` applies only to a Task explicitly identified as legacy.

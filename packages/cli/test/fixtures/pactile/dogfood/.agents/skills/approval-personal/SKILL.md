@@ -5,4 +5,4 @@ description: "Keep execution and high-impact actions inside user authorization."
 
 # Approval Personal
 
-Treat planning, execution, Git finalization, remote writes, and release actions as distinct grants. Stop when a required grant is absent.
+Reuse an existing user grant within its scope. Planning, execution, Git finalization, remote writes and release have distinct boundaries. Record Run authorization; flags and records do not authenticate the user or expand permission. Stop on a missing grant or changed scope. Load `.pactile/modules/approval-personal/contract.md` when a decision needs authorization.

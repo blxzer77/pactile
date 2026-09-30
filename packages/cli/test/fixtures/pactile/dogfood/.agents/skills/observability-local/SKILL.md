@@ -1,8 +1,8 @@
 ---
 name: "observability-local"
-description: "Record local, secret-safe execution and decision evidence."
+description: "Record sanitized local execution and decision evidence."
 ---
 
 # Observability Local
 
-Capture deterministic event and result summaries. Never persist credentials, raw sensitive output, or unrelated user content.
+Record sanitized local event/result receipts and distinguish measured, estimated and unavailable values. Never persist credentials, raw prompts, sensitive payloads or unrelated user content; local tracing does not authorize external telemetry. Load `.pactile/modules/observability-local/contract.md` when execution or decision evidence must be recorded.
