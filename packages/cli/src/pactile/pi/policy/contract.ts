@@ -135,7 +135,7 @@ export function buildPiRoleContract(input: {
     throw new Error("Pi role contract Kernel facts changed after admission");
   if (input.kernel && ((input.role === "implement" && input.kernel.phase !== "execute") || (input.role === "check" && input.kernel.phase !== "verify")))
     throw new Error("Pi role contract Kernel phase does not admit this role");
-  if (input.run && ((input.role === "implement" && input.run.state !== "running") || (input.role === "check" && (input.run.state !== "completed" || !input.run.candidateSnapshot))))
+  if (input.run && ((input.role === "implement" && input.run.state !== "running" && input.run.state !== "waiting") || (input.role === "check" && (input.run.state !== "completed" || !input.run.candidateSnapshot))))
     throw new Error("Pi role contract Run is not eligible for this role");
   const reads: PiPathGrant[] = [{ path: cwd, kind: "directory" }, { path: taskDir, kind: "directory" }];
   const agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");

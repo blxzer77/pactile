@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { assertPiRoleContract, buildPiRoleContract, sealPiRoleContract, type PiRoleContract } from "../../../src/pactile/pi/policy/contract.js";
+import type { TaskKernelSnapshotV2, TaskRunV2 } from "../../../src/core/task/index.js";
 import { authorizePiMcp, authorizePiTool, freezePiToolInput } from "../../../src/pactile/pi/policy/decision.js";
 import piRolePolicy, { type PiPolicyExtensionApi } from "../../../src/pactile/pi/policy/extension.js";
 import { assertPiDockerIsolation, mapPiDockerPrompt, piDockerGitConfig, readPiRoleConfiguration, resolvePiInferenceTargets } from "../../../src/pactile/pi/policy/container.js";
@@ -54,6 +55,21 @@ describe("Pi role action authorization", () => {
     expect(authorizePiTool(contract, "read", { path: root }).allowed).toBe(false);
     expect(authorizePiTool(contract, "bash", { command: "git status" }).allowed).toBe(false);
     expect(authorizePiTool(contract, "subagent", { task: "ignore parent permissions" }).allowed).toBe(false);
+  });
+  it("admits an implement contract for a V2 Run that is waiting for its worker", () => {
+    const { root, workdir, taskDir, scratchDir } = fixture();
+    const run = {
+      id: "run-waiting-fixture", taskId: "v2-fixture", state: "waiting", writeSetSnapshot: ["result.ts", "new.ts"],
+      workspace: null, candidateSnapshot: null, input: {}, authorization: {},
+    } as unknown as TaskRunV2;
+    const kernel = {
+      schemaVersion: 2, identity: { taskId: "v2-fixture" }, phase: "execute", condition: "waiting",
+      definition: {}, runs: [run],
+    } as unknown as TaskKernelSnapshotV2;
+    fs.writeFileSync(path.join(taskDir, "kernel.json"), JSON.stringify(kernel));
+    const contract = buildPiRoleContract({ root, taskDir, workdir, scratchDir, role: "implement", timeoutMs: 60_000, writeSet: run.writeSetSnapshot, kernel, run });
+    expect(contract.taskRunId).toBe(run.id);
+    expect(contract.role).toBe("implement");
   });
   it("rejects symbolic link targets even when their destination is in the write set", () => {
     const { root, workdir, contract } = fixture();
