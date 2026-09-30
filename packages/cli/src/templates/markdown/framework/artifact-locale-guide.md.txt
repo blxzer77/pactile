@@ -1,93 +1,31 @@
-# Human-Reviewed Artifact Locale Guide
+# Artifact language and audience
 
-> **Purpose:** Let PRD / DESIGN / IMPLEMENT / VERIFY / HANDOFF follow the user's language (Chinese or English) without turning Pactile into a full i18n product.
+Human-authored PRD, design, implementation, verification and handoff prose follows the user's/project's review language. Machine identifiers, paths, enums, fingerprints and Kernel contracts retain their canonical spelling. Language choice never changes lifecycle gates.
 
----
+## Current V2 behavior
 
-## 1. Non-goals
+`pactile task create` creates an English reference scaffold only when no authored PRD exists. It does not translate narrative or regenerate an existing file. The live definition and facts come from the Kernel. Agent-authored prose can use the requested language while preserving those references.
 
-| In scope | Out of scope |
-| --- | --- |
-| Workspace / task `artifact_locale` | Full CLI `--help` / stderr i18n |
-| `pactile task create` PRD seed language | Auto-translating archived tasks |
-| Session / planning hints for artifact language | Managed `AGENTS.md` block or project spec |
-| `prd.md` / `design.md` / `implement.md` / `verify.md` / `handoff.md` | `task.json` field names or gate enums |
+Use `pactile task artifacts <task> --agent` for the compact structured index, and fingerprint-bound fact/document/section reads for the context actually needed. Use the default artifacts view and authored Markdown for human explanation. Do not copy all structured state into prose or imply that editing Markdown updates the Kernel.
 
-**Rollback:** `pactile task artifact-locale set zh` or remove `artifact_locale` from `.pactile/config.yaml`. For a single task, delete `task.json` → `meta.artifact_locale`.
+The existing `artifact-locale --task` setter operates on legacy `task.json`; V2 has no equivalent per-Task locale field/setter. Do not manually add one to `kernel.json` or promise that the workspace setting translates a V2 scaffold.
 
----
+## Legacy locale configuration
 
-## 2. Configuration
-
-### Workspace default (`.pactile/config.yaml`)
-
-```yaml
-# Human-reviewed artifact locale (zh | en)
-artifact_locale: zh
-```
-
-Default when unset: **`zh`** (matches current dogfood and User Rules for Simplified Chinese replies).
-
-### CLI
+For an explicitly identified V1 Task, locale resolution uses its valid `meta.artifact_locale`, then `.pactile/config.yaml` `artifact_locale`, then `zh`. The legacy creation templates support `zh` and `en`.
 
 ```powershell
-# Resolved locale (workspace default)
 pactile task artifact-locale get
-
-# Resolved locale for one task (includes task override)
-pactile task artifact-locale get --task .pactile/tasks/<dir>
-
-# Workspace default
 pactile task artifact-locale set en
 pactile task artifact-locale set zh
-
-# Per-task override
-pactile task artifact-locale set zh --task .pactile/tasks/<dir>
+pactile task artifact-locale get --task <legacy-task>
+pactile task artifact-locale set zh --task <legacy-task>
 ```
 
-Invalid values print a warning and fall back to the next layer (`task` → `workspace` → `zh`).
+Workspace setters change local configuration and therefore need applicable authorization. Existing authored/archived files are preserved, not translated. Use the supported setter rather than manually editing Task JSON to switch between the two languages.
 
----
+## Audience and verification
 
-## 3. What respects locale
+For Agents, keep schemas, typed references and selective retrieval. For people, explain the goal, decisions, risks and evidence in readable prose. Both views refer to the same current facts; neither claims unperformed work.
 
-| Artifact | Mechanism |
-| --- | --- |
-| `prd.md` on `pactile task create` | Locale template under `.pactile/tasks/locale/{zh,en}/default-prd.md` |
-| `design.md` / `implement.md` | Agent planning (session context + `pactile-brainstorm`) |
-| `verify.md` / `handoff.md` | Agent execution / finish (same session hint) |
-| Optional `tasks/templates/*` copies | Agent follows guide; English paths stay canonical |
-
-**Does not change:** existing files in a task directory, CLI diagnostics, hooks, or machine gate names.
-
----
-
-## 4. Dogfood checklist
-
-1. `artifact-locale set en` → `pactile task create "Locale EN" --slug locale-dogfood-en` → `prd.md` uses `## Goal`, `## Requirements`.
-2. `artifact-locale set zh` → `pactile task create "Locale ZH" --slug locale-dogfood-zh` → `prd.md` uses `## 目标`, `## 需求`.
-3. With workspace `en`, `artifact-locale set zh --task <dir>` → next create for that task only uses Chinese if `meta.artifact_locale` was set before create (override applies to resolved locale for that task).
-
----
-
-## 5. Orthogonal `locale` settings
-
-| Setting | Purpose |
-| --- | --- |
-| **`artifact_locale`** (this guide) | Human-reviewed task artifacts |
-| Retrieval / semantic `locale` | Code search ranking and plan language |
-| smart-search `locale-scope` | External research evidence language |
-
-Do not merge these keys; they solve different problems.
-
----
-
-## 6. Rollback
-
-1. `artifact-locale set zh` (workspace).
-2. Remove `meta.artifact_locale` from any task that should follow workspace only.
-3. Revert code/templates if needed — default `zh` keeps dogfood behavior without config.
-
----
-
-**Core principle:** Product language follows the user for artifacts they review; infrastructure stays English unless explicitly scoped.
+Verify the actual scaffold/view and preservation behavior separately from language preferences. There is no full CLI internationalization or automatic historical translation requirement. Retrieval/semantic locale and external search locale have separate purposes; do not merge their settings with artifact language.

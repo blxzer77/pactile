@@ -24,4 +24,7 @@
 
 - Keep `prd.md` focused on requirements, constraints, and acceptance criteria.
 - Lightweight tasks can remain PRD-only.
-- For complex tasks, add `design.md` for technical design and `implement.md` for execution planning before `pactile task start-execution --check`.
+- For complex tasks, add `design.md` for technical design and `implement.md`
+  for execution planning before the Task's V2 `run-start`.
+- Start, result, review, and close are recorded with the V2 Task commands;
+  legacy V1 gate commands are only for imported legacy tasks.

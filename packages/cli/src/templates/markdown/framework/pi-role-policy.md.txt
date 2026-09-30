@@ -1,0 +1,41 @@
+# Pi role actions and isolation
+
+Load Pi's configured tools, MCP servers, Skills, extensions, models and thinking settings. A loaded capability does not authorize every action.
+
+## Authority
+
+The host compiles a fresh role contract from the approved Task/Run, registered workspace, precise write set and, for Check, completed candidate. The contract and source guards must remain current. Model recommendations and Jev cannot widen it. Changed authority, role, candidate, source contract or workspace requires a fresh process. Kernel owns lifecycle mutations and Close.
+
+| Role | Project / candidate | Existing Task evidence and Kernel | Validation scratch |
+| --- | --- | --- | --- |
+| implement | Read; write only approved files/directories | Read | Read/write |
+| research / check | Read | Read | Read/write |
+
+No worker commits, merges, publishes, changes authentication, writes production, rewrites evidence or closes the Task. Remote calls require a trusted action/target mapping; a tool name or `readOnlyHint` does not grant permission. Unmapped calls are rejected individually, with the capability still loaded.
+
+## Launch and evidence
+
+`pactile pi run <task> --role <implement|research|check> --prompt-file <file>` adds a native policy extension and requires its contract-bound RPC attestation before sending the worker prompt. Receipts record observed tools/Skill commands and the actual assurance. No `--no-*` capability flags are added. Root Task Skills are supplied when the registered worktree is elsewhere.
+
+- `tool-policy` is the default. Bounded file/query actions are checked before execution. Arbitrary Shell, powershell, MCP scripting and internal delegation require whole-process isolation. The extension is not an OS sandbox; trusted extensions execute in Pi's host process.
+- `--sandbox docker --sandbox-image <prepared-image>` requires an already available Linux Docker engine, a trusted prepared Pi image and the configured relay image. It never pulls images or installs/starts Docker automatically. An unavailable requested backend blocks launch; there is no automatic downgrade.
+- Docker gives each invocation its own non-root process namespace, readonly root, `network=none` and exact mounts. Source, Task evidence, control/configuration, Skills/extensions and Git metadata are readonly; the declared scratch and implement write set are writable. Known credential files and local control directories are hidden. This cannot discover secrets embedded in arbitrary source text.
+- Configured HTTP inference and approved MCP tools use an authenticated temporary broker. Model/MCP credentials remain in the host; the worker sees dummy model auth and virtual MCP endpoints. Provider headers are withheld. Pi's provider implementation and the official MCP SDK retain their protocols. Supported inference paths are `/chat/completions`, `/responses` and `/messages`; OAuth refresh, other transports and arbitrary network access are not granted. Network proxy settings remain external to Pactile.
+- Native MCP Adapter 3.0 discovery/call syntax is preserved; its final approval event checks original server/tool identity and final arguments. The Docker broker repeats authorization even if an extension calls the SDK directly. Aggregate FastCtx searches exclude credentials, links, Git/Pactile runtime and dependencies; ambiguous or oversized scans require a narrower query.
+- Pi internal children share the container's physical maximum. New Pactile Tasks still need their own approval/contracts; an internal child cannot claim a wider physical grant.
+
+Docker invocations use fresh sessions; cross-container `--resume` is not enabled. Native warm reuse/resume is allowed only after rebuilding and attesting the current contract; changed authority/permissions starts a new process. Cancellation stops the owned Docker worker, and stale attachments cannot be recovered while it remains active. Review recording / dispatch lease release require both attachment exit and verified Docker termination. Only owned resources are cleaned; uncertain stop retains the lock/evidence and reports the gap.
+
+## Verification
+
+Docker RPC allows up to 30 seconds for default extensions to finish EOF cleanup, returning as soon as the process exits. The bounded fallback still forces termination and records the actual exit; a forced or abnormal exit cannot yield a passing Review.
+
+The inference relay distinguishes contract/target denial (403) from an authorized upstream transport failure (502), using fixed safe categories in `x-pactile-role-relay-failure`. Provider error status is retained with a sanitized body. A broken started stream closes the connection without injecting error text. Admission scopes and failed/incomplete-model Review gates remain mandatory.
+
+Use affected action/path/RPC/candidate tests, observed backend facts and actual safe/forbidden operations. Label fake RPC/provider evidence as simulated. A valid JSON response, policy handshake or running Docker engine alone does not prove model quality, OS isolation, independent Review PASS or Task Close.
+
+Check keeps every tool failure. Bounded missing-source reads, missing exploratory commands or `which` / `command -v` queries, rejected temporary writes to readonly `/tmp`, readonly discovery failures and ordinary searches/Git ignore queries with no match may have recovery proof. A test tool name in a directory query is not a test invocation. Unknown errors, actual required-validation commands, assertion failures and `grep -q` / `git check-ignore -q` checks remain blocking; a later discovery query cannot hide validation failure in a compound command. For each recoverable failure, `toolRecoveries` must name its actual `failedToolCallId`, a later successful `recoveredByToolCallId`, and an independent `rationale`. The host binds order, outcomes and input/result hashes to stop-receipt-bound event bytes and rechecks them before recording Review. No missing/earlier/failed/duplicate recovery, empty explanation, candidate or authority invalidation, permission expansion, provider/extension failure or incomplete model completion may yield PASS. Keep original failed records.
+
+Failed Bash queries are tokenized with `shell-quote` without execution or host environment expansion; Node `parseArgs` detects quiet options beyond the first flag. Only a bounded static query grammar is eligible for recovery. Package-manager validation options remain hard failures; wrappers, assignments, substitutions, multiline scripts, executable find/sed actions and untrusted executable paths are blocked when their meaning is not proven. Keep discovery and validation in separate tool calls. This narrows error-recovery proof, not the loaded Pi capabilities.
+
+Check tool results include `Pactile tool evidence` with the exact native identity, including provider `call_id|function_call_id`, plus a shorter ID-fingerprint `reviewToolRef`. Prefer copying that exact short reference into recovery fields; full IDs also work. The host resolves only unique recorded calls and stores complete native IDs in the validated Review. Collisions, misspellings and ambiguity are rejected; there is no prefix or fuzzy matching. Retain the original content and error status. Classification is recovery eligibility, not a verdict: explain why the failed call was exploratory and how the later successful evidence recovered it. The host checks the actual events and hard gates.

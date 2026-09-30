@@ -10,6 +10,7 @@ import {
   type PiRunRecord,
 } from "../pactile/pi/bridge.js";
 import type { PiRpcLaunch } from "../pactile/pi/rpc.js";
+import { stopOwnedPiDockerRole } from "../pactile/pi/policy/container.js";
 import {
   collectIndependentPiReviewEvidenceRefs,
   safeParseIndependentPiReview,
@@ -145,6 +146,7 @@ function piReviewContext(
         : null,
       eventCount: record.event_count,
       toolErrors: record.tool_errors,
+      ...(record.review_tool_evidence ? { toolEvidence: record.review_tool_evidence } : {}),
     },
     run: prepared.run,
     boundCandidate: {
@@ -429,6 +431,9 @@ export async function runPiCli(
         `${JSON.stringify({ request_id: randomUUID(), run_id: record.run_id, requested_at: new Date().toISOString() })}\n`,
         { mode: 0o600 },
       );
+      const active = readRecord(path.join(evidence, "active.json")) as unknown as Record<string, unknown> | null;
+      if (active?.backend === "docker" && active.run_id === record.run_id)
+        stopOwnedPiDockerRole(String(active.container_id), String(active.contract_fingerprint));
       console.log(`Cancellation requested for Pi run ${record.run_id}`);
       return 0;
     }
@@ -438,6 +443,9 @@ export async function runPiCli(
     const role = required(option(args, "--role"), "--role");
     if (role !== "implement" && role !== "check" && role !== "research")
       throw new Error("--role must be implement, check, or research");
+    const sandbox = option(args, "--sandbox") ?? process.env.PACTILE_PI_SANDBOX ?? "tool-policy";
+    if (sandbox !== "docker" && sandbox !== "tool-policy") throw new Error("--sandbox must be docker or tool-policy");
+    const dockerOptions = sandbox === "docker" ? { image: required(option(args, "--sandbox-image") ?? process.env.PACTILE_PI_DOCKER_IMAGE, "--sandbox-image or PACTILE_PI_DOCKER_IMAGE") } : undefined;
     const runId = args.includes("--run-id")
       ? required(option(args, "--run-id"), "--run-id")
       : undefined;
@@ -477,7 +485,7 @@ export async function runPiCli(
     const onSignal = (): void => controller.abort();
     process.once("SIGINT", onSignal);
     process.once("SIGTERM", onSignal);
-    const bridge = new PiTaskBridge(root, launch);
+    const bridge = new PiTaskBridge(root, launch, dockerOptions);
     try {
       for (const [index, file] of promptFiles.entries()) {
         const result = await bridge.run({

@@ -1,6 +1,6 @@
 # Change Local Task Lifecycle
 
-Task lifecycle includes creation, selection, execution start, context configuration, archive, parent/child tasks, and lifecycle hooks. Project customization targets are `.pactile/tasks/` and `.pactile/config.yaml`; runtime behavior lives in the Pactile Node CLI.
+Task lifecycle includes creation, selection, execution start, context configuration, archive, and lifecycle hooks. Project customization targets are `.pactile/tasks/` and `.pactile/config.yaml`; runtime behavior lives in the Pactile Node CLI.
 
 ## Read These Files First
 
@@ -33,6 +33,11 @@ hooks:
   after_archive:
     - "node .pactile/hooks/my-sync.mjs archive"
 ```
+
+The supported events are `after_create`, `after_start`, and `after_archive`.
+The historical `after_finish` event belonged to the removed session-pointer
+command and is not emitted by the Node CLI. Use `after_archive` when an
+integration needs to observe a completed task.
 
 Hook commands receive the `TASK_JSON_PATH` environment variable, pointing to the task's `task.json`. Hook failures should usually warn, but not block the main task operation.
 

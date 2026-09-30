@@ -1,10 +1,8 @@
 ---
 name: "define-basic"
-description: "Define requirements, acceptance evidence, and non-goals."
+description: "Define a Task deliverable, acceptance, delivery level and dependencies."
 ---
 
 # Define Basic
 
-Convert the request into observable acceptance criteria and name non-goals; keep implementation steps separate.
-
-Before choosing an implementation, use `.pactile/framework/reuse-first-guide.md`: inspect existing capabilities and permitted mature external options; cite applicable prior research, explicit from-scratch instructions or research limits. Record Decision/Rationale/Risk in Task `design.md`. This grants no new permissions.
+Record deliverable, measurable ACs, delivery level and hard dependencies in the Kernel; Markdown explains them without changing gates. Before choosing an implementation, apply `.pactile/framework/reuse-first-guide.md`: reuse capabilities and permitted mature options, or justify self-build; disclose research limits. Record Decision/Rationale/Risk in `design.md`. Load `.pactile/modules/define-basic/contract.md` for changes.

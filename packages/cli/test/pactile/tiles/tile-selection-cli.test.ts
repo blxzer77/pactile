@@ -240,6 +240,7 @@ describe("current Task tile-selection CLI", () => {
     expect(sessionOffer.tileSelection.status).toBe("offered");
     expect(sessionOffer.tileSelection.offer?.taskLifecycle.selectionGrant.source).toBe("safe-default");
     expect(sessionOffer.tileSelection.offer?.candidates.some((candidate) => candidate.ref === "worker-orchestration@1.0.0")).toBe(false);
+    expect(sessionOffer.tileSelection.offer?.candidates.some((candidate) => candidate.ref === "parent-child@1.0.0")).toBe(false);
     expect(sessionOffer.tileSelection.decisionCommand).toContain("--session");
     const beforeRunDecisionExit = runTileSelectionCli(sessionDecisionArgs(sessionOffer.tileSelection.decisionCommand), root);
     expect(beforeRunDecisionExit, String(errorLog.mock.lastCall?.[0] ?? JSON.stringify(lastJson(log)))).toBe(0);
@@ -287,6 +288,7 @@ describe("current Task tile-selection CLI", () => {
         status: string;
         decisionCommand: string;
         offer?: {
+          requiredOutputs: string[];
           taskLifecycle: { phase: string; revision: number; selectionGrant: { source: string } };
           candidates: { ref: string }[];
         };
@@ -294,12 +296,14 @@ describe("current Task tile-selection CLI", () => {
     };
     expect(activeSession.kernel).toMatchObject({ phase: "execute", revision: active.kernel.revision });
     expect(activeSession.tileSelection.status).toBe("offered");
+    expect(activeSession.tileSelection.offer?.requiredOutputs).toEqual(["execution.result"]);
     expect(activeSession.tileSelection.offer?.taskLifecycle).toMatchObject({
       phase: "execute",
       revision: active.kernel.revision,
       selectionGrant: { source: "task-kernel-approval-snapshot" },
     });
     expect(activeSession.tileSelection.offer?.candidates.some((candidate) => candidate.ref === "worker-orchestration@1.0.0")).toBe(true);
+    expect(activeSession.tileSelection.offer?.candidates.some((candidate) => candidate.ref === "parent-child@1.0.0")).toBe(false);
     expect(JSON.stringify(activeSession.tileSelection)).not.toContain("audit");
     const activeSessionDecisionArgs = sessionDecisionArgs(activeSession.tileSelection.decisionCommand);
     expect(activeSessionDecisionArgs).toContain("--session");
@@ -309,10 +313,22 @@ describe("current Task tile-selection CLI", () => {
       executionAuthorization: "not-granted",
       receipt: {
         outcome: "selected",
-        selectedRefs: ["worker-orchestration@1.0.0"],
+        selectedRefs: ["execute-agent@1.0.0"],
         compilerPassed: true,
       },
     });
+
+    const kernelBeforeLegacyOverride = fs.readFileSync(path.join(taskDir, "kernel.json"));
+    const legacyOverrideArgs = [...activeSessionDecisionArgs];
+    legacyOverrideArgs[legacyOverrideArgs.indexOf("--kind") + 1] = "override";
+    legacyOverrideArgs.push("--tile", "parent-child@1.0.0");
+    expect(runTileSelectionCli(legacyOverrideArgs, root)).toBe(0);
+    expect(lastJson(log)).toMatchObject({
+      success: true,
+      executionAuthorization: "not-granted",
+      receipt: { outcome: "invalid-selection", compilerPassed: false, selectedRefs: [] },
+    });
+    expect(fs.readFileSync(path.join(taskDir, "kernel.json"))).toEqual(kernelBeforeLegacyOverride);
 
     const rejectedExpansion = runTileSelectionCli([
       ...activeSessionDecisionArgs,
@@ -384,6 +400,20 @@ describe("current Task tile-selection CLI", () => {
       receipt: { outcome: "stale-offer", compilerPassed: false, selectedRefs: [] },
     });
     expect(JSON.stringify(staleSessionDecision)).not.toContain("worker-orchestration");
+
+    const noDispatchGrant = { ...grant, capabilities: [] };
+    expect(runTaskCli([
+      "run-start", "v2-tile-grant", "--actor", "alice", "--input-summary", "Produce an execution result without worker dispatch",
+      "--approved-by", "user", "--authorization-scope", `pactile-tile-selection/v1:${canonicalizePactileJsonV1(noDispatchGrant)}`,
+      "--authorization-evidence", "approval.json", "--write-set", "result.txt",
+    ], root)).toBe(0);
+    expect(runContextCli(["--mode", "session", "--json"], root)).toBe(0);
+    const noDispatchSession = lastJson(log).tileSelection as {
+      offer: { requiredOutputs: string[]; candidates: { ref: string }[]; suggestion: { selectedRefs: string[]; complete: boolean } };
+    };
+    expect(noDispatchSession.offer.requiredOutputs).toEqual(["execution.result"]);
+    expect(noDispatchSession.offer.suggestion).toMatchObject({ selectedRefs: ["execute-agent@1.0.0"], complete: true });
+    expect(noDispatchSession.offer.candidates.some((candidate) => candidate.ref === "worker-orchestration@1.0.0")).toBe(false);
   });
 });
 

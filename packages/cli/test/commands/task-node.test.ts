@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runTaskCli } from "../../src/commands/task.js";
 import { emptyTaskRecord } from "../../src/core/task/index.js";
 import { createTaskWithArtifacts } from "../../src/pactile/task/creation.js";
+import { localDate } from "../../src/utils/local-date.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -60,7 +61,7 @@ describe("Node task CLI", () => {
     fs.appendFileSync(path.join(dir, "verify.md"), "\nValidation commands: pnpm test — passed\nFinal acceptance evidence: criteria reviewed\n");
     expect(runTaskCli(["archive", "example", "--check"], root)).toBe(0);
     expect(runTaskCli(["archive", "example"], root)).toBe(0);
-    const month = new Date().toISOString().slice(0, 7);
+    const month = localDate(new Date()).slice(0, 7);
     const archived = path.join(tasks, "archive", month, created ?? "");
     expect(JSON.parse(fs.readFileSync(path.join(archived, "task.json"), "utf8"))).toMatchObject({ status: "completed" });
     expect(fs.existsSync(dir)).toBe(false);

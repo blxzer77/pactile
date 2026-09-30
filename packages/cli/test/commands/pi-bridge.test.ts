@@ -47,7 +47,8 @@ describe("Pi native RPC task bridge", () => {
       const received = fs.readFileSync(result.session_file, "utf8");
       expect(received).toContain("configured MCP servers, skills, and tools");
       expect(received).toContain("read-only for project sources");
-      expect(received).toContain("separate temporary directory outside the project");
+      expect(received).toContain("declared scratch directory");
+      expect(received).toContain("Arbitrary Shell is blocked without whole-process isolation");
       expect(received).toContain("Do not commit, merge, publish");
     } finally { await bridge.close(); }
   });

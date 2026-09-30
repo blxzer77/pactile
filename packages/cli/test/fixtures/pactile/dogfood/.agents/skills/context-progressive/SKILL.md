@@ -5,4 +5,4 @@ description: "Load only the context needed for the next decision."
 
 # Context Progressive
 
-Start from indexes and contracts, retrieve deeper source evidence on demand, and carry forward compact state rather than replaying the whole workspace.
+Use the selected Task's Kernel facts and fingerprinted artifact index, then expand only the needed document sections or source evidence. Registered modules and Tile advice do not grant execution. Do not reconstruct V2 state from legacy files or dump every guide. Load `.pactile/modules/context-progressive/contract.md` for Session Pack budgets and retrieval boundaries.

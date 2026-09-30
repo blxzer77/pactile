@@ -4,6 +4,9 @@ import path from "node:path";
 type ConfigValue = string | ConfigValue[] | { [key: string]: ConfigValue };
 export type PactileConfig = Record<string, ConfigValue>;
 
+const TRUE_VALUES = new Set(["true", "yes", "1", "on"]);
+const FALSE_VALUES = new Set(["false", "no", "0", "off"]);
+
 function stripComment(input: string): string {
   let quote: string | null = null;
   for (let index = 0; index < input.length; index += 1) {
@@ -72,4 +75,30 @@ export function parseSimpleConfig(content: string): PactileConfig {
 export function readPactileConfig(root: string): PactileConfig {
   try { return parseSimpleConfig(fs.readFileSync(path.join(root, ".pactile", "config.yaml"), "utf8")); }
   catch { return {}; }
+}
+
+/**
+ * Read a YAML-like boolean from the intentionally small config parser.
+ *
+ * The parser preserves scalar values as strings so that legacy config files
+ * remain lossless. Keep boolean interpretation in one place and make unknown
+ * values fail closed to the caller's supplied default.
+ */
+export function configBoolean(
+  value: ConfigValue | undefined,
+  defaultValue: boolean,
+): boolean {
+  if (typeof value !== "string") return defaultValue;
+  const normalized = value.trim().toLowerCase();
+  if (TRUE_VALUES.has(normalized)) return true;
+  if (FALSE_VALUES.has(normalized)) return false;
+  return defaultValue;
+}
+
+/** Return a non-empty configured commit message or the operation fallback. */
+export function configCommitMessage(
+  value: ConfigValue | undefined,
+  fallback: string,
+): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }

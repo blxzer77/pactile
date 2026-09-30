@@ -18,7 +18,21 @@ If a process stops after writing only one side of the durable ownership pair, th
 
 `integrateTaskRunWorktree` verifies and persists the integration receipt against the completed Run's result evidence and candidate. It does not run the merge; the target branch must already contain the clean worktree HEAD.
 
-The package exposes this lifecycle at `@blxzer/pactile/worktree`, and the CLI exposes `pactile worktree create|adopt|inspect|integrate|reclaim <task> <run-id>`. Start or queue the Task Run first, then create or explicitly adopt its workspace before dispatching a writer. `integrate --target <local-branch>` verifies and records an already completed Git integration; it does not merge on the user's behalf. `reclaim` records a refusal when a gate fails and returns a retained status without deleting the checkout. Successful `pactile task close` automatically invokes cleanup for a manager-owned workspace; a failed cleanup leaves the Task closed and reports why the checkout remains.
+The package exposes this lifecycle at `@blxzer/pactile/worktree`, and the CLI
+exposes `pactile worktree create|reconcile|adopt|inspect|integrate|reclaim
+<task> <run-id>`. Start or queue the Task Run first, then create or explicitly
+adopt its workspace before dispatching a writer. If the same Run was recorded
+as bound but the process stopped before the binding was fully persisted, use
+`pactile worktree reconcile <task> <run-id>` to complete only that same-Run
+binding after the manager's ownership and path checks pass. Reconcile never
+claims a path for a different Run and never repairs an ambiguous or
+path-anomalous checkout; inspect and resolve those cases first. `integrate
+--target <local-branch>` verifies and records an already completed Git
+integration; it does not merge on the user's behalf. `reclaim` records a
+refusal when a gate fails and returns a retained status without deleting the
+checkout. Successful `pactile task close` automatically invokes cleanup for a
+manager-owned workspace; a failed cleanup leaves the Task closed and reports
+why the checkout remains.
 
 `reclaimRunWorktree` performs automatic cleanup only after the same candidate is reviewed and the Task is closed with delivery evidence. It also requires the durable integration receipt, a host stop receipt verified from the associated Codex desktop or Pactile Pi bridge, exact ownership and Git registration, the expected integrated HEAD, and a clean worktree. A persisted lease prevents concurrent Pactile cleaners. The manager repeats these checks before invoking non-force `git worktree remove`, then rechecks branch ancestry and the changed-path content fingerprint after removal. If target content changed during removal, it restores the checkout from the preserved Run branch and records `recovery-required`; the manager delegates removal to Git rather than performing its own recursive filesystem deletion.
 

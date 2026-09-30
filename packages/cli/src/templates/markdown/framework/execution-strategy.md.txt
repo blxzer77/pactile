@@ -1,14 +1,27 @@
-# Execution strategy (execution_mode / isolation)
+# Execution strategy and isolation
 
-Choose who implements and checks, and where edits happen, before freezing `implement.md`. The approved task contract is authoritative.
+Decide the executing role, Task/Run binding, approved write set, workspace and evidence before dispatch. Use the current [workflow](../workflow.md) and [critical-path scheduling](./parallel-first-execution.md); do not infer V2 execution from old `execution_mode`, intensity or Parent/Child presets.
 
-| Field | Meaning |
-| --- | --- |
-| `execution_mode` | `inline` for the current task, `worker` for an independent task, or `child-task` for a task with a parent |
-| `isolation` | `main-worktree` or `git-worktree` |
+## V2 paths
 
-Codex desktop planning, Execute, and review tasks use native cross-task messaging with `pactile codex` request/receipt records. Execute requires recorded approval and a project worktree. The desktop task must invoke its native tool; the Node CLI cannot invoke App tools by itself. Pi implementation workers use `pactile pi run` after execution approval. Parent batches can use `pactile parallel run <parent> --manifest <file>`; the scheduler chooses waves from hard dependencies, expected completion-time savings, and write-set conflicts, without a fixed task-count limit. Overlapping writes run serially unless the exact Task pair has recorded authorization and an integration plan. Parent integration remains serial. Pactile does not dispatch Codex subagents. See `codex-worker-dispatch.md`.
+The default V2 session Tile request seeks `execution.result`. Ordinary execution can use the baseline implementation capability; worker dispatch is selected when needed, with its recorded authority. An explicit dispatch request can still require `worker.handoff`. Single relevant candidates do not need a Jev selection call.
 
-The execution strategy is documented in `implement.md`. Review it against the task scope before running `pactile task start-execution <task> --check`; the Node CLI checks the transition without changing approval state.
+- `pactile task run-start` records a scoped authorization and starts an admitted Run. `run-result` preserves each outcome and completed candidate; a new attempt does not overwrite old evidence.
+- `pactile task schedule plan|show|dispatch` plans and dispatches eligible Pi Runs using a persisted fresh receipt. Individual Pi implementation uses `pactile pi run <task> --role implement --run-id <run> --prompt-file <file>` after its Run is admitted. Confirm current arguments with `--help`.
+- Codex desktop conversations handle planning, coordination and independent review through the [native request/receipt bridge](./codex-worker-dispatch.md). The current V2 Codex Execute dispatch is disabled; do not treat a desktop thread as a Pi implementation Run or silently substitute a Codex subagent.
 
-A non-Git project may still use a worker; it changes the isolation choices, not the execution mode. Parallel work must have independent write sets and a recorded integration owner.
+A schedule or host success does not settle the Kernel Run, prove acceptance or authorize Git operations. Check actual stop/result receipts and the candidate separately.
+
+## Efficiency and protection
+
+Compare completion time including waiting, work, rework, integration and review. Parallelize only when hard dependencies, scope, capabilities and real isolation permit a benefit. No fixed global concurrency cap applies. Overlapping write sets stay sequential unless the exact Task pair has explicit authorization and an integration plan.
+
+Use the existing worktree manager for Git Run isolation, adoption, integration checks and gated reclamation. Worktree isolation is not an OS sandbox. A non-Git local-result/documentation Task may use bounded project-file observation; lack of a Git repository does not exempt evidence or authorize unsafe shared writes.
+
+Keep Pi's default configured MCP, Skills, tools, extensions and model settings. Authorize actions by role, target and Task scope. Research/check keep candidate and business state read-only; temporary validation/report writes need explicit destinations. The default RPC currently has no role-action enforcement or OS sandbox. If actual protection is required, verify host/external controls first; stop unsupported dangerous actions without claiming prompt-only protection.
+
+After work ends, account for active processes, dirty/ignored data, unique commits, integration and Close before reclaiming managed worktrees. Preserve resources still needed; do not delete arbitrary directories.
+
+## Legacy boundary
+
+V1 execution presets, `start-execution` and Parent batch commands apply only after the unified reader identifies a persisted legacy Task. They are not instructions for V2 Tasks.
