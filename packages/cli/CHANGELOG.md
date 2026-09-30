@@ -12,6 +12,29 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.6-beta.0] - 2026-10-01
+
+### Fixed
+
+- The Node Task Kernel workflow is now the documented default: `create` →
+  `run-start` → `run-result` → `review` → `close`, while V1 commands remain
+  explicitly marked as compatibility paths.
+- Worktree help and lifecycle documentation expose `reconcile`, and the
+  reconcile/inspect/integrate/reclaim boundaries are documented together.
+- V2 implement dispatch accepts a queued (`waiting`) Run consistently with the
+  scheduler, and validated legacy Pi worktree dispatch can write only inside
+  its prepared checkout.
+- Pi cancellation during startup completes the manager-owned handshake before
+  stopping the child, preserving a verified stop receipt and dispatch lease
+  release.
+- Review format-correction deadline exhaustion is consistently recorded as a
+  timeout, including when the final preflight response arrives at the deadline.
+
+This beta is the first release candidate for the 0.6.6 stable package. Validate
+the packed npm beta before preparing the stable promotion.
+
+---
+
 ## [0.6.6] - 2026-10-01
 
 ### Fixed

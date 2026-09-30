@@ -1,0 +1,9 @@
+{
+  "version": "0.6.6-beta.0",
+  "description": "Node lifecycle usability and verified Pi cancellation receipts",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "The Node Task Kernel remains the default lifecycle; Pi startup cancellation now preserves manager-owned stop evidence, and Review format-correction deadline exhaustion is recorded consistently.",
+  "migrations": [],
+  "notes": "No Task data transformation. This beta validates the single Node package, waiting Run dispatch, prepared legacy Pi worktree boundaries, and cancellation/Review evidence under the existing Kernel gates."
+}
