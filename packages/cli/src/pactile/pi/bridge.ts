@@ -1814,17 +1814,16 @@ export class PiTaskBridge {
           references: [],
         });
         checkCancellationNow("Pi run cancelled before format correction");
-        const preflightBudgetMs = remainingCheckMs();
-        if (preflightBudgetMs <= 0)
-          throw new Error("Pi Review format correction exceeded the Check timeout");
-
         let correctionPromptInvoked = false;
         let correctionStarted = performance.now();
         let correctionResponse: ReturnType<typeof assistantText> | undefined;
         try {
+          const preflightBudgetMs = remainingCheckMs();
+          if (preflightBudgetMs <= 0)
+            throw new Error("Pi Review format correction timed out at the Check deadline");
           const beforeCorrection = await client.state(preflightBudgetMs);
           if (remainingCheckMs() <= 0)
-            throw new Error("Pi Review format correction exceeded the Check timeout");
+            throw new Error("Pi Review format correction timed out at the Check deadline");
           if (beforeCorrection.sessionId !== activeReviewSessionId)
             throw new Error(
               "Pi Review Check session changed before format correction",
@@ -1842,7 +1841,7 @@ export class PiTaskBridge {
           ].join("\n\n");
           const promptBudgetMs = remainingCheckMs();
           if (promptBudgetMs <= 0)
-            throw new Error("Pi Review format correction exceeded the Check timeout");
+            throw new Error("Pi Review format correction timed out at the Check deadline");
           const correction = await client.prompt(
             correctionPrompt,
             promptBudgetMs,
@@ -1864,10 +1863,10 @@ export class PiTaskBridge {
 
           const finalStateBudgetMs = remainingCheckMs();
           if (finalStateBudgetMs <= 0)
-            throw new Error("Pi Review format correction exceeded the Check timeout");
+            throw new Error("Pi Review format correction timed out at the Check deadline");
           const afterCorrection = await client.state(finalStateBudgetMs);
           if (remainingCheckMs() <= 0)
-            throw new Error("Pi Review format correction exceeded the Check timeout");
+            throw new Error("Pi Review format correction timed out at the Check deadline");
           if (afterCorrection.sessionId !== activeReviewSessionId)
             throw new Error(
               "Pi Review Check session changed after format correction",

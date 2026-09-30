@@ -34,6 +34,8 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
 - Cancellation during Pi startup now completes the manager-owned handshake
   before stopping the child, so verified cancellation retains a complete stop
   receipt and can release the dispatch lease safely.
+- Review format-correction deadline exhaustion is consistently recorded as a
+  timeout, including when the final preflight response arrives at the deadline.
 
 This patch release is intended for the stable candidate channel first; promote
 it to `latest` only after the candidate checks pass.
