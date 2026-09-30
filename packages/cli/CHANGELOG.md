@@ -26,6 +26,11 @@ SemVer: [semver.org](https://semver.org/spec/v2.0.0.html).
   unrelated staged files.
 - Documentation source mapping and locale command parity now include the
   internal Skill and Pi role contracts used by the release checks.
+- V2 implement dispatch accepts a queued (`waiting`) Run consistently with the
+  scheduler, and validated legacy Pi worktree dispatch can write only inside
+  its prepared checkout.
+- The retrieval quality module is explicitly optional and remains on-demand;
+  it does not force CodeGraph or fast-context installation.
 
 This patch release is intended for the stable candidate channel first; promote
 it to `latest` only after the candidate checks pass.

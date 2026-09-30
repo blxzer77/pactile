@@ -1,6 +1,6 @@
 # `retrieval-extended`
 
-P29 表名：`retrieval-extended`（不得改名）。层：on-demand。
+P29 表名：`retrieval-extended`（不得改名）。层：on-demand（optional）。
 
 ## 职责
 

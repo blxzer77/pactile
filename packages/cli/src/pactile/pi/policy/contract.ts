@@ -166,11 +166,20 @@ export function buildPiRoleContract(input: {
     .map((name) => path.join(taskDir, name)).filter((file) => fs.existsSync(file))
     .map((file) => ({ path: file, sha256: createHash("sha256").update(fs.readFileSync(file)).digest("hex") }));
   const issuedAt = new Date();
+  const projectStateRoot = canonicalPiPath(path.join(input.root, ".pactile"), input.root);
+  const managedWorktreeRoot = canonicalPiPath(path.join(projectStateRoot, "worktrees"), input.root);
+  const isManagedWorktree = insidePiPath(cwd, managedWorktreeRoot);
+  const protectedRoots = [
+    ...(isManagedWorktree && !input.run ? [] : [projectStateRoot]),
+    taskDir,
+    path.join(cwd, ".git"),
+    path.join(cwd, ".pactile"),
+  ];
   const contract = sealPiRoleContract({
     schemaVersion: 1, id: randomUUID(), taskId: input.run?.taskId ?? path.basename(taskDir), taskRunId: input.run?.id ?? null,
     role: input.role, cwd, workspaceIdentity: workspaceIdentity(cwd), authorityFile, authorityFingerprint: piAuthorityFingerprint(authority, input.run?.id ?? null),
     candidateSnapshotId: input.run?.candidateSnapshot?.id ?? null, candidateFingerprint: input.run?.candidateSnapshot?.fingerprint ?? null,
-    reads, writes, scratch, protectedRoots: [canonicalPiPath(path.join(input.root, ".pactile"), input.root), taskDir, path.join(cwd, ".git"), path.join(cwd, ".pactile")],
+    reads, writes, scratch, protectedRoots,
     sourceGuards, issuedAt: issuedAt.toISOString(), expiresAt: new Date(issuedAt.getTime() + input.timeoutMs).toISOString(),
     shell: "deny", backend: "tool-policy", remoteGrants: [], relay: null,
   });
