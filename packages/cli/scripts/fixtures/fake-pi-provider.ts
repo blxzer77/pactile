@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fakePiRolePolicyHandshake } from "./pi-role-policy-probe.js";
 
 interface PiRequest extends Record<string, unknown> {
   type: string;
@@ -47,6 +48,7 @@ function handleLine(line: string): void {
     throw new Error("The fake Pi fixture received an invalid RPC request.");
   }
   const request = value as PiRequest;
+  if (fakePiRolePolicyHandshake(request, writeMessage)) return;
   const reply = (data: Record<string, unknown> = {}) =>
     writeMessage({
       id: request.id,

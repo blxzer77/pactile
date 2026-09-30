@@ -56,7 +56,7 @@ const CANONICAL_POLICY_DIGESTS = {
   inventory: "430b700d9fe6346cddff2d9c4440eb0315015dd5efe1a719a9414a4016a1dd1e",
   renameMap: "e7e3a0eeb7ba5c97b5ed614b13c8ac628e9e3781d57ec763be06f405bb1b91aa",
   documentationMap:
-    "10a8e04e7755747d64b0a24ff93418bcd0ce5e234fb4b713d168c7a20d1608cb",
+    "e3391dfe6bb7d6ddf7c0a27c502446b21269195707ecb6d33cb988bc1db536d5",
 };
 const REQUIRED_TOKEN_IDS = [
   "legacy-product-name",
@@ -87,6 +87,8 @@ const REQUIRED_DOCUMENTATION_SOURCES = [
   "docs/pactile/contracts-v1.md",
   "docs/pactile/compatibility-inputs.md",
   "docs/pactile/compatibility-inputs.zh-CN.md",
+  "docs/pactile/internal-skill-audit.md",
+  "docs/pactile/pi-role-policy.md",
   "docs/retrieval.md",
   "docs/retrieval.zh-CN.md",
   "docs/run-worktree-lifecycle.md",

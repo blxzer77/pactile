@@ -89,18 +89,10 @@ describe("P43 product template mirrors", () => {
       path.join(cliRoot, "src/configurators/shared.ts"),
     );
 
-    expect(defineExtended).toContain(
-      "触发：Phase=Define 且（Rigor=Full 或硬 Risk 或用户明确要深挖/研究/设计）。",
-    );
-    expect(defineExtended).toContain(
-      "Lite 成功路径可以全程不见 Grill、不见 Design。",
-    );
-    expect(defineExtended).toContain(
-      "Lite 写完 PRD+AC 就可以去请 Execute，不必经过本块。",
-    );
-    expect(defineExtended).toContain(
-      "Design 角色仅当 Risk/Policy 或 `verification_profile: architecture` 要求时才成为必产出",
-    );
+    expect(defineExtended).toContain("层：on-demand");
+    expect(defineExtended).toContain("没有改变结果的疑问就不展开仪式化规划");
+    expect(defineExtended).toContain("Markdown 为 Agent 提供结构化索引");
+    expect(defineExtended).toContain("通过硬依赖表达顺序");
     expect(brainstorm).toContain("PRD Grill is an optional planning aid");
     expect(brainstorm).toContain(
       "a Lite task with a clear, testable PRD and acceptance criteria may skip it",
@@ -153,7 +145,10 @@ describe("P43 product template mirrors", () => {
     );
 
     expect(defineExtended).toContain(
-      "Design 角色仅当 Risk/Policy 或 `verification_profile: architecture` 要求时才成为必产出",
+      "确需设计时按需读取",
+    );
+    expect(defineExtended).toContain(
+      "Decision/Rationale/Risk",
     );
     expect(brainstorm).toContain(
       "Add `design.md` only when Risk/Policy or `verification_profile: architecture` requires it",
@@ -174,11 +169,9 @@ describe("P43 product template mirrors", () => {
       "`design.md` records technical design when Risk/Policy or `verification_profile: architecture` requires it",
     );
     expect(frontier).toContain(
-      "Complex tasks need `prd.md` and `implement.md` before `start-execution --check`",
+      "Complex Tasks need `prd.md` and `implement.md` before the current V2 execution contract is admitted",
     );
-    expect(frontier).toContain(
-      "Complex tasks: `implement.md` present; `design.md` only when Risk/Policy or `verification_profile: architecture` requires it",
-    );
+    expect(frontier).toContain("do not infer a mandatory design document from Task size");
     expect(brainstorm).not.toContain(
       "Complex tasks: `design.md` and `implement.md` present",
     );

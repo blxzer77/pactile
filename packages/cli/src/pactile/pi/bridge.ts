@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { readStrategyContract } from "../task/strategy.js";
 import { approvedExecuteTask } from "../task/authorization.js";
 import {
@@ -26,7 +27,14 @@ import {
   buildIndependentPiReviewPrompt,
   type PiReviewPromptBinding,
 } from "../review/contract.js";
-import { resolvePiReviewEvidenceV1 } from "../review/evidence.js";
+import { assertPiReviewToolEvidenceV1, PiReviewToolObserverV1, readPiReviewToolEvidenceV1, resolvePiReviewEvidenceV1, type PiReviewToolEvidenceV1 } from "../review/evidence.js";
+import { resolvePiReviewWorkspace } from "./review-workspace.js";
+import {
+  attestPiRolePolicy, buildPiRoleContract, piRolePermissionFingerprint,
+  prepareNativePiRoleLaunch, persistPiRolePolicyReceipt,
+  prepareDockerPiRoleLaunch, observePiDockerRole, type PiDockerLaunch, type PiDockerOptions,
+  type PiGuardedLaunch, type PiRoleContract, type PiRolePolicyReceipt,
+} from "./policy/index.js";
 import {
   bindPiV2RunHost,
   persistPiV2StopAndRelease,
@@ -124,6 +132,7 @@ export interface PiCheckRunEvidenceV1 {
   stop: PiCheckStopReceiptV1;
   resultBytes: Buffer;
   evidenceRefs: string[];
+  toolEvidence?: PiReviewToolEvidenceV1;
 }
 
 export interface PiRunRecord {
@@ -143,8 +152,10 @@ export interface PiRunRecord {
   elapsed_ms: number | null;
   event_count: number;
   tool_errors: number;
+  review_tool_evidence?: PiReviewToolEvidenceV1;
   reason: string | null;
   result_file: string | null;
+  role_policy?: PiRolePolicyReceipt;
   task_id?: string | null;
   task_run_id?: string | null;
   task_host_id?: "pi" | null;
@@ -277,7 +288,6 @@ export function readPiCheckRunEvidenceV1(
   if (
     record.role !== "check" ||
     record.outcome !== "settled" ||
-    record.tool_errors !== 0 ||
     record.result_redacted === true ||
     !record.session_id ||
     !record.reviewer_id ||
@@ -310,6 +320,14 @@ export function readPiCheckRunEvidenceV1(
   ) {
     throw new Error("Pi Check evidence references are not bound to this run");
   }
+  const policyRef = `pi-bridge/role-policy-receipts/${record.run_id}.json`;
+  const policy = requireObjectJson(safeReviewEvidencePath(taskDir, policyRef), "Pi role policy receipt") as unknown as PiRolePolicyReceipt;
+  if (!record.role_policy || JSON.stringify(policy) !== JSON.stringify(record.role_policy) || policy.attested !== true
+    || policy.source !== "pactile-pi-role-policy-v1" || policy.role !== "check" || policy.taskId !== record.task_id
+    || policy.taskRunId !== record.task_run_id || policy.candidateSnapshotId !== record.candidate_snapshot_id
+    || policy.candidateFingerprint !== record.candidate_fingerprint || !/^[a-f0-9]{64}$/u.test(policy.contractFingerprint)
+    || policy.backend === "docker" && (!policy.containerId || policy.containerStop?.stopped !== true || policy.containerStop.exitCode !== 0 || !policy.containerStop.stoppedAt))
+    throw new Error("Pi Check role policy is missing, stale or did not verify container termination");
   const startPath = safeReviewEvidencePath(
     taskDir,
     record.review_start_receipt_ref,
@@ -339,6 +357,15 @@ export function readPiCheckRunEvidenceV1(
     .readFileSync(eventPath, "utf8")
     .split(/\r?\n/u)
     .filter(Boolean);
+  let toolEvidence: PiReviewToolEvidenceV1 | undefined;
+  if (record.review_tool_evidence) {
+    let eventObjects: Record<string, unknown>[];
+    try { eventObjects = events.map((line) => JSON.parse(line) as Record<string, unknown>); }
+    catch { throw new Error("Pi Check tool event evidence is not valid JSONL"); }
+    toolEvidence = readPiReviewToolEvidenceV1(eventObjects);
+    if (JSON.stringify(toolEvidence) !== JSON.stringify(record.review_tool_evidence)) throw new Error("Pi Check tool evidence does not match the recorded event stream");
+  }
+  assertPiReviewToolEvidenceV1(toolEvidence, record.tool_errors);
   const resultBytes = fs.readFileSync(resultPath);
   const attemptsBytes = fs.readFileSync(attemptsPath);
   const resultSha256 = createHash("sha256").update(resultBytes).digest("hex");
@@ -515,8 +542,10 @@ export function readPiCheckRunEvidenceV1(
     start,
     stop,
     resultBytes,
+    ...(toolEvidence ? { toolEvidence } : {}),
     evidenceRefs: [
       record.review_start_receipt_ref,
+      policyRef,
       record.review_stop_receipt_ref,
       record.progress_evidence_ref,
       record.result_file,
@@ -535,6 +564,7 @@ export interface PiReviewRouteContext {
   run: TaskRunV2;
   workdir: string;
   binding: PiReviewPromptBinding;
+  verificationRef: string;
 }
 
 /** Build the independent Review binding from the current Verify Kernel state. */
@@ -562,23 +592,11 @@ export function preparePiReviewRoute(
   if (run?.state !== "completed" || !run.result || !run.candidateSnapshot) {
     throw new Error("Pi Review requires the latest completed Run candidate");
   }
-  const workdir = run.workspace
-    ? fs.realpathSync(run.workspace.canonicalPath)
-    : projectRoot;
-  if (run.workspace) {
-    const worktreesRoot = fs.realpathSync(
-      path.join(projectRoot, ".pactile", "worktrees"),
-    );
-    const relative = path.relative(worktreesRoot, workdir);
-    if (
-      !relative ||
-      relative === ".." ||
-      relative.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relative)
-    ) {
-      throw new Error("Pi Review Run worktree is outside .pactile/worktrees");
-    }
-  }
+  const boundVerificationRefs = run.result.evidenceRefs.filter((ref) => /^verify(?:-run[0-9]+)?\.md$/u.test(ref));
+  if (boundVerificationRefs.length > 1) throw new Error("Pi Review has ambiguous Run-bound verification instructions");
+  const verificationRef = boundVerificationRefs[0] ?? "verify.md";
+  if (!fs.statSync(path.join(taskDir, verificationRef), { throwIfNoEntry: false })?.isFile()) throw new Error("Pi Review Run-bound verification file is missing");
+  const workdir = resolvePiReviewWorkspace({ root: projectRoot, taskDir, run });
   const binding: PiReviewPromptBinding = {
     kernelRevision: kernel.revision,
     taskId: kernel.identity.taskId,
@@ -611,7 +629,7 @@ export function preparePiReviewRoute(
       }),
     ),
   };
-  return { taskDir, kernel, run, workdir, binding };
+  return { taskDir, kernel, run, workdir, binding, verificationRef };
 }
 
 function assertSameReviewBinding(
@@ -887,6 +905,7 @@ function evidenceEvent(
     safe.tool = normalizeToolName(event.toolName);
   if (event.type === "tool_execution_end")
     safe.is_error = event.isError === true;
+  if (event.type === "auto_retry_end") safe.success = event.success === true;
   if (
     event.type === "message_end" &&
     event.message &&
@@ -992,10 +1011,16 @@ export class PiTaskBridge {
   private workdir: string | null = null;
   private role: PiRunInput["role"] | null = null;
   private locked = false;
+  private roleContract: PiRoleContract | null = null;
+  private policyControlDir: string | null = null;
+  private policyScratchDir: string | null = null;
+  private dockerLaunch: PiDockerLaunch | null = null;
+  private lastDockerStop: PiRolePolicyReceipt["containerStop"] | null = null;
 
   constructor(
     private readonly root: string,
     private readonly launch?: PiRpcLaunch,
+    private readonly dockerOptions?: PiDockerOptions,
   ) {}
 
   private async ensureClient(
@@ -1006,6 +1031,7 @@ export class PiTaskBridge {
     beforeSpawn?: () => void,
     sessionDirOverride?: string,
     startupTimeoutMs?: number,
+    guarded?: PiGuardedLaunch,
   ): Promise<{
     client: PiRpcClient;
     startupMs: number;
@@ -1017,12 +1043,19 @@ export class PiTaskBridge {
       throw new Error("Pi bridge cannot reuse a process in another worktree");
     if (this.client && this.role !== role)
       throw new Error("Pi bridge cannot reuse a process across worker roles");
+    if (this.client && guarded && this.roleContract && piRolePermissionFingerprint(this.roleContract) !== piRolePermissionFingerprint(guarded.contract)) {
+      await this.closeForDispatch();
+    }
+    this.roleContract = guarded?.contract ?? null;
     if (this.client?.isStarted)
       return { client: this.client, startupMs: 0, mode: "warm" };
     const client = new PiRpcClient({
       cwd: workdir,
       sessionDir: sessionDirOverride ?? path.join(dir, "pi-bridge", "sessions"),
-      launch: this.launch,
+      launch: guarded?.launch ?? this.launch,
+      env: guarded?.env,
+      readinessProbeRetryMs: guarded?.readinessProbeRetryMs,
+      shutdownGraceMs: guarded?.shutdownGraceMs,
     });
     this.client = client;
     this.taskDir = dir;
@@ -1035,8 +1068,14 @@ export class PiTaskBridge {
 
   private async closeForDispatch(): Promise<PiRpcProcessExitReceipt | null> {
     const client = this.client;
-    if (!client) return null;
-    const receipt = await client.closeAndObserve();
+    const receipt = await client?.closeAndObserve() ?? null;
+    if (this.dockerLaunch) {
+      const stop = await this.dockerLaunch.close();
+      this.lastDockerStop = { stopped: stop.stopped, removed: stop.removed, exitCode: stop.exitCode, stoppedAt: stop.stoppedAt, recordedAt: new Date().toISOString() };
+      if (receipt) { receipt.terminationVerified &&= stop.stopped; if (stop.stopped) receipt.exitCode = stop.exitCode; }
+      if (!stop.stopped) throw new Error("Pi Docker container stop was not verified; lease and evidence remain open");
+      this.dockerLaunch = null;
+    }
     if (receipt?.terminationVerified) {
       this.client = null;
       this.taskDir = null;
@@ -1047,16 +1086,7 @@ export class PiTaskBridge {
   }
 
   private async closeForReview(): Promise<PiRpcProcessExitReceipt | null> {
-    const client = this.client;
-    if (!client) return null;
-    const receipt = await client.closeAndObserve();
-    if (receipt?.terminationVerified) {
-      this.client = null;
-      this.taskDir = null;
-      this.workdir = null;
-      this.role = null;
-    }
-    return receipt;
+    return this.closeForDispatch();
   }
 
   async run(input: PiRunInput): Promise<PiRunRecord> {
@@ -1070,6 +1100,8 @@ export class PiTaskBridge {
     )
       throw new Error("Pi timeout must be 1 second to 24 hours");
     if (this.locked) throw new Error("Pi bridge already has an active run");
+    if (this.dockerOptions && input.resume) throw new Error("Pi Docker roles require a fresh session; resume requires a new explicit contract and is not enabled");
+    if (this.dockerOptions && this.launch) throw new Error("Pi Docker backend cannot reuse a custom native launch");
     if (input.runId !== undefined) {
       if (input.role !== "implement")
         throw new Error(
@@ -1169,6 +1201,8 @@ export class PiTaskBridge {
         throw new Error(
           "Pi dispatch already active; stop the existing bridge before retrying",
         );
+      if (prior?.backend === "docker" && observePiDockerRole(String(prior.container_id), String(prior.contract_fingerprint)).running)
+        throw new Error("Previous Pi Docker worker is still active; use pactile pi cancel before recovering the attachment");
       const stale = parseJson(latestFile);
       if (stale?.outcome === "running") {
         const recovered = {
@@ -1249,6 +1283,8 @@ export class PiTaskBridge {
     const reviewSessionEvidenceId = review
       ? `pirc-${createHash("sha256").update(runId).digest("hex").slice(0, 32)}`
       : null;
+    const reviewToolObserver = review ? new PiReviewToolObserverV1() : null;
+    const reviewToolEvents: Record<string, unknown>[] = [];
     const record: PiRunRecord = {
       schema_version: dispatch ? 2 : 1,
       run_id: runId,
@@ -1375,9 +1411,32 @@ export class PiTaskBridge {
       if (dispatch) {
         recheckPiV2RunDispatchWorkspace(dispatch);
       }
-      const startupTimeoutMs = review ? remainingCheckMs() : undefined;
+      const startupTimeoutMs = review ? remainingCheckMs() : this.dockerOptions ? Math.min(120_000, remainingCheckMs()) : undefined;
       if (review && (startupTimeoutMs ?? 0) <= 0)
         throw new Error("Pi Check timeout exhausted before startup");
+      this.policyScratchDir ??= fs.mkdtempSync(path.join(os.tmpdir(), "pactile-pi-role-"));
+      this.policyControlDir ??= path.join(evidence, "role-policies", randomUUID());
+      const authorityRead = dispatch ? readTaskKernel({ root: this.root, taskDir: dir, cwd: this.root }) : null;
+      if (authorityRead && authorityRead.kind !== "task-kernel-v2") throw new Error("Pi role policy cannot read the admitted V2 authority");
+      const roleContract = buildPiRoleContract({
+        root: this.root, taskDir: dir, workdir, role: input.role,
+        scratchDir: this.policyScratchDir, timeoutMs: input.timeoutMs,
+        writeSet: touches ?? dispatch?.run.writeSetSnapshot ?? [],
+        ...(review ? { kernel: review.kernel, run: review.run } : {}),
+        ...(dispatch && authorityRead?.kind === "task-kernel-v2" ? {
+          kernel: authorityRead.kernel,
+          run: authorityRead.kernel.runs.find((item) => item.id === dispatch.runId),
+        } : {}),
+      });
+      if (this.dockerOptions && this.client) await this.closeForDispatch();
+      this.lastDockerStop = null;
+      const guarded = this.dockerOptions
+        ? await prepareDockerPiRoleLaunch(roleContract, this.dockerOptions, controller.signal)
+        : prepareNativePiRoleLaunch(roleContract, this.policyControlDir, this.launch);
+      if (this.dockerOptions) this.dockerLaunch = guarded as PiDockerLaunch;
+      checkCancellationNow("Pi cancelled before guarded process start");
+      if (this.dockerLaunch) fs.writeFileSync(lockFile, JSON.stringify({ parent_pid: process.pid, run_id: runId,
+        backend: "docker", container_id: this.dockerLaunch.containerId, contract_fingerprint: roleContract.fingerprint }));
       const { client, startupMs, mode } = await this.ensureClient(
         dir,
         workdir,
@@ -1396,7 +1455,16 @@ export class PiTaskBridge {
           : undefined,
         review ? path.join(evidence, "review-sessions", runId) : undefined,
         startupTimeoutMs,
+        guarded,
       );
+      this.dockerLaunch?.verifyStarted();
+      record.role_policy = await attestPiRolePolicy(client, guarded.contract, review ? remainingCheckMs() : Math.min(input.timeoutMs, 15_000));
+      if (this.dockerLaunch) {
+        record.role_policy.runtimeContractFingerprint = guarded.contract.fingerprint;
+        record.role_policy.contractFingerprint = roleContract.fingerprint;
+        record.role_policy.containerId = this.dockerLaunch.containerId;
+      }
+      persistPiRolePolicyReceipt(path.join(evidence, "role-policy-receipts", `${runId}.json`), record.role_policy);
       if (parallelLeaseId)
         updateParallelChildPid(this.root, dir, parallelLeaseId, client.pid);
       fs.writeFileSync(
@@ -1405,6 +1473,7 @@ export class PiTaskBridge {
           parent_pid: process.pid,
           child_pid: client.pid,
           run_id: runId,
+          ...(this.dockerLaunch ? { backend: "docker", container_id: this.dockerLaunch.containerId, contract_fingerprint: roleContract.fingerprint } : {}),
         }),
         "utf8",
       );
@@ -1430,7 +1499,7 @@ export class PiTaskBridge {
       record.session_file = review
         ? null
         : typeof state.sessionFile === "string"
-          ? state.sessionFile
+          ? this.dockerLaunch?.toHostPath(state.sessionFile) ?? state.sessionFile
           : null;
       atomicJson(runFile, record);
       atomicJson(latestFile, record);
@@ -1528,6 +1597,12 @@ export class PiTaskBridge {
           progressEvidenceRef,
         });
       }
+      // A cancellation can arrive while the child is starting. Keep the
+      // manager-owned handshake and identity receipts intact before honoring
+      // it; the prompt below still receives the aborted signal and will not
+      // dispatch work. Without this ordering a verified child exit could be
+      // left without the session/process evidence needed to settle the Run.
+      checkCancellationNow("Pi cancelled before prompt dispatch");
       detach = client.onEvent((event) => {
         if (event.type === "transport_error") return;
         record.event_count += 1;
@@ -1539,6 +1614,10 @@ export class PiTaskBridge {
         )
           record.tool_errors += 1;
         const summary = evidenceEvent(event);
+        if (reviewToolObserver) {
+          reviewToolObserver.observe(event, record.event_count, summary);
+          reviewToolEvents.push(summary);
+        }
         fs.appendFileSync(eventFile, `${JSON.stringify(summary)}\n`, {
           encoding: "utf8",
           mode: 0o600,
@@ -1568,17 +1647,20 @@ export class PiTaskBridge {
         ? "Task Run write set"
         : "Parent-declared write set";
       const defaultCapabilities = "Use Pi's configured MCP servers, skills, and tools for this assignment. Report unavailable capabilities and evidence gaps; do not assume that a loaded skill proves a tool is usable.";
-      const instructions = review
+      const dockerEnvironment = this.dockerLaunch ? "This worker runs in a Linux Docker image, not the host Windows environment. Use loaded read/MCP tools or Node for structured inspection. Do not assume host Python, PowerShell, ripgrep, package managers or project dependencies are available. Use $TMPDIR or the declared scratch for temporary files; /tmp and source/control mounts are readonly. Known credential/control paths are deliberately masked: container git status can report projection-only differences, including .npmrc. Those differences are not host candidate evidence; use the recorded host candidate observation and exact allowed source references. Do not unmask credentials or install dependencies to recreate the host." : "";
+      const hostInstructions = review
         ? [
             defaultCapabilities,
+            dockerEnvironment,
             "Task-specific Review instructions:",
-            fs.readFileSync(path.join(dir, "verify.md"), "utf8"),
+            fs.readFileSync(path.join(dir, review.verificationRef), "utf8"),
             "Additional caller instructions:",
             input.prompt,
             buildIndependentPiReviewPrompt(review.binding),
           ].join("\n\n")
         : [
             defaultCapabilities,
+            dockerEnvironment,
             `Pactile task: ${taskPath}`,
             `Execution worktree: ${workdir}`,
             `Role: ${input.role}`,
@@ -1592,10 +1674,12 @@ export class PiTaskBridge {
               : "",
             input.role === "implement"
               ? "Implementation may change files only inside the approved write set."
-              : "This role is read-only for project sources. Use configured retrieval, repository queries, and only necessary targeted validation to investigate the task. Do not change project implementation or existing evidence. Keep any validation artifacts in a separate temporary directory outside the project. Read-only is a behavioral contract, not an operating-system sandbox.",
+              : `This role is read-only for project sources and existing evidence. The host-issued role policy gates exact actions and targets. Use configured retrieval and approved queries; write validation artifacts only in the declared scratch directory. ${this.dockerLaunch ? "Shell and extension processes share the inspected Docker filesystem and network isolation." : "Arbitrary Shell is blocked without whole-process isolation. This launch attests tool-call policy and does not claim operating-system isolation."}`,
+            `Role scratch directory: ${roleContract.scratch.path}`,
             "Worker assignment:",
             input.prompt,
           ].join("\n\n");
+      const instructions = this.dockerLaunch?.mapPrompt(hostInstructions) ?? hostInstructions;
       const resultFile = path.join(evidence, "results", `${runId}.md`);
       fs.mkdirSync(path.dirname(resultFile), { recursive: true });
       record.result_file = path.relative(dir, resultFile).replaceAll("\\", "/");
@@ -1670,8 +1754,14 @@ export class PiTaskBridge {
         : null;
       text = response.text;
       redacted = response.redacted;
+      const toolFailuresAllowSettlement = (): boolean => {
+        if (!review) return record.tool_errors === 0;
+        record.review_tool_evidence = readPiReviewToolEvidenceV1(reviewToolEvents);
+        try { assertPiReviewToolEvidenceV1(record.review_tool_evidence, record.tool_errors); return true; }
+        catch { record.reason = "Pi Check has incomplete tool evidence or blocking tool/runtime failures"; return false; }
+      };
       record.outcome =
-        response.stopReason === "stop" && text && !record.tool_errors
+        response.stopReason === "stop" && text && toolFailuresAllowSettlement()
           ? "settled"
           : "needs_review";
       if (response.stopReason && response.stopReason !== "stop")
@@ -1724,17 +1814,16 @@ export class PiTaskBridge {
           references: [],
         });
         checkCancellationNow("Pi run cancelled before format correction");
-        const preflightBudgetMs = remainingCheckMs();
-        if (preflightBudgetMs <= 0)
-          throw new Error("Pi Review format correction exceeded the Check timeout");
-
         let correctionPromptInvoked = false;
         let correctionStarted = performance.now();
         let correctionResponse: ReturnType<typeof assistantText> | undefined;
         try {
+          const preflightBudgetMs = remainingCheckMs();
+          if (preflightBudgetMs <= 0)
+            throw new Error("Pi Review format correction timed out at the Check deadline");
           const beforeCorrection = await client.state(preflightBudgetMs);
           if (remainingCheckMs() <= 0)
-            throw new Error("Pi Review format correction exceeded the Check timeout");
+            throw new Error("Pi Review format correction timed out at the Check deadline");
           if (beforeCorrection.sessionId !== activeReviewSessionId)
             throw new Error(
               "Pi Review Check session changed before format correction",
@@ -1752,7 +1841,7 @@ export class PiTaskBridge {
           ].join("\n\n");
           const promptBudgetMs = remainingCheckMs();
           if (promptBudgetMs <= 0)
-            throw new Error("Pi Review format correction exceeded the Check timeout");
+            throw new Error("Pi Review format correction timed out at the Check deadline");
           const correction = await client.prompt(
             correctionPrompt,
             promptBudgetMs,
@@ -1774,10 +1863,10 @@ export class PiTaskBridge {
 
           const finalStateBudgetMs = remainingCheckMs();
           if (finalStateBudgetMs <= 0)
-            throw new Error("Pi Review format correction exceeded the Check timeout");
+            throw new Error("Pi Review format correction timed out at the Check deadline");
           const afterCorrection = await client.state(finalStateBudgetMs);
           if (remainingCheckMs() <= 0)
-            throw new Error("Pi Review format correction exceeded the Check timeout");
+            throw new Error("Pi Review format correction timed out at the Check deadline");
           if (afterCorrection.sessionId !== activeReviewSessionId)
             throw new Error(
               "Pi Review Check session changed after format correction",
@@ -1798,7 +1887,7 @@ export class PiTaskBridge {
             ),
           );
           record.outcome =
-            response.stopReason === "stop" && text && !record.tool_errors
+            response.stopReason === "stop" && text && toolFailuresAllowSettlement()
               ? "settled"
               : "needs_review";
           if (response.stopReason && response.stopReason !== "stop")
@@ -1851,8 +1940,10 @@ export class PiTaskBridge {
       }
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
+      const cancellation = parseJson(cancelFile);
+      if (cancellation?.run_id === runId && review && typeof cancellation.request_id === "string") record.cancellation_request_id = cancellation.request_id;
       record.outcome =
-        controller.signal.aborted || reason.includes("cancelled")
+        controller.signal.aborted || cancellation?.run_id === runId || reason.includes("cancelled")
           ? "cancelled"
           : reason.includes("timed out")
             ? "timed_out"
@@ -2025,6 +2116,13 @@ export class PiTaskBridge {
             "Pi child close was not verified; dispatch lease retained";
         }
       }
+      if (!dispatch && !review && this.dockerLaunch) {
+        try { await this.closeForDispatch(); } catch { closeFailed = true; record.outcome = "interrupted"; record.reason = "Pi Docker container stop was not verified"; }
+      }
+      if (record.role_policy && this.lastDockerStop) {
+        record.role_policy.containerStop = this.lastDockerStop;
+        persistPiRolePolicyReceipt(path.join(evidence, "role-policy-receipts", `${runId}.json`), record.role_policy);
+      }
       if (closeFailed && alive(this.client?.pid)) {
         record.outcome = "interrupted";
         record.reason = `${record.reason ?? "Pi run interrupted"}; Pi process may still be active`;
@@ -2090,7 +2188,8 @@ export class PiTaskBridge {
   }
 
   async close(): Promise<void> {
-    await this.client?.close();
+    const receipt = await this.closeForDispatch();
+    if (receipt && !receipt.terminationVerified) throw new Error("Pi process termination was not verified");
     this.client = null;
     this.taskDir = null;
     this.workdir = null;

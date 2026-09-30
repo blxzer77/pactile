@@ -106,6 +106,8 @@ Every discovered source has exactly one primary action. Section-level historical
 | `docs/cursor.md` / `docs/cursor.zh-CN.md` | live | redirect | `hosts.cursor` | Hosts/capabilities |
 | `docs/cursor-platform-limitations-and-trellis-adaptation*.md` | compat | redirect | `hosts.cursor-limitations` | Hosts/capabilities |
 | `docs/pactile/compatibility-inputs*.md` | compat | merge | `governance.compatibility` | Batch 3 runtime |
+| `docs/pactile/internal-skill-audit.md` | live | merge | `capabilities.skills` | Hosts/capabilities |
+| `docs/pactile/pi-role-policy.md` | live | merge | `capabilities.subagents` | Hosts/capabilities |
 | `docs/retrieval*.md` | live | redirect | `capabilities.retrieval` | Hosts/capabilities |
 | `docs/skills*.md` | live | redirect | `capabilities.skills` | Hosts/capabilities |
 | `docs/subagents*.md` | live | redirect | `capabilities.subagents` | Hosts/capabilities |

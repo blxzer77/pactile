@@ -1,8 +1,8 @@
 ---
 name: "intake-basic"
-description: "Turn the request into an explicit, bounded work scope."
+description: "Scope new work before creating an independently acceptable Task."
 ---
 
 # Intake Basic
 
-Clarify only choices that change the outcome. Preserve explicit scope and authorization boundaries, then hand a compact request scope to definition.
+Answer directly when no work is requested. Otherwise propose one independently acceptable deliverable, measurable ACs, a delivery level and known hard dependencies. Inspect facts before asking for decisions; create the Task only after user agreement. Load `.pactile/modules/intake-basic/contract.md` for intake boundaries.

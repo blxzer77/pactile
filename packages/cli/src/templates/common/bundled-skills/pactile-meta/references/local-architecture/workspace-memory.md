@@ -63,6 +63,7 @@ If information should be followed every time code is written in the future, put 
 | --- | --- |
 | Change maximum journal lines | `max_journal_lines` in `.pactile/config.yaml`. |
 | Change session auto-commit message | `session_commit_message` in `.pactile/config.yaml`. |
+| Enable session/task archive auto-commit | Set `session_auto_commit: true` (or `yes`, `1`, `on`) explicitly in `.pactile/config.yaml`; it is disabled by default. |
 | Change session content format | Pactile CLI `pactile session add` implementation. |
 | Change how workspace is displayed in context | Pactile CLI `pactile context` implementation. |
 

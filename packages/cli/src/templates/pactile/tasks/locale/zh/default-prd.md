@@ -24,4 +24,7 @@
 
 - `prd.md` 聚焦需求、约束与验收标准。
 - 轻量任务可仅保留 PRD。
-- 复杂任务在 `pactile task start-execution --check` 前补充 `design.md` 与 `implement.md`。
+- 复杂任务在 V2 `run-start` 前补充 `design.md` 与 `implement.md`，用于
+  记录技术设计和执行计划。
+- 启动、结果、审查和关闭都使用 V2 Task 命令记录；旧 V1 gate 命令只用于
+  导入的旧任务。

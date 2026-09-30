@@ -19,9 +19,9 @@ max_journal_lines: 2000
 #-------------------------------------------------------------------------------
 
 # Auto-commit behavior for session journal + task archive operations.
-# - true (default): scripts auto-stage and auto-commit journal / task changes
+# - true (opt-in): scripts auto-stage and auto-commit journal / task changes
 #   after pactile session add / pactile task archive runs.
-# - false: scripts do not touch git. Files (journal-*.md, task archive moves)
+# - false (default): scripts do not touch git. Files (journal-*.md, task archive moves)
 #   are still written to disk; you decide whether to git add / commit.
 #
 # Use `false` if your project's .gitignore intentionally excludes `.pactile/`
@@ -30,7 +30,7 @@ max_journal_lines: 2000
 #
 # Accepts: true / false / yes / no / 1 / 0 / on / off (case-insensitive).
 #
-# session_auto_commit: true
+# session_auto_commit: false
 
 #-------------------------------------------------------------------------------
 # Context injection (opt-in)
@@ -54,8 +54,6 @@ max_journal_lines: 2000
 #     - "echo 'Task created'"
 #   after_start:
 #     - "echo 'Task started'"
-#   after_finish:
-#     - "echo 'Task finished'"
 #   after_archive:
 #     - "echo 'Task archived'"
 

@@ -48,7 +48,10 @@ import {
 import * as piBridge from "../pactile/pi/bridge.js";
 import { approvedExecuteTask } from "../pactile/task/authorization.js";
 import { createTaskWithArtifacts } from "../pactile/task/creation.js";
-import { readPactileConfig } from "../pactile/task/config.js";
+import {
+  configBoolean,
+  readPactileConfig,
+} from "../pactile/task/config.js";
 import { resumeTaskRunWithCoordinationBarrier } from "../pactile/coordination/index.js";
 import {
   runTaskScheduleCli,
@@ -2447,7 +2450,7 @@ function archiveTask(root: string, args: string[]): number {
     exitTask(root);
   if (
     !args.includes("--no-commit") &&
-    readPactileConfig(root).session_auto_commit !== "false"
+    configBoolean(readPactileConfig(root).session_auto_commit, false)
   ) {
     const relativeSource = path.relative(root, dir).replaceAll("\\", "/");
     const relativeDestination = path

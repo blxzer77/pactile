@@ -4,40 +4,27 @@ P29 表名：`retention-storage`（不得改名）。层：on-demand。
 
 ## 职责
 
-Closed Task 的**物理**处置：目录搬家（如 `archive/`）、压缩、保留期限、冷存储。不写业务 Outcome，不撤销 Close。Close 与 Archive 分离：`close-basic` 完成生命周期；本块可以在 Close **之后**跑。Retention 失败不得改 Outcome；只留下 Condition / 修复证据。本需求**不包含** Event Sourcing；更高级存储若将来出现，也只是 Policy 可选实现，不是完成条件。
+按明确保留策略管理 Task 材料、日志、交接和临时产物的物理存储。Kernel Close 是验收事件，不是删除/目录归档命令；受管 Run worktree 回收另外走 manager 合同。
 
 ## 触发/披露
 
-维护者 / 磁盘策略。Agent 日常 Open→Execute→Verify **不看见**本块。触发（可审计）：
+保留期到期、用户要求清理或存储成本确需处理时使用。输入为准确目标、所有权、用途、保留策略及恢复方式；输出为保留/归档/删除清单、实际结果和未处理原因。
 
-1. Outcome 已写入之后的物理收纳；或
-2. 维护者明确要压缩/清理；或
-3. Policy 的保留期限到期。
+先解析并核对绝对路径，确认仍在批准范围内；检查 active Run、宿主/外部进程、dirty/ignored 数据、唯一提交和 Kernel 引用。备份或移出存储须使用当前产品支持的状态一致操作；若没有支持路径，先保留，不用裸文件移动制造旧引用失效。
 
-**不是**触发：把 `pactile task archive` 当成 Close；Execute 当天；用搬家证明做完了。
-
-永远不进默认 Prompt 第 2 层（可与 `observability-local` 类似：零教战成功）。
-
-Agent 看见：
-
-1. 不得用「目录已在 archive/」宣称 completed。
-2. 不得在未 Close 时搬走活任务目录。
-3. 删除、覆盖原目录、不可逆压缩：先问（人 / Policy）。个人默认搬家不是静默删除。
-4. 搬家后若路径变了，通知 Kernel 更新投影；本块不写 Phase/Outcome。
-5. 不拥有 Git；不拥有 session temp handoff。
-
-用户看见：日常收工只关心 Outcome。磁盘策略、压缩、过期清理不出现在每回合。关掉本块时，Closed Task 可以留在原地。
+Task 历史 Run/Review、有效候选、迁移备份和最新验收证据不能凭“任务结束”删除。临时传输文件也须核对用途已结束；对具体对象的既有清理授权可复用。
 
 ## 停止条件
 
-- Close 已完成才可物理处置。
-- 失败不回滚 Outcome。
-- 停止：物理搬家冒充 Close；未 Close 就 archive；静默删除用户工作；把 Event Sourcing 当成本需求验收。
+- 目标越界、所有者不明、仍在使用或存在未保全内容时不移除。
+- 没有可核对的恢复/保留策略时，记录待决对象，不能默认 purge。
+- 目录移动/删除不改变 Kernel phase/outcome；V1 归档命令仅适用于读取器识别的旧任务。
+- 清理失败保留错误与原状态；不宣称收据、恢复或验收已完成。
 
 ## 关掉必须消失
 
-不能把搬家当完成条件。Outcome 照写。活任务目录不被本块搬走。CLI 仍可有业务 Close，只是不移动文件。
+物理保留与清理步骤不再要求；任务状态、证据可读性和 Run worktree 管理门仍由各所有者维持。
 
 ## 不得带走
 
-业务 Close / Outcome（`close-basic`）；Git commit（`vcs-integration`）；过境文档（`session-transfer`）；journal（`personal-memory`）。
+Kernel Close；Review/迁移证据所有权；worktree manager；新的删除授权；个人记忆和项目规范写入。

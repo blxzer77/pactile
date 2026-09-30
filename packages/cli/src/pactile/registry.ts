@@ -29,6 +29,7 @@ import {
   BASELINE_TILE_IDS,
 } from "./tiles/content/baseline/index.js";
 import {
+  LEGACY_ONLY_ONDEMAND_TILE_IDS,
   loadOndemandTileContent,
   ONDEMAND_TILE_IDS,
 } from "./tiles/content/ondemand/index.js";
@@ -639,7 +640,7 @@ function loadSelectedTaskTileSelectionSurface(
   let degraded: string[];
   if (kernelFacts.hasTaskKernelV2) {
     baselineActive = [...BASELINE_TILE_IDS];
-    registered = [...ONDEMAND_TILE_IDS];
+    registered = ONDEMAND_TILE_IDS.filter((id) => !LEGACY_ONLY_ONDEMAND_TILE_IDS.includes(id));
     ondemandActive = [];
     degraded = [];
   } else {
@@ -764,7 +765,14 @@ export function prepareSelectedTaskBatch2TileSelection(
 function applySelectedTaskAgentTileProfile(
   surface: SelectedTaskTileSelectionSurface,
 ): TileResult<TileSelectionRequest> {
-  const base = taskTileSelectionRequest(surface.taskLifecycle.phase);
+  const base = {
+    ...taskTileSelectionRequest(surface.taskLifecycle.phase),
+    // V2 execution requires a result; dispatch is an optional capability.
+    // Keep the legacy profile and explicit dispatch requests unchanged.
+    ...(surface.hasTaskKernelV2 && surface.taskLifecycle.phase === "execute"
+      ? { requiredOutputs: ["execution.result"] }
+      : {}),
+  };
   const authority = surface.authority;
   const request = authority.fact.source === "task-kernel-approval-snapshot"
     ? {

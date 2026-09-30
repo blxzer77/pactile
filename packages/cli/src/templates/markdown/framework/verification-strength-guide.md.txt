@@ -1,185 +1,44 @@
-# Verification Strength Guide
+# Risk-driven verification
 
-> **Purpose**: Define **how deeply** pactile tasks must be verified before closeout — graded by task risk (Lite / Full / Parent), **not** TDD ceremony.
+Choose checks from the Task's acceptance criteria, changed public surfaces, material failure risks and repository-required gates. Task intensity, hierarchy, number of files and presence of planning documents do not determine verification strength.
 
----
+## Select useful evidence
 
-## 1. Non-goals
+1. Identify the exact result being checked and every AC. For final V2 acceptance, use the latest completed Run's candidate ID/fingerprint and current candidate observation.
+2. List affected behaviors and risks: data loss or migration, authorization and privacy, concurrency, lifecycle/compatibility, public interfaces, shared infrastructure and external integration where relevant.
+3. Preserve required repository/CI checks and explicit AC requirements. A caller inventory or model recommendation cannot remove them or claim the complete CI inventory is known.
+4. Reuse relevant existing checks first. Choose the smallest set that observes the changed public behavior and remaining risks. State what the evidence cannot prove.
+5. Expand only for a concrete remaining risk, an unresolved failure or a required gate. Repeat a check after an affecting change, stale observation or plausible flaky/environment cause, not simply because an Agent can run it.
 
-- **No TDD productization** — pactile does not require red-green-refactor loops, "write tests first" gates, or per-function unit test mandates.
-- **No per-task full-suite burden** — Lite tasks must not be forced through architecture review or whole-repo CI.
-- **No replacement for project test frameworks** — pactile validation checks **task evidence** in `verify.md` and configured quality gates; it does not run or replace your project's test runner.
-- **No test-writing mandate** — how to write good tests (pre-agreed seams, anti-patterns, mock boundaries) lives in the [Test Discipline Guide](.pactile/spec/guides/test-discipline-guide.md); verification strength is orthogonal to test-writing style.
+## When to write or run a test
 
----
-
-## 2. Two-axis model (verification strength, not TDD)
-
-### Axis A — Task Ladder closeout profile
-
-Inferred by `pactile task` from artifact presence and `task.json` meta. Determines **minimum evidence** before archive or child integration.
-
-| Closeout profile | Trigger (existing logic) | Minimum verification depth |
-| --- | --- | --- |
-| **lite** | No `design.md`+`implement.md`; or meta marks lite | PRD AC mapping + focused validation + acceptance + durable-learning decision |
-| **full** | Has `design.md` + `implement.md` | Lite depth + DSC validation + **check evidence** + **reviewed change-set** + configured reviewer gates |
-| **parent** | `task.json.children` non-empty | Each child integrated/cancelled + parent integration evidence + integration-review gate |
-
-**High-risk upgrade (normative):** scope touching framework semantics, cross-file workflow, `verification_profile`, or capabilities should **Lite → Full** per `workflow.md` Task Ladder rules.
-
-### Axis B — `verification_profile` (reviewer gate strictness)
-
-Declared in `implement.md` Development Strategy Contract. Guide narrative: **验证强度** — never "TDD tier".
-
-| Profile | Default enabled gates | Strength meaning |
-| --- | --- | --- |
-| **standard** | requirements-review, code-review | Default Full/Child: planning artifacts + change review + validation/check evidence |
-| **strict** | same as standard (reserved for stricter archive signals) | High-risk Full default this wave |
-| **architecture** | + architecture-review | Cross-layer / contract / template / runtime changes |
-
-Details: Pactile CLI task guards and the Kernel's persisted controls.
-
----
-
-## 3. Minimum validation checklist by closeout profile
-
-### Lite
-
-- [ ] Focused validation on **touched behavior** (command + result in `verify.md`)
-- [ ] `pactile task validate <task>`
-- [ ] Final acceptance mapped to PRD AC
-- [ ] Durable-learning decision line (see [Durable Learning Decision Guide](.pactile/spec/guides/durable-learning-decision-guide.md))
-
-**Example `verify.md` lines:**
-
-```markdown
-Validation: `node --check src/foo.mjs` — exit 0
-Acceptance: prd AC 1–3 satisfied; typo fix verified in editor
-Durable learning decision: no durable learning — one-off content fix
-```
-
-### Full
-
-All Lite items, plus:
-
-- [ ] Validation commands from `implement.md` executed; results recorded
-- [ ] `Check evidence:` or `pactile-check evidence:` — inline skill or agent review completed
-- [ ] `Reviewed change-set:` or `Git diff ref:` — identity of reviewed diff
-- [ ] Required gates recorded via `pactile task record-gate` when contract enables them
-
-**Example:**
-
-```markdown
-Validation: probe matrix 4/4 PASS (see research/probe-results.md)
-Check evidence: pactile-check skill — spec compliance + py_compile
-Reviewed change-set: git diff main..HEAD — 8 files in .pactile/spec + scripts
-Acceptance: prd AC 1–5 mapped below
-Durable learning decision: no durable learning
-```
-
-### Parent
-
-All structural children `integrated` or `cancelled`, plus:
-
-- [ ] `Integration evidence:` in parent `verify.md`
-- [ ] `integration-review` gate when parent contract requires it
-
----
-
-## 4. Choosing `verification_profile`
-
-| Situation | Suggested profile |
+| Situation | Useful choice |
 | --- | --- |
-| Single-file / local fix, Lite ladder | N/A (lite closeout; gates minimal) |
-| Full task, normal feature | `standard` |
-| High-risk Full (hooks, gates, templates, runtime) | `strict` or `architecture` |
-| Cross-layer contract / framework semantics | `architecture` |
+| Reversible local prose or mechanical metadata edit | Inspect the changed content and actual references/projection; do not create a wording mirror |
+| Changed public behavior or reproduced defect | Existing targeted test, or a regression that fails for the real defect at a public seam |
+| Authorization, mutation or migration boundary | Success and refusal/preservation behavior with actual inputs and state |
+| Race or shared-resource risk | Relevant interleaving/concurrency proof; sequential green tests alone may be insufficient |
+| External host/provider dependency | Separate simulated contract proof from authorized real connection acceptance |
+| Global/shared build or schema change | Broaden type, contract, package or regression checks as the affected surface requires |
 
-Set in `implement.md`:
+A valuable test detects an observable wrong result. Assertions that restate internal implementation, count helpers, or mirror prose cannot replace behavior proof. Do not add one test per function or run the whole suite after every local edit. Full regression is appropriate when its additional coverage addresses shared risk or a required gate; repository CI may supply that evidence when its scope and SHA match.
 
-```yaml
-verification_profile: standard
-quality_gates:
-  mode: explicit
-  enabled: [requirements-review, code-review]
-```
+Record commands, scope, result, candidate/version, duration when measured, and unresolved failures. Separate baseline debt from new failure. Estimated cost, elapsed tool time, model usage and unavailable metrics are different facts; do not invent throughput or savings.
 
----
+## Current planning receipt
 
-## 5. `verify.md` signal line format (CLI-aligned)
+`pactile task verify-plan <task-id> --manifest <project-relative-json> (--adopt|--override) [--no-jev]` plans against the latest completed V2 candidate. The bounded manifest supplies impact and available check metadata, not executable commands or authoritative CI inventory. The command writes a candidate-bound planning receipt only: it does not run checks, start a Run, record Review or Close.
 
-The CLI uses regex to detect **substantive** evidence. Placeholder values (`TBD`, `N/A`, `待定`, `-`, `...`) are rejected.
+Deterministic planning retains required policy checks. Configured Jev can advise on optional checks under the project egress policy and recorded adoption/override; unavailable or refused advice falls back. Neither Jev nor a planning receipt grants permission, manufactures evidence or supplies the independent final verdict. Replan when the bound candidate changes.
 
-| Signal | Example lines (any one match) |
-| --- | --- |
-| Validation | `Validation:`, `Validation commands:`, `Validation results:` |
-| Check evidence | `Check evidence:`, `pactile-check evidence:` |
-| Acceptance | `Acceptance:`, `Final acceptance:`, `Accepted by user:` |
-| Durable learning | `Durable learning decision:`, `no durable learning`, `Spec update evidence:` |
-| Integration | `Integration evidence:`, `Final integration:` |
-| Reviewed change-set | `Reviewed change-set:`, `Git diff ref:`, `Changeset:` |
+## Review and Close
 
-**Not sufficient alone:**
+Implementation verification and independent Review are separate results. A reviewer checks requirements, code quality and material risks on the exact candidate, reports blockers and does not fix it. Reviewer identity must differ from the Run executor and approver. Preserve role capabilities while enforcing the actual authorized action boundary; a prompt or worktree does not prove read-only/OS protection. See [the role and dispatch contract](../modules/worker-orchestration/contract.md).
 
-- `pactile task validate` passing JSONL schema — **does not** prove task acceptance
-- Long log dumps without structured signal lines
-- Checkbox ticks in PRD without `verify.md` validation mapping
+The Kernel closes only with the latest eligible completed Run, matching current candidate, latest independent passing Review without blockers, every AC's evidence, successful hard dependencies and the defined delivery-level evidence. Normal process exit, check count, old PASS, a retrieval pack or a human-readable summary is insufficient.
 
----
+## Legacy boundary
 
-## 6. False-green detection
+V1 `start-execution`, gate profiles and directory archive apply only when the unified reader identifies that legacy schema. Do not upgrade a V2 Task into Full/Parent because risk rises; adjust the authorized design, checks or independent Task scope through supported operations.
 
-### Existing CLI guards
-
-| Failure mode | Mechanism |
-| --- | --- |
-| Placeholder validation | Pactile CLI task guards |
-| Missing archive signals | `pactile task archive --check` |
-| PRD AC all placeholder | `pactile task start-execution --check` |
-| Gate PASS without evidence | Reviewer gate validation |
-
-### Repeatable probe
-
-Run fixture matrix against shared logic (no second rule set):
-
-```powershell
-pactile task archive <task> --check
-```
-
-For fixtures, create isolated task directories and assert the CLI's reported result and the unchanged task state after `--check`.
-
-| Fixture | Intent | lite | full |
-| --- | --- | --- | --- |
-| `shallow-placeholder.md` | Placeholder-only verify | FAIL | FAIL |
-| `lite-sufficient.md` | Minimal valid Lite | PASS | FAIL (missing check + changeset) |
-| `full-sufficient.md` | Valid Full closeout | PASS | PASS |
-| `overkill-noise.md` | Verbose logs, no signals | FAIL | FAIL |
-
----
-
-## 7. Shallow vs overkill (quick reference)
-
-| Scenario | Too shallow (should block) | Overkill (non-goal) |
-| --- | --- | --- |
-| Lite typo fix | "Looks good" with no `Validation:` line | architecture-review + full-repo test suite |
-| Full hook change | `py_compile` only, no `Reviewed change-set:` | Mandate new unit test per function (TDD) |
-| Parent integrate child | Child verify still placeholder | Full E2E per child |
-
----
-
-## 8. Integration with pactile-check / record-gate / archive
-
-```text
-Phase 2 Execute → pactile-check (skill/agent) → verify.md evidence
-Phase 3.1 Verify → record-gate (non-baseline) → archive --check
-```
-
-- **pactile-check**: review against spec + task artifacts; fix in-contract defects; write human-readable evidence **before** `record-gate`.
-- **record-gate**: machine state only; requires substantive `verify.md` for PASS/SKIPPED.
-- **archive**: `verify_evidence_status()` must pass for profile; Full also needs gate readiness.
-
-Workflow cross-ref: Phase 3.1 Quality verification in `workflow.md`.
-
----
-
-**Core principle:** Match verification **strength** to task **risk** — enough to catch false greens, never enough to become TDD theater.
+See [the current workflow](../workflow.md), [critical-path scheduling](./parallel-first-execution.md) and [reuse before building](./reuse-first-guide.md).

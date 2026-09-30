@@ -1,0 +1,9 @@
+{
+  "version": "0.6.6",
+  "description": "Stable promotion of the Node lifecycle usability fixes",
+  "breaking": false,
+  "recommendMigrate": false,
+  "changelog": "The stable package contains the same product code as 0.6.6-beta.0: verified Pi startup cancellation receipts, consistent Review timeout classification, and the Node Task Kernel usability fixes.",
+  "migrations": [],
+  "notes": "No Task data transformation. Existing task evidence, worktrees, host resources and user data remain preserved."
+}

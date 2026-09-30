@@ -638,6 +638,24 @@
       "reason": "Chinese peer of the scoped compatibility input reference; the same commands, write boundaries, and removal conditions apply."
     },
     {
+      "path": "docs/pactile/internal-skill-audit.md",
+      "classification": "live",
+      "language": "zh-CN",
+      "action": "merge",
+      "targetPage": "capabilities.skills",
+      "ownerLane": "batch-4-docs-hosts-capabilities",
+      "reason": "Internal maintenance record for the product Skill source and invocation contracts."
+    },
+    {
+      "path": "docs/pactile/pi-role-policy.md",
+      "classification": "live",
+      "language": "zh-CN",
+      "action": "merge",
+      "targetPage": "capabilities.subagents",
+      "ownerLane": "batch-4-docs-hosts-capabilities",
+      "reason": "Internal Pi role, capability, isolation, and evidence boundary reference."
+    },
+    {
       "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
       "classification": "live",
       "language": "neutral",

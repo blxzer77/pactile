@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -7,6 +8,53 @@ import { initializeDeveloper } from "../../src/utils/developer.js";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
+
+function gitSessionRoot(config: string): { root: string; git: (...args: string[]) => string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-session-git-"));
+  roots.push(root);
+  const git = (...args: string[]): string => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+  git("init", "-q");
+  git("config", "user.name", "Pactile Test");
+  git("config", "user.email", "pactile@example.invalid");
+  initializeDeveloper(root, "alice");
+  fs.writeFileSync(path.join(root, ".pactile", "config.yaml"), config);
+  fs.writeFileSync(path.join(root, "unrelated.txt"), "original\n");
+  git("add", ".");
+  git("commit", "-q", "-m", "fixture");
+  return { root, git };
+}
+
+it.each(["", "session_auto_commit: OFF\n", "session_auto_commit: invalid\n"])(
+  "saves the journal without staging or committing unless auto-commit is explicitly enabled (%j)",
+  (config) => {
+    const { root, git } = gitSessionRoot(config);
+    const head = git("rev-parse", "HEAD");
+    expect(runSessionCli(["add", "--title", "Local record"], root)).toBe(0);
+    expect(git("rev-parse", "HEAD")).toBe(head);
+    expect(git("diff", "--cached", "--name-only")).toBe("");
+    expect(git("diff", "--name-only")).toContain(".pactile/workspace/alice/journal-1.md");
+  },
+);
+
+it("honors the opt-in commit message and leaves unrelated staged changes untouched", () => {
+  const { root, git } = gitSessionRoot(
+    "session_auto_commit: YES\nsession_commit_message: 'docs(session): preserve evidence'\n",
+  );
+  fs.writeFileSync(path.join(root, "unrelated.txt"), "staged user change\n");
+  git("add", "unrelated.txt");
+  expect(runSessionCli(["add", "--title", "Approved record"], root)).toBe(0);
+  expect(git("log", "-1", "--format=%s")).toBe("docs(session): preserve evidence");
+  expect(git("show", "--pretty=format:", "--name-only", "HEAD")).not.toContain("unrelated.txt");
+  expect(git("diff", "--cached", "--name-only")).toBe("unrelated.txt");
+});
+
+it("gives --no-commit precedence over project opt-in", () => {
+  const { root, git } = gitSessionRoot("session_auto_commit: on\n");
+  const head = git("rev-parse", "HEAD");
+  expect(runSessionCli(["add", "--title", "Review first", "--no-commit"], root)).toBe(0);
+  expect(git("rev-parse", "HEAD")).toBe(head);
+  expect(git("diff", "--cached", "--name-only")).toBe("");
+});
 
 it("records and rotates a journal with matching index markers through Node", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-session-node-"));

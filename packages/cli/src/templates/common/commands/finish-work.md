@@ -42,7 +42,7 @@ Run:
 git status --porcelain
 ```
 
-Filter out paths under `.pactile/workspace/` and `.pactile/tasks/` — those are managed by `pactile session add` and `pactile task archive` auto-commits and will appear dirty as part of this skill's own work.
+Filter out paths under `.pactile/workspace/` and `.pactile/tasks/` — those are managed by `pactile session add` and `pactile task archive`. They may be auto-committed only when the project explicitly sets `session_auto_commit: true` (or another enabled spelling).
 
 For each remaining dirty path, decide whether it belongs to **the selected task** or to **other parallel work** (e.g., another terminal window editing the same repo). Heuristics:
 
@@ -66,7 +66,7 @@ Then route:
 pactile task archive <task-name>
 ```
 
-At minimum: the selected task (if any). Plus any extra tasks the user confirmed in Step 1. Each archive produces a `chore(task): archive ...` commit via the script's auto-commit.
+At minimum: the selected task (if any). Plus any extra tasks the user confirmed in Step 1. An archive commit is created only when the project explicitly enables `session_auto_commit`; otherwise review and commit the resulting files through the normal Task delivery flow.
 
 If there is no selected task and the user did not confirm any cleanup archives, skip this step.
 

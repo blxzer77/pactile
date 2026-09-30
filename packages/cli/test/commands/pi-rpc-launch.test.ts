@@ -41,6 +41,34 @@ function fixture(): { root: string; task: string } {
 }
 
 describe("native Pi default launch", () => {
+  it.each([
+    { name: "lets extensions finish EOF cleanup beyond two seconds", delay: 2_300, grace: 4_000, normal: true },
+    { name: "still forces and records shutdown beyond the bounded grace", delay: 60_000, grace: 100, normal: false },
+  ])("$name", async ({ delay, grace, normal }) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pactile-pi-eof-"));
+    roots.push(root);
+    const executable = path.join(root, "eof-provider.cjs");
+    fs.writeFileSync(executable, [
+      'const readline = require("node:readline");',
+      'const input = readline.createInterface({ input: process.stdin });',
+      'input.on("line", line => { const request = JSON.parse(line); process.stdout.write(JSON.stringify({ type: "response", id: request.id, success: true, data: { isStreaming: false } }) + "\\n"); });',
+      'input.on("close", () => setTimeout(() => process.exit(0), Number(process.argv[2])));',
+    ].join("\n"));
+    const client = new PiRpcClient({ cwd: root, sessionDir: path.join(root, "sessions"), launch: { command: process.execPath, args: [executable, String(delay)] }, shutdownGraceMs: grace });
+    try {
+      await client.start();
+      const receipt = await client.closeAndObserve();
+      expect(receipt?.terminationVerified).toBe(true);
+      if (normal) {
+        expect(receipt).toMatchObject({ exitCode: 0, signalCode: null, killRequestedAt: null });
+      } else {
+        expect(receipt?.killRequestedAt).not.toBeNull();
+        expect(receipt?.exitCode !== 0 || receipt?.signalCode !== null).toBe(true);
+      }
+      expect(await client.closeAndObserve()).toBe(receipt);
+    } finally { await client.close(); }
+  });
+
   it("passes only the native RPC mode to the configured Pi executable", async () => {
     const { root } = fixture();
     const client = new PiRpcClient({ cwd: root, sessionDir: path.join(root, "sessions") });
@@ -58,7 +86,9 @@ describe("native Pi default launch", () => {
       const result = await bridge.run({ root, task, role, prompt: "Inspect the assignment", timeoutMs: 5000 });
       expect(result.outcome).toBe("settled");
       const initial = await state.mock.results[0]?.value as Record<string, unknown>;
-      expect(initial.launchArgs).toEqual(["--mode", "rpc"]);
+      expect(initial.launchArgs).toEqual(["--mode", "rpc", "--extension", expect.stringMatching(/[\\/]policy[\\/]extension\.js$/u)]);
+      expect((initial.launchArgs as string[]).some((argument) => argument.startsWith("--no-"))).toBe(false);
+      expect(result.role_policy).toMatchObject({ attested: true, role, backend: "tool-policy", defaultCapabilities: true });
     } finally { state.mockRestore(); await bridge.close(); }
   });
 });

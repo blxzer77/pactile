@@ -2,7 +2,11 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { localDate } from "../utils/local-date.js";
-import { readPactileConfig } from "../pactile/task/config.js";
+import {
+  configBoolean,
+  configCommitMessage,
+  readPactileConfig,
+} from "../pactile/task/config.js";
 import { readTaskKernel } from "../core/task/index.js";
 import { readLegacyTaskImportRecord } from "../core/task/legacy-task-migration-reader.js";
 import { searchSessionMemory } from "../pactile/task/session-memory.js";
@@ -285,7 +289,9 @@ function addSession(args: string[], root: string): void {
   writeAtomic(targetFile, nextJournal);
   writeAtomic(indexFile, updated);
   console.log(`Session ${sessionNumber} added: ${targetName}`);
-  if (args.includes("--no-commit") || config.session_auto_commit === "false")
+  // Auto-commit is opt-in. This keeps journal writes usable in non-Git roots
+  // and avoids an implicit commit when the project has not authorized it.
+  if (args.includes("--no-commit") || !configBoolean(config.session_auto_commit, false))
     return;
   if (git(root, ["rev-parse", "--is-inside-work-tree"]) !== "true") return;
   const relativePaths = [targetFile, indexFile].map((file) =>
@@ -302,7 +308,7 @@ function addSession(args: string[], root: string): void {
         "commit",
         "--only",
         "-m",
-        "chore(session): record work",
+        configCommitMessage(config.session_commit_message, "chore(session): record work"),
         "--",
         ...relativePaths,
       ],
